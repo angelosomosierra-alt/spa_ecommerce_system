@@ -3,8 +3,12 @@
 session_start();
 
 if (isset($_GET['logout'])) {
+    if (isset($_SESSION['user_id']) && !empty($_SESSION['cart'])) {
+        save_cart_to_db($conn, $_SESSION['user_id'], $_SESSION['cart']);
+    }
+    session_unset();
     session_destroy();
-    header("Location: index.php");
+    header("Location: " . BASE_URL . "user/auth.php");
     exit();
 }
 

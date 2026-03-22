@@ -1,17 +1,7 @@
 <?php
 require_once '../config.php';
 
-// Redirect if already logged in
-if (isset($_SESSION['user_id'])) {
-    if ($_SESSION['role'] === 'admin') {
-        header("Location: ../admin/index.php");
-    } else {
-        header("Location: ../user/index.php");
-    }
-    exit();
-}
-
-// Handle logout
+// ─── LOGOUT — must be BEFORE the logged-in redirect ──────────────
 if (isset($_GET['logout'])) {
     if (isset($_SESSION['user_id']) && !empty($_SESSION['cart'])) {
         save_cart_to_db($conn, $_SESSION['user_id'], $_SESSION['cart']);
@@ -22,8 +12,18 @@ if (isset($_GET['logout'])) {
     exit();
 }
 
-$login_error    = '';
-$register_error = '';
+// Redirect if already logged in
+if (isset($_SESSION['user_id'])) {
+    if ($_SESSION['role'] === 'admin') {
+        header("Location: ../admin/index.php");
+    } else {
+        header("Location: ../user/index.php");
+    }
+    exit();
+}
+
+$login_error      = '';
+$register_error   = '';
 $register_success = '';
 
 // ─── LOGIN ────────────────────────────────────────────────────────
@@ -41,17 +41,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
         $stmt->close();
 
         if ($user && password_verify($password, $user['password'])) {
-            // ✅ Set session variables
             $_SESSION['user_id']  = $user['id'];
             $_SESSION['username'] = $user['username'];
-            $_SESSION['role']     = $user['role']; // 'admin' or 'user'
+            $_SESSION['role']     = $user['role'];
 
-            // Restore cart from DB for regular users
             if ($user['role'] === 'user') {
                 $_SESSION['cart'] = load_cart_from_db($conn, $user['id']);
             }
 
-            // ✅ Redirect based on role
             if ($user['role'] === 'admin') {
                 header("Location: ../admin/index.php");
             } else {
@@ -136,9 +133,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
             </div>
             <div class="form-group">
                 <label>Password</label>
-                <input type="password" name="password" placeholder="Enter your password" required>
+                <input type="password" name="password"
+                       placeholder="Enter your password" required>
             </div>
-            <button type="submit" name="login" class="btn btn-primary" style="width:100%; padding:0.9rem;">
+            <button type="submit" name="login"
+                    class="btn btn-primary" style="width:100%; padding:0.9rem;">
                 Login
             </button>
         </form>
@@ -170,29 +169,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
         <form method="POST">
             <div class="form-group">
                 <label>Username</label>
-                <input type="text" name="username" placeholder="Choose a username" required>
+                <input type="text" name="username"
+                       placeholder="Choose a username" required>
             </div>
             <div class="form-group">
                 <label>Email</label>
-                <input type="email" name="email" placeholder="Enter your email" required>
+                <input type="email" name="email"
+                       placeholder="Enter your email" required>
             </div>
             <div class="form-group">
                 <label>Full Name</label>
-                <input type="text" name="full_name" placeholder="Enter your full name" required>
+                <input type="text" name="full_name"
+                       placeholder="Enter your full name" required>
             </div>
             <div class="form-group">
                 <label>Phone</label>
-                <input type="tel" name="phone" placeholder="e.g. 09123456789">
+                <input type="tel" name="phone"
+                       placeholder="e.g. 09123456789">
             </div>
             <div class="form-group">
                 <label>Address</label>
-                <textarea name="address" placeholder="Enter your address"></textarea>
+                <textarea name="address"
+                          placeholder="Enter your address"></textarea>
             </div>
             <div class="form-group">
                 <label>Password</label>
-                <input type="password" name="password" placeholder="Create a password" required>
+                <input type="password" name="password"
+                       placeholder="Create a password" required>
             </div>
-            <button type="submit" name="register" class="btn btn-primary" style="width:100%; padding:0.9rem;">
+            <button type="submit" name="register"
+                    class="btn btn-primary" style="width:100%; padding:0.9rem;">
                 Register
             </button>
         </form>

@@ -94,6 +94,7 @@ if ($result) {
     }
 }
 
+
 $page_title = 'Home';
 require_once 'header.php';
 ?>

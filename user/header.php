@@ -471,11 +471,16 @@ $_avatar_letter = strtoupper(substr($_display_name, 0, 1));
     </div>
 
     <!-- Logout at bottom -->
-    <div class="psb-footer">
-        <a href="auth.php?logout=1" class="psb-logout">
-            <span>🚪</span> Log Out
-        </a>
-    </div>
+    <?php
+// Works whether header is included from /user/ or root /
+$_logout_url = (strpos($_SERVER['PHP_SELF'], '/user/') !== false)
+    ? 'auth.php?logout=1'
+    : 'user/auth.php?logout=1';
+?>
+<a href="<?php echo BASE_URL; ?>user/auth.php?logout=1" class="psb-logout">
+    <span>🚪</span> Log Out
+</a>
+
 
 </div>
 

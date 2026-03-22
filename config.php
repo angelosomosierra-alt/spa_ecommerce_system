@@ -69,7 +69,11 @@ function redirect_if_logged_in() {
 }
 
 
-function logout() {
+function logout($conn = null) {
+    // Save cart before destroying session
+    if ($conn && isset($_SESSION['user_id']) && !empty($_SESSION['cart'])) {
+        save_cart_to_db($conn, $_SESSION['user_id'], $_SESSION['cart']);
+    }
     session_unset();
     session_destroy();
     header("Location: " . BASE_URL . "user/auth.php");
