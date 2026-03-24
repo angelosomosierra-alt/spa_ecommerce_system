@@ -7,10 +7,10 @@ define("DB_PASSWORD", "");
 define("DB_NAME", "spa_ecommerce_db");
 
 define('MAIL_HOST',     'smtp.gmail.com');
-define('MAIL_USERNAME', 'yourgmail@gmail.com');
-define('MAIL_PASSWORD', 'xxxx xxxx xxxx xxxx'); // Gmail App Password
+define('MAIL_USERNAME', 'keer.gonzalez.ui@phinmaed.com');
+define('MAIL_PASSWORD', 'dlptbvruzaswitny'); // Gmail App Password
 define('MAIL_PORT',     587);
-define('MAIL_FROM',     'yourgmail@gmail.com');
+define('MAIL_FROM',     'keer.gonzalez.ui@phinmaed.com');
 define('MAIL_NAME',     'Spa System');
 
 // ─── PAYMONGO ─────────────────────────────────────────────────────────────────
