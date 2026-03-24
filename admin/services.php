@@ -41,13 +41,14 @@ if (isset($_GET['delete'])) {
 
 // ─── ADD / EDIT ───────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id           = isset($_POST['id']) ? intval($_POST['id']) : null;
-    $name         = sanitize_input($_POST['name']);
-    $description  = sanitize_input($_POST['description']);
-    $price        = floatval($_POST['price']);
-    $session_time = intval($_POST['session_time']);
-    $slots        = intval($_POST['slots']);
-    $category_id  = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
+    $id              = isset($_POST['id']) ? intval($_POST['id']) : null;
+    $name            = sanitize_input($_POST['name']);
+    $description     = sanitize_input($_POST['description']);
+    $price           = floatval($_POST['price']);
+    $session_time    = intval($_POST['session_time']);
+    $slots           = intval($_POST['slots']);
+    $category_id     = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
+    $is_home_service = isset($_POST['is_home_service']) ? 1 : 0;
 
     if (empty($name) || empty($description) || $price <= 0 || $session_time <= 0 || $slots <= 0) {
         $message      = "All fields are required and price/session time/slots must be positive.";
@@ -93,20 +94,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($message_type !== "danger") {
             if ($id) {
                 if ($image_name) {
-                    $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, image=?, category_id=? WHERE id=?");
-                    $stmt->bind_param("ssdiiisi", $name, $description, $price, $session_time, $slots, $image_name, $category_id, $id);
+                    $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, image=?, category_id=?, is_home_service=? WHERE id=?");
+                    $stmt->bind_param("ssdiiisii", $name, $description, $price, $session_time, $slots, $image_name, $category_id, $is_home_service, $id);
                 } else {
                     if ($category_id !== null) {
-                        $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, category_id=? WHERE id=?");
-                        $stmt->bind_param("ssdiiii", $name, $description, $price, $session_time, $slots, $category_id, $id);
+                        $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, category_id=?, is_home_service=? WHERE id=?");
+                        $stmt->bind_param("ssdiiiii", $name, $description, $price, $session_time, $slots, $category_id, $is_home_service, $id);
                     } else {
-                        $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, category_id=NULL WHERE id=?");
-                        $stmt->bind_param("ssdiii", $name, $description, $price, $session_time, $slots, $id);
+                        $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, category_id=NULL, is_home_service=? WHERE id=?");
+                        $stmt->bind_param("ssdiiii", $name, $description, $price, $session_time, $slots, $is_home_service, $id);
                     }
                 }
             } else {
-                $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, slots, image, category_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $stmt->bind_param("ssdiisi", $name, $description, $price, $session_time, $slots, $image_name, $category_id);
+                $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, slots, image, category_id, is_home_service) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->bind_param("ssdiisii", $name, $description, $price, $session_time, $slots, $image_name, $category_id, $is_home_service);
             }
 
             if ($stmt->execute()) {
@@ -242,6 +243,21 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
+            <!-- Home Service Toggle -->
+            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;user-select:none;">
+                        <input type="checkbox" name="is_home_service" value="1"
+                               style="width:18px;height:18px;cursor:pointer;"
+                               <?php echo !empty($edit_service['is_home_service']) ? 'checked' : ''; ?>>
+                        <span>🏠 This service is available as <strong>Home Service</strong></span>
+                    </label>
+                    <small style="color:var(--gray);margin-top:0.3rem;display:block;">
+                        If enabled, customers can choose between visiting the spa or booking a home visit. Home service bookings do not consume daily slots.
+                    </small>
+                </div>
+            </div>
+
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label>Service Image <?php echo !$edit_service ? '<span class="required">*</span>' : ''; ?></label>
@@ -309,6 +325,7 @@ require_once 'admin_header.php';
                     <th>Image</th>
                     <th>Name</th>
                     <th>Category</th>
+                    <th>Type</th>
                     <th>Price</th>
                     <th>Duration</th>
                     <th>Slots/Day</th>
@@ -345,6 +362,13 @@ require_once 'admin_header.php';
                                 <span class="badge" style="background:var(--surface);color:var(--gray);">Uncategorized</span>
                             <?php endif; ?>
                         </td>
+                        <td>
+                            <?php if (!empty($service['is_home_service'])): ?>
+                                <span class="badge badge-online">🏠 Home</span>
+                            <?php else: ?>
+                                <span class="badge badge-onsite">🏪 Onsite</span>
+                            <?php endif; ?>
+                        </td>
                         <td><strong style="color:var(--rust);">₱<?php echo number_format($service['price'], 2); ?></strong></td>
                         <td style="color:var(--gray);">⏱ <?php echo $service['session_time']; ?> mins</td>
                         <td><span class="badge badge-info">📅 <?php echo $service['slots']; ?> slots</span></td>
@@ -364,7 +388,7 @@ require_once 'admin_header.php';
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="10" style="text-align:center;color:var(--gray);padding:2rem;">
+                        <td colspan="11" style="text-align:center;color:var(--gray);padding:2rem;">
                             No services found in this category.
                         </td>
                     </tr>

@@ -33,13 +33,14 @@ if (isset($_SESSION['service_booking'])) {
     }
 
     $checkout_items[] = [
-        'type'         => 'service',
-        'id'           => $service['id'],
-        'name'         => $service['name'],
-        'image'        => $service['image'],
-        'price'        => $service['price'],
-        'quantity'     => 1,
-        'session_time' => $service['session_time']
+        'type'            => 'service',
+        'id'              => $service['id'],
+        'name'            => $service['name'],
+        'image'           => $service['image'],
+        'price'           => $service['price'],
+        'quantity'        => 1,
+        'session_time'    => $service['session_time'],
+        'is_home_service' => $service['is_home_service'] ?? 0,
     ];
     $total_amount = $service['price'];
 
@@ -123,6 +124,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $booking_date   = $_POST['booking_date'] ?? null;
     $people_count   = intval($_POST['people_count'] ?? 1);
     $payment_method = $_POST['payment_method'] ?? 'onsite';
+    $service_type   = $_POST['service_type'] ?? 'onsite'; // 'onsite' or 'home'
+    $home_address   = sanitize_input($_POST['home_address'] ?? '');
+    $home_notes     = sanitize_input($_POST['home_notes'] ?? '');
 
     // ── Determine payment status ───────────────────────────────────────────
     // onsite  = unpaid  (pay at the spa)
@@ -137,6 +141,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         $message_type = "danger";
     } elseif ($checkout_type === 'service' && (empty($booking_date) || $people_count < 1)) {
         $message      = "Booking date and number of people are required for services.";
+        $message_type = "danger";
+    } elseif ($checkout_type === 'service' && $service_type === 'home' && empty($home_address)) {
+        $message      = "Please enter your home address for the home service visit.";
         $message_type = "danger";
     } else {
 
@@ -162,8 +169,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             }
         }
 
-        // ── Validate service slots ─────────────────────────────────────────
-        if ($checkout_type === 'service' && empty($message)) {
+        // ── Validate service slots (skip for home service — no slot limit) ──
+        if ($checkout_type === 'service' && $service_type === 'onsite' && empty($message)) {
             $stmt = $conn->prepare("
                 SELECT slots - IFNULL(SUM(people_count), 0) as available
                 FROM services s
@@ -171,6 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     ON s.id = a.service_id
                     AND DATE(a.appointment_date) = DATE(?)
                     AND a.status IN ('pending','approved')
+                    AND a.service_type = 'onsite'
                 WHERE s.id = ?
                 GROUP BY s.id
             ");
@@ -232,10 +240,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         // Appointment always starts as 'pending' — admin approves after reviewing the order
                         $appt_status = 'pending';
                         $appt_stmt   = $conn->prepare("
-                            INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count)
-                            VALUES (?, ?, ?, ?, ?, ?)
+                            INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, home_address, home_notes)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ");
-                        $appt_stmt->bind_param("iiissi", $user_id, $item['id'], $order_item_id, $booking_date, $appt_status, $people_count);
+                        $appt_stmt->bind_param("iiississ", $user_id, $item['id'], $order_item_id, $booking_date, $appt_status, $people_count, $service_type, $home_address, $home_notes);
                         $appt_stmt->execute();
                         $appt_stmt->close();
                     }
@@ -446,7 +454,53 @@ require_once 'header.php';
                 <textarea name="address" required><?php echo htmlspecialchars($user['address']); ?></textarea>
             </div>
 
-            <?php if ($checkout_type === 'service'): ?>
+            <?php if ($checkout_type === 'service'):
+                $is_home = !empty($checkout_items[0]['is_home_service']);
+            ?>
+                <?php if ($is_home): ?>
+                <!-- Service Type Selector -->
+                <div class="form-group" style="margin-bottom:1.25rem;">
+                    <label style="font-weight:bold;color:#3B2A1A;display:block;margin-bottom:0.75rem;">
+                        Service Type <span style="color:red;">*</span>
+                    </label>
+                    <div style="display:flex;gap:1rem;">
+                        <div style="flex:1;border:2px solid #EAD8C0;border-radius:12px;padding:1rem;
+                                    text-align:center;cursor:pointer;background:#FAF3E8;transition:all 0.2s;"
+                             id="stype-onsite" onclick="selectServiceType('onsite')">
+                            <div style="font-size:1.8rem;">🏪</div>
+                            <div style="font-weight:bold;color:#3B2A1A;margin-top:0.3rem;">Visit the Spa</div>
+                            <div style="font-size:0.78rem;color:#888;margin-top:0.3rem;">Come to our location</div>
+                        </div>
+                        <div style="flex:1;border:2px solid #EAD8C0;border-radius:12px;padding:1rem;
+                                    text-align:center;cursor:pointer;background:#FAF3E8;transition:all 0.2s;"
+                             id="stype-home" onclick="selectServiceType('home')">
+                            <div style="font-size:1.8rem;">🏠</div>
+                            <div style="font-weight:bold;color:#3B2A1A;margin-top:0.3rem;">Home Service</div>
+                            <div style="font-size:0.78rem;color:#888;margin-top:0.3rem;">We come to you</div>
+                        </div>
+                    </div>
+                    <input type="hidden" name="service_type" id="service_type" value="onsite">
+                </div>
+
+                <!-- Home Address Fields (shown only when Home is selected) -->
+                <div id="home-fields" style="display:none;">
+                    <div class="form-group">
+                        <label>Home Address <span style="color:red;">*</span></label>
+                        <textarea name="home_address" rows="3"
+                                  placeholder="Enter your full address for the home visit..."
+                                  style="width:100%;padding:0.75rem;border:1.5px solid #EAD8C0;border-radius:8px;font-family:inherit;font-size:0.95rem;resize:vertical;"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Special Notes / Instructions</label>
+                        <textarea name="home_notes" rows="2"
+                                  placeholder="E.g. gate code, landmarks, special instructions..."
+                                  style="width:100%;padding:0.75rem;border:1.5px solid #EAD8C0;border-radius:8px;font-family:inherit;font-size:0.95rem;resize:vertical;"></textarea>
+                    </div>
+                </div>
+                <?php else: ?>
+                <input type="hidden" name="service_type" value="onsite">
+                <?php endif; ?>
+
                 <div class="form-group">
                     <label>Number of People</label>
                     <input type="number" name="people_count" value="1" min="1" required>
@@ -607,6 +661,31 @@ document.querySelectorAll('.slot-btn').forEach(function(btn) {
 
 // ─── INIT: SELECT ONSITE BY DEFAULT ──────────────────────────────────────────
 selectPayment('onsite');
+
+// ─── SERVICE TYPE SELECTION (home/onsite) ─────────────────────────────────────
+function selectServiceType(type) {
+    const ids = ['stype-onsite', 'stype-home'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.borderColor = '#EAD8C0';
+        el.style.background  = '#FAF3E8';
+        el.querySelectorAll('div').forEach(d => d.style.color = '');
+    });
+    const sel = document.getElementById('stype-' + type);
+    if (sel) {
+        sel.style.borderColor = '#C96A2C';
+        sel.style.background  = '#C96A2C';
+        sel.querySelectorAll('div').forEach(d => d.style.color = '#fff');
+    }
+    const input = document.getElementById('service_type');
+    if (input) input.value = type;
+
+    const homeFields = document.getElementById('home-fields');
+    if (homeFields) homeFields.style.display = type === 'home' ? 'block' : 'none';
+}
+// Init service type default
+if (document.getElementById('stype-onsite')) selectServiceType('onsite');
 </script>
 
 </body>

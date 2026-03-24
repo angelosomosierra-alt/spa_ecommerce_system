@@ -3,7 +3,7 @@ require_once '../config.php';
 redirect_if_not_admin();
 
 function get_available_slots($conn, $service_id, $date, $total_slots) {
-    $stmt = $conn->prepare("SELECT IFNULL(SUM(people_count),0) as b FROM appointments WHERE service_id=? AND DATE(appointment_date)=? AND status IN ('pending','approved')");
+    $stmt = $conn->prepare("SELECT IFNULL(SUM(people_count),0) as b FROM appointments WHERE service_id=? AND DATE(appointment_date)=? AND status IN ('pending','approved') AND (service_type='onsite' OR service_type IS NULL)");
     $stmt->bind_param("is",$service_id,$date); $stmt->execute();
     $b = $stmt->get_result()->fetch_assoc()['b']; $stmt->close();
     return max($total_slots - $b, 0);
@@ -16,7 +16,7 @@ function get_next_slots($conn, $service_id, $days=7) {
     $data = [];
     for ($i=0; $i<$days; $i++) {
         $date = date('Y-m-d', strtotime("+$i day"));
-        $stmt = $conn->prepare("SELECT IFNULL(SUM(people_count),0) as b FROM appointments WHERE service_id=? AND DATE(appointment_date)=? AND status IN ('pending','approved')");
+        $stmt = $conn->prepare("SELECT IFNULL(SUM(people_count),0) as b FROM appointments WHERE service_id=? AND DATE(appointment_date)=? AND status IN ('pending','approved') AND (service_type='onsite' OR service_type IS NULL)");
         $stmt->bind_param("is",$service_id,$date); $stmt->execute();
         $b = $stmt->get_result()->fetch_assoc()['b']; $stmt->close();
         $data[] = ['date'=>$date,'available'=>max($total-$b,0)];
@@ -144,7 +144,7 @@ require_once 'admin_header.php';
 <div class="table-wrap" style="margin-bottom:1.5rem;">
     <table>
         <thead>
-            <tr><th>ID</th><th>Customer</th><th>Service</th><th>Date & Time</th><th>Price</th><th>Status</th><th>People</th><th>Slots Left</th><th>Actions</th></tr>
+            <tr><th>ID</th><th>Customer</th><th>Service</th><th>Type</th><th>Date & Time</th><th>Price</th><th>Status</th><th>People</th><th>Slots Left</th><th>Actions</th></tr>
         </thead>
         <tbody>
             <?php if (!empty($appointments)): foreach ($appointments as $a): ?>
@@ -158,13 +158,36 @@ require_once 'admin_header.php';
                     <div style="color:var(--cream2);"><?php echo htmlspecialchars($a['service_name']); ?></div>
                     <div style="font-size:0.72rem;color:var(--gray);">⏱ <?php echo $a['session_time']; ?> min</div>
                 </td>
+                <td>
+                    <?php if (($a['service_type'] ?? 'onsite') === 'home'): ?>
+                        <span class="badge badge-online">🏠 Home</span>
+                        <?php if (!empty($a['home_address'])): ?>
+                        <div style="font-size:0.7rem;color:var(--gray);margin-top:3px;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+                             title="<?php echo htmlspecialchars($a['home_address']); ?>">
+                            📍 <?php echo htmlspecialchars($a['home_address']); ?>
+                        </div>
+                        <?php endif; ?>
+                        <?php if (!empty($a['home_notes'])): ?>
+                        <div style="font-size:0.7rem;color:var(--gray);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+                             title="<?php echo htmlspecialchars($a['home_notes']); ?>">
+                            📝 <?php echo htmlspecialchars($a['home_notes']); ?>
+                        </div>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <span class="badge badge-onsite">🏪 Onsite</span>
+                    <?php endif; ?>
+                </td>
                 <td style="font-size:0.82rem;color:var(--cream2);"><?php echo date('M d, Y H:i', strtotime($a['appointment_date'])); ?></td>
                 <td style="color:var(--rust);font-weight:600;">₱<?php echo number_format($a['price'],2); ?></td>
                 <td><span class="badge badge-<?php echo $a['status']; ?>"><?php echo ucfirst($a['status']); ?></span></td>
                 <td style="text-align:center;color:var(--cream2);"><?php echo $a['people_count']; ?></td>
                 <td style="text-align:center;">
-                    <?php $avail = get_available_slots($conn,$a['service_id'],date('Y-m-d',strtotime($a['appointment_date'])),$a['slots']); ?>
-                    <span style="color:<?php echo $avail==0?'var(--red)':($avail<=2?'var(--amber)':'var(--green)'); ?>;font-weight:600;"><?php echo $avail; ?></span>
+                    <?php if (($a['service_type'] ?? 'onsite') === 'home'): ?>
+                        <span style="color:var(--gray);font-size:0.78rem;">N/A</span>
+                    <?php else: ?>
+                        <?php $avail = get_available_slots($conn,$a['service_id'],date('Y-m-d',strtotime($a['appointment_date'])),$a['slots']); ?>
+                        <span style="color:<?php echo $avail==0?'var(--red)':($avail<=2?'var(--amber)':'var(--green)'); ?>;font-weight:600;"><?php echo $avail; ?></span>
+                    <?php endif; ?>
                 </td>
                 <td>
                     <?php if ($a['status']==='pending'): ?>
@@ -187,7 +210,7 @@ require_once 'admin_header.php';
                 </td>
             </tr>
             <?php endforeach; else: ?>
-            <tr><td colspan="9" style="text-align:center;color:var(--gray);padding:2rem;">No appointments found.</td></tr>
+            <tr><td colspan="10" style="text-align:center;color:var(--gray);padding:2rem;">No appointments found.</td></tr>
             <?php endif; ?>
         </tbody>
     </table>
