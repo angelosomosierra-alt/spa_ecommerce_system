@@ -421,11 +421,18 @@ table tbody tr:hover { background: var(--bg3); }
     font-weight: 600;
 }
 
-.badge-paid      { background: #d4edda; color: #155724; }
-.badge-unpaid    { background: #fff3cd; color: #856404; }
-.badge-rejected  { background: #f8d7da; color: #721c24; }
-.badge-online    { background: #cfe2ff; color: #084298; }
-.badge-onsite    { background: #e2e3e5; color: #41464b; }
+.badge-paid            { background: #d4edda; color: #155724; }
+.badge-unpaid          { background: #fff3cd; color: #856404; }
+.badge-rejected        { background: #f8d7da; color: #721c24; }
+.badge-online          { background: #cfe2ff; color: #084298; }
+.badge-onsite          { background: #e2e3e5; color: #41464b; }
+.badge-pending_payment { background: #e0d4f5; color: #4a1d96; }
+.badge-cancelled       { background: #f1f1f1; color: #6b7280; }
+.badge-refunded        { background: #fce8d0; color: #92400e; }
+/* approval_status badges */
+.badge-pending         { background: #fff3cd; color: #856404; }
+.badge-approved        { background: #d4edda; color: #155724; }
+.badge-declined        { background: #f8d7da; color: #721c24; }
 .badge-cash      { background: #e2e3e5; color: #41464b; }
 .badge-pending   { background: #fff3cd; color: #856404; }
 .badge-approved  { background: #d4edda; color: #155724; }

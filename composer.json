@@ -1,0 +1,17 @@
+{
+    "name": "angelosomosierra/spa_ecommerce_system",
+    "autoload": {
+        "psr-4": {
+            "Angelosomosierra\\SpaEcommerceSystem\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "angelosomosierra-alt",
+            "email": "angelosomosierra@gmail.com"
+        }
+    ],
+    "require": {
+        "phpmailer/phpmailer": "^7.0"
+    }
+}

@@ -2,833 +2,690 @@
 require_once '../config.php';
 redirect_if_not_admin();
 
-// ─── DATE FILTER ──────────────────────────────────────────────────────────────
-$period = $_GET['period'] ?? 'monthly';
-$today  = date('Y-m-d');
+// ═══════════════════════════════════════════════════════════════════════════════
+// KPI — TOTAL REVENUE
+// Products  → payment_status='paid' AND approval_status='approved'
+// Services  → payment_status='paid' AND appointment.status='completed'
+// Total     → sum of both (never raw payment_status='paid' alone)
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── TOTAL STATISTICS ─────────────────────────────────────────────────────────
-$result        = $conn->query("SELECT SUM(total_amount) as total, COUNT(*) as count FROM orders WHERE payment_status = 'paid'");
-$paid_stats    = $result->fetch_assoc();
-$total_revenue = $paid_stats['total'] ?? 0;
-$total_orders  = $paid_stats['count'] ?? 0;
+$r               = $conn->query("
+    SELECT IFNULL(SUM(oi.subtotal),0) as t, COUNT(DISTINCT o.id) as c
+    FROM order_items oi JOIN orders o ON oi.order_id = o.id
+    WHERE oi.product_id IS NOT NULL
+      AND o.payment_status = 'paid' AND o.approval_status = 'approved'
+");
+$prd_row         = $r->fetch_assoc();
+$product_revenue = floatval($prd_row['t']);
+$product_orders  = intval($prd_row['c']);
 
-$result           = $conn->query("SELECT COUNT(*) as count FROM orders WHERE payment_status = 'unpaid'");
-$pending_orders   = $result->fetch_assoc()['count'] ?? 0;
+$r               = $conn->query("
+    SELECT IFNULL(SUM(oi.subtotal),0) as t, COUNT(DISTINCT o.id) as c
+    FROM order_items oi
+    JOIN orders       o ON oi.order_id      = o.id
+    JOIN appointments a ON a.order_item_id  = oi.id
+    WHERE oi.service_id IS NOT NULL
+      AND a.status = 'completed' AND o.payment_status = 'paid'
+");
+$svc_row         = $r->fetch_assoc();
+$service_revenue = floatval($svc_row['t']);
+$service_orders  = intval($svc_row['c']);
 
-$result           = $conn->query("SELECT COUNT(*) as count FROM appointments WHERE status = 'approved'");
-$total_appts      = $result->fetch_assoc()['count'] ?? 0;
+$total_revenue = $product_revenue + $service_revenue;
+$total_orders  = $product_orders  + $service_orders;
 
-$result           = $conn->query("SELECT COUNT(*) as count FROM users WHERE role = 'user' AND username != 'walkin_customer'");
-$total_customers  = $result->fetch_assoc()['count'] ?? 0;
+$r = $conn->query("
+    SELECT COUNT(*) as c FROM orders
+    WHERE (payment_status='paid'   AND approval_status='pending')
+       OR (payment_status='unpaid' AND approval_status='pending')
+       OR  payment_status='pending_payment'
+");
+$pending_orders  = intval($r->fetch_assoc()['c']);
 
-// ─── DAILY SALES (last 14 days) ───────────────────────────────────────────────
-$daily_labels  = [];
-$daily_data    = [];
-for ($i = 13; $i >= 0; $i--) {
-    $date           = date('Y-m-d', strtotime("-$i days"));
-    $daily_labels[] = date('M d', strtotime($date));
+$r = $conn->query("SELECT COUNT(*) as c FROM appointments WHERE status='completed'");
+$completed_appts = intval($r->fetch_assoc()['c']);
 
-    $stmt = $conn->prepare("
-        SELECT IFNULL(SUM(total_amount), 0) as total
-        FROM orders
-        WHERE DATE(created_at) = ? AND payment_status = 'paid'
-    ");
-    $stmt->bind_param("s", $date);
-    $stmt->execute();
-    $daily_data[] = floatval($stmt->get_result()->fetch_assoc()['total']);
-    $stmt->close();
-}
+$r = $conn->query("SELECT COUNT(*) as c FROM users WHERE role='user' AND username != 'walkin_customer'");
+$total_customers = intval($r->fetch_assoc()['c']);
 
-// ─── WEEKLY SALES (last 12 weeks) ─────────────────────────────────────────────
-$weekly_labels = [];
-$weekly_data   = [];
-for ($i = 11; $i >= 0; $i--) {
-    $week_start     = date('Y-m-d', strtotime("-$i weeks monday this week"));
-    $week_end       = date('Y-m-d', strtotime("-$i weeks sunday this week"));
-    $weekly_labels[] = 'W' . date('W', strtotime($week_start));
+$avg_order = $total_orders > 0 ? $total_revenue / $total_orders : 0;
 
-    $stmt = $conn->prepare("
-        SELECT IFNULL(SUM(total_amount), 0) as total
-        FROM orders
-        WHERE DATE(created_at) BETWEEN ? AND ? AND payment_status = 'paid'
-    ");
-    $stmt->bind_param("ss", $week_start, $week_end);
-    $stmt->execute();
-    $weekly_data[] = floatval($stmt->get_result()->fetch_assoc()['total']);
-    $stmt->close();
-}
+$r = $conn->query("
+    SELECT DAYNAME(o.created_at) as d, SUM(oi.subtotal) as t
+    FROM order_items oi
+    JOIN orders o ON oi.order_id = o.id
+    LEFT JOIN appointments a ON a.order_item_id = oi.id
+    WHERE o.payment_status = 'paid'
+      AND (
+          (oi.product_id IS NOT NULL AND o.approval_status = 'approved')
+          OR (oi.service_id IS NOT NULL AND a.status = 'completed')
+      )
+    GROUP BY DAYNAME(o.created_at)
+    ORDER BY t DESC LIMIT 1
+");
+$best_day = $r->fetch_assoc();
 
-// ─── MONTHLY SALES (last 12 months) ──────────────────────────────────────────
-$monthly_labels = [];
-$monthly_data   = [];
-for ($i = 11; $i >= 0; $i--) {
-    $month           = date('Y-m', strtotime("-$i months"));
-    $monthly_labels[] = date('M Y', strtotime("-$i months"));
-
-    $stmt = $conn->prepare("
-        SELECT IFNULL(SUM(total_amount), 0) as total
-        FROM orders
-        WHERE DATE_FORMAT(created_at, '%Y-%m') = ? AND payment_status = 'paid'
-    ");
-    $stmt->bind_param("s", $month);
-    $stmt->execute();
-    $monthly_data[] = floatval($stmt->get_result()->fetch_assoc()['total']);
-    $stmt->close();
-}
-
-// ─── SALES FORECAST (simple linear regression on monthly data) ────────────────
-function linear_forecast($data, $steps = 3) {
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+function linear_forecast(array $data, int $steps = 3): array {
     $n = count($data);
     if ($n < 2) return array_fill(0, $steps, 0);
-
-    $sum_x = 0; $sum_y = 0; $sum_xy = 0; $sum_xx = 0;
+    $sx = $sy = $sxy = $sxx = 0;
     for ($i = 0; $i < $n; $i++) {
-        $sum_x  += $i;
-        $sum_y  += $data[$i];
-        $sum_xy += $i * $data[$i];
-        $sum_xx += $i * $i;
+        $sx += $i; $sy += $data[$i];
+        $sxy += $i * $data[$i]; $sxx += $i * $i;
     }
-    $denom = ($n * $sum_xx - $sum_x * $sum_x);
-    if ($denom == 0) return array_fill(0, $steps, end($data));
-
-    $slope     = ($n * $sum_xy - $sum_x * $sum_y) / $denom;
-    $intercept = ($sum_y - $slope * $sum_x) / $n;
-
-    $forecast = [];
-    for ($i = 0; $i < $steps; $i++) {
-        $forecast[] = max(0, round($intercept + $slope * ($n + $i), 2));
-    }
-    return $forecast;
+    $denom = $n * $sxx - $sx * $sx;
+    if ($denom == 0) return array_fill(0, $steps, max(0, end($data)));
+    $slope = ($n * $sxy - $sx * $sy) / $denom;
+    $int   = ($sy - $slope * $sx) / $n;
+    $out   = [];
+    for ($i = 0; $i < $steps; $i++) $out[] = max(0, round($int + $slope * ($n + $i), 2));
+    return $out;
 }
 
-$forecast_data   = linear_forecast($monthly_data, 3);
-$forecast_labels = [];
+function svc_revenue($conn, $col, $v1, $v2 = null) {
+    $op   = $v2 === null ? '= ?' : 'BETWEEN ? AND ?';
+    $sql  = "SELECT IFNULL(SUM(oi.subtotal),0) as t
+             FROM order_items oi
+             JOIN orders o ON oi.order_id = o.id
+             JOIN appointments a ON a.order_item_id = oi.id
+             WHERE oi.service_id IS NOT NULL AND a.status='completed'
+               AND o.payment_status='paid' AND $col $op";
+    $stmt = $conn->prepare($sql);
+    $v2 === null ? $stmt->bind_param("s",$v1) : $stmt->bind_param("ss",$v1,$v2);
+    $stmt->execute();
+    $v = floatval($stmt->get_result()->fetch_assoc()['t']);
+    $stmt->close();
+    return $v;
+}
+
+function prd_revenue($conn, $col, $v1, $v2 = null) {
+    $op   = $v2 === null ? '= ?' : 'BETWEEN ? AND ?';
+    $sql  = "SELECT IFNULL(SUM(oi.subtotal),0) as t
+             FROM order_items oi
+             JOIN orders o ON oi.order_id = o.id
+             WHERE oi.product_id IS NOT NULL
+               AND o.payment_status='paid' AND o.approval_status='approved'
+               AND $col $op";
+    $stmt = $conn->prepare($sql);
+    $v2 === null ? $stmt->bind_param("s",$v1) : $stmt->bind_param("ss",$v1,$v2);
+    $stmt->execute();
+    $v = floatval($stmt->get_result()->fetch_assoc()['t']);
+    $stmt->close();
+    return $v;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DAILY — last 11 days + TODAY + 3 forecast days ahead
+// Range: -10 days → today → +1, +2, +3 days
+// ═══════════════════════════════════════════════════════════════════════════════
+$daily_labels = [];
+$daily_actual_total = $daily_actual_svc = $daily_actual_prd = [];
+
+// Collect actual data: 10 days ago up to and including TODAY
+for ($i = 10; $i >= 0; $i--) {
+    $d = $i === 0 ? date('Y-m-d') : date('Y-m-d', strtotime("-{$i} days"));
+    $daily_labels[] = ($i === 0 ? 'Today ' : '') . date('M d', strtotime($d));
+    $s = svc_revenue($conn, "DATE(o.created_at)", $d);
+    $p = prd_revenue($conn, "DATE(o.created_at)", $d);
+    $daily_actual_svc[]   = $s;
+    $daily_actual_prd[]   = $p;
+    $daily_actual_total[] = $s + $p;
+}
+
+// Forecast next 3 days via linear regression on the 11-day actuals
+$daily_forecast_total = linear_forecast($daily_actual_total, 3);
+$daily_forecast_svc   = linear_forecast($daily_actual_svc,   3);
+$daily_forecast_prd   = linear_forecast($daily_actual_prd,   3);
+
+// Add 3 future labels
 for ($i = 1; $i <= 3; $i++) {
-    $forecast_labels[] = date('M Y', strtotime("+$i months"));
+    $daily_labels[] = date('M d', strtotime("+{$i} days")) . ' ▶';
 }
 
-// ─── TOP PRODUCTS (pie chart) ─────────────────────────────────────────────────
-$top_products        = [];
-$top_products_labels = [];
-$top_products_data   = [];
-$top_products_colors = ['#C96A2C','#E8955A','#F5B887','#3B2A1A','#7B5E4A','#A0856B','#D4A574','#8B4513'];
+// Actual lines: real data for past+today, null for future 3 slots
+$daily_total_actual_js = array_merge($daily_actual_total, [null, null, null]);
+$daily_svc_actual_js   = array_merge($daily_actual_svc,   [null, null, null]);
+$daily_prd_actual_js   = array_merge($daily_actual_prd,   [null, null, null]);
 
-$result = $conn->query("
-    SELECT p.name, SUM(oi.quantity) as total_qty, SUM(oi.subtotal) as total_revenue
+// Forecast lines: 0 for past days (so line stays flat/visible), connects from today, extends 3 days
+$daily_total_fcast_js  = array_merge(array_fill(0, 10, 0), [end($daily_actual_total)], $daily_forecast_total);
+$daily_svc_fcast_js    = array_merge(array_fill(0, 10, 0), [end($daily_actual_svc)],   $daily_forecast_svc);
+$daily_prd_fcast_js    = array_merge(array_fill(0, 10, 0), [end($daily_actual_prd)],   $daily_forecast_prd);
+
+// Keep $daily_total / $daily_svc / $daily_prd as the actual arrays (used for strip sum)
+$daily_total = $daily_actual_total;
+$daily_svc   = $daily_actual_svc;
+$daily_prd   = $daily_actual_prd;
+
+// DEBUG — remove after confirming
+// Uncomment the line below temporarily to see what data the daily loop produces:
+// die('<pre>labels: '.json_encode($daily_labels)."\ntotal: ".json_encode($daily_total_actual_js)."\nfcast: ".json_encode($daily_total_fcast_js).'</pre>');
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WEEKLY — last 12 weeks (i=0 is THIS week)
+// ═══════════════════════════════════════════════════════════════════════════════
+$weekly_labels = $weekly_total = $weekly_svc = $weekly_prd = [];
+for ($i = 11; $i >= 0; $i--) {
+    $ws = $i === 0 ? date('Y-m-d', strtotime('monday this week')) : date('Y-m-d', strtotime("-{$i} weeks monday this week"));
+    $we = $i === 0 ? date('Y-m-d', strtotime('sunday this week')) : date('Y-m-d', strtotime("-{$i} weeks sunday this week"));
+    $weekly_labels[] = 'Wk ' . date('W', strtotime($ws));
+    $s = svc_revenue($conn, "DATE(o.created_at)", $ws, $we);
+    $p = prd_revenue($conn, "DATE(o.created_at)", $ws, $we);
+    $weekly_svc[]   = $s;
+    $weekly_prd[]   = $p;
+    $weekly_total[] = $s + $p;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MONTHLY — last 12 months (i=0 is THIS month)
+// ═══════════════════════════════════════════════════════════════════════════════
+$monthly_labels = $monthly_total = $monthly_svc = $monthly_prd = [];
+for ($i = 11; $i >= 0; $i--) {
+    $m = $i === 0 ? date('Y-m') : date('Y-m', strtotime("-{$i} months"));
+    $monthly_labels[] = $i === 0 ? date('M Y') : date('M Y', strtotime("-{$i} months"));
+    $s = svc_revenue($conn, "DATE_FORMAT(o.created_at,'%Y-%m')", $m);
+    $p = prd_revenue($conn, "DATE_FORMAT(o.created_at,'%Y-%m')", $m);
+    $monthly_svc[]   = $s;
+    $monthly_prd[]   = $p;
+    $monthly_total[] = $s + $p;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FORECAST — monthly projection, next 3 months
+// ═══════════════════════════════════════════════════════════════════════════════
+$forecast_total  = linear_forecast($monthly_total, 3);
+$forecast_svc    = linear_forecast($monthly_svc,   3);
+$forecast_prd    = linear_forecast($monthly_prd,   3);
+$forecast_labels = [];
+for ($i = 1; $i <= 3; $i++) $forecast_labels[] = date('M Y', strtotime("+{$i} months"));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOP PRODUCTS
+// ═══════════════════════════════════════════════════════════════════════════════
+$top_products = $top_products_labels = $top_products_qty = $top_products_rev = [];
+$r = $conn->query("
+    SELECT p.name, SUM(oi.quantity) AS total_qty, SUM(oi.subtotal) AS total_rev
     FROM order_items oi
     JOIN products p ON oi.product_id = p.id
-    JOIN orders o ON oi.order_id = o.id
-    WHERE o.payment_status = 'paid'
-    GROUP BY p.id, p.name
-    ORDER BY total_qty DESC
-    LIMIT 8
+    JOIN orders   o ON oi.order_id   = o.id
+    WHERE oi.product_id IS NOT NULL
+      AND o.payment_status = 'paid' AND o.approval_status = 'approved'
+    GROUP BY p.id, p.name ORDER BY total_qty DESC LIMIT 8
 ");
-while ($row = $result->fetch_assoc()) {
+while ($row = $r->fetch_assoc()) {
     $top_products[]        = $row;
     $top_products_labels[] = $row['name'];
-    $top_products_data[]   = intval($row['total_qty']);
+    $top_products_qty[]    = intval($row['total_qty']);
+    $top_products_rev[]    = floatval($row['total_rev']);
 }
 
-// ─── TOP SERVICES (pie chart) ─────────────────────────────────────────────────
-$top_services        = [];
-$top_services_labels = [];
-$top_services_data   = [];
-$top_services_colors = ['#2C7CC9','#5A95E8','#87C5F5','#1A3B7B','#4A6A9A','#6B85A0','#74A8D4','#134589'];
-
-$result = $conn->query("
-    SELECT s.name, COUNT(a.id) as total_bookings, SUM(oi.subtotal) as total_revenue
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOP SERVICES
+// ═══════════════════════════════════════════════════════════════════════════════
+$top_services = $top_services_labels = $top_services_cnt = $top_services_rev = [];
+$r = $conn->query("
+    SELECT s.name, COUNT(a.id) AS total_completed, IFNULL(SUM(oi.subtotal),0) AS total_rev
     FROM appointments a
-    JOIN services s ON a.service_id = s.id
+    JOIN services    s  ON a.service_id    = s.id
     JOIN order_items oi ON a.order_item_id = oi.id
-    JOIN orders o ON oi.order_id = o.id
-    WHERE a.status IN ('approved','completed')
-    GROUP BY s.id, s.name
-    ORDER BY total_bookings DESC
-    LIMIT 8
+    JOIN orders      o  ON oi.order_id     = o.id
+    WHERE a.status = 'completed' AND o.payment_status = 'paid'
+    GROUP BY s.id, s.name ORDER BY total_completed DESC LIMIT 8
 ");
-while ($row = $result->fetch_assoc()) {
+while ($row = $r->fetch_assoc()) {
     $top_services[]        = $row;
     $top_services_labels[] = $row['name'];
-    $top_services_data[]   = intval($row['total_bookings']);
+    $top_services_cnt[]    = intval($row['total_completed']);
+    $top_services_rev[]    = floatval($row['total_rev']);
 }
 
-// ─── RECENT ORDERS ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// RECENT ORDERS
+// ═══════════════════════════════════════════════════════════════════════════════
 $recent_orders = [];
-$result = $conn->query("
-    SELECT o.*, 
-           COUNT(oi.id) as item_count
-    FROM orders o
-    LEFT JOIN order_items oi ON o.id = oi.order_id
-    GROUP BY o.id
-    ORDER BY o.created_at DESC
-    LIMIT 8
+$r = $conn->query("
+    SELECT o.id, o.customer_name, o.total_amount, o.payment_status,
+           o.approval_status, o.payment_method, o.created_at,
+           COUNT(oi.id) AS item_count
+    FROM orders o LEFT JOIN order_items oi ON o.id = oi.order_id
+    GROUP BY o.id ORDER BY o.created_at DESC LIMIT 10
 ");
-while ($row = $result->fetch_assoc()) {
-    $recent_orders[] = $row;
-}
+while ($row = $r->fetch_assoc()) $recent_orders[] = $row;
 
-// ─── BEST SELLING DAY ─────────────────────────────────────────────────────────
-$result = $conn->query("
-    SELECT DAYNAME(created_at) as day_name, SUM(total_amount) as total
-    FROM orders
-    WHERE payment_status = 'paid'
-    GROUP BY DAYNAME(created_at)
-    ORDER BY total DESC
-    LIMIT 1
-");
-$best_day = $result->fetch_assoc();
-
-// ─── AVERAGE ORDER VALUE ──────────────────────────────────────────────────────
-$avg_order_value = $total_orders > 0 ? $total_revenue / $total_orders : 0;
+// ═══════════════════════════════════════════════════════════════════════════════
+// PAGE SETUP
+// ═══════════════════════════════════════════════════════════════════════════════
+$avg_forecast = count($forecast_total) ? array_sum($forecast_total) / count($forecast_total) : 0;
+$extra_head   = '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>';
+$page_title   = 'Analytics';
+$page_icon    = '📊';
+$active_page  = 'analytics';
+require_once 'admin_header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sales Analytics - Spa Admin</title>
-    <link rel="stylesheet" href="../assets/style.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-    <style>
-        .analytics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
-        .stat-card {
-            background: #fff;
-            border-radius: 12px;
-            padding: 1.5rem;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.07);
-            border-left: 5px solid #C96A2C;
-            transition: transform 0.2s;
-        }
-        .stat-card:hover { transform: translateY(-3px); }
-        .stat-card.blue  { border-left-color: #0070f3; }
-        .stat-card.green { border-left-color: #198754; }
-        .stat-card.gold  { border-left-color: #ffc107; }
-        .stat-card.red   { border-left-color: #dc3545; }
-        .stat-number { font-size: 2rem; font-weight: bold; color: #3B2A1A; }
-        .stat-label  { font-size: 0.9rem; color: #888; margin-top: 0.3rem; }
-        .stat-change { font-size: 0.82rem; margin-top: 0.5rem; font-weight: bold; }
-        .stat-change.up   { color: #198754; }
-        .stat-change.down { color: #dc3545; }
-
-        .chart-card {
-            background: #fff;
-            border-radius: 12px;
-            padding: 1.5rem;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.07);
-            margin-bottom: 2rem;
-        }
-        .chart-card h3 {
-            color: #3B2A1A;
-            margin-bottom: 1.5rem;
-            font-size: 1.1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        .chart-tabs {
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 1.5rem;
-        }
-        .chart-tab {
-            padding: 0.4rem 1rem;
-            border-radius: 20px;
-            border: 2px solid #EAD8C0;
-            background: #FAF3E8;
-            color: #3B2A1A;
-            font-weight: bold;
-            font-size: 0.85rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .chart-tab.active { background: #C96A2C; color: #fff; border-color: #C96A2C; }
-        .chart-tab:hover:not(.active) { background: #EAD8C0; }
-
-        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-        @media (max-width: 768px) { .two-col { grid-template-columns: 1fr; } }
-
-        .forecast-badge {
-            display: inline-block;
-            background: #fff3cd;
-            color: #664d03;
-            padding: 0.2rem 0.6rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: bold;
-            margin-left: 0.5rem;
-        }
-        .top-item {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            padding: 0.75rem 0;
-            border-bottom: 1px solid #EAD8C0;
-        }
-        .top-item:last-child { border-bottom: none; }
-        .top-item-rank {
-            width: 28px; height: 28px;
-            border-radius: 50%;
-            background: #C96A2C;
-            color: #fff;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: bold; font-size: 0.85rem; flex-shrink: 0;
-        }
-        .top-item-rank.gold   { background: #ffc107; color: #000; }
-        .top-item-rank.silver { background: #adb5bd; }
-        .top-item-rank.bronze { background: #cd7f32; color: #fff; }
-        .top-item-bar-wrap { flex: 1; }
-        .top-item-bar-bg {
-            background: #EAD8C0; border-radius: 4px;
-            height: 8px; margin-top: 0.3rem; overflow: hidden;
-        }
-        .top-item-bar { height: 100%; border-radius: 4px; background: #C96A2C; }
-        .top-item-bar.blue { background: #0070f3; }
-
-        .recent-table { width: 100%; border-collapse: collapse; }
-        .recent-table th, .recent-table td {
-            padding: 0.75rem; text-align: left;
-            border-bottom: 1px solid #EAD8C0; font-size: 0.9rem;
-        }
-        .recent-table thead tr { background: #FAF3E8; }
-        .badge-paid     { background:#d1e7dd; color:#0a3622; padding:0.2rem 0.6rem; border-radius:20px; font-size:0.78rem; font-weight:bold; }
-        .badge-unpaid   { background:#fff3cd; color:#664d03; padding:0.2rem 0.6rem; border-radius:20px; font-size:0.78rem; font-weight:bold; }
-        .badge-rejected { background:#f8d7da; color:#842029; padding:0.2rem 0.6rem; border-radius:20px; font-size:0.78rem; font-weight:bold; }
-        .badge-onsite   { background:#e2e3e5; color:#41464b; padding:0.2rem 0.6rem; border-radius:20px; font-size:0.78rem; font-weight:bold; }
-        .badge-online   { background:#cfe2ff; color:#084298; padding:0.2rem 0.6rem; border-radius:20px; font-size:0.78rem; font-weight:bold; }
-
-        /* ── EXPORT BUTTONS ── */
-        .export-bar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.6rem;
-            align-items: center;
-            background: #fff;
-            border-radius: 12px;
-            padding: 1rem 1.5rem;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.07);
-            margin-bottom: 2rem;
-            border-left: 5px solid #198754;
-        }
-        .export-bar span {
-            font-weight: bold;
-            color: #3B2A1A;
-            font-size: 0.9rem;
-            margin-right: 0.5rem;
-        }
-        .btn-export {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.45rem 1rem;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            font-weight: bold;
-            text-decoration: none;
-            cursor: pointer;
-            border: none;
-            transition: all 0.2s;
-        }
-        .btn-export:hover { opacity: 0.85; transform: translateY(-1px); }
-        .btn-export.green  { background: #198754; color: #fff; }
-        .btn-export.blue   { background: #0070f3; color: #fff; }
-        .btn-export.orange { background: #C96A2C; color: #fff; }
-        .btn-export.gold   { background: #ffc107; color: #000; }
-        .btn-export.purple { background: #6f42c1; color: #fff; }
-    </style>
-</head>
-<body>
-
-<header>
-    <nav>
-        <div class="logo">Spa Admin</div>
-        <ul class="nav-links">
-            <li><a href="index.php">Dashboard</a></li>
-            <li><a href="services.php">Services</a></li>
-            <li><a href="products.php">Products</a></li>
-            <li><a href="users.php">Users</a></li>
-            <li><a href="appointments.php">Appointments</a></li>
-            <li><a href="orders.php">Orders</a></li>
-            <li><a href="analytics.php" class="active">Analytics</a></li>
-            <li><a href="walkin.php">Walk-in</a></li>
-        </ul>
-        <div class="auth-links">
-            <a href="index.php?logout=1">Logout</a>
-        </div>
-    </nav>
-</header>
-
-<div class="container">
-<div class="admin-container">
-
-    <aside class="admin-sidebar">
-        <ul class="admin-menu">
-            <li><a href="index.php">Dashboard</a></li>
-            <li><a href="services.php">Services</a></li>
-            <li><a href="products.php">Products</a></li>
-            <li><a href="users.php">Users</a></li>
-            <li><a href="appointments.php">Appointments</a></li>
-            <li><a href="orders.php">Orders</a></li>
-            <li><a href="analytics.php" class="active">Analytics</a></li>
-            <li><a href="walkin.php">Walk-in</a></li>
-        </ul>
-    </aside>
-
-    <main class="admin-content">
-        <div class="admin-header">
-            <h2>📊 Sales Analytics & Forecasting</h2>
-            <span style="color:#888; font-size:0.9rem;">Last updated: <?php echo date('M d, Y h:i A'); ?></span>
-        </div>
-
-        <!-- ── EXPORT BAR ─────────────────────────────────────────────────── -->
-        <div class="export-bar">
-            <span>📥 Export to Excel:</span>
-            <a class="btn-export green"  href="export_sales.php?type=all"        >📊 Full Sales Report</a>
-            <a class="btn-export blue"   href="export_sales.php?type=orders_only">📦 Orders Only</a>
-            <a class="btn-export orange" href="export_sales.php?type=monthly"    >📅 Monthly Summary</a>
-            <a class="btn-export gold"   href="export_sales.php?type=products"   >🛍️ Products Sales</a>
-            <a class="btn-export purple" href="export_sales.php?type=services"   >💆 Services Sales</a>
-        </div>
-
-        <!-- ── KPI CARDS ──────────────────────────────────────────────────── -->
-        <div class="analytics-grid">
-            <div class="stat-card green">
-                <div class="stat-number">&#8369;<?php echo number_format($total_revenue, 2); ?></div>
-                <div class="stat-label">💰 Total Revenue (Paid)</div>
-            </div>
-            <div class="stat-card blue">
-                <div class="stat-number"><?php echo $total_orders; ?></div>
-                <div class="stat-label">📦 Total Paid Orders</div>
-            </div>
-            <div class="stat-card gold">
-                <div class="stat-number">&#8369;<?php echo number_format($avg_order_value, 2); ?></div>
-                <div class="stat-label">🧾 Avg Order Value</div>
-            </div>
-            <div class="stat-card red">
-                <div class="stat-number"><?php echo $pending_orders; ?></div>
-                <div class="stat-label">⏳ Pending Payments</div>
-            </div>
-            <div class="stat-card blue">
-                <div class="stat-number"><?php echo $total_appts; ?></div>
-                <div class="stat-label">📅 Approved Appointments</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?php echo $total_customers; ?></div>
-                <div class="stat-label">👥 Registered Customers</div>
-            </div>
-            <?php if ($best_day): ?>
-            <div class="stat-card gold">
-                <div class="stat-number" style="font-size:1.4rem;"><?php echo $best_day['day_name']; ?></div>
-                <div class="stat-label">🏆 Best Sales Day</div>
-                <div class="stat-change up">&#8369;<?php echo number_format($best_day['total'], 2); ?> avg</div>
-            </div>
-            <?php endif; ?>
-            <div class="stat-card green">
-                <div class="stat-number" style="font-size:1.4rem;">
-                    &#8369;<?php echo number_format(array_sum($forecast_data) / 3, 2); ?>
-                </div>
-                <div class="stat-label">🔮 Forecasted Monthly Avg</div>
-                <div class="stat-change up">Next 3 months</div>
-            </div>
-        </div>
-
-        <!-- ── SALES LINE CHART ───────────────────────────────────────────── -->
-        <div class="chart-card">
-            <h3>📈 Sales Trend</h3>
-            <div class="chart-tabs">
-                <button class="chart-tab active" onclick="switchSalesChart('daily', this)">Daily</button>
-                <button class="chart-tab" onclick="switchSalesChart('weekly', this)">Weekly</button>
-                <button class="chart-tab" onclick="switchSalesChart('monthly', this)">Monthly</button>
-                <button class="chart-tab" onclick="switchSalesChart('forecast', this)">
-                    🔮 Forecast <span class="forecast-badge">AI</span>
-                </button>
-            </div>
-            <canvas id="salesChart" height="100"></canvas>
-        </div>
-
-        <!-- ── PIE CHARTS ─────────────────────────────────────────────────── -->
-        <div class="two-col">
-            <div class="chart-card">
-                <h3>🛍️ Top Products by Sales</h3>
-                <?php if (!empty($top_products)): ?>
-                    <canvas id="productsChart" height="220"></canvas>
-                <?php else: ?>
-                    <p style="color:#999; text-align:center; padding:2rem;">No product sales data yet.</p>
-                <?php endif; ?>
-            </div>
-            <div class="chart-card">
-                <h3>💆 Top Services by Bookings</h3>
-                <?php if (!empty($top_services)): ?>
-                    <canvas id="servicesChart" height="220"></canvas>
-                <?php else: ?>
-                    <p style="color:#999; text-align:center; padding:2rem;">No service bookings data yet.</p>
-                <?php endif; ?>
-            </div>
-        </div>
-
-        <!-- ── TOP PRODUCTS & SERVICES LISTS ─────────────────────────────── -->
-        <div class="two-col">
-            <!-- Top Products -->
-            <div class="chart-card">
-                <h3>🏆 Top Products Ranking</h3>
-                <?php if (!empty($top_products)):
-                    $max_qty = max(array_column($top_products, 'total_qty'));
-                    foreach ($top_products as $i => $p):
-                        $rank_class = $i === 0 ? 'gold' : ($i === 1 ? 'silver' : ($i === 2 ? 'bronze' : ''));
-                        $bar_width  = $max_qty > 0 ? ($p['total_qty'] / $max_qty * 100) : 0;
-                ?>
-                    <div class="top-item">
-                        <div class="top-item-rank <?php echo $rank_class; ?>"><?php echo $i + 1; ?></div>
-                        <div class="top-item-bar-wrap">
-                            <div style="display:flex; justify-content:space-between;">
-                                <strong style="font-size:0.9rem;"><?php echo htmlspecialchars($p['name']); ?></strong>
-                                <span style="color:#C96A2C; font-size:0.85rem;"><?php echo $p['total_qty']; ?> sold</span>
-                            </div>
-                            <div class="top-item-bar-bg">
-                                <div class="top-item-bar" style="width:<?php echo $bar_width; ?>%"></div>
-                            </div>
-                            <small style="color:#888;">Revenue: &#8369;<?php echo number_format($p['total_revenue'], 2); ?></small>
-                        </div>
-                    </div>
-                <?php endforeach; else: ?>
-                    <p style="color:#999; text-align:center; padding:2rem;">No product sales yet.</p>
-                <?php endif; ?>
-            </div>
-
-            <!-- Top Services -->
-            <div class="chart-card">
-                <h3>🏆 Top Services Ranking</h3>
-                <?php if (!empty($top_services)):
-                    $max_bookings = max(array_column($top_services, 'total_bookings'));
-                    foreach ($top_services as $i => $s):
-                        $rank_class = $i === 0 ? 'gold' : ($i === 1 ? 'silver' : ($i === 2 ? 'bronze' : ''));
-                        $bar_width  = $max_bookings > 0 ? ($s['total_bookings'] / $max_bookings * 100) : 0;
-                ?>
-                    <div class="top-item">
-                        <div class="top-item-rank <?php echo $rank_class; ?>"><?php echo $i + 1; ?></div>
-                        <div class="top-item-bar-wrap">
-                            <div style="display:flex; justify-content:space-between;">
-                                <strong style="font-size:0.9rem;"><?php echo htmlspecialchars($s['name']); ?></strong>
-                                <span style="color:#0070f3; font-size:0.85rem;"><?php echo $s['total_bookings']; ?> bookings</span>
-                            </div>
-                            <div class="top-item-bar-bg">
-                                <div class="top-item-bar blue" style="width:<?php echo $bar_width; ?>%"></div>
-                            </div>
-                            <small style="color:#888;">Revenue: &#8369;<?php echo number_format($s['total_revenue'], 2); ?></small>
-                        </div>
-                    </div>
-                <?php endforeach; else: ?>
-                    <p style="color:#999; text-align:center; padding:2rem;">No service bookings yet.</p>
-                <?php endif; ?>
-            </div>
-        </div>
-
-        <!-- ── FORECAST TABLE ─────────────────────────────────────────────── -->
-        <div class="chart-card">
-            <h3>🔮 Sales Forecast — Next 3 Months</h3>
-            <p style="color:#888; font-size:0.88rem; margin-bottom:1rem;">
-                Based on linear regression of the past 12 months of sales data.
-            </p>
-            <table class="recent-table">
-                <thead>
-                    <tr>
-                        <th>Month</th>
-                        <th>Forecasted Revenue</th>
-                        <th>Confidence</th>
-                        <th>Trend</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($forecast_labels as $i => $label):
-                        $prev     = $i === 0 ? end($monthly_data) : $forecast_data[$i - 1];
-                        $curr     = $forecast_data[$i];
-                        $change   = $prev > 0 ? (($curr - $prev) / $prev * 100) : 0;
-                        $trend_up = $curr >= $prev;
-                        $conf     = max(60, 90 - ($i * 10));
-                    ?>
-                    <tr>
-                        <td><strong><?php echo $label; ?></strong></td>
-                        <td><strong style="color:#C96A2C; font-size:1.1rem;">&#8369;<?php echo number_format($curr, 2); ?></strong></td>
-                        <td>
-                            <div style="display:flex; align-items:center; gap:0.5rem;">
-                                <div style="flex:1; background:#EAD8C0; border-radius:4px; height:8px; overflow:hidden;">
-                                    <div style="width:<?php echo $conf; ?>%; height:100%; background:#198754; border-radius:4px;"></div>
-                                </div>
-                                <span style="font-size:0.85rem; color:#666;"><?php echo $conf; ?>%</span>
-                            </div>
-                        </td>
-                        <td>
-                            <?php if ($trend_up): ?>
-                                <span style="color:#198754; font-weight:bold;">▲ +<?php echo number_format(abs($change), 1); ?>%</span>
-                            <?php else: ?>
-                                <span style="color:#dc3545; font-weight:bold;">▼ -<?php echo number_format(abs($change), 1); ?>%</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-
-        <!-- ── RECENT ORDERS ──────────────────────────────────────────────── -->
-        <div class="chart-card">
-            <h3>🕐 Recent Orders</h3>
-            <table class="recent-table">
-                <thead>
-                    <tr>
-                        <th>Order ID</th>
-                        <th>Customer</th>
-                        <th>Items</th>
-                        <th>Total</th>
-                        <th>Payment</th>
-                        <th>Status</th>
-                        <th>Date</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($recent_orders as $order):
-                        $pstatus = $order['payment_status'] ?? 'unpaid';
-                        $pmethod = $order['payment_method'] ?? 'onsite';
-                    ?>
-                    <tr>
-                        <td><strong>#<?php echo $order['id']; ?></strong></td>
-                        <td><?php echo htmlspecialchars($order['customer_name']); ?></td>
-                        <td><?php echo $order['item_count']; ?> item(s)</td>
-                        <td><strong style="color:#C96A2C;">&#8369;<?php echo number_format($order['total_amount'], 2); ?></strong></td>
-                        <td>
-                            <?php if ($pmethod === 'online'): ?>
-                                <span class="badge-online">💳 Online</span>
-                            <?php else: ?>
-                                <span class="badge-onsite">🏪 Onsite</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if ($pstatus === 'paid'): ?>
-                                <span class="badge-paid">✅ Paid</span>
-                            <?php elseif ($pstatus === 'rejected'): ?>
-                                <span class="badge-rejected">❌ Rejected</span>
-                            <?php else: ?>
-                                <span class="badge-unpaid">⏳ Unpaid</span>
-                            <?php endif; ?>
-                        </td>
-                        <td style="font-size:0.85rem; color:#888;">
-                            <?php echo date('M d, Y', strtotime($order['created_at'])); ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-
-    </main>
+<!-- ── EXPORT BAR ─────────────────────────────────────────────────────────── -->
+<div class="export-bar" style="margin-bottom:1.5rem;">
+    <span class="export-bar-label">📥 Export:</span>
+    <a class="btn-export green"  href="export_sales.php?type=all"        >📊 Full Report</a>
+    <a class="btn-export blue"   href="export_sales.php?type=orders_only">📦 Orders</a>
+    <a class="btn-export orange" href="export_sales.php?type=monthly"    >📅 Monthly</a>
+    <a class="btn-export gold"   href="export_sales.php?type=products"   >🛍️ Products</a>
+    <a class="btn-export purple" href="export_sales.php?type=services"   >💆 Services</a>
 </div>
+
+<!-- ── KPI CARDS ──────────────────────────────────────────────────────────── -->
+<div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:1.5rem;">
+    <div class="stat-card rust">
+        <div class="stat-icon">💰</div>
+        <div class="stat-number">₱<?php echo number_format($total_revenue,0); ?></div>
+        <div class="stat-label">Total Revenue</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="stat-icon">💆</div>
+        <div class="stat-number">₱<?php echo number_format($service_revenue,0); ?></div>
+        <div class="stat-label">Services Revenue</div>
+        <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">completed appointments</div>
+    </div>
+    <div class="stat-card green">
+        <div class="stat-icon">🛍️</div>
+        <div class="stat-number">₱<?php echo number_format($product_revenue,0); ?></div>
+        <div class="stat-label">Products Revenue</div>
+        <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">approved orders</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">📦</div>
+        <div class="stat-number"><?php echo $total_orders; ?></div>
+        <div class="stat-label">Paid Orders</div>
+    </div>
+    <div class="stat-card amber">
+        <div class="stat-icon">🧾</div>
+        <div class="stat-number">₱<?php echo number_format($avg_order,0); ?></div>
+        <div class="stat-label">Avg Order Value</div>
+    </div>
+    <div class="stat-card green">
+        <div class="stat-icon">📅</div>
+        <div class="stat-number"><?php echo $completed_appts; ?></div>
+        <div class="stat-label">Completed Appts</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-number"><?php echo $total_customers; ?></div>
+        <div class="stat-label">Customers</div>
+    </div>
+    <?php if ($best_day): ?>
+    <div class="stat-card amber">
+        <div class="stat-icon">🏆</div>
+        <div class="stat-number" style="font-size:1.2rem;"><?php echo $best_day['d']; ?></div>
+        <div class="stat-label">Best Sales Day</div>
+        <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">₱<?php echo number_format($best_day['t'],0); ?> total</div>
+    </div>
+    <?php endif; ?>
+    <div class="stat-card green">
+        <div class="stat-icon">🔮</div>
+        <div class="stat-number" style="font-size:1.2rem;">₱<?php echo number_format($avg_forecast,0); ?></div>
+        <div class="stat-label">Forecast Avg / Mo</div>
+        <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">next 3 months</div>
+    </div>
+</div>
+
+<!-- ── REVENUE LINE CHART ─────────────────────────────────────────────────── -->
+<div class="chart-card" style="margin-bottom:1.5rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
+        <h3 style="margin:0;">📈 Revenue Trend — Total · Services · Products</h3>
+        <div class="chart-tabs" style="margin:0;">
+            <button class="chart-tab active" onclick="switchChart('daily',this)">Daily</button>
+            <button class="chart-tab"        onclick="switchChart('weekly',this)">Weekly</button>
+            <button class="chart-tab"        onclick="switchChart('monthly',this)">Monthly</button>
+            <button class="chart-tab"        onclick="switchChart('forecast',this)">🔮 Forecast</button>
+        </div>
+    </div>
+
+    <!-- Revenue summary strip -->
+    <div id="rev-strip" style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;padding:0.75rem 1rem;background:var(--bg3);border-radius:var(--radius);font-size:0.82rem;">
+        <span>⏱ Period: <strong id="strip-period">Last 14 days</strong></span>
+        <span style="color:var(--rust);">💰 Total: <strong id="strip-total">₱<?php echo number_format(array_sum($daily_total),2); ?></strong></span>
+        <span style="color:#0070f3;">💆 Services: <strong id="strip-svc">₱<?php echo number_format(array_sum($daily_svc),2); ?></strong></span>
+        <span style="color:#198754;">🛍️ Products: <strong id="strip-prd">₱<?php echo number_format(array_sum($daily_prd),2); ?></strong></span>
+    </div>
+
+    <!-- Actual vs Forecast legend -->
+    <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:0.75rem;font-size:0.82rem;">
+        <span style="display:flex;align-items:center;gap:0.4rem;"><span style="display:inline-block;width:24px;height:3px;background:#C96A2C;border-radius:2px;"></span> Total (actual)</span>
+        <span style="display:flex;align-items:center;gap:0.4rem;"><span style="display:inline-block;width:24px;height:3px;background:#0070f3;border-radius:2px;"></span> Services (actual)</span>
+        <span style="display:flex;align-items:center;gap:0.4rem;"><span style="display:inline-block;width:24px;height:3px;background:#198754;border-radius:2px;"></span> Products (actual)</span>
+        <span style="display:flex;align-items:center;gap:0.4rem;color:var(--gray);"><span style="display:inline-block;width:24px;height:2px;background:#f59e0b;border-radius:2px;border-top:2px dashed #f59e0b;"></span> Forecast Total</span>
+        <span style="display:flex;align-items:center;gap:0.4rem;color:var(--gray);"><span style="display:inline-block;width:24px;height:2px;border-top:2px dashed #60a5fa;"></span> Forecast Services</span>
+        <span style="display:flex;align-items:center;gap:0.4rem;color:var(--gray);"><span style="display:inline-block;width:24px;height:2px;border-top:2px dashed #34d399;"></span> Forecast Products</span>
+    </div>
+
+    <div style="position:relative;height:320px;">
+        <canvas id="revenueChart"></canvas>
+    </div>
+</div>
+
+<!-- ── PIE CHARTS ─────────────────────────────────────────────────────────── -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
+
+    <div class="chart-card">
+        <h3>💆 Top Services — Completed Sessions</h3>
+        <?php if (!empty($top_services)): ?>
+        <div style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;">
+            <div style="flex:0 0 200px;"><canvas id="servicesChart"></canvas></div>
+            <div style="flex:1;min-width:160px;">
+                <?php
+                $max_s = max($top_services_cnt) ?: 1;
+                $pal_s = ['#0070f3','#34a8ff','#63bfff','#0051b3','#003d8f','#5a95e8','#1a5fa8','#00bfff'];
+                foreach ($top_services as $i => $s):
+                    $w = round($s['total_completed'] / $max_s * 100);
+                ?>
+                <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.6rem;">
+                    <div style="width:22px;height:22px;border-radius:50%;background:<?php echo $pal_s[$i%8]; ?>;color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:700;flex-shrink:0;"><?php echo $i+1; ?></div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="display:flex;justify-content:space-between;font-size:0.82rem;">
+                            <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;"><?php echo htmlspecialchars($s['name']); ?></span>
+                            <span style="color:#0070f3;font-weight:600;"><?php echo $s['total_completed']; ?></span>
+                        </div>
+                        <div style="background:var(--border);border-radius:3px;height:5px;margin-top:3px;">
+                            <div style="width:<?php echo $w; ?>%;height:100%;background:<?php echo $pal_s[$i%8]; ?>;border-radius:3px;"></div>
+                        </div>
+                        <div style="font-size:0.7rem;color:var(--gray);margin-top:1px;">₱<?php echo number_format($s['total_rev'],0); ?></div>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php else: ?>
+        <p style="color:var(--gray);text-align:center;padding:2rem;">No completed service sessions yet.</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="chart-card">
+        <h3>🛍️ Top Products — Units Sold</h3>
+        <?php if (!empty($top_products)): ?>
+        <div style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;">
+            <div style="flex:0 0 200px;"><canvas id="productsChart"></canvas></div>
+            <div style="flex:1;min-width:160px;">
+                <?php
+                $max_p = max($top_products_qty) ?: 1;
+                $pal_p = ['#C96A2C','#E8955A','#F5B887','#A94F1D','#7B3A0E','#D4845A','#FF8C42','#8B4513'];
+                foreach ($top_products as $i => $p):
+                    $w = round($p['total_qty'] / $max_p * 100);
+                ?>
+                <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.6rem;">
+                    <div style="width:22px;height:22px;border-radius:50%;background:<?php echo $pal_p[$i%8]; ?>;color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:700;flex-shrink:0;"><?php echo $i+1; ?></div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="display:flex;justify-content:space-between;font-size:0.82rem;">
+                            <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;"><?php echo htmlspecialchars($p['name']); ?></span>
+                            <span style="color:var(--rust);font-weight:600;"><?php echo $p['total_qty']; ?> sold</span>
+                        </div>
+                        <div style="background:var(--border);border-radius:3px;height:5px;margin-top:3px;">
+                            <div style="width:<?php echo $w; ?>%;height:100%;background:<?php echo $pal_p[$i%8]; ?>;border-radius:3px;"></div>
+                        </div>
+                        <div style="font-size:0.7rem;color:var(--gray);margin-top:1px;">₱<?php echo number_format($p['total_rev'],0); ?></div>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php else: ?>
+        <p style="color:var(--gray);text-align:center;padding:2rem;">No approved product sales yet.</p>
+        <?php endif; ?>
+    </div>
+
+</div>
+
+<!-- ── FORECAST TABLE ─────────────────────────────────────────────────────── -->
+<div class="chart-card" style="margin-bottom:1.5rem;">
+    <h3>🔮 Revenue Forecast — Next 3 Months
+        <span style="font-size:0.75rem;background:var(--amber-dim);color:var(--amber);padding:0.2rem 0.6rem;border-radius:20px;margin-left:0.5rem;font-weight:600;">Linear Regression</span>
+    </h3>
+    <p style="color:var(--gray);font-size:0.82rem;margin-bottom:1rem;">Projected from the last 12 months using least-squares linear regression. Confidence decreases further out.</p>
+    <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+        <thead>
+            <tr style="background:var(--bg3);">
+                <th style="padding:0.75rem 1rem;text-align:left;border-bottom:2px solid var(--border);">Month</th>
+                <th style="padding:0.75rem 1rem;text-align:right;border-bottom:2px solid var(--border);">Total</th>
+                <th style="padding:0.75rem 1rem;text-align:right;border-bottom:2px solid var(--border);">Services</th>
+                <th style="padding:0.75rem 1rem;text-align:right;border-bottom:2px solid var(--border);">Products</th>
+                <th style="padding:0.75rem 1rem;text-align:center;border-bottom:2px solid var(--border);">Confidence</th>
+                <th style="padding:0.75rem 1rem;text-align:center;border-bottom:2px solid var(--border);">Trend</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php
+            $prev_total = end($monthly_total);
+            foreach ($forecast_labels as $i => $lbl):
+                $ft  = $forecast_total[$i];
+                $fs  = $forecast_svc[$i];
+                $fp  = $forecast_prd[$i];
+                $chg = $prev_total > 0 ? ($ft - $prev_total) / $prev_total * 100 : 0;
+                $conf = max(55, 88 - $i * 12);
+                $up  = $ft >= $prev_total;
+                $prev_total = $ft;
+            ?>
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:0.75rem 1rem;font-weight:600;"><?php echo $lbl; ?></td>
+                <td style="padding:0.75rem 1rem;text-align:right;color:var(--rust);font-weight:700;">₱<?php echo number_format($ft,2); ?></td>
+                <td style="padding:0.75rem 1rem;text-align:right;color:#0070f3;">₱<?php echo number_format($fs,2); ?></td>
+                <td style="padding:0.75rem 1rem;text-align:right;color:var(--green);">₱<?php echo number_format($fp,2); ?></td>
+                <td style="padding:0.75rem 1rem;">
+                    <div style="display:flex;align-items:center;gap:0.4rem;">
+                        <div style="flex:1;background:var(--border);border-radius:3px;height:7px;overflow:hidden;">
+                            <div style="width:<?php echo $conf; ?>%;height:100%;background:var(--green);border-radius:3px;"></div>
+                        </div>
+                        <span style="font-size:0.78rem;color:var(--gray);white-space:nowrap;"><?php echo $conf; ?>%</span>
+                    </div>
+                </td>
+                <td style="padding:0.75rem 1rem;text-align:center;">
+                    <?php if ($up): ?>
+                        <span style="color:var(--green);font-weight:700;">▲ +<?php echo number_format(abs($chg),1); ?>%</span>
+                    <?php else: ?>
+                        <span style="color:var(--red);font-weight:700;">▼ -<?php echo number_format(abs($chg),1); ?>%</span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- ── RECENT ORDERS ──────────────────────────────────────────────────────── -->
+<div class="panel">
+    <div class="panel-header"><span class="panel-title">🕐 Recent Orders</span></div>
+    <div class="table-wrap" style="border:none;border-radius:0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Order</th><th>Customer</th><th>Items</th><th>Total</th>
+                    <th>Method</th><th>Payment</th><th>Approval</th><th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($recent_orders as $o):
+                $ps = $o['payment_status'];
+                $as = $o['approval_status'];
+                $pm = $o['payment_method'];
+            ?>
+                <tr>
+                    <td><strong>#<?php echo $o['id']; ?></strong></td>
+                    <td><?php echo htmlspecialchars($o['customer_name'] ?? '—'); ?></td>
+                    <td><?php echo $o['item_count']; ?></td>
+                    <td><strong style="color:var(--rust);">₱<?php echo number_format($o['total_amount'],2); ?></strong></td>
+                    <td><span class="badge badge-<?php echo $pm==='online'?'online':'onsite'; ?>"><?php echo $pm==='online'?'💳 Online':'🏪 Onsite'; ?></span></td>
+                    <td><span class="badge badge-<?php echo $ps; ?>"><?php echo ucfirst($ps); ?></span></td>
+                    <td><span class="badge badge-<?php echo $as; ?>"><?php echo ucfirst($as); ?></span></td>
+                    <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($o['created_at'])); ?></td>
+                </tr>
+            <?php endforeach; ?>
+            <?php if (empty($recent_orders)): ?>
+                <tr><td colspan="8" style="text-align:center;color:var(--gray);padding:2rem;">No orders yet.</td></tr>
+            <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <script>
-// ─── DATA FROM PHP ────────────────────────────────────────────────────────────
-const dailyLabels    = <?php echo json_encode($daily_labels); ?>;
-const dailyData      = <?php echo json_encode($daily_data); ?>;
-const weeklyLabels   = <?php echo json_encode($weekly_labels); ?>;
-const weeklyData     = <?php echo json_encode($weekly_data); ?>;
-const monthlyLabels  = <?php echo json_encode($monthly_labels); ?>;
-const monthlyData    = <?php echo json_encode($monthly_data); ?>;
-const forecastLabels = <?php echo json_encode($forecast_labels); ?>;
-const forecastData   = <?php echo json_encode($forecast_data); ?>;
+const DATA = {
+    daily: {
+        labels:      <?php echo json_encode($daily_labels); ?>,
+        total:       <?php echo json_encode($daily_total_actual_js); ?>,
+        svc:         <?php echo json_encode($daily_svc_actual_js); ?>,
+        prd:         <?php echo json_encode($daily_prd_actual_js); ?>,
+        fcastTotal:  <?php echo json_encode($daily_total_fcast_js); ?>,
+        fcastSvc:    <?php echo json_encode($daily_svc_fcast_js); ?>,
+        fcastPrd:    <?php echo json_encode($daily_prd_fcast_js); ?>
+    },
+    weekly:  { labels: <?php echo json_encode($weekly_labels);  ?>, total: <?php echo json_encode($weekly_total);  ?>, svc: <?php echo json_encode($weekly_svc);  ?>, prd: <?php echo json_encode($weekly_prd);  ?> },
+    monthly: { labels: <?php echo json_encode($monthly_labels); ?>, total: <?php echo json_encode($monthly_total); ?>, svc: <?php echo json_encode($monthly_svc); ?>, prd: <?php echo json_encode($monthly_prd); ?> },
+    forecast: {
+        allLabels:   <?php echo json_encode(array_merge($monthly_labels, $forecast_labels)); ?>,
+        actualTotal: <?php echo json_encode(array_merge($monthly_total, array_fill(0,3,null))); ?>,
+        actualSvc:   <?php echo json_encode(array_merge($monthly_svc,   array_fill(0,3,null))); ?>,
+        actualPrd:   <?php echo json_encode(array_merge($monthly_prd,   array_fill(0,3,null))); ?>,
+        fcastTotal:  <?php $pad=array_fill(0,count($monthly_total)-1,null); $pad[]=end($monthly_total); echo json_encode(array_merge($pad,$forecast_total)); ?>,
+        fcastSvc:    <?php $pad=array_fill(0,count($monthly_svc)-1,null);   $pad[]=end($monthly_svc);   echo json_encode(array_merge($pad,$forecast_svc));   ?>,
+        fcastPrd:    <?php $pad=array_fill(0,count($monthly_prd)-1,null);   $pad[]=end($monthly_prd);   echo json_encode(array_merge($pad,$forecast_prd));   ?>
+    }
+};
 
-const productLabels  = <?php echo json_encode($top_products_labels); ?>;
-const productData    = <?php echo json_encode($top_products_data); ?>;
-const productColors  = <?php echo json_encode($top_products_colors); ?>;
-const serviceLabels  = <?php echo json_encode($top_services_labels); ?>;
-const serviceData    = <?php echo json_encode($top_services_data); ?>;
-const serviceColors  = <?php echo json_encode($top_services_colors); ?>;
+const PERIOD_NAMES = { daily:'Last 14 days', weekly:'Last 12 weeks', monthly:'Last 12 months', forecast:'Monthly + Forecast' };
 
-// ─── CHART DEFAULTS ───────────────────────────────────────────────────────────
-Chart.defaults.font.family = "'Segoe UI', sans-serif";
-Chart.defaults.color       = '#666';
+Chart.defaults.font.family = "'Plus Jakarta Sans','Segoe UI',sans-serif";
+Chart.defaults.font.size   = 12;
+Chart.defaults.color       = '#888';
 
-// ─── SALES LINE CHART ────────────────────────────────────────────────────────
-const salesCtx   = document.getElementById('salesChart').getContext('2d');
-let   salesChart = new Chart(salesCtx, {
+function sum(arr) { return arr.reduce((a,b) => a+(b||0), 0); }
+
+function mkLine(color, dash=false) {
+    return { borderColor:color, backgroundColor:'transparent', borderWidth:dash?2:2.5,
+             pointBackgroundColor:color, pointRadius:4, pointHoverRadius:7,
+             tension:0.4, fill:false, borderDash:dash?[6,4]:[], spanGaps:true };
+}
+
+const rCtx = document.getElementById('revenueChart').getContext('2d');
+let rChart = new Chart(rCtx, {
     type: 'line',
     data: {
-        labels: dailyLabels,
-        datasets: [{
-            label: 'Daily Sales (₱)',
-            data: dailyData,
-            borderColor: '#C96A2C',
-            backgroundColor: 'rgba(201,106,44,0.1)',
-            borderWidth: 2.5,
-            pointBackgroundColor: '#C96A2C',
-            pointRadius: 4,
-            tension: 0.4,
-            fill: true
-        }]
+        labels: DATA.daily.labels,
+        datasets: [
+            { label:'Total (₱)',             data:DATA.daily.total,      ...mkLine('#C96A2C'), backgroundColor:'rgba(201,106,44,0.10)', fill:true },
+            { label:'Services (₱)',           data:DATA.daily.svc,        ...mkLine('#0070f3') },
+            { label:'Products (₱)',           data:DATA.daily.prd,        ...mkLine('#198754') },
+            { label:'Forecast Total (₱)',     data:DATA.daily.fcastTotal, ...mkLine('#f59e0b',true), pointStyle:'triangle', pointRadius:6 },
+            { label:'Forecast Services (₱)',  data:DATA.daily.fcastSvc,   ...mkLine('#60a5fa',true) },
+            { label:'Forecast Products (₱)',  data:DATA.daily.fcastPrd,   ...mkLine('#34d399',true) }
+        ]
     },
     options: {
         responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode:'index', intersect:false },
         plugins: {
-            legend: { display: false },
+            legend: { display:false },
             tooltip: {
                 callbacks: {
-                    label: ctx => ' ₱' + ctx.parsed.y.toFixed(2)
+                    label: ctx => '  '+ctx.dataset.label+': ₱'+(ctx.parsed.y??0).toLocaleString('en-PH',{minimumFractionDigits:2}),
+                    afterBody: (items) => {
+                        const idx = items[0]?.dataIndex;
+                        if (idx >= 11) return ['  ── forecast ──'];
+                        return [];
+                    }
                 }
             }
         },
         scales: {
             y: {
                 beginAtZero: true,
-                ticks: { callback: v => '₱' + v }
+                grid: { color:'rgba(0,0,0,0.06)' },
+                ticks: { callback: v => '₱'+v.toLocaleString() }
+            },
+            x: {
+                grid: { display:false },
+                ticks: {
+                    font: { size:11 },
+                    color: (ctx) => ctx.index >= 11 ? '#f59e0b' : '#888'
+                }
             }
         }
     }
 });
 
-function switchSalesChart(type, el) {
+function switchChart(type, el) {
     document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
     el.classList.add('active');
 
-    let labels, data, datasets, label;
-
-    if (type === 'daily') {
-        labels   = dailyLabels;
-        datasets = [{
-            label: 'Daily Sales (₱)',
-            data: dailyData,
-            borderColor: '#C96A2C',
-            backgroundColor: 'rgba(201,106,44,0.1)',
-            borderWidth: 2.5,
-            pointBackgroundColor: '#C96A2C',
-            pointRadius: 4,
-            tension: 0.4,
-            fill: true
-        }];
-    } else if (type === 'weekly') {
-        labels   = weeklyLabels;
-        datasets = [{
-            label: 'Weekly Sales (₱)',
-            data: weeklyData,
-            borderColor: '#0070f3',
-            backgroundColor: 'rgba(0,112,243,0.1)',
-            borderWidth: 2.5,
-            pointBackgroundColor: '#0070f3',
-            pointRadius: 4,
-            tension: 0.4,
-            fill: true
-        }];
-    } else if (type === 'monthly') {
-        labels   = monthlyLabels;
-        datasets = [{
-            label: 'Monthly Sales (₱)',
-            data: monthlyData,
-            borderColor: '#198754',
-            backgroundColor: 'rgba(25,135,84,0.1)',
-            borderWidth: 2.5,
-            pointBackgroundColor: '#198754',
-            pointRadius: 4,
-            tension: 0.4,
-            fill: true
-        }];
-    } else if (type === 'forecast') {
-        // Combined: actual + forecast
-        const allLabels = [...monthlyLabels, ...forecastLabels];
-        const actualPad = [...monthlyData, null, null, null];
-        const forecastPad = [
-            ...Array(monthlyLabels.length - 1).fill(null),
-            monthlyData[monthlyData.length - 1], // connect line
-            ...forecastData
-        ];
-        labels   = allLabels;
+    let labels, datasets;
+    if (type === 'forecast') {
+        const fd = DATA.forecast;
+        labels   = fd.allLabels;
         datasets = [
-            {
-                label: 'Actual Sales (₱)',
-                data: actualPad,
-                borderColor: '#198754',
-                backgroundColor: 'rgba(25,135,84,0.08)',
-                borderWidth: 2.5,
-                pointBackgroundColor: '#198754',
-                pointRadius: 4,
-                tension: 0.4,
-                fill: true
-            },
-            {
-                label: 'Forecasted Sales (₱)',
-                data: forecastPad,
-                borderColor: '#ffc107',
-                backgroundColor: 'rgba(255,193,7,0.1)',
-                borderWidth: 2.5,
-                borderDash: [6, 4],
-                pointBackgroundColor: '#ffc107',
-                pointRadius: 5,
-                tension: 0.4,
-                fill: false
-            }
+            { label:'Actual Total (₱)',      data:fd.actualTotal, ...mkLine('#C96A2C'), backgroundColor:'rgba(201,106,44,0.08)', fill:true },
+            { label:'Actual Services (₱)',   data:fd.actualSvc,   ...mkLine('#0070f3') },
+            { label:'Actual Products (₱)',   data:fd.actualPrd,   ...mkLine('#198754') },
+            { label:'Forecast Total (₱)',    data:fd.fcastTotal,  ...mkLine('#f59e0b',true), pointStyle:'triangle', pointRadius:6 },
+            { label:'Forecast Services (₱)', data:fd.fcastSvc,    ...mkLine('#60a5fa',true) },
+            { label:'Forecast Products (₱)', data:fd.fcastPrd,    ...mkLine('#34d399',true) }
         ];
+        updateStrip('forecast', fd.fcastTotal, fd.fcastSvc, fd.fcastPrd);
+    } else if (type === 'daily') {
+        const d  = DATA.daily;
+        labels   = d.labels;
+        datasets = [
+            { label:'Total (₱)',             data:d.total,      ...mkLine('#C96A2C'), backgroundColor:'rgba(201,106,44,0.10)', fill:true },
+            { label:'Services (₱)',           data:d.svc,        ...mkLine('#0070f3') },
+            { label:'Products (₱)',           data:d.prd,        ...mkLine('#198754') },
+            { label:'Forecast Total (₱)',     data:d.fcastTotal, ...mkLine('#f59e0b',true), pointStyle:'triangle', pointRadius:6 },
+            { label:'Forecast Services (₱)',  data:d.fcastSvc,   ...mkLine('#60a5fa',true) },
+            { label:'Forecast Products (₱)',  data:d.fcastPrd,   ...mkLine('#34d399',true) }
+        ];
+        updateStrip(type, d.total, d.svc, d.prd);
+    } else {
+        const d  = DATA[type];
+        labels   = d.labels;
+        datasets = [
+            { label:'Total (₱)',    data:d.total, ...mkLine('#C96A2C'), backgroundColor:'rgba(201,106,44,0.08)', fill:true },
+            { label:'Services (₱)', data:d.svc,   ...mkLine('#0070f3') },
+            { label:'Products (₱)', data:d.prd,   ...mkLine('#198754') }
+        ];
+        updateStrip(type, d.total, d.svc, d.prd);
     }
-
-    salesChart.data.labels   = labels;
-    salesChart.data.datasets = datasets;
-    salesChart.update();
+    rChart.data.labels   = labels;
+    rChart.data.datasets = datasets;
+    rChart.update('active');
 }
 
-// ─── PRODUCTS PIE CHART ───────────────────────────────────────────────────────
-<?php if (!empty($top_products)): ?>
-new Chart(document.getElementById('productsChart').getContext('2d'), {
-    type: 'doughnut',
-    data: {
-        labels: productLabels,
-        datasets: [{
-            data: productData,
-            backgroundColor: productColors,
-            borderWidth: 2,
-            borderColor: '#fff'
-        }]
-    },
-    options: {
-        responsive: true,
-        plugins: {
-            legend: { position: 'bottom', labels: { padding: 15, font: { size: 12 } } },
-            tooltip: {
-                callbacks: {
-                    label: ctx => ' ' + ctx.label + ': ' + ctx.parsed + ' sold'
-                }
-            }
-        }
-    }
+function updateStrip(type, total, svc, prd) {
+    const name = PERIOD_NAMES[type] ?? type;
+    document.getElementById('strip-period').textContent = name;
+    document.getElementById('strip-total').textContent  = '₱'+sum(total).toLocaleString('en-PH',{minimumFractionDigits:2});
+    document.getElementById('strip-svc').textContent    = '₱'+sum(svc).toLocaleString('en-PH',{minimumFractionDigits:2});
+    document.getElementById('strip-prd').textContent    = '₱'+sum(prd).toLocaleString('en-PH',{minimumFractionDigits:2});
+}
+
+<?php if (!empty($top_services)): ?>
+new Chart(document.getElementById('servicesChart').getContext('2d'), {
+    type:'doughnut',
+    data:{ labels:<?php echo json_encode($top_services_labels); ?>, datasets:[{ data:<?php echo json_encode($top_services_cnt); ?>, backgroundColor:['#0070f3','#34a8ff','#63bfff','#0051b3','#003d8f','#5a95e8','#1a5fa8','#00bfff'], borderWidth:2, borderColor:'#fff', hoverOffset:6 }] },
+    options:{ responsive:true, cutout:'62%', plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: ctx=>' '+ctx.label+': '+ctx.parsed+' sessions' } } } }
 });
 <?php endif; ?>
 
-// ─── SERVICES PIE CHART ───────────────────────────────────────────────────────
-<?php if (!empty($top_services)): ?>
-new Chart(document.getElementById('servicesChart').getContext('2d'), {
-    type: 'doughnut',
-    data: {
-        labels: serviceLabels,
-        datasets: [{
-            data: serviceData,
-            backgroundColor: serviceColors,
-            borderWidth: 2,
-            borderColor: '#fff'
-        }]
-    },
-    options: {
-        responsive: true,
-        plugins: {
-            legend: { position: 'bottom', labels: { padding: 15, font: { size: 12 } } },
-            tooltip: {
-                callbacks: {
-                    label: ctx => ' ' + ctx.label + ': ' + ctx.parsed + ' bookings'
-                }
-            }
-        }
-    }
+<?php if (!empty($top_products)): ?>
+new Chart(document.getElementById('productsChart').getContext('2d'), {
+    type:'doughnut',
+    data:{ labels:<?php echo json_encode($top_products_labels); ?>, datasets:[{ data:<?php echo json_encode($top_products_qty); ?>, backgroundColor:['#C96A2C','#E8955A','#F5B887','#A94F1D','#7B3A0E','#D4845A','#FF8C42','#8B4513'], borderWidth:2, borderColor:'#fff', hoverOffset:6 }] },
+    options:{ responsive:true, cutout:'62%', plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: ctx=>' '+ctx.label+': '+ctx.parsed+' sold' } } } }
 });
 <?php endif; ?>
 </script>
 
-</body>
-</html>
+<?php require_once 'admin_footer.php'; ?>

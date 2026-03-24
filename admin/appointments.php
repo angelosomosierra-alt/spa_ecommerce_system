@@ -2,289 +2,219 @@
 require_once '../config.php';
 redirect_if_not_admin();
 
-$message = '';
-$message_type = '';
-
-/**
- * Get available slots for a service for the next $days days
- */
-function get_next_slots($conn, $service_id, $days = 7) {
-    $slots_data = [];
-
-    // Get total slots for the service
-    $stmt = $conn->prepare("SELECT slots FROM services WHERE id = ?");
-    $stmt->bind_param("i", $service_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $service = $result->fetch_assoc();
-    $total_slots = $service['slots'] ?? 5; // default 5 if not set
-    $stmt->close();
-
-    for ($i = 0; $i < $days; $i++) {
-        $date = date('Y-m-d', strtotime("+$i day"));
-
-        // Count booked appointments for this date
-        $stmt = $conn->prepare("
-            SELECT IFNULL(SUM(people_count),0) as booked_count 
-            FROM appointments 
-            WHERE service_id = ? 
-            AND DATE(appointment_date) = ? 
-            AND status IN ('pending','approved')
-        ");
-        $stmt->bind_param("is", $service_id, $date);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $booked = $result->fetch_assoc()['booked_count'];
-        $stmt->close();
-
-        $available = max($total_slots - $booked, 0);
-
-        $slots_data[] = [
-            'date' => $date,
-            'available' => $available
-        ];
-    }
-
-    return $slots_data;
+function get_available_slots($conn, $service_id, $date, $total_slots) {
+    $stmt = $conn->prepare("SELECT IFNULL(SUM(people_count),0) as b FROM appointments WHERE service_id=? AND DATE(appointment_date)=? AND status IN ('pending','approved')");
+    $stmt->bind_param("is",$service_id,$date); $stmt->execute();
+    $b = $stmt->get_result()->fetch_assoc()['b']; $stmt->close();
+    return max($total_slots - $b, 0);
 }
 
-// Handle status update
+function get_next_slots($conn, $service_id, $days=7) {
+    $stmt = $conn->prepare("SELECT slots FROM services WHERE id=?");
+    $stmt->bind_param("i",$service_id); $stmt->execute();
+    $total = $stmt->get_result()->fetch_assoc()['slots'] ?? 5; $stmt->close();
+    $data = [];
+    for ($i=0; $i<$days; $i++) {
+        $date = date('Y-m-d', strtotime("+$i day"));
+        $stmt = $conn->prepare("SELECT IFNULL(SUM(people_count),0) as b FROM appointments WHERE service_id=? AND DATE(appointment_date)=? AND status IN ('pending','approved')");
+        $stmt->bind_param("is",$service_id,$date); $stmt->execute();
+        $b = $stmt->get_result()->fetch_assoc()['b']; $stmt->close();
+        $data[] = ['date'=>$date,'available'=>max($total-$b,0)];
+    }
+    return $data;
+}
+
+$message = ''; $message_type = '';
+
 if (isset($_GET['update_status'])) {
-    $id = intval($_GET['update_status']);
+    $id     = intval($_GET['update_status']);
     $status = sanitize_input($_GET['status']);
 
-    if (in_array($status, ['pending', 'approved', 'declined', 'completed'])) {
-        $stmt = $conn->prepare("UPDATE appointments SET status = ? WHERE id = ?");
+    if (in_array($status, ['pending','approved','declined','completed'])) {
+
+        // Update appointment status
+        $stmt = $conn->prepare("UPDATE appointments SET status=? WHERE id=?");
         $stmt->bind_param("si", $status, $id);
-        if ($stmt->execute()) {
-            $message = "Appointment status updated to " . ucfirst($status) . "!";
-            $message_type = "success";
-        } else {
-            $message = "Error updating appointment.";
-            $message_type = "danger";
-        }
+        $ok = $stmt->execute();
         $stmt->close();
+
+        // ── When marked COMPLETED: update the linked order payment_status to 'paid'
+        //    so the service revenue appears in analytics
+        if ($ok && $status === 'completed') {
+            $stmt = $conn->prepare("
+                SELECT oi.order_id
+                FROM appointments a
+                LEFT JOIN order_items oi ON a.order_item_id = oi.id
+                WHERE a.id = ?
+            ");
+            $stmt->bind_param("i", $id); $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc(); $stmt->close();
+
+            if (!empty($row['order_id'])) {
+                // Mark order as paid so it counts in analytics revenue
+                $upd = $conn->prepare("UPDATE orders SET payment_status='paid' WHERE id=? AND payment_status != 'paid'");
+                $upd->bind_param("i", $row['order_id']); $upd->execute(); $upd->close();
+            }
+        }
+
+        // ── When marked DECLINED: restore stock if any products were in the order
+        if ($ok && $status === 'declined') {
+            $stmt = $conn->prepare("
+                SELECT oi.order_id
+                FROM appointments a
+                LEFT JOIN order_items oi ON a.order_item_id = oi.id
+                WHERE a.id = ?
+            ");
+            $stmt->bind_param("i", $id); $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc(); $stmt->close();
+
+            if (!empty($row['order_id'])) {
+                $stmt = $conn->prepare("UPDATE orders SET payment_status='rejected' WHERE id=? AND payment_status='unpaid'");
+                $stmt->bind_param("i", $row['order_id']); $stmt->execute(); $stmt->close();
+            }
+        }
+
+        $message      = $ok ? "Appointment " . ucfirst($status) . " successfully!" : "Error updating.";
+        $message_type = $ok ? "success" : "danger";
+
+        if ($ok && $status === 'completed') {
+            $message = "🏁 Appointment completed! Revenue has been updated in Analytics.";
+        }
     }
 }
 
-// Get filter status
 $filter_status = isset($_GET['filter']) ? sanitize_input($_GET['filter']) : '';
+$status_opts   = ['pending','approved','declined','completed'];
+$appointments  = [];
 
-// Fetch appointments with optional filter
-$appointments = [];
-$status_options = ['pending', 'approved', 'declined', 'completed'];
-
-if ($filter_status && in_array($filter_status, $status_options)) {
+if ($filter_status && in_array($filter_status, $status_opts)) {
     $stmt = $conn->prepare("
-        SELECT a.*, u.full_name, u.email, u.phone, s.name as service_name, s.price, s.session_time, s.slots
+        SELECT a.*, u.full_name, u.email, u.phone,
+               s.name as service_name, s.price, s.session_time, s.slots
         FROM appointments a
-        JOIN users u ON a.user_id = u.id
+        JOIN users    u ON a.user_id    = u.id
         JOIN services s ON a.service_id = s.id
         WHERE a.status = ?
         ORDER BY a.appointment_date ASC
     ");
-    $stmt->bind_param("s", $filter_status);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    while ($row = $result->fetch_assoc()) {
-        $appointments[] = $row;
-    }
-    $stmt->close();
+    $stmt->bind_param("s", $filter_status); $stmt->execute();
+    $appointments = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 } else {
     $result = $conn->query("
-        SELECT a.*, u.full_name, u.email, u.phone, s.name as service_name, s.price, s.session_time, s.slots
+        SELECT a.*, u.full_name, u.email, u.phone,
+               s.name as service_name, s.price, s.session_time, s.slots
         FROM appointments a
-        JOIN users u ON a.user_id = u.id
+        JOIN users    u ON a.user_id    = u.id
         JOIN services s ON a.service_id = s.id
         ORDER BY a.appointment_date ASC
     ");
-    while ($row = $result->fetch_assoc()) {
-        $appointments[] = $row;
-    }
+    while ($row = $result->fetch_assoc()) $appointments[] = $row;
 }
 
-// Get appointment statistics
 $stats = [];
-foreach ($status_options as $status) {
-    $result = $conn->query("SELECT COUNT(*) as count FROM appointments WHERE status = '$status'");
-    $stats[$status] = $result->fetch_assoc()['count'];
+foreach ($status_opts as $s) {
+    $stats[$s] = $conn->query("SELECT COUNT(*) as c FROM appointments WHERE status='$s'")->fetch_assoc()['c'];
 }
 
-// Function to calculate available slots
-function get_available_slots($conn, $service_id, $date, $total_slots) {
-    $stmt = $conn->prepare("
-        SELECT IFNULL(SUM(people_count),0) as booked_count 
-        FROM appointments 
-        WHERE service_id = ? AND DATE(appointment_date) = ? AND status IN ('pending','approved')
-    ");
-    $stmt->bind_param("is", $service_id, $date);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $booked = $result->fetch_assoc()['booked_count'];
-    $stmt->close();
-
-    $available = $total_slots - $booked;
-    return $available >= 0 ? $available : 0;
-}
+$page_title = 'Appointments'; $page_icon = '📅'; $active_page = 'appointments';
+require_once 'admin_header.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Appointments Management - Admin</title>
-<link rel="stylesheet" href="../assets/style.css">
-</head>
-<body>
-<header>
-<nav>
-<div class="logo">Spa Admin</div>
-<ul class="nav-links">
-<li><a href="index.php">Dashboard</a></li>
-<li><a href="services.php">Services</a></li>
-<li><a href="products.php">Products</a></li>
-<li><a href="users.php">Users</a></li>
-<li><a href="appointments.php" class="active">Appointments</a></li>
-<li><a href="orders.php">Orders</a></li>
-</ul>
-<div class="auth-links">
-<a href="index.php?logout=1">Logout</a>
-</div>
-</nav>
-</header>
-
-<div class="container">
-<div class="admin-container">
-<aside class="admin-sidebar">
-<ul class="admin-menu">
-<li><a href="index.php">Dashboard</a></li>
-<li><a href="services.php">Services</a></li>
-<li><a href="products.php">Products</a></li>
-<li><a href="users.php">Users</a></li>
-<li><a href="appointments.php" class="active">Appointments</a></li>
-<li><a href="orders.php">Orders</a></li>
-</ul>
-</aside>
-
-<main class="admin-content">
-<div class="admin-header">
-<h2>Appointments Management</h2>
-</div>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $message_type; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo $message_type; ?>" style="margin-bottom:1.25rem;"><?php echo $message; ?></div>
 <?php endif; ?>
 
-<!-- Statistics -->
-<div class="stats-grid" style="margin-bottom: 2rem;">
-<?php foreach ($stats as $key => $val): ?>
-<div class="stat-card">
-<div class="stat-number"><?php echo $val; ?></div>
-<div class="stat-label"><?php echo ucfirst($key); ?></div>
-</div>
-<?php endforeach; ?>
+<!-- Stats -->
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
+    <div class="stat-card amber"><div class="stat-icon">⏳</div><div class="stat-number"><?php echo $stats['pending']; ?></div><div class="stat-label">Pending</div></div>
+    <div class="stat-card green"><div class="stat-icon">✅</div><div class="stat-number"><?php echo $stats['approved']; ?></div><div class="stat-label">Approved</div></div>
+    <div class="stat-card red"><div class="stat-icon">❌</div><div class="stat-number"><?php echo $stats['declined']; ?></div><div class="stat-label">Declined</div></div>
+    <div class="stat-card blue"><div class="stat-icon">🏁</div><div class="stat-number"><?php echo $stats['completed']; ?></div><div class="stat-label">Completed</div></div>
 </div>
 
-<!-- Filter Buttons -->
-<div style="margin-bottom: 2rem; display: flex; gap: 1rem; flex-wrap: wrap;">
-<a href="appointments.php" class="btn <?php echo !$filter_status ? 'btn-primary' : 'btn-secondary'; ?>">All</a>
-<?php foreach ($status_options as $s): ?>
-<a href="appointments.php?filter=<?php echo $s; ?>" class="btn <?php echo $filter_status === $s ? 'btn-primary' : 'btn-secondary'; ?>"><?php echo ucfirst($s); ?></a>
-<?php endforeach; ?>
+<!-- Filter -->
+<div class="filter-tabs">
+    <a href="appointments.php"                class="filter-tab <?php echo !$filter_status?'active':''; ?>">All</a>
+    <?php foreach ($status_opts as $s): ?>
+    <a href="appointments.php?filter=<?php echo $s; ?>" class="filter-tab <?php echo $filter_status===$s?'active':''; ?>"><?php echo ucfirst($s); ?></a>
+    <?php endforeach; ?>
 </div>
 
-<!-- Appointments Table -->
-<div style="overflow-x: auto;">
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>Customer</th>
-<th>Service</th>
-<th>Date & Time</th>
-<th>Price</th>
-<th>Status</th>
-<th>People</th>
-<th>Available Slots</th>
-<th>Actions</th>
-</tr>
-</thead>
-<tbody>
-<?php if (count($appointments) > 0): ?>
-<?php foreach ($appointments as $appt): ?>
-<tr>
-<td><?php echo $appt['id']; ?></td>
-<td>
-<strong><?php echo $appt['full_name']; ?></strong><br>
-<small><?php echo $appt['email']; ?></small><br>
-<small><?php echo $appt['phone']; ?></small>
-</td>
-<td><?php echo $appt['service_name']; ?> (<?php echo $appt['session_time']; ?> min)</td>
-<td><?php echo date('Y-m-d H:i', strtotime($appt['appointment_date'])); ?></td>
-<td>$<?php echo number_format($appt['price'], 2); ?></td>
-<td>
-<span class="appointment-status status-<?php echo $appt['status']; ?>">
-<?php echo ucfirst($appt['status']); ?>
-</span>
-</td>
-<td><?php echo $appt['people_count']; ?></td>
-<td>
-<?php
-$available = get_available_slots(
-$conn,
-$appt['service_id'],
-date('Y-m-d', strtotime($appt['appointment_date'])),
-$appt['slots']
-);
-echo $available;
-?>
-</td>
-<td>
-<?php if ($appt['status'] === 'pending'): ?>
-<a href="appointments.php?update_status=<?php echo $appt['id']; ?>&status=approved" class="btn btn-success" style="padding:0.4rem 0.6rem;font-size:0.8rem;">Approve</a>
-<a href="appointments.php?update_status=<?php echo $appt['id']; ?>&status=declined" class="btn btn-danger" style="padding:0.4rem 0.6rem;font-size:0.8rem;">Decline</a>
-<?php elseif ($appt['status'] === 'approved'): ?>
-<a href="appointments.php?update_status=<?php echo $appt['id']; ?>&status=completed" class="btn btn-info" style="padding:0.4rem 0.6rem;font-size:0.8rem;">Complete</a>
-<?php endif; ?>
-</td>
-</tr>
-<?php endforeach; ?>
-<?php else: ?>
-<tr>
-<td colspan="9" style="text-align:center; padding:2rem;">No appointments found.</td>
-</tr>
-<?php endif; ?>
-</tbody>
-</table>
+<!-- Table -->
+<div class="table-wrap" style="margin-bottom:1.5rem;">
+    <table>
+        <thead>
+            <tr><th>ID</th><th>Customer</th><th>Service</th><th>Date & Time</th><th>Price</th><th>Status</th><th>People</th><th>Slots Left</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+            <?php if (!empty($appointments)): foreach ($appointments as $a): ?>
+            <tr>
+                <td><strong style="color:var(--gold);">#<?php echo $a['id']; ?></strong></td>
+                <td>
+                    <div style="font-weight:600;color:var(--cream);"><?php echo htmlspecialchars($a['full_name']); ?></div>
+                    <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($a['email']); ?></div>
+                </td>
+                <td>
+                    <div style="color:var(--cream2);"><?php echo htmlspecialchars($a['service_name']); ?></div>
+                    <div style="font-size:0.72rem;color:var(--gray);">⏱ <?php echo $a['session_time']; ?> min</div>
+                </td>
+                <td style="font-size:0.82rem;color:var(--cream2);"><?php echo date('M d, Y H:i', strtotime($a['appointment_date'])); ?></td>
+                <td style="color:var(--rust);font-weight:600;">₱<?php echo number_format($a['price'],2); ?></td>
+                <td><span class="badge badge-<?php echo $a['status']; ?>"><?php echo ucfirst($a['status']); ?></span></td>
+                <td style="text-align:center;color:var(--cream2);"><?php echo $a['people_count']; ?></td>
+                <td style="text-align:center;">
+                    <?php $avail = get_available_slots($conn,$a['service_id'],date('Y-m-d',strtotime($a['appointment_date'])),$a['slots']); ?>
+                    <span style="color:<?php echo $avail==0?'var(--red)':($avail<=2?'var(--amber)':'var(--green)'); ?>;font-weight:600;"><?php echo $avail; ?></span>
+                </td>
+                <td>
+                    <?php if ($a['status']==='pending'): ?>
+                        <a href="appointments.php?update_status=<?php echo $a['id']; ?>&status=approved"
+                           class="btn btn-success btn-sm"
+                           onclick="return confirm('Approve this appointment?')">Approve</a>
+                        <a href="appointments.php?update_status=<?php echo $a['id']; ?>&status=declined"
+                           class="btn btn-danger btn-sm"
+                           onclick="return confirm('Decline this appointment?')">Decline</a>
+                    <?php elseif ($a['status']==='approved'): ?>
+                        <a href="appointments.php?update_status=<?php echo $a['id']; ?>&status=completed"
+                           class="btn btn-info btn-sm"
+                           onclick="return confirm('Mark as completed? This will update the revenue in Analytics.')">🏁 Complete</a>
+                        <a href="appointments.php?update_status=<?php echo $a['id']; ?>&status=declined"
+                           class="btn btn-danger btn-sm"
+                           onclick="return confirm('Decline this appointment?')">Decline</a>
+                    <?php else: ?>
+                        <span style="color:var(--gray);font-size:0.78rem;">—</span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endforeach; else: ?>
+            <tr><td colspan="9" style="text-align:center;color:var(--gray);padding:2rem;">No appointments found.</td></tr>
+            <?php endif; ?>
+        </tbody>
+    </table>
 </div>
 
-<!-- Next 7-Day Slot Tracker -->
-<h3>Next 7-Day Slot Tracker</h3>
-<?php
-$services_result = $conn->query("SELECT id, name FROM services ORDER BY name ASC");
-while ($service = $services_result->fetch_assoc()):
-$slots = get_next_slots($conn, $service['id'], 7);
-?>
-<h4><?php echo $service['name']; ?></h4>
-<table>
-<tr>
-<?php foreach ($slots as $s): ?>
-<th><?php echo date('D, M d', strtotime($s['date'])); ?></th>
-<?php endforeach; ?>
-</tr>
-<tr>
-<?php foreach ($slots as $s): ?>
-<td style="text-align:center; <?php echo $s['available'] == 0 ? 'color:red;' : 'color:green;'; ?>">
-<?php echo $s['available']; ?> slots
-</td>
-<?php endforeach; ?>
-</tr>
-</table>
-<?php endwhile; ?>
+<!-- 7-Day Slot Tracker -->
+<div class="panel">
+    <div class="panel-header"><span class="panel-title">📅 7-Day Slot Tracker</span></div>
+    <div class="panel-body" style="padding:0;">
+        <?php
+        $svc_result = $conn->query("SELECT id, name FROM services ORDER BY name ASC");
+        while ($svc = $svc_result->fetch_assoc()):
+            $slots = get_next_slots($conn, $svc['id'], 7);
+        ?>
+        <div class="slot-tracker-service">
+            <div class="slot-tracker-name"><?php echo htmlspecialchars($svc['name']); ?></div>
+            <div class="slot-days">
+                <?php foreach ($slots as $s): $a = $s['available']; ?>
+                <div class="slot-day">
+                    <div class="slot-day-label"><?php echo date('D', strtotime($s['date'])); ?><br><?php echo date('M d', strtotime($s['date'])); ?></div>
+                    <div class="slot-day-count <?php echo $a==0?'full':($a<=2?'low':'available'); ?>"><?php echo $a; ?></div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php endwhile; ?>
+    </div>
+</div>
 
-</main>
-</div>
-</div>
-</body>
-</html>
+<?php require_once 'admin_footer.php'; ?>

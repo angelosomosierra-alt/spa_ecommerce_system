@@ -125,9 +125,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $payment_method = $_POST['payment_method'] ?? 'onsite';
 
     // ── Determine payment status ───────────────────────────────────────────
-    // onsite = unpaid (admin approves after collecting payment)
-    // online = paid   (PayMongo will handle — placeholder for now)
-    $payment_status = $payment_method === 'online' ? 'paid' : 'unpaid';
+    // onsite  = unpaid  (pay at the spa)
+    // online  = pending_payment (waiting for PayMongo confirmation)
+    $payment_status = $payment_method === 'online' ? 'pending_payment' : 'unpaid';
 
     if (empty($customer_name) || empty($email) || empty($phone) || empty($address)) {
         $message      = "All fields are required.";
@@ -188,8 +188,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         // ── Place order ────────────────────────────────────────────────────
         if (empty($message)) {
             $stmt = $conn->prepare("
-                INSERT INTO orders (user_id, customer_name, email, phone, address, booking_date, total_amount, payment_method, payment_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO orders (user_id, customer_name, email, phone, address, booking_date, total_amount, payment_method, payment_status, approval_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             ");
             $stmt->bind_param("isssssdss",
                 $user_id,
@@ -207,10 +207,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                 $order_id = $stmt->insert_id;
                 $stmt->close();
 
+                // ── Insert order items ─────────────────────────────────────
                 foreach ($checkout_items as $item) {
                     if ($item['type'] === 'product') {
-                        $subtotal = $item['price'] * $item['quantity'];
-
+                        $subtotal  = $item['price'] * $item['quantity'];
                         $item_stmt = $conn->prepare("
                             INSERT INTO order_items (order_id, product_id, quantity, price, subtotal)
                             VALUES (?, ?, ?, ?, ?)
@@ -218,12 +218,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         $item_stmt->bind_param("iiidd", $order_id, $item['id'], $item['quantity'], $item['price'], $subtotal);
                         $item_stmt->execute();
                         $item_stmt->close();
-
-                        // Deduct stock
-                        $update_stmt = $conn->prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
-                        $update_stmt->bind_param("ii", $item['quantity'], $item['id']);
-                        $update_stmt->execute();
-                        $update_stmt->close();
 
                     } elseif ($item['type'] === 'service') {
                         $item_stmt = $conn->prepare("
@@ -235,10 +229,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         $order_item_id = $item_stmt->insert_id;
                         $item_stmt->close();
 
-                        // Appointment status: pending for onsite, approved for online
-                        $appt_status = $payment_method === 'online' ? 'approved' : 'pending';
-
-                        $appt_stmt = $conn->prepare("
+                        // Appointment always starts as 'pending' — admin approves after reviewing the order
+                        $appt_status = 'pending';
+                        $appt_stmt   = $conn->prepare("
                             INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count)
                             VALUES (?, ?, ?, ?, ?, ?)
                         ");
@@ -248,42 +241,114 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     }
                 }
 
-                // ── Clear cart items that were checked out ─────────────────
-                if ($checkout_type === 'cart') {
-                    foreach ($checkout_items as $item) {
-                        unset($_SESSION['cart'][$item['id']]);
-                        remove_cart_item_from_db($conn, $user_id, $item['id']);
+                // ══════════════════════════════════════════════════════════
+                // ONLINE PAYMENT — call PayMongo BEFORE touching stock/cart
+                // Stock and cart are only cleared after payment is confirmed
+                // ══════════════════════════════════════════════════════════
+                if ($payment_method === 'online') {
+
+                    $amount_cents = intval($total_amount * 100); // centavos
+
+                    // Build absolute redirect URLs back to your site
+                    $base_url    = (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
+                    $success_url = $base_url . '/spa_ecommerce_system/user/payment_success.php?order_id=' . $order_id;
+                    $cancel_url  = $base_url . '/spa_ecommerce_system/user/payment_cancel.php?order_id=' . $order_id;
+
+                    $payload = json_encode([
+                        'data' => [
+                            'attributes' => [
+                                'amount'      => $amount_cents,
+                                'currency'    => 'PHP',
+                                'description' => 'Serenity Spa Order #' . $order_id,
+                                'remarks'     => 'Order #' . $order_id,
+                                'redirect'    => [
+                                    'success' => $success_url,
+                                    'failed'  => $cancel_url,
+                                ],
+                            ]
+                        ]
+                    ]);
+
+                    $ch = curl_init('https://api.paymongo.com/v1/links');
+                    curl_setopt_array($ch, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_POST           => true,
+                        CURLOPT_POSTFIELDS     => $payload,
+                        CURLOPT_HTTPHEADER     => [
+                            'Content-Type: application/json',
+                            'Accept: application/json',
+                            'Authorization: Basic ' . base64_encode(PAYMONGO_SECRET_KEY . ':'),
+                        ],
+                    ]);
+
+                    $response    = curl_exec($ch);
+                    $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    curl_close($ch);
+
+                    $result = json_decode($response, true);
+
+                    if ($http_status === 200 && isset($result['data']['attributes']['checkout_url'])) {
+                        // ✅ PayMongo link created — save link ID and redirect
+                        $checkout_url     = $result['data']['attributes']['checkout_url'];
+                        $paymongo_link_id = $result['data']['id'];
+
+                        $upd = $conn->prepare("UPDATE orders SET paymongo_link_id = ? WHERE id = ?");
+                        $upd->bind_param("si", $paymongo_link_id, $order_id);
+                        $upd->execute();
+                        $upd->close();
+
+                        // Keep checkout session alive — stock/cart cleared on success page
+                        $_SESSION['paymongo_order_id']    = $order_id;
+                        $_SESSION['paymongo_checkout_type'] = $checkout_type;
+                        $_SESSION['paymongo_checkout_items'] = $checkout_items;
+
+                        header("Location: " . $checkout_url);
+                        exit();
+
+                    } else {
+                        // ❌ PayMongo failed — roll back everything cleanly
+                        $conn->prepare("DELETE FROM appointments WHERE order_item_id IN (SELECT id FROM order_items WHERE order_id = $order_id)")->execute();
+                        $conn->prepare("DELETE FROM order_items WHERE order_id = $order_id")->execute();
+                        $del = $conn->prepare("DELETE FROM orders WHERE id = ?");
+                        $del->bind_param("i", $order_id);
+                        $del->execute();
+                        $del->close();
+
+                        $message      = "❌ Could not create payment link. Please try again or choose Onsite Payment.";
+                        $message_type = "danger";
                     }
+
+                } else {
+                    // ══════════════════════════════════════════════════════
+                    // ONSITE PAYMENT — deduct stock and clear cart now
+                    // ══════════════════════════════════════════════════════
+                    foreach ($checkout_items as $item) {
+                        if ($item['type'] === 'product') {
+                            $upd = $conn->prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
+                            $upd->bind_param("ii", $item['quantity'], $item['id']);
+                            $upd->execute();
+                            $upd->close();
+                        }
+                    }
+
+                    // Clear cart
+                    if ($checkout_type === 'cart' && !empty($_SESSION['checkout_item_ids'])) {
+                        foreach ($_SESSION['checkout_item_ids'] as $pid) {
+                            unset($_SESSION['cart'][$pid]);
+                            remove_cart_item_from_db($conn, $user_id, $pid);
+                        }
+                    }
+                    unset($_SESSION['direct_checkout'], $_SESSION['service_booking'],
+                          $_SESSION['checkout_items'], $_SESSION['checkout_item_ids']);
+
+                    if (!empty($_SESSION['cart'])) {
+                        sync_cart_to_db($conn, $user_id, $_SESSION['cart']);
+                    }
+
+                    $message      = "✅ Order placed successfully! Order ID: #$order_id";
+                    $message_type = "success";
+                    echo "<script>setTimeout(function(){ window.location.href = 'appointments.php'; }, 2500);</script>";
                 }
-
-                // Clear all checkout sessions
-                // ─── REMOVE CHECKED-OUT ITEMS FROM CART ──────────────────────────────────────
-if ($checkout_type === 'cart' && !empty($_SESSION['checkout_item_ids'])) {
-    foreach ($_SESSION['checkout_item_ids'] as $checked_out_id) {
-        // Remove from session cart
-        unset($_SESSION['cart'][$checked_out_id]);
-        // Remove from database cart
-        remove_cart_item_from_db($conn, $user_id, $checked_out_id);
-    }
-}
-
-// Clear all checkout sessions
-unset(
-    $_SESSION['direct_checkout'],
-    $_SESSION['service_booking'],
-    $_SESSION['checkout_items'],
-    $_SESSION['checkout_item_ids']  // ← clear the tracking array too
-);
-
-// Sync the updated cart back to DB
-if (!empty($_SESSION['cart'])) {
-    sync_cart_to_db($conn, $user_id, $_SESSION['cart']);
-}
-
-                $message      = "✅ Order placed successfully! Order ID: #$order_id";
-                $message_type = "success";
-
-                echo "<script>setTimeout(function(){ window.location.href = 'appointments.php'; }, 2500);</script>";
 
             } else {
                 $message      = "Error placing order. Please try again.";
@@ -415,10 +480,10 @@ require_once 'header.php';
                      onclick="selectPayment('online')">
                     <div style="font-size:2rem;">💳</div>
                     <div style="font-weight:bold; color:#3B2A1A; margin-top:0.3rem;">Online Payment</div>
-                    <div style="font-size:0.8rem; color:#888; margin-top:0.3rem;">Pay via PayMongo</div>
-                    <span style="display:inline-block; background:#EAD8C0; color:#3B2A1A;
+                    <div style="font-size:0.8rem; color:#888; margin-top:0.3rem;">GCash · Maya · Cards</div>
+                    <span style="display:inline-block; background:#d1e7dd; color:#0a3622;
                                  font-size:0.7rem; padding:0.1rem 0.5rem; border-radius:20px; margin-top:0.3rem;">
-                        Coming Soon
+                        via PayMongo
                     </span>
                 </div>
             </div>
@@ -519,14 +584,11 @@ function selectPayment(method) {
     if (method === 'onsite') {
         note.innerHTML = '🏪 <strong>Onsite Payment:</strong> Your order will be set to <strong>Pending</strong> — pay at the spa and staff will approve.';
         note.style.borderColor = '#C96A2C';
+        note.style.background  = '#fff8f2';
     } else {
-        note.innerHTML = '💳 <strong>Online Payment (Coming Soon):</strong> Once PayMongo is integrated, your order will be <strong>automatically approved</strong> after payment.';
-        note.style.borderColor = '#0070f3';
-        // Show alert for now
-        alert('💳 Online Payment via PayMongo is coming soon!\n\nPlease select Onsite Payment for now.');
-        // Revert back to onsite
-        selectPayment('onsite');
-        return;
+        note.innerHTML = '💳 <strong>Online Payment via PayMongo:</strong> You will be redirected to a secure payment page to pay via <strong>GCash, Maya, or Credit/Debit Card</strong>.';
+        note.style.borderColor = '#198754';
+        note.style.background  = '#f0fdf4';
     }
 }
 

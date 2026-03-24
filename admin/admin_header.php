@@ -30,7 +30,7 @@ $nav_items = [
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($page_title ?? 'Admin'); ?> — Spa Admin</title>
-    <link rel="stylesheet" href="../assets/admin.css?v=<?php echo filemtime('../assets/admin.css'); ?>">
+    <link rel="stylesheet" href="admin.css?v=<?php echo filemtime('admin.css'); ?>">
     <?php if (isset($extra_head)) echo $extra_head; ?>
 </head>
 <body>

@@ -6,6 +6,20 @@ define("DB_USERNAME", "root");
 define("DB_PASSWORD", "");
 define("DB_NAME", "spa_ecommerce_db");
 
+define('MAIL_HOST',     'smtp.gmail.com');
+define('MAIL_USERNAME', 'yourgmail@gmail.com');
+define('MAIL_PASSWORD', 'xxxx xxxx xxxx xxxx'); // Gmail App Password
+define('MAIL_PORT',     587);
+define('MAIL_FROM',     'yourgmail@gmail.com');
+define('MAIL_NAME',     'Spa System');
+
+// ─── PAYMONGO ─────────────────────────────────────────────────────────────────
+// Get your keys from: https://dashboard.paymongo.com/developers
+// Use TEST keys while developing (sk_test_...), switch to LIVE keys for production
+define('PAYMONGO_SECRET_KEY',    'sk_test_EbjoHRbpFf5kkJGxAxTe2YaJ'); // Your PayMongo Secret Key
+define('PAYMONGO_PUBLIC_KEY',    'pk_test_WKsTtXWAa8GspKAGSYs8ARKF'); // Your PayMongo Public Key
+define('PAYMONGO_WEBHOOK_SECRET','whsk_xxxxxxxxxxxxxxxxxxxx');    // From Dashboard → Webhooks
+
 // Attempt to connect to MySQL database
 $conn = new mysqli(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_NAME);
 
