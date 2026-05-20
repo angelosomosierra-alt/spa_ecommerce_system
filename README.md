@@ -1,0 +1,1 @@
+The purpose of the project is to develop a web-based integrated system for Recovery Iloilo Spa that automates appointments, inventory, payments, and reports to improve operational efficiency and customer service.
