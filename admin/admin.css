@@ -86,6 +86,22 @@ img { display: block; }
     position: relative;
     z-index: 20;
 }
+.logo {
+    display: flex;           /* Turns on the flexbox layout */
+    align-items: center;     /* Aligns logo and text vertically in the middle */
+    justify-content: center; /* Centers the whole group horizontally */
+    gap: 10px;               /* Adds a little space between the image and the text */
+    font-weight: bold;       /* Optional: makes the name stand out */
+    font-size: 1.5rem;       /* Optional: adjusts text size */
+}
+
+/* Ensure the image doesn't have weird bottom margins */
+.logo img {
+    display: block;
+}
+.logo.logo{
+    color: var(--cream);
+}
 
 .sidebar-logo {
     padding: 1.5rem 1.5rem 1rem;
@@ -434,6 +450,11 @@ table tbody tr:hover { background: var(--bg3); }
 .badge-approved        { background: #d4edda; color: #155724; }
 .badge-declined        { background: #f8d7da; color: #721c24; }
 .badge-cash      { background: #e2e3e5; color: #41464b; }
+.badge-gcash     { background: #d4f5e4; color: #065f34; }
+.badge-maya      { background: #ede9fe; color: #4c1d95; }
+.badge-qrph      { background: #dbeafe; color: #1e40af; }
+.badge-bank      { background: #fef3c7; color: #92400e; }
+.badge-card      { background: #e0f2fe; color: #075985; }
 .badge-pending   { background: #fff3cd; color: #856404; }
 .badge-approved  { background: #d4edda; color: #155724; }
 .badge-declined  { background: #f8d7da; color: #721c24; }
@@ -612,10 +633,10 @@ table tbody tr:hover { background: var(--bg3); }
    IMAGE THUMBNAILS
 ════════════════════════════════════════════════════════════ */
 .thumb {
-    width: 48px; height: 48px;
+    width: 50px;
+    height: 50px;
     object-fit: cover;
-    border-radius: 6px;
-    border: 1px solid var(--border);
+    border-radius: 4px;
 }
 
 .thumb-lg {
@@ -1168,4 +1189,197 @@ table tbody tr:hover { background: var(--bg3); }
     .admin-content { padding: 1rem; }
     .stats-grid    { grid-template-columns: 1fr; }
     .filter-tabs   { width: 100%; }
+}
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE — FULL MOBILE SUPPORT
+   Breakpoints:
+     Tablet:  ≤ 1024px
+     Mobile:  ≤ 768px
+     Small:   ≤ 480px
+════════════════════════════════════════════════════════════ */
+
+/* ── HAMBURGER BUTTON (hidden on desktop) ─────────────────── */
+.sidebar-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #FAF3E8;
+    font-size: 1.2rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.18s;
+    margin-right: 0.5rem;
+}
+
+.sidebar-toggle:hover { background: rgba(255,255,255,0.18); }
+
+/* ── OVERLAY behind sidebar on mobile ─────────────────────── */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 29;
+    backdrop-filter: blur(2px);
+}
+
+.sidebar-overlay.active { display: block; }
+
+/* ── TABLET (≤ 1024px) ────────────────────────────────────── */
+@media (max-width: 1024px) {
+    :root { --sidebar-w: 220px; }
+
+    .admin-content { padding: 1.25rem; }
+
+    .two-col        { grid-template-columns: 1fr; }
+    .category-grid  { grid-template-columns: 1fr; }
+    .form-grid-3    { grid-template-columns: repeat(2, 1fr); }
+
+    /* Tables scroll horizontally */
+    .table-wrap     { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table           { min-width: 600px; }
+
+    /* Stats grid 2-col */
+    .stats-grid     { grid-template-columns: repeat(2, 1fr); }
+
+    /* Topbar — hide time on tablet */
+    .topbar-time    { display: none; }
+}
+
+/* ── MOBILE (≤ 768px) ─────────────────────────────────────── */
+@media (max-width: 768px) {
+    /* Show hamburger */
+    .sidebar-toggle { display: flex; }
+
+    /* Sidebar becomes slide-in drawer */
+    .admin-sidebar {
+        display: flex !important;
+        position: fixed;
+        left: -100%;
+        top: 0;
+        height: 100vh;
+        z-index: 30;
+        transition: left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 4px 0 24px rgba(0,0,0,0.25);
+    }
+
+    .admin-sidebar.open { left: 0; }
+
+    /* Main area takes full width */
+    .admin-main { width: 100%; }
+
+    /* Topbar adjustments */
+    .admin-topbar   { padding: 0 1rem; }
+    .topbar-time    { display: none; }
+    .topbar-badge   { display: none; }
+    .topbar-title   { font-size: 0.9rem; }
+
+    /* Content */
+    .admin-content  { padding: 1rem; }
+
+    /* Grids collapse to 1 col */
+    .form-grid,
+    .form-grid-2,
+    .form-grid-3    { grid-template-columns: 1fr; }
+    .two-col        { grid-template-columns: 1fr; }
+    .category-grid  { grid-template-columns: 1fr; }
+
+    /* Stats 2-col on mobile */
+    .stats-grid     { grid-template-columns: repeat(2, 1fr); }
+
+    /* Tables */
+    .table-wrap     { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table           { min-width: 550px; }
+
+    /* Filter tabs full width */
+    .filter-tabs    { width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+
+    /* Slot days 4-col */
+    .slot-days      { grid-template-columns: repeat(4, 1fr); }
+
+    /* Modal full screen on mobile */
+    .modal-overlay  { padding: 0; align-items: flex-end; }
+    .modal-box      { max-width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+
+    /* Panel headers wrap */
+    .panel-header   { flex-wrap: wrap; gap: 0.5rem; }
+
+    /* Kiosk tabs scroll */
+    .kiosk-tabs     { width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+
+    /* Form actions stack */
+    .form-actions   { flex-direction: column; }
+    .form-actions .btn { width: 100%; justify-content: center; }
+
+    /* Page header */
+    .page-header    { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
+
+    /* Quick actions */
+    .quick-actions-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── SMALL MOBILE (≤ 480px) ───────────────────────────────── */
+@media (max-width: 480px) {
+    .admin-content  { padding: 0.75rem; }
+
+    /* Stats 1-col on very small */
+    .stats-grid     { grid-template-columns: 1fr; }
+
+    /* Stat card compact */
+    .stat-number    { font-size: 1.4rem; }
+    .stat-card      { padding: 1rem; }
+
+    /* Buttons smaller */
+    .btn            { padding: 0.5rem 0.85rem; font-size: 0.78rem; }
+    .btn-lg         { padding: 0.65rem 1.1rem; font-size: 0.85rem; }
+
+    /* Item cards 2-col minimum */
+    .item-select-grid { grid-template-columns: repeat(2, 1fr); }
+
+    /* Kiosk payment buttons stack */
+    .payment-buttons { flex-direction: column; }
+
+    /* Modal full width */
+    .modal-box      { border-radius: 0; }
+
+    /* Tables compact */
+    table           { font-size: 0.78rem; }
+    table th,
+    table td        { padding: 0.65rem 0.75rem; }
+
+    /* Filter tabs horizontal scroll */
+    .filter-tabs    { overflow-x: auto; padding-bottom: 0.25rem; }
+    .filter-tab     { white-space: nowrap; flex-shrink: 0; }
+
+    /* Topbar compact */
+    .topbar-title   { font-size: 0.82rem; }
+
+    /* Panel body compact */
+    .panel-body     { padding: 1rem; }
+    .form-section-body { padding: 1rem; }
+
+    /* Alerts compact */
+    .alert          { padding: 0.65rem 1rem; font-size: 0.82rem; }
+
+    /* Quick actions 2-col */
+    .quick-actions-grid { grid-template-columns: repeat(2, 1fr); }
+
+    /* Slot days 2-col */
+    .slot-days      { grid-template-columns: repeat(2, 1fr); }
+
+    /* Category actions */
+    .category-item  { flex-wrap: wrap; }
+}
+
+/* ── LANDSCAPE PHONE (short + wide) ──────────────────────── */
+@media (max-height: 500px) and (max-width: 900px) {
+    .admin-sidebar  { overflow-y: auto; }
+    .sidebar-logo   { padding: 0.75rem 1.25rem; }
+    .admin-menu a   { padding: 0.45rem 0.75rem; }
+    .sidebar-footer { padding: 0.5rem 0.75rem; }
 }

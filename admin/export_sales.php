@@ -1,23 +1,11 @@
 <?php
 require_once '../config.php';
-redirect_if_not_admin();
+require_once __DIR__ . '/admin_access.php';
+enforce_page_access();
 
-// ─── CHECK IF approval_status COLUMN EXISTS ───────────────────────────────────
-// Fallback for systems where the migration hasn't been run yet
-$has_approval_col = false;
-$col_check = $conn->query("SHOW COLUMNS FROM orders LIKE 'approval_status'");
-if ($col_check && $col_check->num_rows > 0) {
-    $has_approval_col = true;
-}
-
-// Build the approved condition based on whether the column exists
-$approved_where  = $has_approval_col
-    ? "payment_status='paid' AND approval_status='approved'"
-    : "payment_status='paid'";
-
-$pending_where   = $has_approval_col
-    ? "payment_status IN ('unpaid','pending_payment') OR (payment_status='paid' AND approval_status='pending')"
-    : "payment_status IN ('unpaid','pending_payment')";
+// ─── CONDITIONS ───────────────────────────────────────────────────────────────
+$approved_where = "payment_status='paid' AND approval_status IN ('approved','completed')";
+$pending_where  = "payment_status IN ('unpaid','pending_payment') OR (payment_status='paid' AND approval_status='pending')";
 
 // ─── STATS ────────────────────────────────────────────────────────────────────
 $total_revenue    = $conn->query("SELECT IFNULL(SUM(total_amount),0) as t FROM orders WHERE $approved_where")->fetch_assoc()['t'];

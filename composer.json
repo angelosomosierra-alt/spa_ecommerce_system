@@ -12,6 +12,8 @@
         }
     ],
     "require": {
-        "phpmailer/phpmailer": "^7.0"
+        "phpmailer/phpmailer": "^7.0",
+        "phpoffice/phpspreadsheet": "^5.8",
+        "mpdf/mpdf": "^8.3"
     }
 }

@@ -23,7 +23,8 @@ $result = ['products' => [], 'services' => []];
 $stmt = $conn->prepare("
     SELECT id, name, price, image, stock
     FROM products
-    WHERE name LIKE ? OR description LIKE ?
+    WHERE (name LIKE ? OR description LIKE ?)
+      AND deleted_at IS NULL
     ORDER BY name ASC
     LIMIT 8
 ");
@@ -39,7 +40,8 @@ $stmt->close();
 $stmt = $conn->prepare("
     SELECT id, name, price, image, session_time
     FROM services
-    WHERE name LIKE ? OR description LIKE ?
+    WHERE (name LIKE ? OR description LIKE ?)
+      AND deleted_at IS NULL
     ORDER BY name ASC
     LIMIT 8
 ");

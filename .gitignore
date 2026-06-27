@@ -1,1 +1,27 @@
+# Environment / secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Composer
 /vendor/
+
+# Logs
+/logs/
+*.log
+
+# Debug / seed files — delete these before going live
+test_secret.php
+create_admin.php
+seed.php
+user/debug_payment.php
+user/test_paymongo.php
+admin/walkin_payment_debug.php
+
+# Editor noise
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db

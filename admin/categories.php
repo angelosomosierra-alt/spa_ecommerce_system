@@ -1,22 +1,45 @@
 <?php
 require_once '../config.php';
+require_once __DIR__ . '/admin_access.php';
+enforce_page_access();
 redirect_if_not_admin();
 
 $message = ''; $message_type = '';
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['add_category'])) {
-    $name = sanitize_input($_POST['name']); $type = $_POST['type'];
-    if (empty($name)||empty($type)) { $message="Name and type required."; $message_type="danger"; }
-    else {
+    verify_csrf_token();
+    $name = sanitize_input($_POST['name']);
+    $type = $_POST['type'];
+
+    if (empty($name)||empty($type)) { 
+        $message="Name and type required."; 
+        $message_type="danger"; 
+    } else {
         $stmt = $conn->prepare("SELECT id FROM categories WHERE name=? AND type=?");
-        $stmt->bind_param("ss",$name,$type); $stmt->execute(); $stmt->store_result();
-        if ($stmt->num_rows>0) { $message="Already exists."; $message_type="danger"; $stmt->close(); }
-        else {
+        $stmt->bind_param("ss",$name,$type); 
+        $stmt->execute(); 
+        $stmt->store_result();
+
+        if ($stmt->num_rows>0) { 
+            $message="Already exists."; 
+            $message_type="danger"; 
+            $stmt->close(); 
+        } else {
             $stmt->close();
             $stmt = $conn->prepare("INSERT INTO categories (name,type) VALUES (?,?)");
             $stmt->bind_param("ss",$name,$type);
-            $message = $stmt->execute() ? "Category added!" : "Error adding.";
-            $message_type = $stmt->execute() ? "success" : "danger";
+
+            // Execute ONCE and save the boolean result
+            $success = $stmt->execute(); 
+
+            if ($success) {
+                $message = "Category added!";
+                $message_type = "success";
+            } else {
+                $message = "Error adding.";
+                $message_type = "danger";
+            }
+
             $stmt->close();
         }
     }
@@ -31,18 +54,21 @@ if (isset($_GET['delete'])) {
     else {
         $stmt = $conn->prepare("DELETE FROM categories WHERE id=?");
         $stmt->bind_param("i",$id);
-        $message = $stmt->execute() ? "Deleted." : "Error.";
-        $message_type = $stmt->execute() ? "success" : "danger";
+        $ok = $stmt->execute();
+        $message      = $ok ? "Deleted." : "Error deleting category.";
+        $message_type = $ok ? "success"  : "danger";
         $stmt->close();
     }
 }
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['edit_category'])) {
+    verify_csrf_token();
     $id = intval($_POST['category_id']); $name = sanitize_input($_POST['name']); $type = $_POST['type'];
     $stmt = $conn->prepare("UPDATE categories SET name=?,type=? WHERE id=?");
     $stmt->bind_param("ssi",$name,$type,$id);
-    $message = $stmt->execute() ? "Updated!" : "Error.";
-    $message_type = $stmt->execute() ? "success" : "danger";
+    $ok = $stmt->execute();
+    $message      = $ok ? "Category updated!" : "Error updating category.";
+    $message_type = $ok ? "success"           : "danger";
     $stmt->close();
 }
 
@@ -66,6 +92,7 @@ require_once 'admin_header.php';
     <div class="form-section-header">➕ Add New Category</div>
     <div class="form-section-body">
         <form method="POST">
+            <?php echo csrf_field(); ?>
             <div class="form-grid">
                 <div class="form-group">
                     <label>Category Name <span class="required">*</span></label>
@@ -153,6 +180,7 @@ require_once 'admin_header.php';
         </div>
         <div class="modal-box-body">
             <form method="POST">
+                <?php echo csrf_field(); ?>
                 <input type="hidden" name="category_id" id="edit_id">
                 <div class="form-group" style="margin-bottom:1rem;">
                     <label>Category Name</label>

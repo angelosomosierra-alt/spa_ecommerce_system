@@ -1,6 +1,10 @@
 <?php
 require_once '../config.php';
+require_once __DIR__ . '/admin_access.php';
+enforce_page_access();
 redirect_if_not_admin();
+
+$conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS deleted_at DATETIME NULL DEFAULT NULL");
 
 $message      = '';
 $message_type = '';
@@ -12,35 +16,44 @@ while ($row = $cat_result->fetch_assoc()) {
     $categories[] = $row;
 }
 
-// ─── DELETE ───────────────────────────────────────────────────────────────────
-if (isset($_GET['delete'])) {
-    $id = intval($_GET['delete']);
-
-    $stmt = $conn->prepare("SELECT image FROM products WHERE id = ?");
+// ─── ARCHIVE (SOFT DELETE) ────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_product') {
+    verify_csrf_token();
+    $id = intval($_POST['id'] ?? 0);
+    $stmt = $conn->prepare("SELECT id FROM products WHERE id = ?");
     $stmt->bind_param("i", $id);
     $stmt->execute();
-    $product = $stmt->get_result()->fetch_assoc();
+    $prod_check = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-
-    if ($product) {
-        if ($product['image'] && file_exists(UPLOAD_DIR_PRODUCTS . $product['image'])) {
-            unlink(UPLOAD_DIR_PRODUCTS . $product['image']);
-        }
-        $stmt = $conn->prepare("DELETE FROM products WHERE id = ?");
+    if ($prod_check) {
+        $stmt = $conn->prepare("UPDATE products SET deleted_at = NOW() WHERE id = ?");
         $stmt->bind_param("i", $id);
         if ($stmt->execute()) {
-            $message      = "Product deleted successfully!";
+            $message      = "Product archived.";
             $message_type = "success";
         } else {
-            $message      = "Error deleting product.";
+            $message      = "Error archiving product.";
             $message_type = "danger";
         }
         $stmt->close();
     }
 }
 
+// ─── RESTORE ─────────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'restore_product') {
+    verify_csrf_token();
+    $rid = intval($_POST['id'] ?? 0);
+    $stmt = $conn->prepare("UPDATE products SET deleted_at = NULL WHERE id = ?");
+    $stmt->bind_param("i", $rid);
+    $stmt->execute(); $stmt->close();
+    $message      = "Product restored.";
+    $message_type = "success";
+}
+
 // ─── ADD / EDIT ───────────────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && !in_array($_POST['action'] ?? '', ['delete_product', 'restore_product'])) {
+    verify_csrf_token();
     $id          = isset($_POST['id']) ? intval($_POST['id']) : null;
     $name        = sanitize_input($_POST['name']);
     $description = sanitize_input($_POST['description']);
@@ -145,7 +158,7 @@ while ($row = $result->fetch_assoc()) {
 
 // ─── STATS ────────────────────────────────────────────────────────────────────
 $total_products  = count($products);
-$low_stock_count = count(array_filter($products, fn($p) => $p['stock'] <= 5));
+$low_stock_count = count(array_filter($products, fn($p) => $p['stock'] <= 10));
 $out_of_stock    = count(array_filter($products, fn($p) => $p['stock'] == 0));
 $in_stock        = $total_products - $out_of_stock;
 
@@ -175,7 +188,7 @@ require_once 'admin_header.php';
     <div class="stat-card amber">
         <div class="stat-icon">⚠️</div>
         <div class="stat-number"><?php echo $low_stock_count; ?></div>
-        <div class="stat-label">Low Stock (≤5)</div>
+        <div class="stat-label">Low Stock</div>
     </div>
     <div class="stat-card red">
         <div class="stat-icon">❌</div>
@@ -198,6 +211,7 @@ require_once 'admin_header.php';
     </div>
     <div class="form-section-body">
         <form method="POST" enctype="multipart/form-data">
+            <?php echo csrf_field(); ?>
             <?php if ($edit_product): ?>
                 <input type="hidden" name="id" value="<?php echo $edit_product['id']; ?>">
             <?php endif; ?>
@@ -322,7 +336,7 @@ require_once 'admin_header.php';
                 ?>
                 <?php if (!empty($filtered)): ?>
                     <?php foreach ($filtered as $product): ?>
-                    <tr>
+                    <tr<?php if ($product['deleted_at']): ?> style="opacity:0.5;"<?php endif; ?>>
                         <td><strong style="color:var(--gold);">#<?php echo $product['id']; ?></strong></td>
                         <td>
                             <?php if ($product['image']): ?>
@@ -332,7 +346,7 @@ require_once 'admin_header.php';
                                 <div class="thumb" style="background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--gray);font-size:0.7rem;">No img</div>
                             <?php endif; ?>
                         </td>
-                        <td><strong><?php echo htmlspecialchars($product['name']); ?></strong></td>
+                        <td><strong><?php echo htmlspecialchars($product['name']); ?></strong><?php if ($product['deleted_at']): ?> <span class="badge" style="background:#6c757d;color:#fff;font-size:0.68rem;">ARCHIVED</span><?php endif; ?></td>
                         <td>
                             <?php if ($product['category_name']): ?>
                                 <span class="badge badge-approved"><?php echo htmlspecialchars($product['category_name']); ?></span>
@@ -357,10 +371,22 @@ require_once 'admin_header.php';
                             <?php echo date('M d, Y', strtotime($product['created_at'])); ?>
                         </td>
                         <td>
+                            <?php if ($product['deleted_at']): ?>
+                            <form method="POST" style="display:inline;">
+                                <?php echo csrf_field(); ?>
+                                <input type="hidden" name="action" value="restore_product">
+                                <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">
+                                <button type="submit" class="btn btn-secondary btn-sm">♻️ Restore</button>
+                            </form>
+                            <?php else: ?>
                             <a href="products.php?edit=<?php echo $product['id']; ?>" class="btn btn-info btn-sm">Edit</a>
-                            <a href="products.php?delete=<?php echo $product['id']; ?>"
-                               class="btn btn-danger btn-sm"
-                               onclick="return confirm('Delete this product?')">Delete</a>
+                            <form method="POST" style="display:inline;" onsubmit="return confirm('Archive this product?')">
+                                <?php echo csrf_field(); ?>
+                                <input type="hidden" name="action" value="delete_product">
+                                <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">
+                                <button type="submit" class="btn btn-danger btn-sm">🗃️ Archive</button>
+                            </form>
+                            <?php endif; ?>
                         </td>
                     </tr>
                     <?php endforeach; ?>

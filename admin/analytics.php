@@ -1,5 +1,7 @@
 <?php
 require_once '../config.php';
+require_once __DIR__ . '/admin_access.php';
+enforce_page_access();
 redirect_if_not_admin();
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -9,49 +11,90 @@ redirect_if_not_admin();
 // Total     → sum of both (never raw payment_status='paid' alone)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-$r               = $conn->query("
+// Get filter dates or set defaults (Last 30 days)
+$start_date = $_GET['start_date'] ?? date('Y-m-d', strtotime('-30 days'));
+$end_date   = $_GET['end_date']   ?? date('Y-m-d');
+
+// Strict validation — reject anything that isn't a valid YYYY-MM-DD date
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start_date) || !strtotime($start_date)) {
+    $start_date = date('Y-m-d', strtotime('-30 days'));
+}
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end_date) || !strtotime($end_date)) {
+    $end_date = date('Y-m-d');
+}
+if ($start_date > $end_date) {
+    [$start_date, $end_date] = [$end_date, $start_date];
+}
+
+$r_stmt = $conn->prepare("
     SELECT IFNULL(SUM(oi.subtotal),0) as t, COUNT(DISTINCT o.id) as c
     FROM order_items oi JOIN orders o ON oi.order_id = o.id
     WHERE oi.product_id IS NOT NULL
       AND o.payment_status = 'paid' AND o.approval_status = 'approved'
+      AND DATE(o.created_at) BETWEEN ? AND ?
 ");
-$prd_row         = $r->fetch_assoc();
+$r_stmt->bind_param("ss", $start_date, $end_date);
+$r_stmt->execute();
+$prd_row         = $r_stmt->get_result()->fetch_assoc();
+$r_stmt->close();
 $product_revenue = floatval($prd_row['t']);
 $product_orders  = intval($prd_row['c']);
 
-$r               = $conn->query("
+$r_stmt = $conn->prepare("
     SELECT IFNULL(SUM(oi.subtotal),0) as t, COUNT(DISTINCT o.id) as c
     FROM order_items oi
-    JOIN orders       o ON oi.order_id      = o.id
-    JOIN appointments a ON a.order_item_id  = oi.id
+    JOIN orders o ON oi.order_id = o.id
+    JOIN appointments a ON a.order_item_id = oi.id
     WHERE oi.service_id IS NOT NULL
       AND a.status = 'completed' AND o.payment_status = 'paid'
+      AND DATE(o.created_at) BETWEEN ? AND ?
 ");
-$svc_row         = $r->fetch_assoc();
+$r_stmt->bind_param("ss", $start_date, $end_date);
+$r_stmt->execute();
+$svc_row         = $r_stmt->get_result()->fetch_assoc();
+$r_stmt->close();
 $service_revenue = floatval($svc_row['t']);
 $service_orders  = intval($svc_row['c']);
 
 $total_revenue = $product_revenue + $service_revenue;
 $total_orders  = $product_orders  + $service_orders;
 
-$r = $conn->query("
+$r_stmt = $conn->prepare("
     SELECT COUNT(*) as c FROM orders
-    WHERE (payment_status='paid'   AND approval_status='pending')
-       OR (payment_status='unpaid' AND approval_status='pending')
-       OR  payment_status='pending_payment'
+    WHERE ((payment_status='paid'   AND approval_status='pending')
+        OR (payment_status='unpaid' AND approval_status='pending')
+        OR  payment_status='pending_payment')
+      AND DATE(created_at) BETWEEN ? AND ?
 ");
-$pending_orders  = intval($r->fetch_assoc()['c']);
+$r_stmt->bind_param("ss", $start_date, $end_date);
+$r_stmt->execute();
+$pending_orders = intval($r_stmt->get_result()->fetch_assoc()['c']);
+$r_stmt->close();
 
-$r = $conn->query("SELECT COUNT(*) as c FROM appointments WHERE status='completed'");
-$completed_appts = intval($r->fetch_assoc()['c']);
+$r_stmt = $conn->prepare("SELECT COUNT(*) as c FROM appointments WHERE status='completed' AND DATE(created_at) BETWEEN ? AND ?");
+$r_stmt->bind_param("ss", $start_date, $end_date);
+$r_stmt->execute();
+$completed_appts = intval($r_stmt->get_result()->fetch_assoc()['c']);
+$r_stmt->close();
 
-$r = $conn->query("SELECT COUNT(*) as c FROM users WHERE role='user' AND username != 'walkin_customer'");
-$total_customers = intval($r->fetch_assoc()['c']);
+$r_stmt = $conn->prepare("
+    SELECT COUNT(DISTINCT o.user_id) AS c
+    FROM orders o
+    JOIN users u ON u.id = o.user_id
+    WHERE u.role = 'user'
+      AND u.username != 'walkin_customer'
+      AND o.payment_status = 'paid'
+      AND DATE(o.created_at) BETWEEN ? AND ?
+");
+$r_stmt->bind_param("ss", $start_date, $end_date);
+$r_stmt->execute();
+$total_customers = (int)$r_stmt->get_result()->fetch_assoc()['c'];
+$r_stmt->close();
 
 $avg_order = $total_orders > 0 ? $total_revenue / $total_orders : 0;
 
-$r = $conn->query("
-    SELECT DAYNAME(o.created_at) as d, SUM(oi.subtotal) as t
+$r_stmt = $conn->prepare("
+    SELECT DAYNAME(o.created_at) AS d, SUM(oi.subtotal) AS t
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
     LEFT JOIN appointments a ON a.order_item_id = oi.id
@@ -60,14 +103,15 @@ $r = $conn->query("
           (oi.product_id IS NOT NULL AND o.approval_status = 'approved')
           OR (oi.service_id IS NOT NULL AND a.status = 'completed')
       )
+      AND DATE(o.created_at) BETWEEN ? AND ?
     GROUP BY DAYNAME(o.created_at)
     ORDER BY t DESC LIMIT 1
 ");
-$best_day = $r->fetch_assoc();
+$r_stmt->bind_param("ss", $start_date, $end_date);
+$r_stmt->execute();
+$best_day = $r_stmt->get_result()->fetch_assoc();
+$r_stmt->close();
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPER FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -110,7 +154,8 @@ function prd_revenue($conn, $col, $v1, $v2 = null) {
              FROM order_items oi
              JOIN orders o ON oi.order_id = o.id
              WHERE oi.product_id IS NOT NULL
-               AND o.payment_status='paid' AND o.approval_status='approved'
+               AND o.payment_status='paid' 
+               AND o.approval_status='approved'
                AND $col $op";
     $stmt = $conn->prepare($sql);
     $v2 === null ? $stmt->bind_param("s",$v1) : $stmt->bind_param("ss",$v1,$v2);
@@ -124,13 +169,21 @@ function prd_revenue($conn, $col, $v1, $v2 = null) {
 // DAILY — last 11 days + TODAY + 3 forecast days ahead
 // Range: -10 days → today → +1, +2, +3 days
 // ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// DAILY — Based on Filtered Date Range
+// ═══════════════════════════════════════════════════════════════════════════════
 $daily_labels = [];
 $daily_actual_total = $daily_actual_svc = $daily_actual_prd = [];
 
-// Collect actual data: 10 days ago up to and including TODAY
-for ($i = 10; $i >= 0; $i--) {
-    $d = $i === 0 ? date('Y-m-d') : date('Y-m-d', strtotime("-{$i} days"));
-    $daily_labels[] = ($i === 0 ? 'Today ' : '') . date('M d', strtotime($d));
+$begin = new DateTime($start_date);
+$end   = new DateTime($end_date);
+$end->modify('+1 day'); 
+$interval = new DateInterval('P1D');
+$dateRange = new DatePeriod($begin, $interval, $end);
+
+foreach ($dateRange as $date) {
+    $d = $date->format("Y-m-d");
+    $daily_labels[] = date('M d', strtotime($d));
     $s = svc_revenue($conn, "DATE(o.created_at)", $d);
     $p = prd_revenue($conn, "DATE(o.created_at)", $d);
     $daily_actual_svc[]   = $s;
@@ -138,42 +191,39 @@ for ($i = 10; $i >= 0; $i--) {
     $daily_actual_total[] = $s + $p;
 }
 
-// Forecast next 3 days via linear regression on the 11-day actuals
-$daily_forecast_total = linear_forecast($daily_actual_total, 3);
-$daily_forecast_svc   = linear_forecast($daily_actual_svc,   3);
-$daily_forecast_prd   = linear_forecast($daily_actual_prd,   3);
+$num_days = count($daily_actual_total);
 
-// Add 3 future labels
+// Forecast next 3 days
+$daily_forecast_total = linear_forecast($daily_actual_total, 3);
+$daily_forecast_svc   = linear_forecast($daily_actual_svc, 3);
+$daily_forecast_prd   = linear_forecast($daily_actual_prd, 3);
+
 for ($i = 1; $i <= 3; $i++) {
-    $daily_labels[] = date('M d', strtotime("+{$i} days")) . ' ▶';
+    $daily_labels[] = date('M d', strtotime($end_date . " +$i days")) . ' ▶';
 }
 
-// Actual lines: real data for past+today, null for future 3 slots
 $daily_total_actual_js = array_merge($daily_actual_total, [null, null, null]);
 $daily_svc_actual_js   = array_merge($daily_actual_svc,   [null, null, null]);
 $daily_prd_actual_js   = array_merge($daily_actual_prd,   [null, null, null]);
 
-// Forecast lines: 0 for past days (so line stays flat/visible), connects from today, extends 3 days
-$daily_total_fcast_js  = array_merge(array_fill(0, 10, 0), [end($daily_actual_total)], $daily_forecast_total);
-$daily_svc_fcast_js    = array_merge(array_fill(0, 10, 0), [end($daily_actual_svc)],   $daily_forecast_svc);
-$daily_prd_fcast_js    = array_merge(array_fill(0, 10, 0), [end($daily_actual_prd)],   $daily_forecast_prd);
+// Connect the forecast line to the last actual data point
+$_pad_n = max(0, $num_days - 1);
+$daily_total_fcast_js  = array_merge(array_fill(0, $_pad_n, null), $num_days > 0 ? [end($daily_actual_total)] : [0], $daily_forecast_total);
+$daily_svc_fcast_js    = array_merge(array_fill(0, $_pad_n, null), $num_days > 0 ? [end($daily_actual_svc)]   : [0], $daily_forecast_svc);
+$daily_prd_fcast_js    = array_merge(array_fill(0, $_pad_n, null), $num_days > 0 ? [end($daily_actual_prd)]   : [0], $daily_forecast_prd);
 
-// Keep $daily_total / $daily_svc / $daily_prd as the actual arrays (used for strip sum)
 $daily_total = $daily_actual_total;
 $daily_svc   = $daily_actual_svc;
 $daily_prd   = $daily_actual_prd;
 
-// DEBUG — remove after confirming
-// Uncomment the line below temporarily to see what data the daily loop produces:
-// die('<pre>labels: '.json_encode($daily_labels)."\ntotal: ".json_encode($daily_total_actual_js)."\nfcast: ".json_encode($daily_total_fcast_js).'</pre>');
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// WEEKLY — last 12 weeks (i=0 is THIS week)
+// WEEKLY — Adjusted to Range
 // ═══════════════════════════════════════════════════════════════════════════════
 $weekly_labels = $weekly_total = $weekly_svc = $weekly_prd = [];
+// We keep the last 12 weeks for the "Weekly" view trend
 for ($i = 11; $i >= 0; $i--) {
-    $ws = $i === 0 ? date('Y-m-d', strtotime('monday this week')) : date('Y-m-d', strtotime("-{$i} weeks monday this week"));
-    $we = $i === 0 ? date('Y-m-d', strtotime('sunday this week')) : date('Y-m-d', strtotime("-{$i} weeks sunday this week"));
+    $ws = date('Y-m-d', strtotime("-$i weeks monday this week"));
+    $we = date('Y-m-d', strtotime("-$i weeks sunday this week"));
     $weekly_labels[] = 'Wk ' . date('W', strtotime($ws));
     $s = svc_revenue($conn, "DATE(o.created_at)", $ws, $we);
     $p = prd_revenue($conn, "DATE(o.created_at)", $ws, $we);
@@ -183,12 +233,12 @@ for ($i = 11; $i >= 0; $i--) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MONTHLY — last 12 months (i=0 is THIS month)
+// MONTHLY — Adjusted to Range
 // ═══════════════════════════════════════════════════════════════════════════════
 $monthly_labels = $monthly_total = $monthly_svc = $monthly_prd = [];
 for ($i = 11; $i >= 0; $i--) {
-    $m = $i === 0 ? date('Y-m') : date('Y-m', strtotime("-{$i} months"));
-    $monthly_labels[] = $i === 0 ? date('M Y') : date('M Y', strtotime("-{$i} months"));
+    $m = date('Y-m', strtotime("-$i months"));
+    $monthly_labels[] = date('M Y', strtotime("-$i months"));
     $s = svc_revenue($conn, "DATE_FORMAT(o.created_at,'%Y-%m')", $m);
     $p = prd_revenue($conn, "DATE_FORMAT(o.created_at,'%Y-%m')", $m);
     $monthly_svc[]   = $s;
@@ -215,7 +265,8 @@ $r = $conn->query("
     JOIN products p ON oi.product_id = p.id
     JOIN orders   o ON oi.order_id   = o.id
     WHERE oi.product_id IS NOT NULL
-      AND o.payment_status = 'paid' AND o.approval_status = 'approved'
+      AND o.payment_status = 'paid' 
+      AND o.approval_status = 'approved'
     GROUP BY p.id, p.name ORDER BY total_qty DESC LIMIT 8
 ");
 while ($row = $r->fetch_assoc()) {
@@ -251,12 +302,58 @@ while ($row = $r->fetch_assoc()) {
 $recent_orders = [];
 $r = $conn->query("
     SELECT o.id, o.customer_name, o.total_amount, o.payment_status,
-           o.approval_status, o.payment_method, o.created_at,
+           o.approval_status, o.payment_method, o.paymongo_method, o.created_at,
            COUNT(oi.id) AS item_count
     FROM orders o LEFT JOIN order_items oi ON o.id = oi.order_id
     GROUP BY o.id ORDER BY o.created_at DESC LIMIT 10
 ");
 while ($row = $r->fetch_assoc()) $recent_orders[] = $row;
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FEEDBACK DATA (for Feedback tab)
+// ═══════════════════════════════════════════════════════════════════════════════
+$fb_stats    = $conn->query("SELECT COUNT(*) as c, ROUND(AVG(rating),1) as avg FROM feedback")->fetch_assoc();
+$fb_total    = intval($fb_stats['c']);
+$fb_avg      = floatval($fb_stats['avg']);
+$fb_dist     = [5=>0,4=>0,3=>0,2=>0,1=>0];
+$r = $conn->query("SELECT rating, COUNT(*) as c FROM feedback GROUP BY rating");
+while ($row = $r->fetch_assoc()) $fb_dist[intval($row['rating'])] = intval($row['c']);
+
+$fb_service_stats = [];
+$r = $conn->query("
+    SELECT s.name, COUNT(f.id) as cnt, ROUND(AVG(f.rating),1) as avg
+    FROM feedback f
+    JOIN appointments a ON f.appointment_id = a.id
+    JOIN services s ON a.service_id = s.id
+    GROUP BY s.id, s.name ORDER BY avg DESC LIMIT 5
+");
+while ($row = $r->fetch_assoc()) $fb_service_stats[] = $row;
+
+$fb_appt = [];
+$r = $conn->query("
+    SELECT f.*, u.full_name, u.email,
+           s.name AS service_name, a.appointment_date
+    FROM feedback f
+    JOIN users u ON f.user_id = u.id
+    JOIN appointments a ON f.appointment_id = a.id
+    JOIN services s ON a.service_id = s.id
+    WHERE f.appointment_id IS NOT NULL
+    ORDER BY f.created_at DESC
+");
+while ($row = $r->fetch_assoc()) $fb_appt[] = $row;
+
+$fb_orders = [];
+$r = $conn->query("
+    SELECT f.*, u.full_name, u.email,
+           o.created_at AS order_date, o.total_amount
+    FROM feedback f
+    JOIN users u ON f.user_id = u.id
+    JOIN orders o ON f.order_id = o.id
+    WHERE f.appointment_id IS NULL AND f.order_id IS NOT NULL
+    ORDER BY f.created_at DESC
+");
+while ($row = $r->fetch_assoc()) $fb_orders[] = $row;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PAGE SETUP
@@ -266,10 +363,33 @@ $extra_head   = '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.
 $page_title   = 'Analytics';
 $page_icon    = '📊';
 $active_page  = 'analytics';
+$analytics_tab = $_GET['atab'] ?? 'charts';
+if (!in_array($analytics_tab, ['charts', 'feedback'], true)) {
+    $analytics_tab = 'charts';
+}
 require_once 'admin_header.php';
 ?>
 
-<!-- ── EXPORT BAR ─────────────────────────────────────────────────────────── -->
+<!-- ── ANALYTICS TAB NAV ─────────────────────────────────────────────────── -->
+<div style="display:flex;gap:0.4rem;margin-bottom:1.5rem;border-bottom:2px solid var(--border2);padding-bottom:0;flex-wrap:wrap;">
+    <?php foreach([
+        'charts'   => ['📊 Analytics',  false],
+        'feedback' => ['⭐ Feedback',    false],
+    ] as $tab_key => [$tab_label, $unused]): $is_active = $analytics_tab === $tab_key; ?>
+    <a href="analytics.php?atab=<?php echo $tab_key; ?><?php echo isset($_GET['start_date']) ? '&start_date='.htmlspecialchars($start_date) : ''; ?><?php echo isset($_GET['end_date']) ? '&end_date='.htmlspecialchars($end_date) : ''; ?>"
+       style="padding:0.6rem 1.25rem;font-size:0.85rem;font-weight:700;text-decoration:none;
+              border-radius:8px 8px 0 0;border:2px solid var(--border2);border-bottom:none;
+              background:<?php echo $is_active ? 'var(--brown)' : 'var(--bg3)'; ?>;
+              color:<?php echo $is_active ? '#fff' : 'var(--brown)'; ?>;
+              margin-bottom:-2px;">
+        <?php echo $tab_label; ?>
+    </a>
+    <?php endforeach; ?>
+</div>
+
+<?php if ($analytics_tab === 'charts'): ?>
+
+<!-- ── EXPORT BAR ─────────────────────────────────────────────────────────── 
 <div class="export-bar" style="margin-bottom:1.5rem;">
     <span class="export-bar-label">📥 Export:</span>
     <a class="btn-export green"  href="export_sales.php?type=all"        >📊 Full Report</a>
@@ -277,6 +397,24 @@ require_once 'admin_header.php';
     <a class="btn-export orange" href="export_sales.php?type=monthly"    >📅 Monthly</a>
     <a class="btn-export gold"   href="export_sales.php?type=products"   >🛍️ Products</a>
     <a class="btn-export purple" href="export_sales.php?type=services"   >💆 Services</a>
+</div>-->
+
+<div class="chart-card" style="margin-bottom: 1.5rem; padding: 1rem;">
+    <form method="GET" action="analytics.php" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <input type="hidden" name="atab" value="<?php echo htmlspecialchars($analytics_tab); ?>">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <label style="font-size: 0.85rem; font-weight: 600;">From:</label>
+            <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>"
+                   style="padding: 0.4rem; border: 1px solid var(--border); border-radius: 4px;">
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <label style="font-size: 0.85rem; font-weight: 600;">To:</label>
+            <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>"
+                   style="padding: 0.4rem; border: 1px solid var(--border); border-radius: 4px;">
+        </div>
+        <button type="submit" class="btn-export blue" style="border:none; cursor:pointer; padding: 0.5rem 1.2rem;">🔍 Filter Report</button>
+        <a href="analytics.php" style="font-size: 0.8rem; color: var(--gray); text-decoration: none;">Reset</a>
+    </form>
 </div>
 
 <!-- ── KPI CARDS ──────────────────────────────────────────────────────────── -->
@@ -512,14 +650,20 @@ require_once 'admin_header.php';
             <?php foreach ($recent_orders as $o):
                 $ps = $o['payment_status'];
                 $as = $o['approval_status'];
-                $pm = $o['payment_method'];
+                // Use paymongo_method (actual) if available, else payment_method
+                $pm = !empty($o['paymongo_method']) ? $o['paymongo_method'] : ($o['payment_method'] ?? 'cash');
             ?>
                 <tr>
                     <td><strong>#<?php echo $o['id']; ?></strong></td>
                     <td><?php echo htmlspecialchars($o['customer_name'] ?? '—'); ?></td>
                     <td><?php echo $o['item_count']; ?></td>
                     <td><strong style="color:var(--rust);">₱<?php echo number_format($o['total_amount'],2); ?></strong></td>
-                    <td><span class="badge badge-<?php echo $pm==='online'?'online':'onsite'; ?>"><?php echo $pm==='online'?'💳 Online':'🏪 Onsite'; ?></span></td>
+                    <td><?php
+                        $pm_labels = ['cash'=>'💵 Cash','gcash'=>'📱 GCash','maya'=>'💜 Maya',
+                                      'qrph'=>'📷 QRPH','bank'=>'🏦 Bank','card'=>'💳 Card','online'=>'💳 Online'];
+                        $pm_class  = in_array($pm,['gcash','maya','qrph','bank','card','online']) ? 'online' : 'onsite';
+                        echo '<span class="badge badge-'.$pm_class.'">'.(($pm_labels[$pm]) ?? ('💰 '.ucfirst($pm))).'</span>';
+                    ?></td>
                     <td><span class="badge badge-<?php echo $ps; ?>"><?php echo ucfirst($ps); ?></span></td>
                     <td><span class="badge badge-<?php echo $as; ?>"><?php echo ucfirst($as); ?></span></td>
                     <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($o['created_at'])); ?></td>
@@ -687,5 +831,170 @@ new Chart(document.getElementById('productsChart').getContext('2d'), {
 });
 <?php endif; ?>
 </script>
+
+<?php elseif ($analytics_tab === 'feedback'): ?>
+
+<!-- ════════════════════════════════════════════════════════════
+     FEEDBACK TAB
+════════════════════════════════════════════════════════════ -->
+
+<!-- KPI Cards -->
+<div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:1.5rem;">
+    <div class="stat-card amber">
+        <div class="stat-icon">⭐</div>
+        <div class="stat-number"><?php echo $fb_avg ?: '—'; ?></div>
+        <div class="stat-label">Overall Rating</div>
+        <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">out of 5.0</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💬</div>
+        <div class="stat-number"><?php echo $fb_total; ?></div>
+        <div class="stat-label">Total Reviews</div>
+    </div>
+    <div class="stat-card blue">
+        <div class="stat-icon">💆</div>
+        <div class="stat-number"><?php echo count($fb_appt); ?></div>
+        <div class="stat-label">Service Reviews</div>
+    </div>
+    <div class="stat-card green">
+        <div class="stat-icon">🛍️</div>
+        <div class="stat-number"><?php echo count($fb_orders); ?></div>
+        <div class="stat-label">Product Reviews</div>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
+
+    <!-- Rating distribution -->
+    <div class="chart-card">
+        <h3>Rating Distribution</h3>
+        <?php for ($star = 5; $star >= 1; $star--):
+            $cnt = $fb_dist[$star];
+            $pct = $fb_total > 0 ? round($cnt / $fb_total * 100) : 0;
+        ?>
+        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;">
+            <span style="font-size:0.85rem;color:var(--brown);width:12px;text-align:right;"><?php echo $star; ?></span>
+            <span style="color:#f59e0b;">&#9733;</span>
+            <div style="flex:1;background:var(--border);border-radius:4px;height:10px;overflow:hidden;">
+                <div style="width:<?php echo $pct; ?>%;height:100%;background:#f59e0b;border-radius:4px;"></div>
+            </div>
+            <span style="font-size:0.78rem;color:var(--gray);width:55px;"><?php echo $cnt; ?> (<?php echo $pct; ?>%)</span>
+        </div>
+        <?php endfor; ?>
+    </div>
+
+    <!-- Top rated services -->
+    <div class="chart-card">
+        <h3>Top Rated Services</h3>
+        <?php if (!empty($fb_service_stats)): ?>
+        <?php foreach ($fb_service_stats as $i => $ss): ?>
+        <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;">
+            <div style="width:24px;height:24px;border-radius:50%;flex-shrink:0;
+                        background:<?php echo ['#f59e0b','#adb5bd','#cd7f32','#C96A2C','#888'][$i] ?? '#ccc'; ?>;
+                        color:#fff;font-size:0.7rem;font-weight:700;
+                        display:flex;align-items:center;justify-content:center;">
+                <?php echo $i+1; ?>
+            </div>
+            <div style="flex:1;">
+                <div style="font-weight:600;font-size:0.85rem;color:var(--brown);"><?php echo htmlspecialchars($ss['name']); ?></div>
+                <div style="font-size:0.75rem;color:var(--gray);"><?php echo $ss['cnt']; ?> reviews</div>
+            </div>
+            <div style="text-align:right;">
+                <div style="font-size:0.88rem;font-weight:700;color:#f59e0b;"><?php echo $ss['avg']; ?> ★</div>
+            </div>
+        </div>
+        <?php endforeach; ?>
+        <?php else: ?>
+        <p style="color:var(--gray);font-size:0.85rem;text-align:center;padding:1rem;">No service feedback yet.</p>
+        <?php endif; ?>
+    </div>
+</div>
+
+<!-- Service Appointment Feedback Table -->
+<div class="panel" style="margin-bottom:1.5rem;">
+    <div class="panel-header">
+        <span class="panel-title">💆 Service Appointment Feedback</span>
+        <span class="badge badge-approved"><?php echo count($fb_appt); ?> reviews</span>
+    </div>
+    <div class="table-wrap" style="border:none;border-radius:0;">
+        <table>
+            <thead>
+                <tr><th>Customer</th><th>Service</th><th>Date</th><th>Rating</th><th>Comment</th><th>Submitted</th></tr>
+            </thead>
+            <tbody>
+            <?php if (!empty($fb_appt)): foreach ($fb_appt as $f): ?>
+            <tr>
+                <td>
+                    <div style="font-weight:600;"><?php echo htmlspecialchars($f['full_name']); ?></div>
+                    <div style="font-size:0.75rem;color:var(--gray);"><?php echo htmlspecialchars($f['email']); ?></div>
+                </td>
+                <td style="font-size:0.85rem;"><?php echo htmlspecialchars($f['service_name']); ?></td>
+                <td style="font-size:0.82rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($f['appointment_date'])); ?></td>
+                <td>
+                    <div style="display:flex;gap:1px;">
+                        <?php for ($i=1;$i<=5;$i++): ?>
+                        <span style="color:<?php echo $i<=$f['rating']?'#f59e0b':'#e5e7eb'; ?>;font-size:1rem;">&#9733;</span>
+                        <?php endfor; ?>
+                    </div>
+                    <div style="font-size:0.72rem;color:var(--gray);"><?php echo $f['rating']; ?>/5</div>
+                </td>
+                <td style="max-width:200px;font-size:0.85rem;">
+                    <?php echo $f['comment'] ? htmlspecialchars($f['comment']) : '<span style="color:var(--gray);font-style:italic;">No comment</span>'; ?>
+                </td>
+                <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($f['created_at'])); ?></td>
+            </tr>
+            <?php endforeach; else: ?>
+            <tr><td colspan="6" style="text-align:center;color:var(--gray);padding:2rem;">No service feedback yet.</td></tr>
+            <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Product Order Feedback Table -->
+<div class="panel">
+    <div class="panel-header">
+        <span class="panel-title">🛍️ Product Order Feedback</span>
+        <span class="badge badge-approved"><?php echo count($fb_orders); ?> reviews</span>
+    </div>
+    <div class="table-wrap" style="border:none;border-radius:0;">
+        <table>
+            <thead>
+                <tr><th>Customer</th><th>Order</th><th>Order Date</th><th>Rating</th><th>Comment</th><th>Submitted</th></tr>
+            </thead>
+            <tbody>
+            <?php if (!empty($fb_orders)): foreach ($fb_orders as $f): ?>
+            <tr>
+                <td>
+                    <div style="font-weight:600;"><?php echo htmlspecialchars($f['full_name']); ?></div>
+                    <div style="font-size:0.75rem;color:var(--gray);"><?php echo htmlspecialchars($f['email']); ?></div>
+                </td>
+                <td>
+                    <strong style="color:var(--gold);">#<?php echo $f['order_id']; ?></strong><br>
+                    <span style="font-size:0.78rem;color:var(--gray);">₱<?php echo number_format($f['total_amount'],2); ?></span>
+                </td>
+                <td style="font-size:0.82rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($f['order_date'])); ?></td>
+                <td>
+                    <div style="display:flex;gap:1px;">
+                        <?php for ($i=1;$i<=5;$i++): ?>
+                        <span style="color:<?php echo $i<=$f['rating']?'#f59e0b':'#e5e7eb'; ?>;font-size:1rem;">&#9733;</span>
+                        <?php endfor; ?>
+                    </div>
+                    <div style="font-size:0.72rem;color:var(--gray);"><?php echo $f['rating']; ?>/5</div>
+                </td>
+                <td style="max-width:200px;font-size:0.85rem;">
+                    <?php echo $f['comment'] ? htmlspecialchars($f['comment']) : '<span style="color:var(--gray);font-style:italic;">No comment</span>'; ?>
+                </td>
+                <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($f['created_at'])); ?></td>
+            </tr>
+            <?php endforeach; else: ?>
+            <tr><td colspan="6" style="text-align:center;color:var(--gray);padding:2rem;">No product feedback yet.</td></tr>
+            <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<?php endif; ?>
 
 <?php require_once 'admin_footer.php'; ?>

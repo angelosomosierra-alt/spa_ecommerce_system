@@ -1,6 +1,10 @@
 <?php
 require_once '../config.php';
+require_once __DIR__ . '/admin_access.php';
+enforce_page_access();
 redirect_if_not_admin();
+
+$conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS deleted_at DATETIME NULL DEFAULT NULL");
 
 $message      = '';
 $message_type = '';
@@ -12,116 +16,109 @@ while ($row = $cat_result->fetch_assoc()) {
     $categories[] = $row;
 }
 
-// ─── DELETE ───────────────────────────────────────────────────────────────────
-if (isset($_GET['delete'])) {
-    $id = intval($_GET['delete']);
-
-    $stmt = $conn->prepare("SELECT image FROM services WHERE id = ?");
+// ─── ARCHIVE (SOFT DELETE) ────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_service') {
+    verify_csrf_token();
+    $id = intval($_POST['id'] ?? 0);
+    $stmt = $conn->prepare("SELECT id FROM services WHERE id = ?");
     $stmt->bind_param("i", $id);
     $stmt->execute();
-    $service = $stmt->get_result()->fetch_assoc();
+    $svc_check = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-
-    if ($service) {
-        if ($service['image'] && file_exists(UPLOAD_DIR_SERVICES . $service['image'])) {
-            unlink(UPLOAD_DIR_SERVICES . $service['image']);
-        }
-        $stmt = $conn->prepare("DELETE FROM services WHERE id = ?");
+    if ($svc_check) {
+        $conn->query("DELETE FROM therapist_specialty_services WHERE service_id = $id");
+        $conn->query("DELETE FROM therapist_commission WHERE service_id = $id");
+        $conn->query("DELETE FROM partner_rates WHERE service_id = $id");
+        $stmt = $conn->prepare("UPDATE services SET deleted_at = NOW() WHERE id = ?");
         $stmt->bind_param("i", $id);
         if ($stmt->execute()) {
-            $message      = "Service deleted successfully!";
+            $message      = "Service archived.";
             $message_type = "success";
         } else {
-            $message      = "Error deleting service.";
+            $message      = "Error archiving service.";
             $message_type = "danger";
         }
         $stmt->close();
     }
 }
 
-// ─── ADD / EDIT ───────────────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id              = isset($_POST['id']) ? intval($_POST['id']) : null;
-    $name            = sanitize_input($_POST['name']);
-    $description     = sanitize_input($_POST['description']);
-    $price           = floatval($_POST['price']);
-    $session_time    = intval($_POST['session_time']);
-    $slots           = intval($_POST['slots']);
-    $category_id     = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
-    $is_home_service = isset($_POST['is_home_service']) ? 1 : 0;
-
-    if (empty($name) || empty($description) || $price <= 0 || $session_time <= 0 || $slots <= 0) {
-        $message      = "All fields are required and price/session time/slots must be positive.";
-        $message_type = "danger";
-    } else {
-        $image_name = '';
-
-        if (isset($_FILES['image']) && $_FILES['image']['size'] > 0) {
-            $file          = $_FILES['image'];
-            $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-
-            if (!in_array($file['type'], $allowed_types)) {
-                $message      = "Only image files (JPEG, PNG, GIF, WebP) are allowed.";
-                $message_type = "danger";
-            } elseif ($file['size'] > 5 * 1024 * 1024) {
-                $message      = "File size must not exceed 5MB.";
-                $message_type = "danger";
-            } else {
-                $image_name  = 'service_' . time() . '_' . basename($file['name']);
-                $upload_path = UPLOAD_DIR_SERVICES . $image_name;
-
-                if (move_uploaded_file($file['tmp_name'], $upload_path)) {
-                    if ($id) {
-                        $stmt = $conn->prepare("SELECT image FROM services WHERE id = ?");
-                        $stmt->bind_param("i", $id);
-                        $stmt->execute();
-                        $old = $stmt->get_result()->fetch_assoc();
-                        $stmt->close();
-                        if ($old && $old['image'] && file_exists(UPLOAD_DIR_SERVICES . $old['image'])) {
-                            unlink(UPLOAD_DIR_SERVICES . $old['image']);
-                        }
-                    }
-                } else {
-                    $message      = "Error uploading image.";
-                    $message_type = "danger";
-                }
-            }
-        } elseif (!$id) {
-            $message      = "Image is required for new services.";
-            $message_type = "danger";
-        }
-
-        if ($message_type !== "danger") {
-            if ($id) {
-                if ($image_name) {
-                    $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, image=?, category_id=?, is_home_service=? WHERE id=?");
-                    $stmt->bind_param("ssdiiisii", $name, $description, $price, $session_time, $slots, $image_name, $category_id, $is_home_service, $id);
-                } else {
-                    if ($category_id !== null) {
-                        $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, category_id=?, is_home_service=? WHERE id=?");
-                        $stmt->bind_param("ssdiiiii", $name, $description, $price, $session_time, $slots, $category_id, $is_home_service, $id);
-                    } else {
-                        $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, slots=?, category_id=NULL, is_home_service=? WHERE id=?");
-                        $stmt->bind_param("ssdiiii", $name, $description, $price, $session_time, $slots, $is_home_service, $id);
-                    }
-                }
-            } else {
-                $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, slots, image, category_id, is_home_service) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                $stmt->bind_param("ssdiisii", $name, $description, $price, $session_time, $slots, $image_name, $category_id, $is_home_service);
-            }
-
-            if ($stmt->execute()) {
-                $message      = $id ? "Service updated successfully!" : "Service added successfully!";
-                $message_type = "success";
-            } else {
-                $message      = "Error saving service: " . $conn->error;
-                $message_type = "danger";
-            }
-            $stmt->close();
-        }
-    }
+// ─── RESTORE ─────────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'restore_service') {
+    verify_csrf_token();
+    $rid = intval($_POST['id'] ?? 0);
+    $stmt = $conn->prepare("UPDATE services SET deleted_at = NULL WHERE id = ?");
+    $stmt->bind_param("i", $rid);
+    $stmt->execute(); $stmt->close();
+    $message      = "Service restored.";
+    $message_type = "success";
 }
 
+// ─── ADD / EDIT ───────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && !in_array($_POST['action'] ?? '', ['delete_service', 'restore_service'])) {
+    verify_csrf_token();
+    $id               = isset($_POST['id']) ? intval($_POST['id']) : null;
+    $name             = sanitize_input($_POST['name']);
+    $description      = sanitize_input($_POST['description']);
+    $price            = floatval($_POST['price']);
+    $session_time     = intval($_POST['session_time']);
+    $category_id      = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
+    $is_home_service  = isset($_POST['is_home_service']) ? 1 : 0;
+    $home_service_fee = $is_home_service ? floatval($_POST['home_service_fee'] ?? 0) : 0.00;
+
+    $image_name = '';
+
+    // 1. HANDLE IMAGE UPLOAD FIRST
+    if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+        $file_tmp = $_FILES['image']['tmp_name'];
+        $file_name = $_FILES['image']['name'];
+        $ext = pathinfo($file_name, PATHINFO_EXTENSION);
+        
+        $image_name = 'service_' . time() . '.' . $ext;
+        $target_path = UPLOAD_DIR_SERVICES . $image_name;
+
+        if (move_uploaded_file($file_tmp, $target_path)) {
+            if ($id) {
+                $check = $conn->query("SELECT image FROM services WHERE id = $id");
+                $old = $check->fetch_assoc();
+                if ($old && $old['image'] && file_exists(UPLOAD_DIR_SERVICES . $old['image'])) {
+                    unlink(UPLOAD_DIR_SERVICES . $old['image']);
+                }
+            }
+        } else {
+            $message = "Folder permission error: Cannot move file to " . UPLOAD_DIR_SERVICES;
+            $message_type = "danger";
+        }
+    }
+
+    // 2. CONSTRUCT THE SQL
+    if ($message_type !== 'danger') {
+        if ($id) {
+            // EDITING
+            if ($image_name !== '') {
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_fee=? WHERE id=?");
+                $stmt->bind_param("ssdiisiidi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee, $id);
+            } else {
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_fee=? WHERE id=?");
+                $stmt->bind_param("ssdiiidi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_fee, $id);
+            }
+        } else {
+            // NEW SERVICE
+            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("ssdisiid", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee);
+        }
+
+        if ($stmt->execute()) {
+            // Success! Force a redirect to clear POST data and show the new image
+            header("Location: services.php?success=1");
+            exit();
+        } else {
+            $message = "Database Error: " . $conn->error;
+            $message_type = "danger";
+        }
+        $stmt->close();
+    }
+}
 // ─── FETCH FOR EDITING ────────────────────────────────────────────────────────
 $edit_service = null;
 if (isset($_GET['edit'])) {
@@ -147,7 +144,6 @@ while ($row = $result->fetch_assoc()) {
 
 // ─── STATS ────────────────────────────────────────────────────────────────────
 $total_services    = count($services);
-$total_slots       = array_sum(array_column($services, 'slots'));
 $avg_price         = $total_services ? array_sum(array_column($services, 'price')) / $total_services : 0;
 $categorized_count = count(array_filter($services, fn($s) => !empty($s['category_id'])));
 
@@ -162,17 +158,14 @@ require_once 'admin_header.php';
 <?php endif; ?>
 
 <?php if (!$edit_service && !isset($_GET['action'])): ?>
+    <form method="POST" enctype="multipart/form-data">
+    <?php echo csrf_field(); ?>
 <!-- ── STATS ──────────────────────────────────────────────────────────────── -->
-<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
+<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1.5rem;">
     <div class="stat-card">
         <div class="stat-icon">💆</div>
         <div class="stat-number"><?php echo $total_services; ?></div>
         <div class="stat-label">Total Services</div>
-    </div>
-    <div class="stat-card green">
-        <div class="stat-icon">📅</div>
-        <div class="stat-number"><?php echo $total_slots; ?></div>
-        <div class="stat-label">Total Slots/Day</div>
     </div>
     <div class="stat-card amber">
         <div class="stat-icon">💰</div>
@@ -200,6 +193,7 @@ require_once 'admin_header.php';
     </div>
     <div class="form-section-body">
         <form method="POST" enctype="multipart/form-data">
+            <?php echo csrf_field(); ?>
             <?php if ($edit_service): ?>
                 <input type="hidden" name="id" value="<?php echo $edit_service['id']; ?>">
             <?php endif; ?>
@@ -225,7 +219,7 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
-            <div class="form-grid form-grid-3" style="margin-bottom:1.25rem;">
+            <div class="form-grid form-grid-2" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label>Price (₱) <span class="required">*</span></label>
                     <input type="number" name="price" step="0.01" min="0.01" required
@@ -236,27 +230,58 @@ require_once 'admin_header.php';
                     <input type="number" name="session_time" min="1" required
                            value="<?php echo $edit_service['session_time'] ?? ''; ?>">
                 </div>
-                <div class="form-group">
-                    <label>Available Slots/Day <span class="required">*</span></label>
-                    <input type="number" name="slots" min="1" required
-                           value="<?php echo $edit_service['slots'] ?? 5; ?>">
-                </div>
             </div>
 
-            <!-- Home Service Toggle -->
+            <!-- Home Service Toggle + Fee -->
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;user-select:none;">
                         <input type="checkbox" name="is_home_service" value="1"
+                               id="homeServiceToggle"
                                style="width:18px;height:18px;cursor:pointer;"
                                <?php echo !empty($edit_service['is_home_service']) ? 'checked' : ''; ?>>
                         <span>🏠 This service is available as <strong>Home Service</strong></span>
                     </label>
                     <small style="color:var(--gray);margin-top:0.3rem;display:block;">
-                        If enabled, customers can choose between visiting the spa or booking a home visit. Home service bookings do not consume daily slots.
+                        If enabled, customers can choose between visiting the spa or booking a home visit.
                     </small>
                 </div>
             </div>
+
+            <!-- Home Service Fee (shown only when checkbox is checked) -->
+            <div class="form-grid form-grid-2" style="margin-bottom:1.25rem;"
+                 id="homeFeeSectionRow"
+                 <?php if (empty($edit_service['is_home_service'])): ?>style="display:none;"<?php endif; ?>>
+                <div class="form-group">
+                    <label>🏠 Home Service Fee (₱) <span class="required">*</span></label>
+                    <input type="number" name="home_service_fee" id="homeServiceFee"
+                           step="0.01" min="0"
+                           value="<?php echo $edit_service['home_service_fee'] ?? '0.00'; ?>"
+                           placeholder="e.g. 150.00">
+                    <small style="color:var(--gray);">
+                        Extra charge added to the total when customer selects Home Service. Set to 0 for no extra fee.
+                    </small>
+                </div>
+            </div>
+            <script>
+            document.getElementById('homeServiceToggle').addEventListener('change', function() {
+                const row = document.getElementById('homeFeeSectionRow');
+                const fee = document.getElementById('homeServiceFee');
+                if (this.checked) {
+                    row.style.display = '';
+                    fee.required = true;
+                } else {
+                    row.style.display = 'none';
+                    fee.required = false;
+                    fee.value = '0.00';
+                }
+            });
+            // Set required state on page load
+            (function(){
+                const chk = document.getElementById('homeServiceToggle');
+                document.getElementById('homeServiceFee').required = chk.checked;
+            })();
+            </script>
 
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
@@ -265,8 +290,7 @@ require_once 'admin_header.php';
                            <?php echo !$edit_service ? 'required' : ''; ?>>
                     <?php if ($edit_service && $edit_service['image']): ?>
                         <div style="margin-top:0.5rem;display:flex;align-items:center;gap:1rem;">
-                            <img src="../uploads/services/<?php echo htmlspecialchars($edit_service['image']); ?>"
-                                 style="width:60px;height:60px;object-fit:cover;border-radius:8px;border:2px solid var(--border);">
+                            <img src="../uploads/services/<?php echo htmlspecialchars($service['image']); ?>" class="thumb" alt="">                                 style="width:60px;height:60px;object-fit:cover;border-radius:8px;border:2px solid var(--border);">
                             <small>Current image — upload new to replace</small>
                         </div>
                     <?php endif; ?>
@@ -328,7 +352,6 @@ require_once 'admin_header.php';
                     <th>Type</th>
                     <th>Price</th>
                     <th>Duration</th>
-                    <th>Slots/Day</th>
                     <th>Description</th>
                     <th>Date Added</th>
                     <th>Actions</th>
@@ -344,7 +367,7 @@ require_once 'admin_header.php';
                 ?>
                 <?php if (!empty($filtered)): ?>
                     <?php foreach ($filtered as $service): ?>
-                    <tr>
+                    <tr<?php if ($service['deleted_at']): ?> style="opacity:0.5;"<?php endif; ?>>
                         <td><strong style="color:var(--gold);">#<?php echo $service['id']; ?></strong></td>
                         <td>
                             <?php if ($service['image']): ?>
@@ -354,7 +377,7 @@ require_once 'admin_header.php';
                                 <div class="thumb" style="background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--gray);font-size:0.7rem;">No img</div>
                             <?php endif; ?>
                         </td>
-                        <td><strong><?php echo htmlspecialchars($service['name']); ?></strong></td>
+                        <td><strong><?php echo htmlspecialchars($service['name']); ?></strong><?php if ($service['deleted_at']): ?> <span class="badge" style="background:#6c757d;color:#fff;font-size:0.68rem;">ARCHIVED</span><?php endif; ?></td>
                         <td>
                             <?php if ($service['category_name']): ?>
                                 <span class="badge badge-approved"><?php echo htmlspecialchars($service['category_name']); ?></span>
@@ -371,7 +394,6 @@ require_once 'admin_header.php';
                         </td>
                         <td><strong style="color:var(--rust);">₱<?php echo number_format($service['price'], 2); ?></strong></td>
                         <td style="color:var(--gray);">⏱ <?php echo $service['session_time']; ?> mins</td>
-                        <td><span class="badge badge-info">📅 <?php echo $service['slots']; ?> slots</span></td>
                         <td style="max-width:180px;color:var(--gray);font-size:0.82rem;">
                             <?php echo htmlspecialchars(substr($service['description'], 0, 60)) . '...'; ?>
                         </td>
@@ -379,10 +401,22 @@ require_once 'admin_header.php';
                             <?php echo date('M d, Y', strtotime($service['created_at'])); ?>
                         </td>
                         <td>
+                            <?php if ($service['deleted_at']): ?>
+                            <form method="POST" style="display:inline;">
+                                <?php echo csrf_field(); ?>
+                                <input type="hidden" name="action" value="restore_service">
+                                <input type="hidden" name="id" value="<?php echo intval($service['id']); ?>">
+                                <button type="submit" class="btn btn-secondary btn-sm">♻️ Restore</button>
+                            </form>
+                            <?php else: ?>
                             <a href="services.php?edit=<?php echo $service['id']; ?>" class="btn btn-info btn-sm">Edit</a>
-                            <a href="services.php?delete=<?php echo $service['id']; ?>"
-                               class="btn btn-danger btn-sm"
-                               onclick="return confirm('Delete this service?')">Delete</a>
+                            <form method="POST" style="display:inline;" onsubmit="return confirm('Archive this service?')">
+                                <?php echo csrf_field(); ?>
+                                <input type="hidden" name="action" value="delete_service">
+                                <input type="hidden" name="id" value="<?php echo intval($service['id']); ?>">
+                                <button type="submit" class="btn btn-danger btn-sm">🗃️ Archive</button>
+                            </form>
+                            <?php endif; ?>
                         </td>
                     </tr>
                     <?php endforeach; ?>

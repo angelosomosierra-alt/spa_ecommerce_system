@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Spa Ecommerce System
 
 A complete, beginner-friendly CRUD Booking and E-commerce System built with procedural PHP, MySQL, HTML, CSS, and Vanilla JavaScript.
@@ -343,6 +342,3 @@ This project is provided as-is for educational purposes.
 **Created**: 2024
 **Version**: 1.0
 **Built with**: PHP, MySQL, HTML, CSS, Vanilla JavaScript
-=======
-# Capstone_Recovery-system
->>>>>>> 47cc516a47ece95668abb96d60f6128e966e6279

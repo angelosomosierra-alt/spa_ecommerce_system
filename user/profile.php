@@ -24,13 +24,17 @@ $stmt->execute();
 $user = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
-// Handle logout
+// Handle logout — save cart before destroying session
 if (isset($_GET['logout'])) {
+    if (!empty($_SESSION['cart']) && isset($_SESSION['user_id'])) {
+        sync_cart_to_db($conn, $_SESSION['user_id'], $_SESSION['cart']);
+    }
     logout();
 }
 
 // Handle profile update
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
+    verify_csrf_token();
     $full_name = sanitize_input($_POST['full_name']);
     $email = sanitize_input($_POST['email']);
     $phone = sanitize_input($_POST['phone']);
@@ -73,9 +77,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
                     } else if ($new_password !== $confirm_password) {
                         $message = "New passwords do not match.";
                         $message_type = "danger";
-                    } else if (strlen($new_password) < 6) {
-                        $message = "New password must be at least 6 characters long.";
-                        $message_type = "danger";
+                    } elseif (strlen($new_password) < 8) {
+                        $message = 'Password must be at least 8 characters.';
+                        $message_type = 'danger';
+                    } elseif (!preg_match('/[A-Z]/', $new_password)) {
+                        $message = 'Password must contain at least one uppercase letter.';
+                        $message_type = 'danger';
+                    } elseif (!preg_match('/[0-9]/', $new_password)) {
+                        $message = 'Password must contain at least one number.';
+                        $message_type = 'danger';
+                    } elseif (!preg_match('/[\W_]/', $new_password)) {
+                        $message = 'Password must contain at least one special character.';
+                        $message_type = 'danger';
                     } else {
                         // Update password
                         $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
@@ -106,25 +119,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
         $check_stmt->close();
     }
 }
-?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Profile - Spa Ecommerce</title>
-    <link rel="stylesheet" href="../assets/style.css">
-</head>
-<body>
-    <!-- Navigation -->
-    
+$page_title = 'My Profile';
+require_once __DIR__ . '/header.php';
+?>
 
     <div class="container">
         <div class="profile-container">
             <div class="profile-header">
-                <h1 class="profile-name"><?php echo $user['full_name']; ?></h1>
-                <p class="profile-email"><?php echo $user['email']; ?></p>
+                <h1 class="profile-name"><?php echo htmlspecialchars($user['full_name'], ENT_QUOTES, 'UTF-8'); ?></h1>
+                <p class="profile-email"><?php echo htmlspecialchars($user['email'], ENT_QUOTES, 'UTF-8'); ?></p>
                 <p style="color: #999; font-size: 0.9rem;">Member since <?php echo date('F Y', strtotime($user['created_at'])); ?></p>
             </div>
 
@@ -133,35 +137,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
             <?php endif; ?>
 
             <form method="POST">
+                <?php echo csrf_field(); ?>
                 <h3 style="color: #3B2A1A; margin-bottom: 1.5rem;">Personal Information</h3>
 
                 <div class="form-row">
                     <div class="form-group">
                         <label for="full_name">Full Name</label>
-                        <input type="text" id="full_name" name="full_name" value="<?php echo $user['full_name']; ?>" required>
+                        <input type="text" id="full_name" name="full_name" value="<?php echo htmlspecialchars($user['full_name'], ENT_QUOTES, 'UTF-8'); ?>" required>
                     </div>
 
                     <div class="form-group">
                         <label for="email">Email</label>
-                        <input type="email" id="email" name="email" value="<?php echo $user['email']; ?>" required>
+                        <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($user['email'], ENT_QUOTES, 'UTF-8'); ?>" required>
                     </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
                         <label for="phone">Phone Number</label>
-                        <input type="tel" id="phone" name="phone" value="<?php echo $user['phone']; ?>" required>
+                        <input type="tel" id="phone" name="phone" value="<?php echo htmlspecialchars($user['phone'], ENT_QUOTES, 'UTF-8'); ?>" required>
                     </div>
 
                     <div class="form-group">
                         <label for="username">Username</label>
-                        <input type="text" id="username" name="username" value="<?php echo $user['username']; ?>" disabled style="background-color: #f0f0f0;">
+                        <input type="text" id="username" name="username" value="<?php echo htmlspecialchars($user['username'], ENT_QUOTES, 'UTF-8'); ?>" disabled style="background-color: #f0f0f0;">
                     </div>
                 </div>
 
                 <div class="form-group">
                     <label for="address">Address</label>
-                    <textarea id="address" name="address" required><?php echo $user['address']; ?></textarea>
+                    <textarea id="address" name="address" required><?php echo htmlspecialchars($user['address'], ENT_QUOTES, 'UTF-8'); ?></textarea>
                 </div>
 
                 <hr style="margin: 2rem 0; border: none; border-top: 2px solid #EAD8C0;">
@@ -187,10 +192,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
 
                 <div style="display: flex; gap: 1rem; margin-top: 2rem;">
                     <button type="submit" name="update_profile" class="btn btn-primary">Save Changes</button>
+                    <a href="index.php" class="hero-btn-primary" style="padding: 0.5rem 1rem; font-size: 0.8rem;">HOME</a>
+
                     <a href="profile.php?logout=1" class="btn btn-danger">Logout</a>
                 </div>
             </form>
         </div>
     </div>
+
+<footer class="spa-footer">
+    <div class="footer-inner">
+        <div class="footer-brand"><div class="ft-logo">RECOVERY ILOILO</div><p>Your sanctuary for wellness and restoration in the heart of Iloilo City.</p></div>
+        <div class="footer-col"><h4>Quick Links</h4><ul><li><a href="index.php">Home</a></li><li><a href="index.php#services">Services</a></li><li><a href="index.php#products">Products</a></li><li><a href="index.php#about">About Us</a></li><li><a href="index.php#contact">Contact</a></li></ul></div>
+        <div class="footer-col"><h4>Services</h4><ul><li><a href="index.php#services">Massage Therapy</a></li><li><a href="index.php#services">Nail Care</a></li><li><a href="index.php#services">Lash Services</a></li><li><a href="index.php#services">Facial Treatments</a></li><li><a href="index.php#services">Body Scrubs</a></li></ul></div>
+        <div class="footer-col"><h4>Contact</h4><ul><li><a href="index.php#contact">Iloilo City, Philippines</a></li><li><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></li><li><a href="tel:+639853359998">+639853359998</a></li><li><a href="index.php#contact">Mon – Sun: 10AM – 10PM</a></li></ul></div>
+    </div>
+    <div class="footer-bottom">&copy; <?php echo date('Y'); ?> Recovery Spa Iloilo. All rights reserved.</div>
+</footer>
 </body>
 </html>

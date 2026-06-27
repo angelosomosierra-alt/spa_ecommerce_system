@@ -1,4 +1,7 @@
 <?php
+
+require_once '../config.php';
+redirect_if_not_user();
 // ─── CART COUNT ───────────────────────────────────────────────────────────────
 $cart_count = 0;
 if (isset($_SESSION['user_id'])) {
@@ -80,7 +83,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
         .csd-header {
             display: flex; align-items: center; justify-content: space-between;
             padding: 1rem 1.4rem;
-            background: #FAF3E8;
+            background: #433724;
             border-bottom: 2px solid #EAD8C0;
             flex-shrink: 0;
         }
@@ -281,7 +284,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
             outline: none; font-family: inherit;
             transition: background .2s, border-color .2s;
         }
-        .header-search input::placeholder { color: rgba(255,255,255,.6); }
+        .header-search input::placeholder { color: rgba(255, 255, 255, 0.6); }
         .header-search input:focus {
             background: rgba(255,255,255,.28);
             border-color: rgba(255,255,255,.7);
@@ -298,10 +301,29 @@ $current_page = basename($_SERVER['PHP_SELF']);
             display: none; padding: 0; line-height: 1;
         }
         .header-search .search-clear:hover { color: #fff; }
+        .header-search .search-icon {
+    position: absolute; 
+    left: .65rem;
+    pointer-events: none;
+    opacity: .7;
+    /* --- Add these for the SVG --- */
+    display: flex;
+    align-items: center;
+    top: 50%;
+    transform: translateY(-50%); /* This keeps it exactly in the middle vertically */
+}
+
+/* This ensures the SVG color inherits the white/glassy look of your header */
+.header-search .search-icon svg {
+    display: block;
+    color: #fff; 
+}
 
         /* ── Search results dropdown ── */
         .search-results {
-            position: absolute; top: calc(100% + 8px); left: 0; right: 0;
+            position: absolute; top: calc(100% + 8px); right: 0; left: auto;
+            min-width: 340px;
+            max-width: min(480px, calc(100vw - 1rem));
             background: #fff; border-radius: 12px;
             box-shadow: 0 8px 32px rgba(0,0,0,.15);
             overflow: hidden; z-index: 8000;
@@ -316,37 +338,67 @@ $current_page = basename($_SERVER['PHP_SELF']);
             font-size: .7rem; font-weight: 700; letter-spacing: .1em;
             text-transform: uppercase; color: #9a7c68;
         }
-        .search-result-item {
+        /* ── Search result rows ──────────────────────────────────────────────────
+           .search-result-item is an <a> inside .auth-links, so assets/style.css
+           rule ".auth-links a { background:#C96A2C; color:#FAF3E8 }" would win.
+           We bump specificity with .auth-links .search-result-item to override it.
+        ── */
+        .search-result-item,
+        .auth-links .search-result-item,
+        .auth-links .search-result-item:visited {
             display: flex; align-items: center; gap: .75rem;
-            padding: .65rem 1rem; text-decoration: none; color: #3B2A1A;
+            padding: .7rem 1rem; text-decoration: none;
+            color: #3B2A1A; background: transparent;
+            border-radius: 0;
             transition: background .15s;
             border-bottom: 1px solid #f5ede4;
+            font-weight: normal;
         }
         .search-result-item:last-child { border-bottom: none; }
-        .search-result-item:hover { background: #fdf5ec; }
+
+        /* Light cream hover — override .auth-links a:hover { background:#A94F1D } */
+        .search-result-item:hover,
+        .auth-links .search-result-item:hover {
+            background: #fdf5ec;
+            color: #3B2A1A;
+        }
+
         .search-result-img {
-            width: 42px; height: 42px; border-radius: 7px;
+            width: 48px; height: 48px; border-radius: 8px;
             object-fit: cover; flex-shrink: 0;
             border: 1px solid #EAD8C0;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08);
         }
         .search-result-noimg {
-            width: 42px; height: 42px; border-radius: 7px;
-            background: #fdf5ec; flex-shrink: 0;
+            width: 48px; height: 48px; border-radius: 8px;
+            background: linear-gradient(135deg, #fdf5ec, #EAD8C0);
+            flex-shrink: 0;
             display: flex; align-items: center; justify-content: center;
-            font-size: 1.2rem;
+            font-size: 1.3rem;
         }
-        .search-result-info { flex: 1; min-width: 0; }
+        .search-result-info { flex: 1 1 auto; min-width: 0; overflow: hidden; }
         .search-result-name {
             font-size: .85rem; font-weight: 600; color: #3B2A1A;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            background: none;
         }
         .search-result-meta {
-            font-size: .72rem; color: #9a7c68; margin-top: 1px;
+            font-size: .72rem; color: #9a7c68; margin-top: 2px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .search-result-price {
             font-size: .82rem; font-weight: 700; color: #C96A2C;
-            flex-shrink: 0; white-space: nowrap;
+            flex-shrink: 0; white-space: nowrap; text-align: right;
+            padding-left: .75rem;
         }
+
+        /* Soft yellow marker — inline only, must not push the ellipsis in early */
+        .search-results mark {
+            background: #fff3cd; color: #3B2A1A;
+            padding: 0 2px; border-radius: 3px; font-weight: 700;
+            display: inline;
+        }
+
         .search-no-results {
             padding: 1.5rem 1rem; text-align: center;
             font-size: .85rem; color: #9a7c68;
@@ -358,10 +410,29 @@ $current_page = basename($_SERVER['PHP_SELF']);
 
         @media (max-width: 680px) {
             .header-search { max-width: 160px; }
+            .search-results { min-width: min(92vw, 340px); }
+            .search-result-img,
+            .search-result-noimg { width: 40px; height: 40px; }
+            .search-result-name  { font-size: .82rem; }
+            .search-result-price { font-size: .78rem; }
         }
         @media (max-width: 480px) {
             .header-search { display: none; }
         }
+
+        .logo {
+    display: flex;           /* Turns on the flexbox layout */
+    align-items: center;     /* Aligns logo and text vertically in the middle */
+    justify-content: center; /* Centers the whole group horizontally */
+    gap: 10px;               /* Adds a little space between the image and the text */
+    font-weight: bold;       /* Optional: makes the name stand out */
+    font-size: 1.5rem;       /* Optional: adjusts text size */
+}
+
+/* Ensure the image doesn't have weird bottom margins */
+.logo img {
+    display: block;
+}
     </style>
 </head>
 <body>
@@ -379,7 +450,48 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
 $_display_name  = $_header_user['username'] ?? 'User';
 $_display_email = $_header_user['email'] ?? '';
 $_avatar_letter = strtoupper(substr($_display_name, 0, 1));
+
+// ── Notification setup ────────────────────────────────────────────────────────
+if (isset($_SESSION['user_id']) && isset($conn)) {
+    require_once __DIR__ . '/../notify.php';
+    $notif_user_id  = $_SESSION['user_id'];
+    $notif_unread   = get_unread_count($conn, $notif_user_id);
+    $notif_list     = get_notifications($conn, $notif_user_id, 15);
+    // Mark all read if requested
+    if (isset($_GET['mark_notif_read'])) {
+        mark_all_read($conn, $notif_user_id);
+        header("Location: " . strtok($_SERVER['REQUEST_URI'], '?')); exit();
+    }
+}
 ?>
+
+<!-- ── MOBILE NAV OVERLAY ──────────────────────────────────── -->
+<div class="nav-mobile-overlay" id="navMobileOverlay" onclick="closeNavDrawer()"></div>
+
+<!-- ── MOBILE NAV DRAWER ───────────────────────────────────── -->
+<div class="nav-mobile-drawer" id="navMobileDrawer">
+    <div class="nav-drawer-header">
+        <span class="nav-drawer-logo">Recovery Iloilo</span>
+        <button class="nav-drawer-close" onclick="closeNavDrawer()">✕</button>
+    </div>
+    <div class="nav-drawer-links">
+        <a href="index.php" <?php echo $current_page==='index.php' ? 'class="active"' : ''; ?>>🏠 Home</a>
+        <a href="index.php#about">ℹ️ About Us</a>
+        <a href="index.php#services">💆 Services</a>
+        <a href="index.php#products">🛍️ Products</a>
+        <a href="index.php#contact">📞 Contact</a>
+        <?php if (isset($_SESSION['user_id'])): ?>
+        <div class="nav-drawer-divider"></div>
+        <a href="appointments.php" <?php echo $current_page==='appointments.php' ? 'class="active"' : ''; ?>>📅 Appointments</a>
+        <a href="profile.php" <?php echo $current_page==='profile.php' ? 'class="active"' : ''; ?>>👤 My Profile</a>
+        <div class="nav-drawer-divider"></div>
+        <a href="auth.php?logout=1" style="color:#ff8a8a;">🚪 Logout</a>
+        <?php else: ?>
+        <div class="nav-drawer-divider"></div>
+        <a href="auth.php">🔑 Login / Register</a>
+        <?php endif; ?>
+    </div>
+</div>
 
 <header>
     <nav>
@@ -393,22 +505,36 @@ $_avatar_letter = strtoupper(substr($_display_name, 0, 1));
         </a>
         <?php endif; ?>
 
-        <div class="logo">R E C O V E R Y</div>
-
+<div class="logo">
+    <img src="../img/logo.png" width="75" height="60" alt="Logo">
+    <span>RECOVERY ILOILO</span>
+</div>
         <ul class="nav-links">
-            <li><a href="index.php"          <?php echo $current_page==='index.php'        ?'class="active"':''; ?>>Home</a></li>
-            <li><a href="index.php#services"  <?php echo $current_page==='services.php'     ?'class="active"':''; ?>>Services</a></li>
-            <li><a href="index.php#products"  <?php echo $current_page==='products.php'     ?'class="active"':''; ?>>Products</a></li>
+            <li><a href="index.php"           <?php echo $current_page==='index.php'        ?'class="active"':''; ?>>Home</a></li>
+            <li><a href="index.php#about"            <?php echo $current_page==='about.php'        ?'class="active"':''; ?>>About Us</a></li>
+            <li><a href="index.php#services"   <?php echo $current_page==='services.php'     ?'class="active"':''; ?>>Services</a></li>
+            <li><a href="index.php#products"   <?php echo $current_page==='products.php'     ?'class="active"':''; ?>>Products</a></li>
+            <li><a href="index.php#contact"          <?php echo $current_page==='contact.php'      ?'class="active"':''; ?>>Contact</a></li>
             <?php if (isset($_SESSION['user_id'])): ?>
                 <li><a href="appointments.php" <?php echo $current_page==='appointments.php' ?'class="active"':''; ?>>Appointments</a></li>
             <?php endif; ?>
         </ul>
 
         <div class="auth-links">
+            <!-- Hamburger — mobile only -->
+            <button class="nav-hamburger" id="navHamburger" onclick="toggleNavDrawer()" aria-label="Menu">
+                <span></span><span></span><span></span>
+            </button>
+
             <?php if (isset($_SESSION['user_id'])): ?>
                 <!-- Search bar -->
                 <div class="header-search" id="headerSearch">
-                    <span class="search-icon">🔍</span>
+                    <span class="search-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    </span>
                     <input type="text"
                            id="headerSearchInput"
                            placeholder="Search products & services…"
@@ -421,10 +547,9 @@ $_avatar_letter = strtoupper(substr($_display_name, 0, 1));
                 </div>
 
                 <!-- Cart icon only — logout moved to sidebar -->
-                <a href="#"
+                <a href="cart.php"
                    class="cart-icon-btn"
                    id="cartIconBtn"
-                   onclick="event.preventDefault(); openCartSlide();"
                    title="View Cart">
                     🛒
                     <span class="cart-icon-badge" id="cartIconBadge"
@@ -432,6 +557,99 @@ $_avatar_letter = strtoupper(substr($_display_name, 0, 1));
                         <?php echo $cart_count > 99 ? '99+' : $cart_count; ?>
                     </span>
                 </a>
+
+                <!-- Notification Bell -->
+                <?php if (isset($notif_user_id)): ?>
+                <div class="notif-wrap" id="notifWrap" style="position:relative;display:inline-block;">
+                    <button class="notif-bell" onclick="toggleNotif(event)"
+                            style="background:none;border:none;cursor:pointer;font-size:1.1rem;
+                                   padding:0.35rem 0.55rem;border-radius:8px;position:relative;
+                                   color:inherit;transition:background 0.15s;"
+                            title="Notifications">
+                        🔔
+                        <?php if ($notif_unread > 0): ?>
+                        <span style="position:absolute;top:-2px;right:-4px;background:#dc3545;
+                                     color:#fff;font-size:0.6rem;font-weight:700;min-width:16px;
+                                     height:16px;border-radius:8px;display:flex;align-items:center;
+                                     justify-content:center;padding:0 3px;line-height:1;">
+                            <?php echo $notif_unread > 99 ? '99+' : $notif_unread; ?>
+                        </span>
+                        <?php endif; ?>
+                    </button>
+                    <div class="notif-panel" id="notifPanel"
+                         style="display:none;position:absolute;right:0;top:calc(100% + 8px);
+                                width:300px;background:#fff;border-radius:12px;
+                                box-shadow:0 8px 32px rgba(0,0,0,0.15);
+                                border:1px solid #EAD8C0;z-index:9999;overflow:hidden;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;
+                                    padding:0.65rem 1rem;background:#3B2A1A;color:#FAF3E8;">
+                            <span style="font-weight:600;font-size:0.85rem;">🔔 Notifications</span>
+                            <?php if ($notif_unread > 0): ?>
+                            <a href="?mark_notif_read=1"
+                               style="font-size:0.72rem;color:#C8A46B;text-decoration:none;">
+                                Mark all read
+                            </a>
+                            <?php endif; ?>
+                        </div>
+                        <div style="max-height:340px;overflow-y:auto;">
+                            <?php if (empty($notif_list)): ?>
+                            <div style="padding:1.5rem;text-align:center;color:#aaa;font-size:0.82rem;">No notifications yet</div>
+                            <?php else: ?>
+                            <?php
+                            $n_icons = ['order'=>'🛍️','appointment'=>'📅','status'=>'🔔','general'=>'💬'];
+                            foreach ($notif_list as $n):
+                                $diff = time() - strtotime($n['created_at']);
+                                if ($diff < 60)        $n_time = 'Just now';
+                                elseif ($diff < 3600)  $n_time = floor($diff/60) . 'm ago';
+                                elseif ($diff < 86400) $n_time = floor($diff/3600) . 'h ago';
+                                else                   $n_time = date('M d', strtotime($n['created_at']));
+                            ?>
+                            <a href="<?php echo htmlspecialchars($n['link']); ?>"
+                               style="display:flex;align-items:flex-start;gap:0.65rem;
+                                      padding:0.65rem 0.9rem;border-bottom:1px solid #EAD8C0;
+                                      text-decoration:none;color:inherit;
+                                      background:<?php echo $n['is_read'] ? '#fff' : '#fff8f3'; ?>;
+                                      transition:background 0.15s;">
+                                <span style="font-size:1.2rem;flex-shrink:0;margin-top:1px;">
+                                    <?php echo $n_icons[$n['type']] ?? '🔔'; ?>
+                                </span>
+                                <div style="flex:1;min-width:0;">
+                                    <div style="font-weight:600;font-size:0.82rem;color:#3B2A1A;
+                                                white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                                        <?php echo htmlspecialchars($n['title']); ?>
+                                    </div>
+                                    <div style="font-size:0.75rem;color:#666;line-height:1.4;
+                                                display:-webkit-box;-webkit-line-clamp:2;
+                                                -webkit-box-orient:vertical;overflow:hidden;">
+                                        <?php echo htmlspecialchars($n['message']); ?>
+                                    </div>
+                                    <div style="font-size:0.7rem;color:#aaa;margin-top:2px;">
+                                        <?php echo $n_time; ?>
+                                    </div>
+                                </div>
+                                <?php if (!$n['is_read']): ?>
+                                <div style="width:7px;height:7px;border-radius:50%;
+                                            background:#C96A2C;flex-shrink:0;margin-top:5px;"></div>
+                                <?php endif; ?>
+                            </a>
+                            <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+                <script>
+                function toggleNotif(e) {
+                    e.stopPropagation();
+                    const p = document.getElementById('notifPanel');
+                    p.style.display = p.style.display === 'block' ? 'none' : 'block';
+                }
+                document.addEventListener('click', function(e) {
+                    const w = document.getElementById('notifWrap');
+                    const p = document.getElementById('notifPanel');
+                    if (p && w && !w.contains(e.target)) p.style.display = 'none';
+                });
+                </script>
+                <?php endif; ?>
             <?php else: ?>
                 <a href="auth.php">Login</a>
                 <a href="auth.php?register=1">Register</a>
@@ -584,139 +802,103 @@ function loadCartContent() {
 // ── Bind ALL interactivity after HTML is injected ─────────────────────────────
 function drawerBind() {
     const c = document.getElementById('cartSlideContent');
+    const form = c.querySelector('#cartForm');
+    if (!c || !form) return;
 
-    // ── 1. Qty stepper buttons (− / +) ───────────────────────────────────────
+    // 1. Handle Stepper Buttons (+ / -)
     c.querySelectorAll('.cart-stepper button').forEach(btn => {
-        btn.addEventListener('click', function() {
-            // Find the input sibling inside the same .cart-stepper
-            const stepper = this.closest('.cart-stepper');
-            const input   = stepper.querySelector('input[type="number"]');
-            if (!input) return;
-            const max = parseInt(input.max) || 9999;
-            const val = parseInt(input.value) || 1;
-            input.value = this.textContent.trim() === '−'
-                ? Math.max(1, val - 1)
-                : Math.min(max, val + 1);
-            drawerOnQtyChange(input);
-        });
+        btn.type = "button"; // Force type to prevent reload
+        btn.onclick = function(e) {
+            e.preventDefault();
+            const input = this.parentElement.querySelector('input');
+            const delta = this.textContent === '+' ? 1 : -1;
+            let val = parseInt(input.value) + delta;
+            if (val < 1) val = 1;
+            input.value = val;
+            
+            // Trigger the math update
+            updateDrawerMath(input);
+        };
     });
 
-    // ── 2. Qty number inputs (direct typing) ─────────────────────────────────
-    c.querySelectorAll('.cart-stepper input[type="number"]').forEach(input => {
-        input.addEventListener('input', function() { drawerOnQtyChange(this); });
-        // Allow focus / click so user can type
-        input.removeAttribute('readonly');
-        input.style.pointerEvents = 'auto';
-        input.style.userSelect    = 'text';
+    // 2. Handle Manual Input
+    c.querySelectorAll('.cart-stepper input').forEach(input => {
+        input.oninput = function() { updateDrawerMath(this); };
     });
 
-    // ── 3. Checkboxes ────────────────────────────────────────────────────────
-    const masterCb = c.querySelector('#selectAll');
+    // 3. Handle Checkbox Changes
     c.querySelectorAll('.item-checkbox').forEach(cb => {
-        cb.addEventListener('change', function() {
-            const pid  = this.dataset.pid;
-            const card = c.querySelector('#card_' + pid);
-            if (card) card.classList.toggle('dimmed', !this.checked);
-            drawerSyncMaster(c);
-            drawerUpdateTotals(c);
-        });
-    });
-    if (masterCb) {
-        masterCb.addEventListener('change', function() {
-            c.querySelectorAll('.item-checkbox').forEach(cb => {
-                cb.checked = this.checked;
-                const card = c.querySelector('#card_' + cb.dataset.pid);
-                if (card) card.classList.toggle('dimmed', !this.checked);
-            });
-            drawerUpdateTotals(c);
-        });
-    }
-
-    // ── 4. Remove links ───────────────────────────────────────────────────────
-    c.querySelectorAll('a.cart-item-del').forEach(link => {
-        link.addEventListener('click', function(e) {
-            e.preventDefault();
-            if (!confirm('Remove this item from your cart?')) return;
-            fetch(this.href, { credentials: 'same-origin' })
-            .then(() => { loadCartContent(); updateBadge(); });
-        });
+        cb.onchange = function() {
+            updateDrawerMath(null);
+            const card = document.getElementById('card_' + this.dataset.pid);
+            if (card) card.style.opacity = this.checked ? "1" : "0.4";
+        };
     });
 
-    // ── 5. Continue Shopping ──────────────────────────────────────────────────
-    c.querySelectorAll('a.btn-continue').forEach(a => {
-        a.addEventListener('click', function(e) { e.preventDefault(); closeCartSlide(); });
-    });
+    // 4. Handle AJAX Save (The "Update Cart" button)
+    form.onsubmit = function(e) {
+        e.preventDefault();
+        const btn = document.getElementById('btnUpdate');
+        btn.textContent = '⏳ Saving...';
 
-    // ── 6. Update Cart button ─────────────────────────────────────────────────
-    const updateBtn = c.querySelector('button[name="update_quantities"]');
-    if (updateBtn) {
-        updateBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            const form     = c.querySelector('#cartForm');
-            const formData = new FormData(form);
-            formData.append('update_quantities', '1');
+        const formData = new FormData(this);
+        formData.append('update_quantities', '1');
 
-            // Show loading state on button
-            this.textContent = '⏳ Updating…';
-            this.disabled    = true;
-
-            fetch('cart.php', {
-                method: 'POST',
-                body: formData,
-                credentials: 'same-origin'
-            })
-            .then(() => {
-                drawerQtyDirty = false; // ← allow checkout now
-                loadCartContent();
-                updateBadge();
-            })
-            .catch(() => { loadCartContent(); });
+        fetch('cart.php', {
+            method: 'POST',
+            body: formData,
+            headers: {'X-Requested-With': 'XMLHttpRequest'}
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                btn.textContent = '✅ Saved';
+                btn.disabled = true;
+                btn.classList.remove('pulse');
+                document.getElementById('qtyNotice').style.display = 'none';
+                document.getElementById('checkoutBtn').disabled = false;
+                document.getElementById('checkoutBtn').textContent = 'Proceed to Checkout';
+                setTimeout(() => { btn.textContent = '🔄 Update Cart'; }, 2000);
+            }
         });
-    }
-
-    // ── 7. Checkout button ────────────────────────────────────────────────────
-    const checkoutBtn = c.querySelector('button[name="checkout_selected"]');
-    if (checkoutBtn) {
-        checkoutBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-
-            // Validate: at least one item checked
-            const anyChecked = [...c.querySelectorAll('.item-checkbox')].some(cb => cb.checked);
-            if (!anyChecked) {
-                alert('Please select at least one item to checkout.');
-                return;
-            }
-
-            // Validate: no dirty quantities
-            if (drawerQtyDirty) {
-                alert("You changed some quantities. Please click 'Update Cart' first.");
-                return;
-            }
-
-            // Build a real form and submit normally for full-page navigation
-            const form     = c.querySelector('#cartForm');
-            const formData = new FormData(form);
-            formData.append('checkout_selected', '1');
-
-            const f = document.createElement('form');
-            f.method = 'POST';
-            f.action = 'cart.php';
-            for (const [k, v] of formData.entries()) {
-                const i   = document.createElement('input');
-                i.type    = 'hidden';
-                i.name    = k;
-                i.value   = v;
-                f.appendChild(i);
-            }
-            document.body.appendChild(f);
-            f.submit();
-        });
-    }
-
-    // Init totals
-    drawerUpdateTotals(c);
+    };
 }
+function updateDrawerMath(inputEl) {
+    const c = document.getElementById('cartSlideContent');
+    
+    // Update individual subtotal if an input was changed
+    if (inputEl) {
+        const pid = inputEl.dataset.pid;
+        const price = parseFloat(inputEl.dataset.price);
+        const sub = price * parseInt(inputEl.value || 0);
+        const subDisplay = document.getElementById('sub_' + pid);
+        if (subDisplay) {
+            subDisplay.textContent = '₱' + sub.toLocaleString('en-PH', {minimumFractionDigits:2});
+        }
+    }
 
+    // Update Grand Total
+    let grandTotal = 0;
+    c.querySelectorAll('.item-checkbox').forEach(cb => {
+        if (cb.checked) {
+            const pid = cb.dataset.pid;
+            const input = document.getElementById('qty_' + pid);
+            grandTotal += parseFloat(input.dataset.price) * parseInt(input.value);
+        }
+    });
+
+    document.getElementById('summary-total').textContent = '₱' + grandTotal.toLocaleString('en-PH', {minimumFractionDigits:2});
+
+    // Show notice and Lock Checkout
+    document.getElementById('qtyNotice').style.display = 'block';
+    const btnUp = document.getElementById('btnUpdate');
+    btnUp.disabled = false;
+    btnUp.classList.add('pulse');
+    
+    const btnCheck = document.getElementById('checkoutBtn');
+    btnCheck.disabled = true;
+    btnCheck.textContent = '⚠️ Update Cart First';
+}
 // ── Track dirty qty state ─────────────────────────────────────────────────────
 let drawerQtyDirty = false;
 
@@ -889,7 +1071,7 @@ function renderSearchResults(data, query) {
                 <div class="search-result-noimg" ${s.image ? 'style="display:none"' : ''}>💆</div>
                 <div class="search-result-info">
                     <div class="search-result-name">${highlight(escHtml(s.name), query)}</div>
-                    <div class="search-result-meta">Service · ${s.session_time ?? ''}min</div>
+                    <div class="search-result-meta">Service${s.session_time ? ` · ${s.session_time} min` : ''}</div>
                 </div>
                 <div class="search-result-price">₱${parseFloat(s.price).toLocaleString('en-PH',{minimumFractionDigits:2})}</div>
             </a>`;
@@ -901,7 +1083,7 @@ function renderSearchResults(data, query) {
 
 function highlight(text, query) {
     const re = new RegExp('(' + query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-    return text.replace(re, '<mark style="background:#fff3cd;color:#3B2A1A;border-radius:2px;padding:0 1px">$1</mark>');
+    return text.replace(re, '<mark>$1</mark>');
 }
 
 function escHtml(str) {
@@ -920,9 +1102,36 @@ function closeSearchResults() {
     if (r) { r.classList.remove('open'); r.innerHTML = ''; }
 }
 
-// Close search on outside click
-document.addEventListener('click', function(e) {
-    const search = document.getElementById('headerSearch');
-    if (search && !search.contains(e.target)) closeSearchResults();
+// ════════════════════════════════════════════════════════
+//  MOBILE NAV DRAWER
+// ════════════════════════════════════════════════════════
+function toggleNavDrawer() {
+    const drawer   = document.getElementById('navMobileDrawer');
+    const overlay  = document.getElementById('navMobileOverlay');
+    const hamburger = document.getElementById('navHamburger');
+    const isOpen   = drawer.classList.contains('open');
+    if (isOpen) {
+        closeNavDrawer();
+    } else {
+        drawer.classList.add('open');
+        overlay.classList.add('active');
+        hamburger.classList.add('open');
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+function closeNavDrawer() {
+    const drawer    = document.getElementById('navMobileDrawer');
+    const overlay   = document.getElementById('navMobileOverlay');
+    const hamburger = document.getElementById('navHamburger');
+    drawer.classList.remove('open');
+    overlay.classList.remove('active');
+    if (hamburger) hamburger.classList.remove('open');
+    document.body.style.overflow = '';
+}
+
+// Close on ESC
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeNavDrawer();
 });
 </script>
