@@ -48,13 +48,11 @@ if (isset($_POST['verify_pin_only'])) {
     if (!ctype_digit($entered) || strlen($entered) !== 4) {
         echo json_encode(['ok' => false, 'error' => 'Invalid PIN format.']); exit();
     }
-    $stmt = $conn->prepare("SELECT full_name, cashier_pin FROM users WHERE id = ? AND admin_role = 'cashier'");
-    $stmt->bind_param("i", $uid); $stmt->execute();
+    // FIXED: Bug 1 — query receptionist_pins by entered PIN, not users.cashier_pin
+    $stmt = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+    $stmt->bind_param("s", $entered); $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc(); $stmt->close();
-    if (!$row || empty($row['cashier_pin'])) {
-        echo json_encode(['ok' => false, 'error' => 'No PIN set. Ask the owner to set your PIN.']); exit();
-    }
-    if ($row['cashier_pin'] !== $entered) {
+    if (!$row) {
         echo json_encode(['ok' => false, 'error' => 'Incorrect PIN. Try again.']); exit();
     }
     echo json_encode(['ok' => true, 'name' => $row['full_name']]);
@@ -170,10 +168,11 @@ $message = ''; $message_type = '';
 // ═══════════════════════════════════════════════════════════════════════════
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assign_therapist') {
     verify_csrf_token();
-    $appt_id      = intval($_POST['appt_id']);
-    $therapist_id = intval($_POST['therapist_id']);
-    $commission   = floatval($_POST['commission'] ?? 0);
-    $notes        = sanitize_input($_POST['notes'] ?? '');
+    $appt_id        = intval($_POST['appt_id']);
+    $therapist_id   = intval($_POST['therapist_id']);
+    $commission     = floatval($_POST['commission'] ?? 0);
+    $notes          = sanitize_input($_POST['notes'] ?? '');
+    $people_handled = max(1, intval($_POST['people_handled'] ?? 1));
 
     $s = $conn->prepare("SELECT people_count FROM appointments WHERE id=?");
     $s->bind_param("i",$appt_id); $s->execute();
@@ -183,14 +182,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
     $d->bind_param("ii",$appt_id,$therapist_id); $d->execute();
     $is_dup = $d->get_result()->num_rows > 0; $d->close();
 
-    $c = $conn->prepare("SELECT COUNT(*) AS c FROM appointment_therapists WHERE appointment_id=?");
+    // Use SUM(people_handled) for the people-budget check, not COUNT(*)
+    $c = $conn->prepare("SELECT COALESCE(SUM(people_handled), 0) AS sum_ph FROM appointment_therapists WHERE appointment_id=?");
     $c->bind_param("i",$appt_id); $c->execute();
-    $filled = (int)$c->get_result()->fetch_assoc()['c']; $c->close();
+    $filled_sum = (int)$c->get_result()->fetch_assoc()['sum_ph']; $c->close();
+    $budget_remaining = $people - $filled_sum;
 
     if ($is_dup) {
         $message = "This therapist is already assigned."; $message_type = "danger";
-    } elseif ($filled >= $people) {
-        $message = "All {$people} therapist(s) already assigned for this appointment."; $message_type = "danger";
+    } elseif ($people_handled > $budget_remaining) {
+        $message = $budget_remaining <= 0
+            ? "All {$people} people are already covered for this appointment."
+            : "Cannot assign {$people_handled} — only {$budget_remaining} person(s) unassigned.";
+        $message_type = "danger";
     } else {
         // ── Proper overlap conflict check ─────────────────────────────────────
         $appt_info = $conn->prepare("
@@ -201,9 +205,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
         $appt_info->bind_param("i", $appt_id); $appt_info->execute();
         $ai = $appt_info->get_result()->fetch_assoc(); $appt_info->close();
 
-        $ai_buffer = ($ai['service_type'] ?? '') === 'home' ? 30 : 0;
+        $ai_buffer  = ($ai['service_type'] ?? '') === 'home' ? 30 : 0;
         $ai_session = intval($ai['session_time'] ?? 60);
-        $ai_date = $ai['appointment_date'];
+        $ai_date    = $ai['appointment_date'];
 
         $conf = $conn->prepare("
             SELECT COUNT(*) AS cnt
@@ -215,10 +219,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
               AND a2.status IN ('approved','assigned')
               AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE)
                     < (? + INTERVAL ? MINUTE)
-              AND (a2.appointment_date + INTERVAL (s2.session_time + IF(a2.service_type='home',30,0)) MINUTE)
+              AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + IF(a2.service_type='home',30,0)) MINUTE)
                     > (? - INTERVAL ? MINUTE)
         ");
-        $ai_end_mins = $ai_session + $ai_buffer;
+        // new slot duration = session_time × people_handled (back-to-back model)
+        $ai_end_mins = ($ai_session * $people_handled) + $ai_buffer;
         $conf->bind_param("iisisi",
             $therapist_id, $appt_id,
             $ai_date, $ai_end_mins,
@@ -228,13 +233,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
         $conf_count = (int)$conf->get_result()->fetch_assoc()['cnt']; $conf->close();
 
         if ($conf_count > 0) {
-            $t_end = date('h:i A', strtotime($ai_date . ' +' . ($ai_session + $ai_buffer) . ' minutes'));
+            $t_end   = date('h:i A', strtotime($ai_date . ' +' . $ai_end_mins . ' minutes'));
             $t_start = date('h:i A', strtotime($ai_date . ' -' . $ai_buffer . ' minutes'));
             $message = "⚠️ Therapist is already booked during {$t_start}–{$t_end}" . ($ai_buffer ? " (incl. travel buffer)" : "") . ".";
             $message_type = "danger";
         } else {
-            $ins = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, notes, commission) VALUES (?,?,?,?)");
-            $ins->bind_param("iisd",$appt_id,$therapist_id,$notes,$commission);
+            $ins = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, notes, commission, people_handled) VALUES (?,?,?,?,?)");
+            $ins->bind_param("iisdi",$appt_id,$therapist_id,$notes,$commission,$people_handled);
             $ok = $ins->execute(); $ins->close();
             $message = $ok ? "✅ Therapist assigned." : "Failed.";
             $message_type = $ok ? "success" : "danger";
@@ -566,9 +571,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
         // ── APPROVE ──────────────────────────────────────────────────────────
         if ($action === 'approve' && $appt['status'] === 'pending') {
 
-            $chk = $conn->prepare("SELECT COUNT(*) AS c FROM appointment_therapists WHERE appointment_id=?");
+            // Count total people covered (sum of people_handled, not row count)
+            $chk = $conn->prepare("SELECT COALESCE(SUM(IFNULL(people_handled,1)),0) AS covered FROM appointment_therapists WHERE appointment_id=?");
             $chk->bind_param("i",$appt_id); $chk->execute();
-            $assigned_count = (int)$chk->get_result()->fetch_assoc()['c']; $chk->close();
+            $assigned_count = (int)$chk->get_result()->fetch_assoc()['covered']; $chk->close();
 
             $people_needed = (int)($appt['people_count'] ?? 1);
 
@@ -576,14 +582,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                 $message = "Cannot approve — assign at least one therapist first.";
                 $message_type = "danger";
             } elseif ($assigned_count < $people_needed) {
-                $message = "Cannot approve — this is a {$people_needed}-person booking. Only {$assigned_count} therapist(s) assigned. Need {$people_needed}.";
+                $message = "Cannot approve — this is a {$people_needed}-person booking. Only {$assigned_count} of {$people_needed} people have a therapist assigned.";
                 $message_type = "danger";
             } else {
                 $approver_id = (int)$_SESSION['user_id'];
                 $approver_nm = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
 
                 // ── Discount (submitted from PIN modal form) ──────────────────
-                $disc_type         = in_array($_POST['appt_discount_type'] ?? '', ['none','voucher','senior','pwd','employee'])
+                $disc_type         = in_array($_POST['appt_discount_type'] ?? '', ['none','voucher','gift_card','senior','pwd','employee'])
                                      ? $_POST['appt_discount_type'] : 'none';
                 $disc_voucher_type = $_POST['appt_voucher_type']   ?? 'cash';
                 $disc_value        = floatval($_POST['appt_discount_value'] ?? 0);
@@ -654,11 +660,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             // Receptionist PIN check for decline
             if (is_cashier()) {
                 $entered_pin = trim($_POST['pin'] ?? '');
-                $uid = (int)$_SESSION['user_id'];
-                $ps = $conn->prepare("SELECT cashier_pin FROM users WHERE id=? AND admin_role='cashier'");
-                $ps->bind_param("i", $uid); $ps->execute();
+                // FIXED: Bug 1 — query receptionist_pins by entered PIN
+                $ps = $conn->prepare("SELECT id FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr = $ps->get_result()->fetch_assoc(); $ps->close();
-                if (empty($pr['cashier_pin']) || $pr['cashier_pin'] !== $entered_pin) {
+                if (!$pr) {
                     $message = "⚠️ Incorrect PIN. Decline action cancelled."; $message_type = "danger";
                     goto end_action;
                 }
@@ -694,7 +700,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
 
             // Discount fields (validated server-side — never trust client amounts for % discounts)
             $ci_disc_type  = sanitize_input($_POST['ci_discount_type'] ?? 'none');
-            $ci_disc_allow = ['none','voucher','senior','pwd','employee'];
+            $ci_disc_allow = ['none','voucher','gift_card','senior','pwd','employee'];
             if (!in_array($ci_disc_type, $ci_disc_allow)) $ci_disc_type = 'none';
             $ci_disc_amt_raw = floatval($_POST['ci_discount_amount'] ?? 0);
 
@@ -710,7 +716,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                         $sv_disc = round($base_total * 0.20, 2);
                     } elseif ($ci_disc_type === 'employee') {
                         $sv_disc = round($base_total * 0.50, 2);
-                    } elseif ($ci_disc_type === 'voucher') {
+                    } elseif ($ci_disc_type === 'voucher' || $ci_disc_type === 'gift_card') {
                         $sv_disc = min($ci_disc_amt_raw, $base_total); // cap at total
                     }
                     $sv_final = max(0.00, $base_total - $sv_disc);
@@ -753,11 +759,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             // Receptionist PIN check for complete
             if (is_cashier()) {
                 $entered_pin = trim($_POST['pin'] ?? '');
-                $uid = (int)$_SESSION['user_id'];
-                $ps = $conn->prepare("SELECT cashier_pin FROM users WHERE id=? AND admin_role='cashier'");
-                $ps->bind_param("i", $uid); $ps->execute();
+                // FIXED: Bug 1 — query receptionist_pins by entered PIN
+                $ps = $conn->prepare("SELECT id FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr = $ps->get_result()->fetch_assoc(); $ps->close();
-                if (empty($pr['cashier_pin']) || $pr['cashier_pin'] !== $entered_pin) {
+                if (!$pr) {
                     $message = "⚠️ Incorrect PIN. Complete action cancelled."; $message_type = "danger";
                     goto end_action;
                 }
@@ -787,7 +793,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                 $charged_for_commission = floatval($cp_r['total_amount'] ?? 0);
             }
 
-            $at_list = $conn->prepare("SELECT id, therapist_id FROM appointment_therapists WHERE appointment_id=?");
+            $at_list = $conn->prepare("SELECT id, therapist_id, IFNULL(people_handled, 1) AS people_handled FROM appointment_therapists WHERE appointment_id=?");
             $at_list->bind_param("i", $appt_id); $at_list->execute();
             $done_therapists = $at_list->get_result()->fetch_all(MYSQLI_ASSOC); $at_list->close();
 
@@ -795,6 +801,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
 
             foreach ($done_therapists as $dt) {
                 $tid = $dt['therapist_id'];
+                $ph  = max(1, intval($dt['people_handled']));  // people this therapist handled
                 $commission_amt = 0.00;
 
                 if ($svc_id && $charged_for_commission > 0) {
@@ -809,9 +816,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
 
                     if ($cm_row) {
                         $rate_type_appt = $appt['rate_type'] ?? 'regular';
+                        // FIXED: Bug 2 — charged_for_commission is now the TOTAL for all people;
+                        // divide by people_count to get per-person price, then multiply by people_handled
+                        $people_total    = max(1, intval($appt['people_count'] ?? 1));
+                        $per_person_price = $charged_for_commission / $people_total;
                         $commission_amt = ($rate_type_appt === 'influencer')
-                            ? floatval($cm_row['influencer_flat_rate'])
-                            : round($charged_for_commission * floatval($cm_row['commission_percent']) / 100, 2);
+                            ? floatval($cm_row['influencer_flat_rate']) * $ph
+                            : round($per_person_price * $ph * floatval($cm_row['commission_percent']) / 100, 2);
                     }
                 }
 
@@ -836,6 +847,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                 'Your '.$appt['service_name'].' session is done. Thank you for visiting! Please leave a feedback.',
                 'appointments.php');
             $message = "🎉 Appointment #$appt_id completed. Therapist(s) returned to rotation."; $message_type = "success";
+
+        } elseif ($action === 'save_per_person_inline') {
+
+            $therapist_ids = array_map('intval', (array)($_POST['therapist_ids'] ?? []));
+            $people_needed = max(1, (int)($appt['people_count'] ?? 1));
+            $svc_id_ai     = (int)$appt['service_id'];
+
+            if (count($therapist_ids) !== $people_needed || in_array(0, $therapist_ids, true)) {
+                $message = "Please select a therapist for every person."; $message_type = "danger";
+                goto end_action;
+            }
+
+            $grouped = array_count_values($therapist_ids);
+            $errors  = [];
+
+            foreach ($grouped as $tid_key => $ph) {
+                $tid = (int)$tid_key;
+                $sp  = $conn->prepare("
+                    SELECT (SELECT COUNT(*) FROM therapist_specialty_services WHERE therapist_id=? AND service_id=?)
+                         + (SELECT COUNT(*) FROM therapist_specialties ts
+                            JOIN services s ON s.category_id=ts.category_id
+                            WHERE ts.therapist_id=? AND s.id=?) AS total
+                ");
+                $sp->bind_param("iiii", $tid, $svc_id_ai, $tid, $svc_id_ai); $sp->execute();
+                $sp_count = (int)$sp->get_result()->fetch_assoc()['total']; $sp->close();
+                if ($sp_count === 0) {
+                    $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
+                    $tn->bind_param("i", $tid); $tn->execute();
+                    $tn_name = htmlspecialchars($tn->get_result()->fetch_assoc()['full_name'] ?? 'Therapist'); $tn->close();
+                    $errors[] = "{$tn_name} is not qualified for this service.";
+                }
+            }
+
+            if (!empty($errors)) {
+                $message = implode(' ', $errors); $message_type = "danger"; goto end_action;
+            }
+
+            $conn->begin_transaction();
+            try {
+                $del = $conn->prepare("DELETE FROM appointment_therapists WHERE appointment_id=?");
+                $del->bind_param("i", $appt_id); $del->execute(); $del->close();
+
+                $commission = 0.00; $notes = '';
+                foreach ($grouped as $tid_key => $ph) {
+                    $tid = (int)$tid_key;
+                    $ins = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, notes, commission, people_handled) VALUES (?,?,?,?,?)");
+                    $ins->bind_param("iisdi", $appt_id, $tid, $notes, $commission, $ph);
+                    $ins->execute(); $ins->close();
+                }
+
+                $conn->query("UPDATE appointments SET status='assigned' WHERE id={$appt_id} AND status='pending'");
+
+                $conn->commit();
+                $message = "✅ Therapists assigned successfully."; $message_type = "success";
+            } catch (Throwable $e) {
+                $conn->rollback();
+                $message = "Failed to save assignments. Please try again."; $message_type = "danger";
+            }
 
         } else {
             $message = "Action not allowed for current status."; $message_type = "danger";
@@ -889,7 +958,7 @@ $appt_sql = "
            u.full_name, u.email, u.phone,
            a.approved_by_name, a.completed_by_name, a.declined_by_name,
            a.cancelled_by_name, a.rescheduled_by_name, a.rescheduled_at,
-           (SELECT COUNT(*) FROM appointment_therapists WHERE appointment_id=a.id) AS therapist_count,
+           (SELECT COALESCE(SUM(IFNULL(at3.people_handled,1)),0) FROM appointment_therapists at3 WHERE at3.appointment_id=a.id) AS therapist_count,
            (SELECT oi.order_id FROM order_items oi WHERE oi.id = a.order_item_id LIMIT 1) AS order_id
     FROM appointments a
     JOIN services s ON a.service_id = s.id
@@ -1085,8 +1154,9 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     $status  = $a['status'];
     $people  = max(1,intval($a['people_count']));
     $appt_id = $a['id'];
-    $t_count = (int)$a['therapist_count'];
-    $needs_therapist = ($status === 'pending' && $t_count < $people);
+    $t_count          = (int)$a['therapist_count'];
+    $slots_left_inline = max(0, $people - $t_count);
+    $needs_therapist  = ($status === 'pending' && $t_count < $people);
 
     $badge=['pending'=>['#FEF3C7','#92400E','⏳ Pending'],'assigned'=>['#cfe2ff','#084298','💆 Assigned'],'approved'=>['#D1FAE5','#065F46','✅ Approved'],'completed'=>['#E0F2FE','#0C4A6E','🎉 Completed'],'declined'=>['#FEE2E2','#991B1B','❌ Declined'],'cancelled'=>['#F3F4F6','#374151','🚫 Cancelled']];
     [$bbg,$bfg,$blabel]=$badge[$status]??['#e2e3e5','#41464b',ucfirst($status)];
@@ -1322,53 +1392,93 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         </div>
         <?php endif; ?>
 
-        <?php if ($t_count < $people && in_array($status,['pending','assigned'])): ?>
-        <details <?php echo $needs_therapist?'open':''; ?>>
-            <summary style="font-size:0.82rem;font-weight:600;color:var(--gold);list-style:none;display:flex;align-items:center;gap:0.4rem;padding:0.4rem 0;cursor:pointer;user-select:none;">
-                ➕ Add Therapist
-                <?php if($needs_therapist): ?><span style="background:#fff3cd;color:#664d03;padding:0.1rem 0.5rem;border-radius:20px;font-size:0.7rem;font-weight:700;">Required before approving</span><?php endif; ?>
-            </summary>
-            <form method="POST" style="margin-top:0.75rem;display:grid;gap:0.65rem;">
-                <?php echo csrf_field(); ?>
-                <input type="hidden" name="action"  value="assign_therapist">
-                <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
-                <?php if(empty($available)): ?>
-                <div style="padding:0.65rem;background:rgba(220,53,69,0.1);border-radius:8px;font-size:0.82rem;color:#ff6b7a;border:1px solid rgba(220,53,69,0.25);">
-                    <?php if ($appt_is_today): ?>
-                    ⚠️ No therapists on duty today. Go to <a href="therapists.php" style="color:var(--gold);">Therapists</a> to check in staff.
-                    <?php else: ?>
-                    ⚠️ No qualified therapists found for this service.
-                    <?php endif; ?>
-                </div>
-                <?php else: ?>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.65rem;">
-                    <div>
-                        <label style="font-size:0.75rem;color:var(--gray);display:block;margin-bottom:3px;">Therapist <span style="color:#ff6b7a;">*</span></label>
-                        <select name="therapist_id" required style="width:100%;padding:0.45rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.83rem;">
-                            <option value="">— Select —</option>
-                            <?php foreach($available as $t):
-                                $dis=$t['is_on_break']||!empty($t['time_out']);
-                                $lbl=htmlspecialchars($t['full_name']);
-                                if($t['is_on_break'])$lbl.=' ☕ On break';
-                                if(!empty($t['time_out']))$lbl.=' — Checked out';
-                            ?>
-                            <option value="<?php echo $t['id']; ?>" <?php echo $dis?'disabled':''; ?>><?php echo $lbl; ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="font-size:0.75rem;color:var(--gray);display:block;margin-bottom:3px;">Notes (optional)</label>
-                        <input type="text" name="notes" placeholder="e.g. Guest prefers light pressure"
-                               style="width:100%;padding:0.45rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.83rem;">
-                    </div>
-                </div>
-                <input type="hidden" name="commission" value="0">
-                <button type="submit" class="btn btn-primary btn-sm" style="justify-self:start;">💾 Save Assignment</button>
+        <?php if ($status === 'pending'): ?>
+        <div style="margin-top:0.85rem;padding:1rem;background:rgba(201,106,44,0.06);
+                    border:1px solid rgba(201,106,44,0.2);border-radius:10px;">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.75rem;
+                        display:flex;align-items:center;justify-content:space-between;">
+                <span>💆 Therapist Assignment — <?php echo $t_count; ?>/<?php echo $people; ?> covered</span>
+                <?php if ($t_count < $people): ?>
+                <span style="font-size:0.7rem;background:#fff3cd;color:#664d03;padding:0.15rem 0.5rem;
+                             border-radius:20px;font-weight:700;">Required before approving</span>
                 <?php endif; ?>
+            </div>
+
+            <form method="POST" style="display:grid;gap:0.55rem;">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="action"  value="save_per_person_inline">
+                <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+
+                <?php
+                $inline_date_esc = $conn->real_escape_string($a['appointment_date']);
+                $inline_svc_id   = (int)$a['service_id'];
+                $inline_appt_id  = (int)$appt_id;
+
+                $inline_therapists_res = $conn->query("
+                    SELECT t.id, t.full_name,
+                        (SELECT COUNT(*) FROM therapist_specialty_services
+                         WHERE therapist_id=t.id AND service_id={$inline_svc_id}) +
+                        (SELECT COUNT(*) FROM therapist_specialties ts2
+                         JOIN services s2 ON s2.category_id=ts2.category_id
+                         WHERE ts2.therapist_id=t.id AND s2.id={$inline_svc_id}) AS has_specialty,
+                        (SELECT COUNT(*) FROM therapist_attendance ta
+                         WHERE ta.therapist_id=t.id
+                           AND ta.duty_date=DATE('{$inline_date_esc}')
+                           AND ta.time_out IS NULL) AS on_duty
+                    FROM therapists t
+                    ORDER BY has_specialty DESC, t.full_name ASC
+                ");
+                $inline_therapists = $inline_therapists_res ? $inline_therapists_res->fetch_all(MYSQLI_ASSOC) : [];
+
+                $ias = $conn->prepare("SELECT therapist_id, IFNULL(people_handled,1) AS ph FROM appointment_therapists WHERE appointment_id=? ORDER BY id ASC");
+                $ias->bind_param("i", $inline_appt_id); $ias->execute();
+                $inline_assigned = $ias->get_result()->fetch_all(MYSQLI_ASSOC); $ias->close();
+
+                $prefill_map = []; $idx = 1;
+                foreach ($inline_assigned as $row) {
+                    for ($x = 0; $x < (int)$row['ph']; $x++) {
+                        $prefill_map[$idx++] = (int)$row['therapist_id'];
+                    }
+                }
+
+                for ($p = 1; $p <= $people; $p++):
+                    $pre = $prefill_map[$p] ?? 0;
+                ?>
+                <div style="display:grid;grid-template-columns:72px 1fr;align-items:center;gap:0.5rem;">
+                    <span style="font-size:0.78rem;font-weight:600;color:var(--brown);">👤 Person <?php echo $p; ?></span>
+                    <select name="therapist_ids[]" required
+                            style="width:100%;padding:0.4rem 0.6rem;border:1px solid #c8a46e;
+                                   border-radius:7px;background:#ffffff;color:#1a1a1a;font-size:0.82rem;">
+                        <option value="" style="color:#1a1a1a;">— Select therapist —</option>
+                        <?php foreach ($inline_therapists as $t):
+                            $selected  = ($t['id'] == $pre) ? 'selected' : '';
+                            $qualified = $t['has_specialty'] > 0;
+                            $on_duty_t = $t['on_duty'] > 0;
+                            $label     = htmlspecialchars($t['full_name']);
+                            if (!$qualified)    $label .= ' — ❌ Not qualified';
+                            elseif (!$on_duty_t) $label .= ' — Off duty';
+                        ?>
+                        <option value="<?php echo $t['id']; ?>" <?php echo $selected; ?>
+                                style="color:<?php echo $qualified ? '#1a1a1a' : '#999999'; ?>;">
+                            <?php echo $label; ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <?php endfor; ?>
+
+                <button type="submit" class="btn btn-primary btn-sm"
+                        style="margin-top:0.25rem;font-size:0.8rem;padding:0.4rem 0.9rem;width:100%;">
+                    💾 Save Therapist Assignment
+                </button>
             </form>
-        </details>
-        <?php elseif ($t_count >= $people): ?>
-        <div style="font-size:0.8rem;color:var(--green);font-weight:600;">✅ All <?php echo $people; ?> therapist<?php echo $people>1?'s':''; ?> assigned.</div>
+
+            <a href="assign_therapist.php?appt_id=<?php echo $appt_id; ?>"
+               style="display:block;margin-top:0.6rem;font-size:0.72rem;color:var(--gold);
+                      text-align:center;text-decoration:none;">
+                ↗ Advanced assignment (separate page)
+            </a>
+        </div>
         <?php endif; ?>
     </div>
     <?php endif; ?>
@@ -1639,10 +1749,18 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 Assign Therapist
             </button>
             <?php endif; ?>
-            <form method="POST" style="margin:0;">
+            <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                <?php if (is_cashier()): ?>
+                <input type="password" name="pin" maxlength="4" inputmode="numeric"
+                       placeholder="PIN" required
+                       style="width:60px;padding:0.32rem 0.4rem;border:1px solid var(--border2);
+                              border-radius:6px;font-size:0.88rem;text-align:center;
+                              letter-spacing:0.2em;color:var(--brown);background:var(--bg3);
+                              font-family:monospace;">
+                <?php endif; ?>
                 <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Decline this appointment?')">❌ Decline</button>
             </form>
 
@@ -1657,24 +1775,48 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                         <?php echo floatval(($pm_row['final_amount'] ?? 0) > 0 ? $pm_row['final_amount'] : ($pm_row['total_amount'] ?? 0)); ?>,
                         <?php echo intval($pm_row['order_id'] ?? 0); ?>
                     )">✅ Check In</button>
-            <form method="POST" style="margin:0;">
+            <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                <?php if (is_cashier()): ?>
+                <input type="password" name="pin" maxlength="4" inputmode="numeric"
+                       placeholder="PIN" required
+                       style="width:60px;padding:0.32rem 0.4rem;border:1px solid var(--border2);
+                              border-radius:6px;font-size:0.88rem;text-align:center;
+                              letter-spacing:0.2em;color:var(--brown);background:var(--bg3);
+                              font-family:monospace;">
+                <?php endif; ?>
                 <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Decline this appointment?')">❌ Decline</button>
             </form>
 
         <?php elseif ($status === 'approved'): ?>
-            <form method="POST" style="margin:0;">
+            <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="complete">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                <?php if (is_cashier()): ?>
+                <input type="password" name="pin" maxlength="4" inputmode="numeric"
+                       placeholder="PIN" required
+                       style="width:60px;padding:0.32rem 0.4rem;border:1px solid var(--border2);
+                              border-radius:6px;font-size:0.88rem;text-align:center;
+                              letter-spacing:0.2em;color:var(--brown);background:var(--bg3);
+                              font-family:monospace;">
+                <?php endif; ?>
                 <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('Mark this session as completed?')">🎉 Mark Complete</button>
             </form>
-            <form method="POST" style="margin:0;">
+            <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                <?php if (is_cashier()): ?>
+                <input type="password" name="pin" maxlength="4" inputmode="numeric"
+                       placeholder="PIN" required
+                       style="width:60px;padding:0.32rem 0.4rem;border:1px solid var(--border2);
+                              border-radius:6px;font-size:0.88rem;text-align:center;
+                              letter-spacing:0.2em;color:var(--brown);background:var(--bg3);
+                              font-family:monospace;">
+                <?php endif; ?>
                 <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Decline this appointment?')">❌ Decline</button>
             </form>
         <?php endif; ?>
@@ -2131,8 +2273,8 @@ function clearApptSearch() {
         </div>
         <div id="modal-discount-section" style="display:none;">
         <p style="font-size:0.82rem;color:var(--gray);text-align:center;margin-bottom:1rem;">Does this customer have a discount or voucher?</p>
-        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.4rem;margin-bottom:1rem;">
-            <?php foreach (['none'=>['🚫','None',''],'voucher'=>['🎟️','Voucher',''],'senior'=>['👴','Senior','20% off'],'pwd'=>['♿','PWD','20% off'],'employee'=>['🪪','Staff','50% off']] as $dtype => [$dico, $dlbl, $dsub]): ?>
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:0.4rem;margin-bottom:1rem;">
+            <?php foreach (['none'=>['🚫','None',''],'senior'=>['👴','Senior','20% off'],'pwd'=>['♿','PWD','20% off'],'employee'=>['🪪','Staff','50% off']] as $dtype => [$dico, $dlbl, $dsub]): ?>
             <div id="dmod-btn-<?php echo $dtype; ?>"
                  onclick="selectDiscModal('<?php echo $dtype; ?>')"
                  style="padding:0.6rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;<?php echo $dtype==='none'?'border-color:#C96A2C;background:#fff8f2;':''; ?>">
@@ -2141,6 +2283,46 @@ function clearApptSearch() {
                 <?php if ($dsub): ?><div style="font-size:0.65rem;color:#6b7280;"><?php echo $dsub; ?></div><?php endif; ?>
             </div>
             <?php endforeach; ?>
+            <button type="button" id="dmod-btn-voucher" onclick="selectDiscModal('voucher')"
+                    style="padding:0.55rem 0.4rem;border:2px solid #e5e7eb;border-radius:8px;
+                           background:#fff;cursor:pointer;font-size:0.75rem;font-weight:600;
+                           color:#374151;text-align:center;transition:all .15s;">
+                🎟️<br>Voucher
+            </button>
+            <button type="button" id="dmod-btn-gift_card" onclick="selectDiscModal('gift_card')"
+                    style="padding:0.55rem 0.4rem;border:2px solid #e5e7eb;border-radius:8px;
+                           background:#fff;cursor:pointer;font-size:0.75rem;font-weight:600;
+                           color:#374151;text-align:center;transition:all .15s;">
+                🎁<br>Gift Card
+            </button>
+        </div>
+        <div id="dmod-voucher-area" style="display:none;background:#fef9f0;
+             border:1px solid #f59e0b;border-radius:10px;padding:0.85rem;margin-bottom:0.85rem;">
+            <div style="font-size:0.8rem;font-weight:600;color:#92400e;margin-bottom:0.5rem;"
+                 id="dmod-voucher-label">Enter Discount Details</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+                <div>
+                    <label style="font-size:0.72rem;color:#6b7280;display:block;margin-bottom:3px;">Type</label>
+                    <select id="dmod-voucher-type" onchange="updateDiscModalPreview()"
+                            style="width:100%;padding:0.45rem 0.6rem;border:1px solid #e5e7eb;
+                                   border-radius:7px;font-size:0.82rem;color:#1a1a1a;background:#fff;">
+                        <option value="cash">₱ Fixed Amount Off</option>
+                        <option value="percent">% Percentage Off</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:0.72rem;color:#6b7280;display:block;margin-bottom:3px;">Amount</label>
+                    <input type="number" id="dmod-voucher-value" min="0" step="0.01"
+                           placeholder="e.g. 100 or 30"
+                           oninput="updateDiscModalPreview()"
+                           style="width:100%;padding:0.45rem 0.6rem;border:1px solid #e5e7eb;
+                                  border-radius:7px;font-size:0.82rem;box-sizing:border-box;
+                                  color:#1a1a1a;background:#fff;">
+                </div>
+            </div>
+            <div style="font-size:0.72rem;color:#6b7280;margin-top:0.4rem;" id="dmod-voucher-hint">
+                Enter ₱ amount or % to deduct from the total.
+            </div>
         </div>
         </div><!-- /modal-discount-section -->
 
@@ -2192,25 +2374,6 @@ function clearApptSearch() {
                   background:var(--bg3,#f5f5f5);border-radius:8px;">
             💡 Discount and payment will be collected when the customer arrives for Check In.
         </p>
-        <div id="dmod-voucher-area" style="display:none;background:#fef9f0;border:1px solid #f59e0b;border-radius:10px;padding:0.85rem;margin-bottom:0.85rem;">
-            <div style="font-size:0.8rem;font-weight:600;color:#92400e;margin-bottom:0.5rem;">Enter Voucher Discount</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
-                <div>
-                    <label style="font-size:0.72rem;color:#6b7280;display:block;margin-bottom:3px;">Type</label>
-                    <select id="dmod-voucher-type" onchange="updateDiscModalPreview()"
-                            style="width:100%;padding:0.45rem 0.6rem;border:1px solid #e5e7eb;border-radius:7px;font-size:0.82rem;">
-                        <option value="cash">💵 Cash Off (₱)</option>
-                        <option value="percent">% Percentage</option>
-                    </select>
-                </div>
-                <div>
-                    <label style="font-size:0.72rem;color:#6b7280;display:block;margin-bottom:3px;">Amount</label>
-                    <input type="number" id="dmod-voucher-value" min="0" step="0.01" placeholder="0.00"
-                           oninput="updateDiscModalPreview()"
-                           style="width:100%;padding:0.45rem 0.6rem;border:1px solid #e5e7eb;border-radius:7px;font-size:0.82rem;box-sizing:border-box;">
-                </div>
-            </div>
-        </div>
         <div id="dmod-preview" style="display:none;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.3);border-radius:8px;padding:0.6rem 0.85rem;font-size:0.82rem;color:#15803d;margin-bottom:0.85rem;"></div>
         <div style="display:flex;gap:0.65rem;margin-top:0.5rem;">
             <button type="button" onclick="closeDiscountModal()" class="btn btn-secondary" style="flex:1;">Cancel</button>
@@ -2296,6 +2459,33 @@ function clearApptSearch() {
                     <?php endif; ?>
                 </label>
                 <?php endforeach; ?>
+            </div>
+        </div>
+
+        <!-- Voucher / Gift Card input -->
+        <div id="ci-voucher-area" style="display:none;margin-top:0.65rem;background:#fef9f0;
+             border:1px solid #f59e0b;border-radius:8px;padding:0.75rem;">
+            <div style="font-size:0.78rem;font-weight:600;color:#92400e;margin-bottom:0.5rem;"
+                 id="ci-voucher-label">Voucher Details</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+                <div>
+                    <label style="font-size:0.72rem;color:#6b7280;display:block;margin-bottom:3px;">Type</label>
+                    <select id="ci-voucher-type" onchange="ciUpdateVoucher()"
+                            style="width:100%;padding:0.4rem 0.55rem;border:1px solid #e5e7eb;
+                                   border-radius:7px;font-size:0.82rem;color:#1a1a1a;background:#fff;">
+                        <option value="cash">₱ Fixed Amount Off</option>
+                        <option value="percent">% Percentage Off</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:0.72rem;color:#6b7280;display:block;margin-bottom:3px;">Amount</label>
+                    <input type="number" id="ci-voucher-value" min="0" step="0.01"
+                           placeholder="e.g. 100 or 30"
+                           oninput="ciUpdateVoucher()"
+                           style="width:100%;padding:0.4rem 0.55rem;border:1px solid #e5e7eb;
+                                  border-radius:7px;font-size:0.82rem;color:#1a1a1a;background:#fff;
+                                  box-sizing:border-box;">
+                </div>
             </div>
         </div>
 
@@ -2507,8 +2697,8 @@ function openDiscountModal(apptId, customerName, isOnlinePaid, onlineMethod) {
     _paymentMethod = 'cash';
     document.getElementById('approve-appt-id').value = apptId;
     document.getElementById('discModalCustomer').textContent = 'Customer: ' + customerName;
-    document.getElementById('dmod-voucher-area').style.display = 'none';
     document.getElementById('dmod-preview').style.display = 'none';
+    document.getElementById('dmod-voucher-area').style.display = 'none';
     document.getElementById('dmod-voucher-value').value = '';
     selectDiscModal('none');
     selectPayModal('cash');
@@ -2549,13 +2739,22 @@ function selectPayModal(method) {
 
 function selectDiscModal(type) {
     _discountType = type;
-    ['none','voucher','senior','pwd','employee'].forEach(t => {
+    ['none','voucher','gift_card','senior','pwd','employee'].forEach(t => {
         const btn = document.getElementById('dmod-btn-' + t);
         if (!btn) return;
         btn.style.borderColor = t === type ? '#C96A2C' : '#e5e7eb';
         btn.style.background  = t === type ? '#fff8f2' : '';
     });
-    document.getElementById('dmod-voucher-area').style.display = type === 'voucher' ? 'block' : 'none';
+    const isVoucherLike = (type === 'voucher' || type === 'gift_card');
+    document.getElementById('dmod-voucher-area').style.display = isVoucherLike ? 'block' : 'none';
+    if (isVoucherLike) {
+        const label = type === 'gift_card' ? '🎁 Gift Card Details' : '🎟️ Voucher Details';
+        document.getElementById('dmod-voucher-label').textContent = label;
+        const hint = type === 'gift_card'
+            ? 'Enter the gift card value to deduct from total.'
+            : 'Enter voucher discount amount or percentage.';
+        document.getElementById('dmod-voucher-hint').textContent = hint;
+    }
     updateDiscModalPreview();
 }
 
@@ -2570,11 +2769,12 @@ function updateDiscModalPreview() {
         discAmt = orig * 0.20; label = '♿ PWD Discount (20%)';
     } else if (_discountType === 'employee') {
         discAmt = orig * 0.50; label = '🪪 Employee Discount (50%)';
-    } else if (_discountType === 'voucher') {
+    } else if (_discountType === 'voucher' || _discountType === 'gift_card') {
         const vType = document.getElementById('dmod-voucher-type').value;
         const vVal  = parseFloat(document.getElementById('dmod-voucher-value').value || 0);
         discAmt = vType === 'percent' ? orig * (vVal / 100) : Math.min(vVal, orig);
-        label   = vType === 'percent' ? `🎟️ Voucher (${vVal}% off)` : '🎟️ Voucher';
+        const icon = _discountType === 'gift_card' ? '🎁 Gift Card' : '🎟️ Voucher';
+        label = vType === 'percent' ? `${icon} (${vVal}% off)` : `${icon} (₱${vVal} off)`;
     }
     const final = Math.max(0, orig - discAmt);
     if (discAmt > 0) {
@@ -2590,7 +2790,8 @@ function proceedToPIN() {
     const vVal  = document.getElementById('dmod-voucher-value')?.value || '0';
     document.getElementById('approve-discount-type').value  = _discountType;
     document.getElementById('approve-voucher-type').value   = vType;
-    document.getElementById('approve-discount-value').value = _discountType === 'voucher' ? vVal : '0';
+    document.getElementById('approve-discount-value').value =
+        (_discountType === 'voucher' || _discountType === 'gift_card') ? vVal : '0';
     document.getElementById('approve-payment-method').value = _paymentMethod;
     closeDiscountModal();
 
@@ -2600,13 +2801,15 @@ function proceedToPIN() {
     let desc = `Approving · ${payLabel}`;
     if (_discountType !== 'none') {
         const vv = parseFloat(vVal || 0);
-        const vt = document.getElementById('dmod-voucher-type')?.value || 'cash';
+        const vt = vType;
         let discAmt = 0;
         if (_discountType === 'senior' || _discountType === 'pwd') discAmt = orig * 0.20;
         else if (_discountType === 'employee') discAmt = orig * 0.50;
-        else if (_discountType === 'voucher') discAmt = vt === 'percent' ? orig*(vv/100) : Math.min(vv,orig);
+        else if (_discountType === 'voucher' || _discountType === 'gift_card')
+            discAmt = vt === 'percent' ? orig * (vv / 100) : Math.min(vv, orig);
         const final = Math.max(0, orig - discAmt);
-        desc = `Approving · ${payLabel} · ${_discountType} discount — Final: ₱${final.toLocaleString('en-PH',{minimumFractionDigits:2})}`;
+        const icon = _discountType === 'gift_card' ? '🎁 Gift Card' : _discountType === 'voucher' ? '🎟️ Voucher' : _discountType;
+        desc = `Approving · ${payLabel} · ${icon} discount — Final: ₱${final.toLocaleString('en-PH',{minimumFractionDigits:2})}`;
     }
     document.getElementById('pinModalDesc').textContent = desc;
 
@@ -2718,6 +2921,12 @@ function ciSelectPayment(method) {
 function ciSelectDiscount(type) {
     ciState.discountType = type;
 
+    // Always reset voucher area first
+    var vArea = document.getElementById('ci-voucher-area');
+    if (vArea) vArea.style.display = 'none';
+    var vVal = document.getElementById('ci-voucher-value');
+    if (vVal) vVal.value = '';
+
     ['none','voucher','senior','pwd','employee'].forEach(function(t) {
         var lbl = document.getElementById('ci-disc-label-' + t);
         if (lbl) {
@@ -2732,6 +2941,14 @@ function ciSelectDiscount(type) {
         disc = Math.round(base * 0.20 * 100) / 100;
     } else if (type === 'employee') {
         disc = Math.round(base * 0.50 * 100) / 100;
+    } else if (type === 'voucher' || type === 'gift_card') {
+        // Show voucher input area; disc stays 0 until user enters amount
+        if (vArea) {
+            vArea.style.display = 'block';
+            var lbl = document.getElementById('ci-voucher-label');
+            if (lbl) lbl.textContent = type === 'gift_card' ? '🎁 Gift Card Details' : '🎟️ Voucher Details';
+        }
+        disc = 0;
     }
     ciState.discountAmount = disc;
     ciState.finalAmount    = Math.max(0, base - disc);
@@ -2764,6 +2981,40 @@ function ciSelectDiscount(type) {
     var discInput    = document.getElementById('ci-discount-type');
     var discAmtInput = document.getElementById('ci-discount-amount');
     if (discInput)    discInput.value    = type;
+    if (discAmtInput) discAmtInput.value = disc.toFixed(2);
+}
+
+function ciUpdateVoucher() {
+    var vType = document.getElementById('ci-voucher-type').value;
+    var vVal  = parseFloat(document.getElementById('ci-voucher-value').value || 0);
+    var base  = ciState.totalAmount;
+    var disc  = vType === 'percent'
+        ? Math.round(base * (vVal / 100) * 100) / 100
+        : Math.min(vVal, base);
+    ciState.discountAmount = disc;
+    ciState.finalAmount    = Math.max(0, base - disc);
+
+    var fmt = function(n) { return n.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); };
+
+    var discRow = document.getElementById('ci-discount-row');
+    if (discRow) {
+        if (disc > 0) {
+            discRow.style.display = 'flex';
+            var lblEl = document.getElementById('ci-discount-label');
+            if (lblEl) lblEl.textContent = (ciState.discountType === 'gift_card' ? 'Gift Card' : 'Voucher') + ' discount';
+            var amtEl = document.getElementById('ci-discount-amt');
+            if (amtEl) amtEl.textContent = fmt(disc);
+        } else {
+            discRow.style.display = 'none';
+        }
+    }
+
+    var finalEl = document.getElementById('ci-final-amount');
+    if (finalEl) finalEl.textContent = fmt(ciState.finalAmount);
+
+    var discInput    = document.getElementById('ci-discount-type');
+    var discAmtInput = document.getElementById('ci-discount-amount');
+    if (discInput)    discInput.value    = ciState.discountType;
     if (discAmtInput) discAmtInput.value = disc.toFixed(2);
 }
 

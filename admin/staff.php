@@ -18,6 +18,20 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $comm_to) || !strtotime($comm_to))
     $comm_to = date('Y-m-d');
 if ($comm_from > $comm_to) { $tmp = $comm_from; $comm_from = $comm_to; $comm_to = $tmp; unset($tmp); }
 
+// ── Pay-period for CA / Deductions tab — semi-monthly smart default ───────────
+// Default: day 1–15 → 1st–15th of this month; day 16+ → 16th–last day.
+$_day = (int) date('j');
+$_ps_default = $_day <= 15 ? date('Y-m-01') : date('Y-m-16');
+$_pe_default = $_day <= 15 ? date('Y-m-15') : date('Y-m-t');
+$period_start = $_GET['period_start'] ?? $_ps_default;
+$period_end   = $_GET['period_end']   ?? $_pe_default;
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $period_start) || !strtotime($period_start))
+    $period_start = $_ps_default;
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $period_end) || !strtotime($period_end))
+    $period_end = $_pe_default;
+if ($period_start > $period_end) { $tmp = $period_start; $period_start = $period_end; $period_end = $tmp; unset($tmp); }
+unset($_day, $_ps_default, $_pe_default);
+
 $msg = ''; $msg_type = 'success';
 
 $conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS is_generalist TINYINT(1) NOT NULL DEFAULT 0");
@@ -475,33 +489,84 @@ foreach ($all_therapists as &$_th) {
 }
 unset($_th);
 
-// Recent deductions log (last 30 days)
-$recent_deds = $conn->query("
+// Recent deductions log — pay period
+$_dq = $conn->prepare("
     SELECT td.*, t.full_name
     FROM therapist_deductions td
     JOIN therapists t ON td.therapist_id = t.id
-    WHERE td.deduction_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+    WHERE td.deduction_date BETWEEN ? AND ?
     ORDER BY td.deduction_date DESC, td.created_at DESC
-    LIMIT 50
-")->fetch_all(MYSQLI_ASSOC);
+    LIMIT 100
+");
+$_dq->bind_param("ss", $period_start, $period_end);
+$_dq->execute();
+$recent_deds = $_dq->get_result()->fetch_all(MYSQLI_ASSOC);
+$_dq->close();
 
-// Per-therapist CA totals (last 30 days) — for deductions summary table
+// Per-therapist CA totals — pay period
 $ded_totals_by_therapist = [];
 if (!empty($all_therapists)) {
+    // IDs are INT-cast from DB rows; IN clause with intval() is safe
     $tids_for_deds = implode(',', array_map(fn($t) => intval($t['id']), $all_therapists));
-    $dt_rows = $conn->query("
+    $_dt = $conn->prepare("
         SELECT therapist_id,
-               SUM(amount)                                          AS total_all,
+               SUM(amount)                                           AS total_all,
                SUM(CASE WHEN type='ca'      THEN amount ELSE 0 END) AS total_ca,
                SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) AS total_expense
         FROM therapist_deductions
         WHERE therapist_id IN ($tids_for_deds)
-          AND deduction_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          AND deduction_date BETWEEN ? AND ?
         GROUP BY therapist_id
     ");
-    while ($r = $dt_rows->fetch_assoc()) {
+    $_dt->bind_param("ss", $period_start, $period_end);
+    $_dt->execute();
+    $_dt_rows = $_dt->get_result();
+    while ($r = $_dt_rows->fetch_assoc()) {
         $ded_totals_by_therapist[$r['therapist_id']] = $r;
     }
+    $_dt->close();
+}
+
+// Per-therapist commission for pay period — pre-built to avoid N+1 in the HTML loop
+// Two aggregate queries (base + add-on) instead of one correlated query per therapist.
+$ded_commission_by_therapist = [];
+if (!empty($all_therapists)) {
+    $tids_for_comm = implode(',', array_map(fn($t) => intval($t['id']), $all_therapists));
+
+    $_bc = $conn->prepare("
+        SELECT at2.therapist_id, IFNULL(SUM(at2.commission), 0) AS base_comm
+        FROM appointment_therapists at2
+        JOIN appointments ap ON at2.appointment_id = ap.id
+        WHERE at2.therapist_id IN ($tids_for_comm)
+          AND ap.status = 'completed'
+          AND DATE(ap.appointment_date) BETWEEN ? AND ?
+        GROUP BY at2.therapist_id
+    ");
+    $_bc->bind_param("ss", $period_start, $period_end);
+    $_bc->execute();
+    $_bc_rows = $_bc->get_result();
+    while ($r = $_bc_rows->fetch_assoc()) {
+        $ded_commission_by_therapist[$r['therapist_id']] = (float)$r['base_comm'];
+    }
+    $_bc->close();
+
+    $_ac = $conn->prepare("
+        SELECT aes.therapist_id, IFNULL(SUM(aes.commission), 0) AS addon_comm
+        FROM appointment_extra_services aes
+        JOIN appointments ap ON aes.appointment_id = ap.id
+        WHERE aes.therapist_id IN ($tids_for_comm)
+          AND ap.status = 'completed'
+          AND DATE(ap.appointment_date) BETWEEN ? AND ?
+        GROUP BY aes.therapist_id
+    ");
+    $_ac->bind_param("ss", $period_start, $period_end);
+    $_ac->execute();
+    $_ac_rows = $_ac->get_result();
+    while ($r = $_ac_rows->fetch_assoc()) {
+        $ded_commission_by_therapist[$r['therapist_id']] =
+            ($ded_commission_by_therapist[$r['therapist_id']] ?? 0) + (float)$r['addon_comm'];
+    }
+    $_ac->close();
 }
 
 // Commission matrix data
@@ -1864,11 +1929,56 @@ function showCommission(therapistId) {
 ══════════════════════════════════════════════════════════════════════════ -->
 <?php elseif ($active_tab === 'deductions'): ?>
 
+<!-- ── Pay-Period selector ───────────────────────────────────────────────── -->
+<div class="panel" style="margin-bottom:1.25rem;">
+    <div class="panel-body" style="padding:0.85rem 1.1rem;">
+        <form method="GET" style="display:flex;gap:0.65rem;align-items:flex-end;flex-wrap:wrap;">
+            <input type="hidden" name="tab" value="deductions">
+            <div>
+                <label style="font-size:0.72rem;font-weight:700;color:var(--brown);display:block;margin-bottom:3px;">From</label>
+                <input type="date" name="period_start" value="<?php echo $period_start; ?>"
+                       style="padding:0.42rem 0.65rem;border:1px solid var(--border2);border-radius:8px;
+                              background:var(--bg3);color:var(--brown);font-size:0.82rem;">
+            </div>
+            <div>
+                <label style="font-size:0.72rem;font-weight:700;color:var(--brown);display:block;margin-bottom:3px;">To</label>
+                <input type="date" name="period_end" value="<?php echo $period_end; ?>"
+                       style="padding:0.42rem 0.65rem;border:1px solid var(--border2);border-radius:8px;
+                              background:var(--bg3);color:var(--brown);font-size:0.82rem;">
+            </div>
+            <button type="submit" class="btn btn-primary" style="padding:0.42rem 1rem;font-size:0.82rem;">
+                🔍 Apply
+            </button>
+            <?php
+            $presets = [
+                ['1st–15th',   date('Y-m-01'),                                       date('Y-m-15')],
+                ['16th–end',   date('Y-m-16'),                                       date('Y-m-t')],
+                ['Last month', date('Y-m-01', strtotime('first day of last month')), date('Y-m-t', strtotime('last day of last month'))],
+            ];
+            foreach ($presets as [$plabel, $ps, $pe]):
+                $is_preset_active = ($period_start === $ps && $period_end === $pe);
+            ?>
+            <a href="?tab=deductions&period_start=<?php echo $ps; ?>&period_end=<?php echo $pe; ?>"
+               class="btn btn-secondary"
+               style="padding:0.42rem 0.75rem;font-size:0.78rem;white-space:nowrap;
+                      <?php echo $is_preset_active ? 'border-color:var(--gold);background:rgba(200,164,107,.15);font-weight:700;' : ''; ?>">
+                <?php echo $plabel; ?>
+            </a>
+            <?php endforeach; unset($presets,$plabel,$ps,$pe,$is_preset_active); ?>
+        </form>
+    </div>
+</div>
+
 <!-- ── Per-therapist CA Summary table ────────────────────────────────────── -->
 <?php if (!empty($all_therapists)): ?>
 <div class="panel" style="margin-bottom:1.5rem;">
     <div class="panel-header">
-        <span class="panel-title">💸 CA Summary — Last 30 Days</span>
+        <span class="panel-title">
+            💸 CA Summary
+            <span style="font-size:0.78rem;font-weight:400;color:var(--gray);margin-left:0.35rem;">
+                Pay Period: <?php echo date('M d', strtotime($period_start)); ?> – <?php echo date('M d, Y', strtotime($period_end)); ?>
+            </span>
+        </span>
         <span style="font-size:0.72rem;color:var(--gray);">
             Per therapist · Click name for full history
         </span>
@@ -1878,7 +1988,7 @@ function showCommission(therapistId) {
             <thead>
                 <tr>
                     <th>Therapist</th>
-                    <th style="text-align:right;">Commission (30d)</th>
+                    <th style="text-align:right;">Commission</th>
                     <th style="text-align:right;">Cash Advance</th>
                     <th style="text-align:right;">Expenses</th>
                     <th style="text-align:right;">Total Deductions</th>
@@ -1888,21 +1998,10 @@ function showCommission(therapistId) {
             </thead>
             <tbody>
             <?php foreach ($all_therapists as $t):
-                $deds     = $ded_totals_by_therapist[$t['id']] ?? ['total_all'=>0,'total_ca'=>0,'total_expense'=>0];
-                $total_ded = floatval($deds['total_all']);
-
-                // Commission earned in last 30 days for this therapist
-                $c30 = $conn->prepare("
-                    SELECT IFNULL(SUM(at2.commission), 0) AS comm_30d
-                    FROM appointment_therapists at2
-                    JOIN appointments ap ON at2.appointment_id = ap.id
-                    WHERE at2.therapist_id = ?
-                      AND ap.status = 'completed'
-                      AND DATE(ap.appointment_date) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-                ");
-                $c30->bind_param("i", $t['id']); $c30->execute();
-                $comm_30d = floatval($c30->get_result()->fetch_assoc()['comm_30d']); $c30->close();
-                $net_30d  = $comm_30d - $total_ded;
+                $deds        = $ded_totals_by_therapist[$t['id']] ?? ['total_all'=>0,'total_ca'=>0,'total_expense'=>0];
+                $total_ded   = floatval($deds['total_all']);
+                $comm_period = $ded_commission_by_therapist[$t['id']] ?? 0.0;
+                $net_period  = $comm_period - $total_ded;
             ?>
             <tr>
                 <td>
@@ -1920,7 +2019,7 @@ function showCommission(therapistId) {
                     </div>
                 </td>
                 <td style="text-align:right;font-weight:700;color:var(--green);">
-                    ₱<?php echo number_format($comm_30d, 2); ?>
+                    ₱<?php echo number_format($comm_period, 2); ?>
                 </td>
                 <td style="text-align:right;
                            color:<?php echo $deds['total_ca']>0?'var(--rust)':'var(--gray)'; ?>;
@@ -1938,8 +2037,8 @@ function showCommission(therapistId) {
                 </td>
                 <td style="text-align:right;">
                     <span style="font-weight:800;font-size:0.92rem;
-                                 color:<?php echo $net_30d>=0?'var(--green)':'var(--rust)'; ?>;">
-                        ₱<?php echo number_format($net_30d, 2); ?>
+                                 color:<?php echo $net_period>=0?'var(--green)':'var(--rust)'; ?>;">
+                        ₱<?php echo number_format($net_period, 2); ?>
                     </span>
                 </td>
                 <td>
@@ -2042,7 +2141,12 @@ function showCommission(therapistId) {
     <!-- Recent deductions log -->
     <div class="panel" id="deductions">
         <div class="panel-header">
-            <span class="panel-title">💸 Recent Log — Last 30 Days</span>
+            <span class="panel-title">
+                💸 Recent Log
+                <span style="font-size:0.78rem;font-weight:400;color:var(--gray);margin-left:0.35rem;">
+                    Pay Period: <?php echo date('M d', strtotime($period_start)); ?> – <?php echo date('M d, Y', strtotime($period_end)); ?>
+                </span>
+            </span>
             <span style="background:var(--red-dim);color:var(--rust);font-size:0.72rem;
                          padding:0.2rem 0.65rem;border-radius:20px;font-weight:700;">
                 −₱<?php echo number_format(array_sum(array_column($recent_deds,'amount')),2); ?> total
@@ -2051,7 +2155,7 @@ function showCommission(therapistId) {
         <?php if (empty($recent_deds)): ?>
         <div class="panel-body" style="text-align:center;padding:2.5rem;color:var(--gray);">
             <div style="font-size:2rem;margin-bottom:0.4rem;">💸</div>
-            No deductions recorded in the last 30 days.
+            No deductions recorded in this pay period.
         </div>
         <?php else: ?>
         <div class="table-wrap" style="border:none;border-radius:0;">
@@ -2091,7 +2195,7 @@ function showCommission(therapistId) {
                         −₱<?php echo number_format($d['amount'],2); ?>
                     </td>
                     <td>
-                        <a href="staff.php?del_ded=<?php echo $d['id']; ?>&tab=deductions"
+                        <a href="staff.php?del_ded=<?php echo $d['id']; ?>&tab=deductions&period_start=<?php echo urlencode($period_start); ?>&period_end=<?php echo urlencode($period_end); ?>"
                            class="btn btn-danger btn-sm" style="font-size:0.68rem;padding:0.2rem 0.45rem;"
                            onclick="return confirm('Delete this deduction entry?')">✕</a>
                     </td>

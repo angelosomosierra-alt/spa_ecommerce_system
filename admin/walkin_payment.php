@@ -41,7 +41,8 @@ $rate_type      = $_POST['rate_type']      ?? 'regular';
 $partner_id     = intval($_POST['partner_id'] ?? 0);
 $customer_note  = sanitize_input($_POST['customer_note'] ?? '');
 $slip_number    = sanitize_input($_POST['slip_number']   ?? '');
-$therapist_id   = intval($_POST['therapist_id'] ?? 0);
+$therapist_id        = intval($_POST['therapist_id'] ?? 0);
+$people_handled_svc  = max(1, min($people_count, intval($_POST['people_handled'] ?? $people_count)));
 
 $discount_type  = in_array($_POST['discount_type'] ?? '', ['none','voucher','senior','pwd','employee'])
                   ? $_POST['discount_type'] : 'none';
@@ -128,7 +129,7 @@ if ($order_type === 'product') {
         case 'influencer': $charged_price = 0.00; break;
         default:           $charged_price = $regular_price; break;
     }
-    $total_amount = $charged_price;
+    $total_amount = $charged_price * $people_count;
 }
 
 // ── Compute discount ──────────────────────────────────────────────────────────
@@ -200,8 +201,8 @@ try {
         $stmt = $conn->prepare("INSERT INTO order_items (order_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)");
         $stmt->bind_param("iiidd", $order_id, $item_id, $quantity, $charged_price, $total_amount);
     } else {
-        $stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, 1, ?, ?)");
-        $stmt->bind_param("iidd", $order_id, $item_id, $charged_price, $charged_price);
+        $stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)");
+        $stmt->bind_param("iiidd", $order_id, $item_id, $people_count, $charged_price, $total_amount);
     }
     $stmt->execute();
     $order_item_id = $stmt->insert_id;
@@ -211,6 +212,9 @@ try {
     if ($order_type === 'service') {
         $svc_type_val    = ($rate_type === 'home') ? 'home' : 'onsite';
         $appt_partner_id = ($rate_type === 'hotel' && $partner_id > 0) ? $partner_id : null;
+        // charged_price stored as total (per-person × people_count)
+        // so Complete action can safely do charged_price / people_count
+        $appt_charged_total = $charged_price * $people_count;
         $appt_stmt = $conn->prepare("
             INSERT INTO appointments
                 (user_id, service_id, order_item_id, appointment_date,
@@ -222,7 +226,7 @@ try {
             $walkin_user_id, $item_id, $order_item_id,
             $booking_date, $people_count,
             $svc_type_val, $rate_type,
-            $appt_partner_id, $charged_price, $customer_note
+            $appt_partner_id, $appt_charged_total, $customer_note
         );
         $appt_stmt->execute();
         $appointment_id = $appt_stmt->insert_id;  // ← actual appointments.id
@@ -235,12 +239,13 @@ try {
             $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
             $commission = 0.0;
             if ($cm_row) {
+                // commission = per-person price × people_handled × rate
                 $commission = $rate_type === 'influencer'
-                    ? floatval($cm_row['influencer_flat_rate'])
-                    : round($charged_price * floatval($cm_row['commission_percent']) / 100, 2);
+                    ? floatval($cm_row['influencer_flat_rate']) * $people_handled_svc
+                    : round($charged_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
             }
-            $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, notes) VALUES (?, ?, ?, '')");
-            $at->bind_param("iid", $appointment_id, $therapist_id, $commission); // ← fixed
+            $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
+            $at->bind_param("iidi", $appointment_id, $therapist_id, $commission, $people_handled_svc);
             $at->execute(); $at->close();
         }
     }

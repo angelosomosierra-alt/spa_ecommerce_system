@@ -97,7 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             // EDITING
             if ($image_name !== '') {
                 $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_fee=? WHERE id=?");
-                $stmt->bind_param("ssdiisiidi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee, $id);
+                // FIX: Corrected type definitions string to match exactly 9 elements (ssdisiidi)
+                $stmt->bind_param("ssdisiidi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee, $id);
             } else {
                 $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_fee=? WHERE id=?");
                 $stmt->bind_param("ssdiiidi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_fee, $id);
@@ -160,7 +161,6 @@ require_once 'admin_header.php';
 <?php if (!$edit_service && !isset($_GET['action'])): ?>
     <form method="POST" enctype="multipart/form-data">
     <?php echo csrf_field(); ?>
-<!-- ── STATS ──────────────────────────────────────────────────────────────── -->
 <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1.5rem;">
     <div class="stat-card">
         <div class="stat-icon">💆</div>
@@ -180,7 +180,6 @@ require_once 'admin_header.php';
 </div>
 <?php endif; ?>
 
-<!-- ── ADD / EDIT FORM ────────────────────────────────────────────────────── -->
 <?php if ((isset($_GET['action']) && $_GET['action'] === 'add') || $edit_service): ?>
 
 <div style="margin-bottom:1rem;">
@@ -232,7 +231,6 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
-            <!-- Home Service Toggle + Fee -->
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;user-select:none;">
@@ -248,7 +246,6 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
-            <!-- Home Service Fee (shown only when checkbox is checked) -->
             <div class="form-grid form-grid-2" style="margin-bottom:1.25rem;"
                  id="homeFeeSectionRow"
                  <?php if (empty($edit_service['is_home_service'])): ?>style="display:none;"<?php endif; ?>>
@@ -290,7 +287,10 @@ require_once 'admin_header.php';
                            <?php echo !$edit_service ? 'required' : ''; ?>>
                     <?php if ($edit_service && $edit_service['image']): ?>
                         <div style="margin-top:0.5rem;display:flex;align-items:center;gap:1rem;">
-                            <img src="../uploads/services/<?php echo htmlspecialchars($service['image']); ?>" class="thumb" alt="">                                 style="width:60px;height:60px;object-fit:cover;border-radius:8px;border:2px solid var(--border);">
+                            <img src="../uploads/services/<?php echo htmlspecialchars($edit_service['image']); ?>" 
+                                 class="thumb" 
+                                 alt="Current Service Image" 
+                                 style="width:60px;height:60px;object-fit:cover;border-radius:8px;border:2px solid var(--border);">
                             <small>Current image — upload new to replace</small>
                         </div>
                     <?php endif; ?>
@@ -316,7 +316,6 @@ require_once 'admin_header.php';
 
 <?php endif; ?>
 
-<!-- ── SERVICES TABLE ─────────────────────────────────────────────────────── -->
 <?php if (!$edit_service): ?>
 
 <div class="panel">
@@ -369,14 +368,18 @@ require_once 'admin_header.php';
                     <?php foreach ($filtered as $service): ?>
                     <tr<?php if ($service['deleted_at']): ?> style="opacity:0.5;"<?php endif; ?>>
                         <td><strong style="color:var(--gold);">#<?php echo $service['id']; ?></strong></td>
+                        
                         <td>
-                            <?php if ($service['image']): ?>
+                            <?php if (!empty($service['image'])): ?>
                                 <img src="../uploads/services/<?php echo htmlspecialchars($service['image']); ?>"
-                                     class="thumb" alt="">
+                                     class="thumb" 
+                                     alt="Service Thumbnail"
+                                     style="width:50px;height:50px;object-fit:cover;border-radius:6px;">
                             <?php else: ?>
-                                <div class="thumb" style="background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--gray);font-size:0.7rem;">No img</div>
+                                <div class="thumb" style="width:50px;height:50px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--gray);font-size:0.7rem;border-radius:6px;">No img</div>
                             <?php endif; ?>
                         </td>
+                        
                         <td><strong><?php echo htmlspecialchars($service['name']); ?></strong><?php if ($service['deleted_at']): ?> <span class="badge" style="background:#6c757d;color:#fff;font-size:0.68rem;">ARCHIVED</span><?php endif; ?></td>
                         <td>
                             <?php if ($service['category_name']): ?>

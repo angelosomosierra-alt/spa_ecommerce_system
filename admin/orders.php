@@ -15,13 +15,11 @@ if (isset($_POST['verify_pin_only'])) {
     if (!ctype_digit($entered) || strlen($entered) !== 4) {
         echo json_encode(['ok' => false, 'error' => 'Invalid PIN format.']); exit();
     }
-    $stmt = $conn->prepare("SELECT full_name, cashier_pin FROM users WHERE id=? AND admin_role='cashier'");
-    $stmt->bind_param("i", $uid); $stmt->execute();
+    // FIXED: Bug 1 — query receptionist_pins by entered PIN, not users.cashier_pin
+    $stmt = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+    $stmt->bind_param("s", $entered); $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc(); $stmt->close();
-    if (!$row || empty($row['cashier_pin'])) {
-        echo json_encode(['ok' => false, 'error' => 'No PIN set. Ask the owner to set your PIN.']); exit();
-    }
-    if ($row['cashier_pin'] !== $entered) {
+    if (!$row) {
         echo json_encode(['ok' => false, 'error' => 'Incorrect PIN. Try again.']); exit();
     }
     echo json_encode(['ok' => true, 'name' => $row['full_name']]);

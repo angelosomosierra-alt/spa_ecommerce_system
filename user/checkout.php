@@ -139,9 +139,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $payment_status  = $payment_method === 'online' ? 'pending_payment' : 'unpaid';
 
     $home_fee_applied = 0.00;
-    if ($checkout_type === 'service' && $service_type === 'home') {
-        $home_fee_applied = floatval($checkout_items[0]['home_service_fee'] ?? 0);
-        $total_amount     = $checkout_items[0]['price'] + $home_fee_applied;
+    if ($checkout_type === 'service') {
+        if ($service_type === 'home') {
+            $home_fee_applied = floatval($checkout_items[0]['home_service_fee'] ?? 0);
+            $total_amount     = ($checkout_items[0]['price'] + $home_fee_applied) * $people_count;
+        } else {
+            $total_amount = $checkout_items[0]['price'] * $people_count;
+        }
     }
 
     if ($checkout_type === 'service' && !empty($booking_date)) {
@@ -166,7 +170,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     } else {
         if ($checkout_type === 'service') {
             if (empty($booking_date) || $people_count < 1) {
-                $message = "Booking date and number of people are required."; $message_type = "danger";
+                $message = empty($booking_date)
+                    ? "Please select a date and time slot for your appointment."
+                    : "Please specify the number of people (minimum 1).";
+                $message_type = "danger";
             } else {
                 date_default_timezone_set('Asia/Manila');
                 $chosen_time = strtotime($booking_date);
@@ -309,10 +316,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         $item_stmt->bind_param("iiidd", $order_id, $item['id'], $item['quantity'], $item['price'], $subtotal);
                         $item_stmt->execute(); $item_stmt->close();
                     } elseif ($item['type'] === 'service') {
-                        $svc_home_fee = ($service_type === 'home') ? $home_fee_applied : 0.00;
-                        $svc_subtotal = $item['price'] + $svc_home_fee;
-                        $item_stmt    = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal, home_service_fee) VALUES (?, ?, 1, ?, ?, ?)");
-                        $item_stmt->bind_param("iiddd", $order_id, $item['id'], $item['price'], $svc_subtotal, $svc_home_fee);
+                        $svc_home_fee   = ($service_type === 'home') ? $home_fee_applied : 0.00;
+                        $svc_per_person = $item['price'] + $svc_home_fee;
+                        $svc_subtotal   = $svc_per_person * $people_count;
+                        $item_stmt      = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal, home_service_fee) VALUES (?, ?, ?, ?, ?, ?)");
+                        $item_stmt->bind_param("iiiddd", $order_id, $item['id'], $people_count, $svc_per_person, $svc_subtotal, $svc_home_fee);
                         $item_stmt->execute(); $order_item_id = $item_stmt->insert_id; $item_stmt->close();
 
                         $appt_stmt = $conn->prepare("
@@ -322,7 +330,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                                  charged_price)
                             VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
                         ");
-                        $appt_charged = floatval($item['price']); // regular price for online bookings
+                        // FIXED: Bug 2 — store total for all people, not per-person
+                        $appt_charged = floatval($item['price']) * $people_count;
                         $appt_stmt->bind_param("iiisissssd",
                             $user_id, $item['id'], $order_item_id,
                             $booking_date, $people_count,
@@ -1357,7 +1366,7 @@ require_once 'header.php';
                     <div class="co-totals">
                         <div class="co-total-row">
                             <span>Subtotal</span>
-                            <span>₱<?php echo number_format($total_amount, 2); ?></span>
+                            <span id="subtotalDisplay">₱<?php echo number_format($total_amount, 2); ?></span>
                         </div>
                         <div class="co-total-row" id="homeFeeRow" style="display:none;">
                             <span>🏠 Home Service Fee</span>
@@ -1455,7 +1464,6 @@ function selectServiceType(type) {
     const homeBlock  = document.getElementById('homeAddressBlock');
     const homeFeeRow = document.getElementById('homeFeeRow');
     const homeNotice = document.getElementById('homeFeeNotice');
-    const grandTotal = document.getElementById('grandTotal');
     const homeAddr   = document.getElementById('home_address');
 
     if (type === 'home') {
@@ -1463,14 +1471,13 @@ function selectServiceType(type) {
         if (homeFeeRow) homeFeeRow.style.display  = '';
         if (homeNotice) homeNotice.style.display  = '';
         if (homeAddr)   homeAddr.required = true;
-        if (grandTotal) grandTotal.textContent = '₱' + (BASE_PRICE + HOME_FEE).toLocaleString('en-PH', {minimumFractionDigits:2});
     } else {
         if (homeBlock)  homeBlock.style.display  = 'none';
         if (homeFeeRow) homeFeeRow.style.display  = 'none';
         if (homeNotice) homeNotice.style.display  = 'none';
         if (homeAddr)   homeAddr.required = false;
-        if (grandTotal) grandTotal.textContent = '₱' + BASE_PRICE.toLocaleString('en-PH', {minimumFractionDigits:2});
     }
+    updateDiscountPreview();
 }
 
 // ── Payment method ────────────────────────────────────────────────────────────
@@ -1633,7 +1640,7 @@ function selectSlot(btn, slot, allSlots) {
     updateBookingConfirmation();
 }
 
-// Reload slots when people count changes
+// Reload slots and totals when people count changes
 const origChangePeople = window.changePeople;
 function changePeople(delta) {
     const inp = document.getElementById('people_count');
@@ -1642,6 +1649,7 @@ function changePeople(delta) {
     if (val > Math.max(TOTAL_QUALIFIED, 10)) val = Math.max(TOTAL_QUALIFIED, 10);
     inp.value = val;
     checkCapacityWarning(val);
+    updateDiscountPreview();
     // Reload slots with new people count
     if (document.getElementById('booking_date_picker')?.value) loadSlots();
 }
@@ -1697,11 +1705,13 @@ function updateDiscountPreview() {
     const grandEl = document.getElementById('grandTotal');
     if (!discRow || !grandEl) return;
 
-    let subtotal = BASE_TOTAL_AMOUNT;
+    const people = parseInt(document.getElementById('people_count')?.value || 1) || 1;
     const homeFeeRow = document.getElementById('homeFeeRow');
-    if (homeFeeRow && homeFeeRow.style.display !== 'none') {
-        subtotal += parseFloat(document.getElementById('homeFeeAmt')?.textContent?.replace(/[^0-9.]/g,'') || 0);
-    }
+    const homeFeePerPerson = (homeFeeRow && homeFeeRow.style.display !== 'none')
+        ? parseFloat(document.getElementById('homeFeeAmt')?.textContent?.replace(/[^0-9.]/g,'') || 0) : 0;
+    let subtotal = (BASE_TOTAL_AMOUNT + homeFeePerPerson) * people;
+    const subtotalEl = document.getElementById('subtotalDisplay');
+    if (subtotalEl) subtotalEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
 
     let discountAmt = 0;
 
@@ -1739,6 +1749,35 @@ function updateDiscountPreview() {
 // Init
 selectPayment('onsite');
 selectDiscount('none');
+
+<?php if ($checkout_type === 'service'): ?>
+// Prevent form submission when no time slot has been selected.
+// `required` on type="hidden" is ignored by all browsers, so we enforce it here.
+document.getElementById('checkoutForm').addEventListener('submit', function(e) {
+    const bookingDate = document.getElementById('booking_date_input').value;
+    if (bookingDate) return; // slot selected — proceed
+
+    e.preventDefault();
+
+    const datePicker  = document.getElementById('booking_date_picker');
+    const slotSection = document.getElementById('slot-section');
+    const errBox      = document.getElementById('slot-unavailable');
+
+    if (!datePicker.value) {
+        // User hasn't even chosen a date yet — highlight the date picker
+        datePicker.style.outline = '2px solid #ef4444';
+        datePicker.focus();
+        datePicker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        setTimeout(() => { datePicker.style.outline = ''; }, 3000);
+    } else {
+        // Date chosen but no slot clicked — reveal the slot grid with an inline error
+        slotSection.style.display = 'block';
+        errBox.style.display      = 'block';
+        errBox.textContent        = '⚠️ Please select a time slot before confirming your booking.';
+        slotSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+});
+<?php endif; ?>
 </script>
 
 <footer class="spa-footer">

@@ -100,7 +100,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     $partner_id     = intval($_POST['partner_id'] ?? 0);
     $customer_note  = sanitize_input($_POST['customer_note'] ?? '');
     $slip_number    = sanitize_input($_POST['slip_number']    ?? '');
-    $therapist_id   = intval($_POST['therapist_id']   ?? 0);
+    $therapist_id       = intval($_POST['therapist_id']   ?? 0);
+    // single walk-in therapist handles all people in the booking by default
+    $people_handled_svc = max(1, min($people_count, intval($_POST['people_handled'] ?? $people_count)));
 
     $discount_type  = in_array($_POST['discount_type'] ?? '', ['none','voucher','senior','pwd','employee'])
                       ? $_POST['discount_type'] : 'none';
@@ -187,7 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     default:           $charged_price = $regular_price; break;
                 }
 
-                $total_amount    = $charged_price;
+                $total_amount    = $charged_price * $people_count;
                 $appt_rate_type  = $rate_type;
                 $appt_partner_id = ($rate_type === 'hotel' && $partner_id > 0) ? $partner_id : null;
 
@@ -282,15 +284,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $order_id = $stmt->insert_id;
                 $stmt->close();
 
-                $item_stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, 1, ?, ?)");
-                $item_stmt->bind_param("iidd", $order_id, $item_id, $charged_price, $charged_price);
+                $item_stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)");
+                $item_stmt->bind_param("iiidd", $order_id, $item_id, $people_count, $charged_price, $total_amount);
                 $item_stmt->execute();
                 $order_item_id = $item_stmt->insert_id;
                 $item_stmt->close();
 
+                // charged_price stored as total (per-person × people_count)
+                // so Complete action can safely do charged_price / people_count
+                $appt_charged_total = $charged_price * $people_count;
                 $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?)");
                 $svc_type_val = ($rate_type === 'home') ? 'home' : 'onsite';
-                $appt_stmt->bind_param("iiisissids", $walkin_user_id, $item_id, $order_item_id, $booking_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $charged_price, $customer_note);
+                $appt_stmt->bind_param("iiisissids", $walkin_user_id, $item_id, $order_item_id, $booking_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $appt_charged_total, $customer_note);
                 $appt_stmt->execute();
                 $appointment_id = $appt_stmt->insert_id; // ← actual appointment ID
                 $appt_stmt->close();
@@ -315,8 +320,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
 
                     $svc_session = intval($item['session_time'] ?? 60);
                     $svc_buffer  = ($rate_type === 'home') ? 30 : 0;
-                    $cf = $conn->prepare("SELECT COUNT(*) AS cnt FROM appointment_therapists at2 JOIN appointments a2 ON at2.appointment_id = a2.id JOIN services s2 ON a2.service_id = s2.id WHERE at2.therapist_id = ? AND a2.status IN ('approved','assigned') AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE) < (? + INTERVAL ? MINUTE) AND (a2.appointment_date + INTERVAL (s2.session_time + IF(a2.service_type='home',30,0)) MINUTE) > (? - INTERVAL ? MINUTE)");
-                    $end_mins = $svc_session + $svc_buffer;
+                    // FIXED: Bug 3 — new slot duration = session_time × people_handled (back-to-back model)
+                    // Also scale existing appointments' end by their people_handled to avoid double-booking
+                    $cf = $conn->prepare("SELECT COUNT(*) AS cnt FROM appointment_therapists at2 JOIN appointments a2 ON at2.appointment_id = a2.id JOIN services s2 ON a2.service_id = s2.id WHERE at2.therapist_id = ? AND a2.status IN ('approved','assigned') AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE) < (? + INTERVAL ? MINUTE) AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + IF(a2.service_type='home',30,0)) MINUTE) > (? - INTERVAL ? MINUTE)");
+                    $end_mins = ($svc_session * $people_handled_svc) + $svc_buffer;
                     $cf->bind_param("isisi", $therapist_id, $booking_date, $end_mins, $booking_date, $svc_buffer);
                     $cf->execute();
                     $cf_count = (int)$cf->get_result()->fetch_assoc()['cnt']; $cf->close();
@@ -331,12 +338,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
                         $commission = 0.00;
                         if ($cm_row) {
+                            // commission = per-person price × people_handled × rate
                             $commission = $rate_type === 'influencer'
-                                ? floatval($cm_row['influencer_flat_rate'])
-                                : round($charged_price * floatval($cm_row['commission_percent']) / 100, 2);
+                                ? floatval($cm_row['influencer_flat_rate']) * $people_handled_svc
+                                : round($charged_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                         }
-                        $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, notes) VALUES (?, ?, ?, '')");
-                        $at->bind_param("iid", $appointment_id, $therapist_id, $commission); $at->execute(); $at->close();
+                        $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
+                        $at->bind_param("iidi", $appointment_id, $therapist_id, $commission, $people_handled_svc); $at->execute(); $at->close();
 
                         $is_future = strtotime($booking_date) > (time() + 1800);
                         if (!$is_future) {
@@ -354,7 +362,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $disc_suffix = $discount_type !== 'none' && $discount_amount_calc > 0
                     ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior Citizen','pwd'=>'PWD','employee'=>'Employee'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
                     : '';
-                $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name}</strong> — {$item['name']} · {$rate_label} · ₱" . number_format($charged_price, 2) . $disc_suffix;
+                $people_suffix = $people_count > 1 ? " · {$people_count} people" : '';
+                $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name}</strong> — {$item['name']} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix;
                 $walkin_type    = "success";
                 } catch (Throwable $_we) {
                     $conn->rollback();
@@ -526,6 +535,7 @@ require_once 'admin_header.php';
                     </div>
                     <div class="form-section-body">
                         <input type="hidden" name="therapist_id" id="svc_therapist_id" value="0">
+                        <input type="hidden" name="people_handled" id="svc_people_handled" value="1">
                         <div id="therapist-no-svc-notice" style="margin-bottom:0.75rem;padding:0.6rem 0.85rem;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.25);border-radius:8px;font-size:0.8rem;color:var(--gray);">
                             💡 Select a service above to see available therapists.
                         </div>
@@ -1034,7 +1044,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const bi = document.getElementById('service_booking_date');
     if (bi) { bi.addEventListener('change', updateTherapistMode); bi.addEventListener('input', updateTherapistMode); }
     const pi = document.querySelector('[name="people_count"]');
-    if (pi) pi.addEventListener('change', updateTherapistMode);
+    if (pi) {
+        pi.addEventListener('change', () => {
+            updateTherapistMode();
+            const ph = document.getElementById('svc_people_handled');
+            if (ph) ph.value = Math.max(1, parseInt(pi.value) || 1);
+        });
+        pi.addEventListener('input', () => {
+            updatePricePreview(); updateWalkinPreview('service');
+            const ph = document.getElementById('svc_people_handled');
+            if (ph) ph.value = Math.max(1, parseInt(pi.value) || 1);
+        });
+    }
 });
 
 function onPartnerChange(partnerId) { currentPartnerId = parseInt(partnerId) || 0; document.getElementById('partner_id_val').value = currentPartnerId; updatePricePreview(); }
@@ -1043,14 +1064,18 @@ function updatePricePreview() {
     const svc = serviceData[currentServiceId]; const display = document.getElementById('price-display'); const formula = document.getElementById('price-formula');
     if (!display || !formula) return;
     if (!svc) { display.textContent = '₱0.00'; formula.textContent = 'Select a service first'; return; }
-    const regular = parseFloat(svc.price); let charged = regular; let formulaTxt = '';
+    const regular = parseFloat(svc.price);
+    const peopleCount = parseInt(document.querySelector('[name="people_count"]')?.value || 1) || 1;
+    let perPerson = regular; let formulaTxt = '';
     switch (currentRateType) {
-        case 'regular':    charged = regular; formulaTxt = 'Regular price'; break;
-        case 'home':       charged = (regular * 2) + 300; formulaTxt = `(₱${regular.toFixed(2)} × 2) + ₱300`; break;
-        case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { charged = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { charged = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
-        case 'influencer': charged = 0; formulaTxt = 'Complimentary — ₱0'; break;
+        case 'regular':    perPerson = regular; formulaTxt = 'Regular price'; break;
+        case 'home':       perPerson = (regular * 2) + 300; formulaTxt = `(₱${regular.toFixed(2)} × 2) + ₱300`; break;
+        case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
+        case 'influencer': perPerson = 0; formulaTxt = 'Complimentary — ₱0'; break;
     }
-    display.textContent = '₱' + charged.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+    if (peopleCount > 1 && currentRateType !== 'influencer') formulaTxt += ` × ${peopleCount} people`;
+    const total = perPerson * peopleCount;
+    display.textContent = '₱' + total.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
     formula.textContent = formulaTxt;
     display.style.color = currentRateType === 'influencer' ? 'var(--green)' : 'var(--gold)';
 }

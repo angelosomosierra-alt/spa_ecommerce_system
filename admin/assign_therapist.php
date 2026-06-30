@@ -24,147 +24,116 @@ $appt = $stmt->get_result()->fetch_assoc(); $stmt->close();
 if (!$appt) { header("Location: appointments.php"); exit(); }
 
 // Only allow assignment on approved or assigned appointments
-if (!in_array($appt['status'], ['approved','assigned'])) {
+if (!in_array($appt['status'], ['pending','approved','assigned'])) {
     header("Location: appointments.php?msg=cannot_assign"); exit();
 }
 
 $appt_date  = $appt['appointment_date'];              // e.g. "2025-04-10 10:00:00"
 $people     = max(1, intval($appt['people_count']));  // how many therapists needed
 
-// ── ASSIGN therapist ──────────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_therapist'])) {
+// ── ASSIGN therapists — per-person row submission ─────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_per_person'])) {
     verify_csrf_token();
-    $therapist_id = intval($_POST['therapist_id']);
-    $notes        = sanitize_input($_POST['notes'] ?? '');
-    $commission   = floatval($_POST['commission'] ?? 0);
 
-    if (!$therapist_id) {
-        $message = "Please select a therapist."; $message_type = "danger";
+    $therapist_ids = array_map('intval', (array)($_POST['therapist_ids'] ?? []));
+
+    if (count($therapist_ids) !== $people || in_array(0, $therapist_ids, true)) {
+        $message = "Please select a therapist for every person."; $message_type = "danger";
     } else {
-        // ── Specialty check ───────────────────────────────────────────────────
-        $spc = $conn->prepare("
-            SELECT (
-                SELECT COUNT(*) FROM therapist_specialty_services
-                WHERE therapist_id=? AND service_id=?
-            ) + (
-                SELECT COUNT(*) FROM therapist_specialties ts
-                JOIN services s ON s.category_id = ts.category_id
-                WHERE ts.therapist_id=? AND s.id=?
-            ) AS total
-        ");
-        $svc_id = (int)$appt['service_id'];
-        $spc->bind_param("iiii", $therapist_id, $svc_id, $therapist_id, $svc_id);
-        $spc->execute();
-        $spc_count = intval($spc->get_result()->fetch_assoc()['total']); $spc->close();
+        // Group identical IDs → people_handled count per unique therapist
+        $grouped = array_count_values($therapist_ids); // ['tid' => ph]
 
-        if ($spc_count === 0) {
-            // Get therapist name and service name for a clear message
-            $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
-            $tn->bind_param("i", $therapist_id); $tn->execute();
-            $tn_row = $tn->get_result()->fetch_assoc(); $tn->close();
-            $message = "⚠️ <strong>" . htmlspecialchars($tn_row['full_name'] ?? 'This therapist') . "</strong> does not have <strong>" . htmlspecialchars($appt['service_name']) . "</strong> as a specialty. Please assign a qualified therapist.";
-            $message_type = "danger";
-        } else {
-        // ── Proper overlap conflict check using session_time ──────────────────
-        // Get session_time for the current appointment's service
         $new_session_time = intval($appt['session_time'] ?? 60);
-        $is_home = ($appt['service_type'] ?? '') === 'home';
-        $buffer  = $is_home ? 30 : 0;
+        $is_home          = ($appt['service_type'] ?? '') === 'home';
+        $buffer           = $is_home ? 30 : 0;
+        $svc_id           = (int)$appt['service_id'];
+        $errors           = [];
 
-        // new slot range (with home service buffer)
-        $new_start = $appt_date;  // e.g. "2026-05-23 15:00:00"
+        foreach ($grouped as $tid_key => $ph) {
+            $tid = (int)$tid_key;
 
-        $conflict_stmt = $conn->prepare("
-            SELECT COUNT(*) AS cnt
-            FROM appointment_therapists at2
-            JOIN appointments a2  ON at2.appointment_id = a2.id
-            JOIN services     s2  ON a2.service_id = s2.id
-            WHERE at2.therapist_id = ?
-              AND a2.id            != ?
-              AND a2.status        IN ('approved','assigned')
-              AND (
-                -- existing busy_start < new busy_end
-                (a2.appointment_date - INTERVAL ? MINUTE)
-                    < (? + INTERVAL ? MINUTE)
-                AND
-                -- existing busy_end > new busy_start
-                (a2.appointment_date + INTERVAL (s2.session_time + ?) MINUTE)
-                    > (? - INTERVAL ? MINUTE)
-              )
-        ");
-        // params: therapist_id, appt_id,
-        //         existing_buffer, new_start, new_session+buffer,
-        //         existing_buffer, new_start, new_buffer
-        $end_mins = $new_session_time + $buffer;
-        $conflict_stmt->bind_param(
-            "iiisisis",
-            $therapist_id, $appt_id,
-            $buffer, $new_start, $end_mins,
-            $buffer, $new_start, $buffer
-        );
-        $conflict_stmt->execute();
-        $conflict_count = $conflict_stmt->get_result()->fetch_assoc()['cnt'];
-        $conflict_stmt->close();
+            // Specialty check
+            $spc = $conn->prepare("
+                SELECT (
+                    SELECT COUNT(*) FROM therapist_specialty_services WHERE therapist_id=? AND service_id=?
+                ) + (
+                    SELECT COUNT(*) FROM therapist_specialties ts
+                    JOIN services s ON s.category_id = ts.category_id
+                    WHERE ts.therapist_id=? AND s.id=?
+                ) AS total
+            ");
+            $spc->bind_param("iiii", $tid, $svc_id, $tid, $svc_id); $spc->execute();
+            $spc_count = intval($spc->get_result()->fetch_assoc()['total']); $spc->close();
 
-        if ($conflict_count > 0) {
-            $time_label = date('h:i A', strtotime($appt_date));
-            $end_label  = date('h:i A', strtotime($appt_date . ' +' . ($new_session_time + $buffer) . ' minutes'));
-            $message = "⚠️ This therapist is already booked during the " . $time_label . "–" . $end_label . " window" . ($is_home ? " (includes 30-min home service travel buffer)" : "") . ". Please choose another therapist.";
-            $message_type = "danger";
-        } else {
-            // ── Check if already assigned to THIS appointment ─────────────────
-            $dup = $conn->prepare("SELECT id FROM appointment_therapists WHERE appointment_id=? AND therapist_id=?");
-            $dup->bind_param("ii", $appt_id, $therapist_id); $dup->execute();
-            $already = $dup->get_result()->fetch_assoc(); $dup->close();
+            if ($spc_count === 0) {
+                $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
+                $tn->bind_param("i", $tid); $tn->execute();
+                $tn_name = htmlspecialchars($tn->get_result()->fetch_assoc()['full_name'] ?? 'Unknown'); $tn->close();
+                $errors[] = "<strong>{$tn_name}</strong> is not qualified for <strong>" . htmlspecialchars($appt['service_name']) . "</strong>.";
+                continue;
+            }
 
-            if ($already) {
-                $message = "This therapist is already assigned to this appointment."; $message_type = "danger";
-            } else {
-                // ── Check we haven't exceeded people_count ────────────────────
-                $cnt_stmt = $conn->prepare("SELECT COUNT(*) AS c FROM appointment_therapists WHERE appointment_id=?");
-                $cnt_stmt->bind_param("i", $appt_id); $cnt_stmt->execute();
-                $current_count = $cnt_stmt->get_result()->fetch_assoc()['c']; $cnt_stmt->close();
+            // Conflict check: new slot = session_time × ph (back-to-back model)
+            $end_mins = ($new_session_time * $ph) + $buffer;
+            $conf = $conn->prepare("
+                SELECT COUNT(*) AS cnt
+                FROM appointment_therapists at2
+                JOIN appointments a2 ON at2.appointment_id = a2.id
+                JOIN services     s2 ON a2.service_id = s2.id
+                WHERE at2.therapist_id = ?
+                  AND a2.id            != ?
+                  AND a2.status        IN ('approved','assigned')
+                  AND (a2.appointment_date - INTERVAL ? MINUTE) < (? + INTERVAL ? MINUTE)
+                  AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + ?) MINUTE)
+                        > (? - INTERVAL ? MINUTE)
+            ");
+            $conf->bind_param("iiisisis", $tid, $appt_id, $buffer, $appt_date, $end_mins, $buffer, $appt_date, $buffer);
+            $conf->execute();
+            $conf_count = (int)$conf->get_result()->fetch_assoc()['cnt']; $conf->close();
 
-                if ($current_count >= $people) {
-                    $message = "All {$people} therapist(s) for this appointment are already assigned.";
-                    $message_type = "danger";
-                } else {
-                    // ── Insert assignment with commission ─────────────────────
-                    $ins = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, notes, commission) VALUES (?,?,?,?)");
-                    $ins->bind_param("iisd", $appt_id, $therapist_id, $notes, $commission);
-                    $ok = $ins->execute(); $ins->close();
-
-                    if ($ok) {
-                        // Update appointment status to 'assigned'
-                        $upd = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=?");
-                        $upd->bind_param("i",$appt_id); $upd->execute(); $upd->close();
-
-                        // Notify user
-                        require_once __DIR__ . '/../notify.php';
-                        $t_name_stmt = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
-                        $t_name_stmt->bind_param("i", $therapist_id); $t_name_stmt->execute();
-                        $t_name = $t_name_stmt->get_result()->fetch_assoc()['full_name'] ?? 'a therapist';
-                        $t_name_stmt->close();
-
-                        add_notification($conn, $appt['user_id'], 'appointment',
-                            '💆 Therapist Assigned!',
-                            'Your appointment for "' . $appt['service_name'] . '" has been assigned to ' . $t_name . '.',
-                            'appointments.php'
-                        );
-
-                        $message = "✅ Therapist assigned successfully."; $message_type = "success";
-                    } else {
-                        $message = "Error assigning therapist. Please try again."; $message_type = "danger";
-                    }
-                }
+            if ($conf_count > 0) {
+                $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
+                $tn->bind_param("i", $tid); $tn->execute();
+                $tn_name = htmlspecialchars($tn->get_result()->fetch_assoc()['full_name'] ?? 'Unknown'); $tn->close();
+                $t_start = date('h:i A', strtotime($appt_date . ' -' . $buffer . ' minutes'));
+                $t_end   = date('h:i A', strtotime($appt_date . ' +' . $end_mins . ' minutes'));
+                $errors[] = "<strong>{$tn_name}</strong> is busy during {$t_start}–{$t_end}" . ($is_home ? " (incl. travel buffer)" : "") . ".";
             }
         }
-        } // end specialty check else
+
+        if (!empty($errors)) {
+            $message = "⚠️ " . implode(" ", $errors); $message_type = "danger";
+        } else {
+            // Replace all existing assignments with the new grouped set
+            $del = $conn->prepare("DELETE FROM appointment_therapists WHERE appointment_id=?");
+            $del->bind_param("i", $appt_id); $del->execute(); $del->close();
+
+            $commission = 0.00; $notes = '';
+            $therapist_names = [];
+            foreach ($grouped as $tid_key => $ph) {
+                $tid = (int)$tid_key;
+                $ins = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, notes, commission, people_handled) VALUES (?,?,?,?,?)");
+                $ins->bind_param("iisdi", $appt_id, $tid, $notes, $commission, $ph);
+                $ins->execute(); $ins->close();
+
+                $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
+                $tn->bind_param("i", $tid); $tn->execute();
+                $therapist_names[] = $tn->get_result()->fetch_assoc()['full_name'] ?? 'a therapist'; $tn->close();
+            }
+
+            $upd = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=?");
+            $upd->bind_param("i", $appt_id); $upd->execute(); $upd->close();
+
+            require_once __DIR__ . '/../notify.php';
+            add_notification($conn, $appt['user_id'], 'appointment',
+                '💆 Therapist Assigned!',
+                'Your appointment for "' . $appt['service_name'] . '" has been assigned to ' . implode(' & ', $therapist_names) . '.',
+                'appointments.php'
+            );
+
+            header("Location: assign_therapist.php?appt_id={$appt_id}&msg=assigned"); exit();
+        }
     }
-    // Reload appointment after changes
-    $stmt = $conn->prepare("SELECT a.*, s.name AS service_name, s.session_time, u.username, u.email FROM appointments a JOIN services s ON a.service_id=s.id JOIN users u ON a.user_id=u.id WHERE a.id=?");
-    $stmt->bind_param("i", $appt_id); $stmt->execute();
-    $appt = $stmt->get_result()->fetch_assoc(); $stmt->close();
 }
 
 // ── REMOVE therapist assignment ───────────────────────────────────────────────
@@ -189,6 +158,7 @@ if (isset($_GET['remove_assign'])) {
 // ── Currently assigned therapists for this appointment ───────────────────────
 $assigned_stmt = $conn->prepare("
     SELECT at2.id AS at_id, at2.assigned_at, at2.notes, at2.commission,
+           IFNULL(at2.people_handled, 1) AS people_handled,
            t.id AS therapist_id, t.full_name, t.specialties
     FROM appointment_therapists at2
     JOIN therapists t ON at2.therapist_id = t.id
@@ -199,7 +169,8 @@ $assigned_stmt->bind_param("i", $appt_id); $assigned_stmt->execute();
 $assigned_therapists = $assigned_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $assigned_stmt->close();
 
-$slots_filled = count($assigned_therapists);
+// People budget: sum of people_handled across assigned therapists
+$slots_filled = array_sum(array_column($assigned_therapists, 'people_handled'));
 $slots_left   = $people - $slots_filled;
 
 // ── Available therapists on duty TODAY ───────────────────────────────────────
@@ -301,6 +272,33 @@ if ($appt_is_today) {
 }
 $available_therapists = $available_stmt->fetch_all(MYSQLI_ASSOC);
 
+// All therapists for per-person dropdowns — includes already-assigned (same therapist
+// can handle multiple person-rows), no attendance filter so future appts work too.
+$form_t_stmt = $conn->query("
+    SELECT t.id, t.full_name, t.specialties,
+           COALESCE(ta.is_on_break, 0) AS is_on_break,
+           ta.time_out,
+           (SELECT COUNT(*) FROM therapist_specialty_services tss
+            WHERE tss.therapist_id=t.id AND tss.service_id={$appt['service_id']}
+           ) + (SELECT COUNT(*) FROM therapist_specialties ts2
+            JOIN services s2 ON s2.category_id=ts2.category_id
+            WHERE ts2.therapist_id=t.id AND s2.id={$appt['service_id']}
+           ) AS has_specialty,
+           (SELECT COUNT(*) FROM appointment_therapists at3
+            JOIN appointments a3 ON at3.appointment_id=a3.id
+            JOIN services     s3 ON a3.service_id=s3.id
+            WHERE at3.therapist_id=t.id
+              AND a3.id     != {$appt_id}
+              AND a3.status IN ('approved','assigned')
+              AND (a3.appointment_date - INTERVAL IF(a3.service_type='home',30,0) MINUTE) < {$new_end_expr}
+              AND (a3.appointment_date + INTERVAL (s3.session_time + IF(a3.service_type='home',30,0)) MINUTE) > {$new_start_expr}
+           ) AS slot_conflict
+    FROM therapists t
+    LEFT JOIN therapist_attendance ta ON ta.therapist_id=t.id AND ta.duty_date=CURDATE()
+    ORDER BY has_specialty DESC, slot_conflict ASC, t.full_name ASC
+");
+$form_therapists = $form_t_stmt->fetch_all(MYSQLI_ASSOC);
+
 $page_title  = 'Assign Therapist';
 $page_icon   = '💆';
 $active_page = 'appointments';
@@ -312,6 +310,9 @@ require_once 'admin_header.php';
 <?php endif; ?>
 <?php if (isset($_GET['msg']) && $_GET['msg']==='removed'): ?>
 <div class="alert alert-success" style="margin-bottom:1.25rem;">✅ Therapist removed from this appointment.</div>
+<?php endif; ?>
+<?php if (isset($_GET['msg']) && $_GET['msg']==='assigned'): ?>
+<div class="alert alert-success" style="margin-bottom:1.25rem;">✅ Therapist assignments saved successfully.</div>
 <?php endif; ?>
 
 <div style="display:grid;grid-template-columns:1fr 1.1fr;gap:1.5rem;align-items:start;">
@@ -371,10 +372,10 @@ require_once 'admin_header.php';
             <!-- Therapist assignment progress -->
             <div style="margin-top:0.5rem;">
                 <div style="display:flex;justify-content:space-between;margin-bottom:0.35rem;">
-                    <span style="font-size:0.76rem;color:var(--gray);">Therapists assigned</span>
+                    <span style="font-size:0.76rem;color:var(--gray);">People covered</span>
                     <span style="font-size:0.76rem;font-weight:700;
                         color:<?php echo $slots_filled>=$people?'var(--green)':'var(--gold)'; ?>">
-                        <?php echo $slots_filled; ?> / <?php echo $people; ?> assigned
+                        <?php echo $slots_filled; ?> / <?php echo $people; ?> covered
                     </span>
                 </div>
                 <div style="height:6px;background:var(--border2);border-radius:99px;overflow:hidden;">
@@ -388,7 +389,7 @@ require_once 'admin_header.php';
     <!-- Assigned Therapists -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">💆 Assigned Therapists (<?php echo $slots_filled; ?>/<?php echo $people; ?>)</span>
+            <span class="panel-title">💆 Assigned Therapists (<?php echo $slots_filled; ?>/<?php echo $people; ?> people covered)</span>
         </div>
         <div class="panel-body" style="padding:1rem;">
             <?php if (empty($assigned_therapists)): ?>
@@ -411,7 +412,10 @@ require_once 'admin_header.php';
                         <?php if ($at['notes']): ?>
                         <div style="font-size:0.72rem;color:var(--gold);margin-top:0.15rem;">📝 <?php echo htmlspecialchars($at['notes']); ?></div>
                         <?php endif; ?>
-                        <div style="font-size:0.72rem;color:#a3e6a3;margin-top:0.15rem;">
+                        <div style="font-size:0.72rem;color:var(--gold);margin-top:0.15rem;">
+                            👥 Handles: <?php echo $at['people_handled']; ?> person<?php echo $at['people_handled']>1?'s':''; ?>
+                        </div>
+                        <div style="font-size:0.72rem;color:#a3e6a3;margin-top:0.1rem;">
                             💵 Commission: ₱<?php echo number_format($at['commission'] ?? 0, 2); ?>
                         </div>
                     </div>
@@ -433,103 +437,81 @@ require_once 'admin_header.php';
 <!-- ── RIGHT: Assign Therapist Form + Available Roster ───────────────────── -->
 <div>
 
-    <!-- Assign Form -->
+    <!-- Assign Form — per-person rows -->
     <div class="panel" style="margin-bottom:1.25rem;">
         <div class="panel-header">
-            <span class="panel-title">➕ Assign a Therapist</span>
+            <span class="panel-title">💆 Assign Therapists</span>
             <?php if ($slots_left <= 0): ?>
             <span style="font-size:0.75rem;background:rgba(25,135,84,0.15);color:var(--green);
-                         padding:0.2rem 0.65rem;border-radius:20px;font-weight:600;">All therapists assigned ✓</span>
+                         padding:0.2rem 0.65rem;border-radius:20px;font-weight:600;">All <?php echo $people; ?> people covered ✓</span>
             <?php else: ?>
             <span style="font-size:0.75rem;background:rgba(201,106,44,0.15);color:var(--gold);
-                         padding:0.2rem 0.65rem;border-radius:20px;font-weight:600;"><?php echo $slots_left; ?> more therapist<?php echo $slots_left>1?'s':''; ?> needed</span>
+                         padding:0.2rem 0.65rem;border-radius:20px;font-weight:600;"><?php echo $slots_left; ?> person<?php echo $slots_left>1?'s':''; ?> unassigned</span>
             <?php endif; ?>
         </div>
         <div class="panel-body" style="padding:1.1rem;">
 
         <?php if ($slots_left <= 0): ?>
-        <div style="text-align:center;padding:1.25rem;background:rgba(25,135,84,0.08);border-radius:10px;
-                    border:1px solid rgba(25,135,84,0.2);color:var(--green);font-size:0.88rem;">
-            ✅ All <?php echo $people; ?> therapist<?php echo $people>1?'s have':'has'; ?> been assigned for this appointment.
+        <div style="margin-bottom:1rem;padding:0.7rem 0.9rem;background:rgba(25,135,84,0.08);
+                    border:1px solid rgba(25,135,84,0.2);border-radius:8px;font-size:0.85rem;color:var(--green);">
+            ✅ All <?php echo $people; ?> people are covered. You may reassign below if needed.
         </div>
-        <?php else: ?>
+        <?php endif; ?>
+
         <form method="POST">
         <?php echo csrf_field(); ?>
-            <div style="display:grid;gap:0.85rem;">
-                <div>
-                    <label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:4px;">
-                        Select Therapist <span style="color:#ff6b7a;">*</span>
-                    </label>
-                    <select name="therapist_id" required
-                            style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);
-                                   border-radius:8px;background:var(--bg3);color:var(--cream);font-size:0.85rem;">
-                        <option value="">— Choose therapist —</option>
-                        <?php
-                        // Split into qualified and non-qualified
-                        $qualified     = array_filter($available_therapists, fn($t) => $t['has_specialty'] > 0);
-                        $not_qualified = array_filter($available_therapists, fn($t) => $t['has_specialty'] == 0);
-                        ?>
-                        <?php if (!empty($qualified)): ?>
-                        <optgroup label="✅ Qualified for <?php echo htmlspecialchars($appt['service_name']); ?>">
-                        <?php foreach ($qualified as $t):
-                            $busy    = $t['slot_conflict'] > 0;
-                            $onbreak = $t['is_on_break'];
-                            $out     = !empty($t['time_out']);
-                            $label   = htmlspecialchars($t['full_name']);
-                            if ($busy)        $label .= ' — ⚠️ Busy at this time';
-                            elseif ($onbreak) $label .= ' — ☕ On break';
-                            elseif ($out)     $label .= ' — 🏁 Checked out';
-                            else              $label .= ' — ✅ Available';
-                        ?>
-                        <option value="<?php echo $t['id']; ?>"
-                                <?php echo ($busy || $out) ? 'disabled' : ''; ?>>
-                            <?php echo $label; ?>
-                        </option>
-                        <?php endforeach; ?>
-                        </optgroup>
-                        <?php endif; ?>
-                        <?php if (!empty($not_qualified)): ?>
-                        <optgroup label="❌ No specialty for <?php echo htmlspecialchars($appt['service_name']); ?>">
-                        <?php foreach ($not_qualified as $t): ?>
-                        <option value="<?php echo $t['id']; ?>" disabled
-                                style="color:#888;">
-                            <?php echo htmlspecialchars($t['full_name']); ?> — ❌ Not qualified
-                        </option>
-                        <?php endforeach; ?>
-                        </optgroup>
-                        <?php endif; ?>
-                        <?php if (empty($available_therapists)): ?>
-                        <option value="" disabled>No therapists on duty today</option>
-                        <?php endif; ?>
-                    </select>
-                    <small style="color:var(--gray);font-size:0.71rem;">
-                        Only therapists with <strong><?php echo htmlspecialchars($appt['service_name']); ?></strong> specialty are selectable. Others are shown but disabled.
-                    </small>
-                </div>
-                <div>
-                    <label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:4px;">Notes (optional)</label>
-                    <input type="text" name="notes" placeholder="e.g. Guest prefers light pressure"
-                           style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);
-                                  border-radius:8px;background:var(--bg3);color:var(--cream);font-size:0.85rem;">
-                </div>
-                <div>
-                    <label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:4px;">
-                        💵 Commission (₱) <span style="color:#ff6b7a;">*</span>
-                    </label>
-                    <input type="number" name="commission" step="0.01" min="0" value="0.00" required
-                           placeholder="e.g. 150.00"
-                           style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);
-                                  border-radius:8px;background:var(--bg3);color:var(--cream);font-size:0.85rem;">
-                    <small style="color:var(--gray);font-size:0.71rem;">
-                        Fixed commission amount for this therapist on this service. Saved to their daily record.
-                    </small>
-                </div>
-                <button type="submit" name="assign_therapist" class="btn btn-primary">
-                    💆 Assign Therapist
-                </button>
-            </div>
-        </form>
+        <div style="display:grid;gap:0.65rem;margin-bottom:1rem;">
+        <?php
+        for ($p = 1; $p <= $people; $p++):
+            // Pre-fill by walking through assigned_therapists and accumulating people_handled
+            $prefill_id = 0; $counter = 0;
+            foreach ($assigned_therapists as $at) {
+                $counter += intval($at['people_handled']);
+                if ($p <= $counter) { $prefill_id = $at['therapist_id']; break; }
+            }
+        ?>
+        <div style="display:grid;grid-template-columns:90px 1fr;align-items:center;gap:0.75rem;
+                    padding:0.65rem 0.85rem;background:var(--bg3);border:1px solid var(--border2);
+                    border-radius:8px;">
+            <div style="font-size:0.82rem;font-weight:600;color:var(--gold);">👤 Person <?php echo $p; ?></div>
+            <select name="therapist_ids[]" required
+                    style="padding:0.45rem 0.65rem;border:1px solid var(--border2);border-radius:7px;
+                           background:var(--bg2);color:var(--cream);font-size:0.85rem;width:100%;">
+                <option value="">— Select therapist —</option>
+                <?php foreach ($form_therapists as $t):
+                    $selected  = ($t['id'] == $prefill_id) ? 'selected' : '';
+                    $qualified = $t['has_specialty'] > 0;
+                    $busy      = $t['slot_conflict'] > 0;
+                    $onbreak   = $t['is_on_break'];
+                    $out       = !empty($t['time_out']);
+                    $label     = htmlspecialchars($t['full_name']);
+                    if (!$qualified)  $label .= ' — ❌ Not qualified';
+                    elseif ($busy)    $label .= ' — ⚠️ Busy';
+                    elseif ($onbreak) $label .= ' — ☕ On break';
+                    elseif ($out)     $label .= ' — 🏁 Checked out';
+                    else              $label .= ' — ✅ Available';
+                ?>
+                <option value="<?php echo $t['id']; ?>" <?php echo $selected; ?> <?php echo !$qualified ? 'disabled' : ''; ?>>
+                    <?php echo $label; ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <?php endfor; ?>
+        </div>
+
+        <?php if (empty($form_therapists)): ?>
+        <div style="padding:0.65rem;background:rgba(220,53,69,0.1);border-radius:8px;font-size:0.82rem;
+                    color:#ff6b7a;border:1px solid rgba(220,53,69,0.25);margin-bottom:1rem;">
+            ⚠️ No therapists found. <a href="therapists.php" style="color:var(--gold);">Check therapist roster.</a>
+        </div>
         <?php endif; ?>
+
+        <button type="submit" name="save_per_person" class="btn btn-primary" style="width:100%;">
+            💾 Save All Assignments
+        </button>
+        </form>
+
         </div>
     </div>
 

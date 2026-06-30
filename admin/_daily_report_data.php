@@ -38,6 +38,8 @@ $_s = $conn->prepare("
         a.appointment_date,
         a.duration_minutes,
         a.rate_type,
+        -- charged_price is stored as total (per_person × people_count)
+        -- multiplication was removed after storage fix was confirmed
         a.charged_price,
         a.status          AS appt_status,
         GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
@@ -97,6 +99,8 @@ $_i = $conn->prepare("
         s.price           AS regular_price,
         a.appointment_date,
         a.duration_minutes,
+        -- charged_price is stored as total (per_person × people_count)
+        -- multiplication was removed after storage fix was confirmed
         a.charged_price,
         a.status          AS appt_status,
         GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
@@ -389,11 +393,16 @@ $top_services = $_ts->get_result()->fetch_all(MYSQLI_ASSOC);
 $_ts->close();
 
 // Therapist Productivity
+// revenue = proportional share: (charged_price / people_count) × people_handled
+// avoids double-counting when multiple therapists share one appointment row
 $_tp = $conn->prepare("
     SELECT t.full_name,
-           COUNT(DISTINCT a.id)  AS svc_count,
-           SUM(at2.commission)   AS commission,
-           SUM(a.charged_price)  AS revenue
+           COUNT(DISTINCT a.id) AS svc_count,
+           SUM(at2.commission)  AS commission,
+           SUM(
+               (a.charged_price / GREATEST(IFNULL(a.people_count, 1), 1))
+               * IFNULL(at2.people_handled, 1)
+           ) AS revenue
     FROM appointment_therapists at2
     JOIN therapists   t ON t.id  = at2.therapist_id
     JOIN appointments a ON a.id  = at2.appointment_id
