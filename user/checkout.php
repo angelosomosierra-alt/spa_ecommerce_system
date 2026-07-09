@@ -1092,26 +1092,19 @@ require_once 'header.php';
 .bm-day.disabled { color: #ccc; cursor: not-allowed; text-decoration: line-through; }
 .bm-day.empty { cursor: default; }
 
-/* Slot grid inside modal */
+/* Time picker inside modal */
 .bm-slots-section { margin-top: 1.1rem; }
 .bm-slots-label { font-size: 0.75rem; font-weight: 700; color: var(--brown); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 0.6rem; }
-.bm-slot-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.45rem; }
-.bm-slot {
-    padding: 0.5rem 0.3rem;
-    border-radius: 8px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    border: 1.5px solid var(--cream2);
-    background: var(--cream);
-    color: var(--brown);
-    cursor: pointer;
-    text-align: center;
-    transition: all .15s;
-}
-.bm-slot:hover { border-color: var(--gold); }
-.bm-slot.selected { background: var(--gold); border-color: var(--gold); color: #fff; }
-.bm-slot.warning { border-color: #f59e0b; background: #fffbeb; color: #92400e; }
-.bm-slot.warning.selected { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.bm-tp-legend { font-size: 0.72rem; color: var(--gray); margin-bottom: 0.6rem; display: flex; gap: 0.85rem; }
+.bm-time-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 0.85rem; }
+.bm-time-col-label { font-size: 0.68rem; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: .06em; text-align: center; margin-bottom: 0.45rem; }
+.bm-hour-list, .bm-minute-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.bm-hour-item, .bm-minute-item { padding: 0.45rem 0.6rem; border-radius: 7px; font-size: 0.82rem; font-weight: 600; text-align: center; border: 1px solid; cursor: pointer; transition: all .12s; }
+.bm-hour-item.available, .bm-minute-item.available { background: #f0fdf4; color: #15803d; border-color: #86efac; }
+.bm-hour-item.available:hover, .bm-minute-item.available:hover { background: #dcfce7; border-color: #4ade80; }
+.bm-hour-item.blocked, .bm-minute-item.blocked { background: #f3f4f6; color: #9ca3af; border-color: #e5e7eb; cursor: not-allowed; pointer-events: none; }
+.bm-hour-item.selected, .bm-minute-item.selected { background: #C96A2C; color: #fff; border-color: #C96A2C; }
+.bm-time-hint { font-size: 0.78rem; color: var(--gray); text-align: center; padding: 1rem; }
 .bm-slot.unavailable { background: #f9fafb; color: #9ca3af; border-color: #e5e7eb; cursor: not-allowed; opacity: .6; }
 
 .bm-footer {
@@ -1688,18 +1681,29 @@ require_once 'header.php';
             </div>
             <div class="bm-cal-grid" id="bmCalGrid"></div>
 
-            <!-- Slot section (appears after date selected) -->
+            <!-- Time picker section (appears after date selected) -->
             <div class="bm-slots-section" id="bmSlotsSection" style="display:none;">
-                <div class="bm-slots-label" id="bmSlotsLabel">Available Times</div>
+                <div class="bm-tp-legend">
+                    <span>🟢 Available</span>
+                    <span>⬜ Occupied</span>
+                </div>
                 <div id="bmSlotsLoading" style="text-align:center;padding:1.2rem;color:var(--gray);font-size:0.85rem;display:none;">
                     ⏳ Checking availability…
                 </div>
                 <div id="bmSlotsUnavail" style="display:none;padding:0.85rem;background:#fff5f5;
                      border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;"></div>
-                <div class="bm-slot-grid" id="bmSlotGrid"></div>
-                <div id="bmSlotWarning" style="display:none;margin-top:0.6rem;padding:0.5rem 0.8rem;
-                     background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;
-                     font-size:0.76rem;color:#92400e;font-family:'DM Sans',sans-serif;"></div>
+                <div class="bm-time-cols" id="bmTimeCols" style="display:none;">
+                    <div class="bm-time-col">
+                        <div class="bm-time-col-label">HOUR</div>
+                        <div class="bm-hour-list" id="bmHourList"></div>
+                    </div>
+                    <div class="bm-time-col">
+                        <div class="bm-time-col-label">MINUTE</div>
+                        <div class="bm-minute-list" id="bmMinuteList">
+                            <div class="bm-time-hint">← Select an hour</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="bm-footer" id="bmFooter" style="display:none;">
@@ -1841,14 +1845,17 @@ const SERVICE_ID = <?php echo intval($service_id ?? 0); ?>;
 const BM_MIN_DATE = new Date('<?php echo date('Y-m-d'); ?>');
 const BM_MAX_DATE = new Date('<?php echo date('Y-m-d', strtotime('+30 days')); ?>');
 
-let bmYear, bmMonth, bmSelectedDate = null, bmSelectedSlot = null;
+let bmYear, bmMonth, bmSelectedDate = null;
+let bwData = null, bmSelectedHour = null, bmSelectedMinute = null;
 
 function openBM() {
     const now = new Date();
     bmYear  = now.getFullYear();
     bmMonth = now.getMonth();
-    bmSelectedDate = null;
-    bmSelectedSlot = null;
+    bmSelectedDate   = null;
+    bwData           = null;
+    bmSelectedHour   = null;
+    bmSelectedMinute = null;
     document.getElementById('bmSlotsSection').style.display = 'none';
     document.getElementById('bmFooter').style.display = 'none';
     document.getElementById('bmConfirmBtn').disabled = true;
@@ -1932,16 +1939,44 @@ function bmNextMonth() {
 }
 
 function bmSelectDate(dateStr, el) {
-    bmSelectedDate = dateStr;
-    bmSelectedSlot = null;
+    bmSelectedDate   = dateStr;
+    bwData           = null;
+    bmSelectedHour   = null;
+    bmSelectedMinute = null;
     document.getElementById('bmConfirmBtn').disabled = true;
     document.getElementById('bmSelectedInfo').textContent = '';
     document.querySelectorAll('.bm-day.selected').forEach(d => d.classList.remove('selected'));
     el.classList.add('selected');
-    bmLoadSlots(dateStr);
+    bmLoadBusyWindows(dateStr);
 }
 
-function bmLoadSlots(dateStr) {
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function bmParseMinutes(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
+function bmFormatHour12(h) {
+    const s   = h < 12 ? 'AM' : 'PM';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return h12 + ':00 ' + s;
+}
+
+function bmMinuteAvailable(h, m, d) {
+    const startMin = h * 60 + m;
+    const endMin   = startMin + d.session_time; // buffer already baked into busy windows
+    if (h < d.open_hour || h > d.close_hour) return false;
+    if (h === d.close_hour && m > 0) return false;
+    // Grey out past times + 2-hour advance minimum (min_start_minutes = now+120 when is_today, else 0)
+    if (d.min_start_minutes > 0 && startMin < d.min_start_minutes) return false;
+    for (const w of d.busy) {
+        if (startMin < bmParseMinutes(w.end) && endMin > bmParseMinutes(w.start)) return false;
+    }
+    return true;
+}
+
+function bmHourAvailable(h, d) {
+    for (let m = 0; m < 60; m++) { if (bmMinuteAvailable(h, m, d)) return true; }
+    return false;
+}
+
+function bmLoadBusyWindows(dateStr) {
     const people   = parseInt(document.getElementById('people_count').value) || 1;
     const rateType = document.getElementById('service_type_hidden')?.value === 'home' ? 'home' : 'regular';
     const thId     = selectedTherapistId;
@@ -1949,78 +1984,39 @@ function bmLoadSlots(dateStr) {
     const section  = document.getElementById('bmSlotsSection');
     const loading  = document.getElementById('bmSlotsLoading');
     const unavail  = document.getElementById('bmSlotsUnavail');
-    const slotGrid = document.getElementById('bmSlotGrid');
-    const warning  = document.getElementById('bmSlotWarning');
+    const timeCols = document.getElementById('bmTimeCols');
     const footer   = document.getElementById('bmFooter');
-    const lbl      = document.getElementById('bmSlotsLabel');
 
-    const [_yr, _mo, _dy] = dateStr.split('-').map(Number);
-    lbl.textContent = 'Times for ' + BM_MONTHS[_mo - 1] + ' ' + _dy;
+    section.style.display   = 'block';
+    loading.style.display   = 'block';
+    unavail.style.display   = 'none';
+    timeCols.style.display  = 'none';
+    footer.style.display    = 'none';
+    document.getElementById('bmHourList').innerHTML   = '';
+    document.getElementById('bmMinuteList').innerHTML = '<div class="bm-time-hint">← Select an hour</div>';
 
-    section.style.display = 'block';
-    loading.style.display = 'block';
-    unavail.style.display = 'none';
-    warning.style.display = 'none';
-    slotGrid.innerHTML    = '';
-    footer.style.display  = 'none';
-    bmSelectedSlot        = null;
-
-    fetch(`../admin/slots.php?service_id=${SERVICE_ID}&date=${dateStr}&people=${people}&rate_type=${rateType}&therapist_id=${thId}`)
+    fetch(`../admin/busy_windows.php?service_id=${SERVICE_ID}&date=${dateStr}&people=${people}&rate_type=${rateType}&therapist_id=${thId}`)
         .then(r => r.json())
         .then(data => {
             loading.style.display = 'none';
-
             if (data.error) {
                 unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
-                unavail.textContent   = '⚠️ ' + (data.message || 'Could not check availability. Please try again.');
+                unavail.textContent   = '⚠️ ' + (data.error || 'Could not check availability.');
                 return;
             }
-            if (data.service_status === 'unavailable') {
-                if (data.reason_code === 'no_duty_today' || data.reason_code === 'fully_booked') {
-                    unavail.style.cssText = 'display:block;';
-                    unavail.innerHTML     = '<div style="text-align:center;padding:1.5rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">📅 ' + data.message + '</div>';
-                } else {
-                    unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
-                    unavail.textContent   = '⚠️ ' + (data.message || 'This service is currently unavailable.');
-                }
+            if (data.reason_code && !data.on_duty && data.is_today) {
+                unavail.style.cssText = 'display:block;';
+                unavail.innerHTML     = '<div style="text-align:center;padding:1.5rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">📅 ' + data.message + '</div>';
                 return;
             }
-            if (!data.slots || data.slots.length === 0) {
+            if (data.reason_code === 'NOT_QUALIFIED') {
                 unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
-                unavail.textContent   = '⚠️ No time slots available for this date.';
+                unavail.textContent   = '⚠️ ' + data.message;
                 return;
             }
-
-            data.slots.forEach(slot => {
-                const btn = document.createElement('button');
-                btn.type        = 'button';
-                btn.textContent = slot.time_label;
-                btn.className   = 'bm-slot';
-
-                if (slot.status === 'unavailable' || slot.is_past) {
-                    btn.classList.add('unavailable');
-                    btn.disabled = true;
-                    if (slot.is_past) btn.style.textDecoration = 'line-through';
-                    if (slot.reason && !slot.is_past) btn.title = slot.reason;
-                } else if (slot.status === 'warning') {
-                    btn.classList.add('warning');
-                    btn.title  = slot.reason;
-                    btn.onclick = () => bmSelectSlot(btn, slot);
-                } else {
-                    btn.onclick = () => bmSelectSlot(btn, slot);
-                }
-                slotGrid.appendChild(btn);
-            });
-
-            if (data.available_count === 0) {
-                if (data.message && data.reason_code) {
-                    unavail.style.cssText = 'display:block;';
-                    unavail.innerHTML     = '<div style="text-align:center;padding:1.5rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">📅 ' + data.message + '</div>';
-                } else {
-                    unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
-                    unavail.innerHTML     = '⚠️ No available slots for this date.<br><small>Please try a different date.</small>';
-                }
-            }
+            bwData = data;
+            bmRenderHours();
+            timeCols.style.display = 'grid';
         })
         .catch(() => {
             loading.style.display = 'none';
@@ -2029,35 +2025,77 @@ function bmLoadSlots(dateStr) {
         });
 }
 
-function bmSelectSlot(btn, slot) {
-    document.querySelectorAll('.bm-slot').forEach(b => {
-        b.classList.remove('selected');
-    });
-    btn.classList.add('selected');
-    bmSelectedSlot = slot;
-
-    const warn = document.getElementById('bmSlotWarning');
-    if (slot.status === 'warning') {
-        warn.style.display = 'block';
-        warn.innerHTML = `⚠️ ${slot.reason} — <strong>Receptionist will contact you to confirm.</strong>`;
-    } else {
-        warn.style.display = 'none';
+function bmRenderHours() {
+    const list = document.getElementById('bmHourList');
+    list.innerHTML = '';
+    for (let h = bwData.open_hour; h <= bwData.close_hour; h++) {
+        const avail = bmHourAvailable(h, bwData);
+        const el = document.createElement('div');
+        el.className   = 'bm-hour-item ' + (avail ? 'available' : 'blocked');
+        el.textContent = bmFormatHour12(h);
+        if (avail) el.onclick = () => bmSelectHour(h, el);
+        list.appendChild(el);
     }
+}
+
+function bmSelectHour(h, el) {
+    bmSelectedHour   = h;
+    bmSelectedMinute = null;
+    document.getElementById('bmConfirmBtn').disabled = true;
+    document.getElementById('bmSelectedInfo').textContent = '';
+    document.getElementById('bmFooter').style.display = 'none';
+    document.querySelectorAll('.bm-hour-item').forEach(x => x.classList.remove('selected'));
+    el.classList.add('selected');
+    bmRenderMinutes(h);
+}
+
+function bmRenderMinutes(h) {
+    const list = document.getElementById('bmMinuteList');
+    list.innerHTML = '';
+    let firstAvail = null;
+    for (let m = 0; m < 60; m++) {
+        const avail = bmMinuteAvailable(h, m, bwData);
+        const el = document.createElement('div');
+        el.className   = 'bm-minute-item ' + (avail ? 'available' : 'blocked');
+        el.textContent = String(m).padStart(2, '0');
+        if (avail) {
+            el.onclick = () => bmSelectMinute(m, el);
+            if (firstAvail === null) firstAvail = el;
+        }
+        list.appendChild(el);
+    }
+    if (firstAvail) {
+        setTimeout(() => firstAvail.scrollIntoView({ block: 'nearest' }), 0);
+    }
+}
+
+function bmSelectMinute(m, el) {
+    bmSelectedMinute = m;
+    document.querySelectorAll('.bm-minute-item').forEach(x => x.classList.remove('selected'));
+    el.classList.add('selected');
 
     const [_syr, _smo, _sdy] = bmSelectedDate.split('-').map(Number);
+    const h12 = bmSelectedHour === 0 ? 12 : bmSelectedHour > 12 ? bmSelectedHour - 12 : bmSelectedHour;
+    const ampm = bmSelectedHour < 12 ? 'AM' : 'PM';
+    const timeLabel = h12 + ':' + String(m).padStart(2, '0') + ' ' + ampm;
     document.getElementById('bmSelectedInfo').textContent =
-        BM_MONTHS[_smo - 1] + ' ' + _sdy + ' · ' + slot.time_label;
+        BM_MONTHS[_smo - 1] + ' ' + _sdy + ' · ' + timeLabel;
     document.getElementById('bmFooter').style.display = 'flex';
     document.getElementById('bmConfirmBtn').disabled  = false;
 }
 
 function confirmBM() {
-    if (!bmSelectedDate || !bmSelectedSlot) return;
-    document.getElementById('booking_date_input').value = bmSelectedSlot.datetime;
+    if (!bmSelectedDate || bmSelectedHour === null || bmSelectedMinute === null) return;
+    const [yr, mo, dy] = bmSelectedDate.split('-').map(Number);
+    const dateStr = yr + '-' + String(mo).padStart(2, '0') + '-' + String(dy).padStart(2, '0');
+    const timeStr = String(bmSelectedHour).padStart(2, '0') + ':' + String(bmSelectedMinute).padStart(2, '0') + ':00';
+    document.getElementById('booking_date_input').value = dateStr + ' ' + timeStr;
 
-    const [_cyr, _cmo, _cdy] = bmSelectedDate.split('-').map(Number);
+    const h12  = bmSelectedHour === 0 ? 12 : bmSelectedHour > 12 ? bmSelectedHour - 12 : bmSelectedHour;
+    const ampm = bmSelectedHour < 12 ? 'AM' : 'PM';
+    const timeLabel = h12 + ':' + String(bmSelectedMinute).padStart(2, '0') + ' ' + ampm;
     const btn = document.getElementById('dtPickBtn');
-    btn.textContent = '📅 ' + BM_MONTHS[_cmo - 1] + ' ' + _cdy + ', ' + _cyr + ' · ' + bmSelectedSlot.time_label + ' — Change';
+    btn.textContent = '📅 ' + BM_MONTHS[mo - 1] + ' ' + dy + ', ' + yr + ' · ' + timeLabel + ' — Change';
     btn.classList.add('has-value');
 
     closeBM();

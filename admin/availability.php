@@ -123,12 +123,12 @@ class AvailabilityEngine {
                     JOIN appointments a2 ON at2.appointment_id = a2.id
                     JOIN services     s2 ON a2.service_id = s2.id
                     WHERE at2.therapist_id = t.id
-                      AND a2.status IN ('approved','assigned')
+                      AND a2.status IN ('pending','approved','assigned')
                       $exclude_clause
                       AND DATE(a2.appointment_date) = DATE('{$dt_esc}')
                       AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE)
                             < ('{$dt_esc}' + INTERVAL {$new_end_mins} MINUTE)
-                      AND (a2.appointment_date + INTERVAL (s2.session_time + IF(a2.service_type='home',30,0)) MINUTE)
+                      AND (a2.appointment_date + INTERVAL ((s2.session_time * IFNULL(at2.people_handled,1)) + IF(a2.service_type='home',30,0)) MINUTE)
                             > ('{$dt_esc}' - INTERVAL {$buffer} MINUTE)
                    ) AS is_busy
             FROM therapists t
@@ -162,18 +162,15 @@ class AvailabilityEngine {
         $is_today     = ($slot_date === $today_str);
 
         // ── Check if within operating hours ──────────────────────────────────
+        // CLOSE_HOUR is the last allowed START hour; sessions may run past it.
+        // At exactly CLOSE_HOUR, only minute :00 is valid (matches the picker rule).
         $slot_hour = (int)$slot_dt->format('H');
         $slot_min  = (int)$slot_dt->format('i');
-        if ($slot_hour < self::OPEN_HOUR || $slot_hour >= self::CLOSE_HOUR) {
+        if ($slot_hour < self::OPEN_HOUR || $slot_hour > self::CLOSE_HOUR) {
             return ['available' => false, 'reason' => 'Outside operating hours (10AM–8PM)'];
         }
-
-        // ── Check slot doesn't run past closing time ──────────────────────────
-        $end_dt = clone $slot_dt;
-        $end_dt->modify("+{$session_time} minutes");
-        if ((int)$end_dt->format('H') > self::CLOSE_HOUR ||
-            ((int)$end_dt->format('H') === self::CLOSE_HOUR && (int)$end_dt->format('i') > 0)) {
-            return ['available' => false, 'reason' => 'Session would run past closing time (8PM)'];
+        if ($slot_hour === self::CLOSE_HOUR && $slot_min > 0) {
+            return ['available' => false, 'reason' => 'Last bookable start time is 8:00 PM'];
         }
 
         // ── Past time check (same day) ────────────────────────────────────────
@@ -214,8 +211,9 @@ class AvailabilityEngine {
         }
 
         // ── Count free therapists at this slot ───────────────────────────────
+        // Pass total window = session_time × people_count (back-to-back model)
         $free = $this->countFreeTherapists(
-            $therapist_ids, $datetime, $session_time, $rate_type, $exclude_appt_id
+            $therapist_ids, $datetime, $session_time * $people_count, $rate_type, $exclude_appt_id
         );
 
         if ($free === 0) {
@@ -309,5 +307,99 @@ class AvailabilityEngine {
             }
         }
         return null;
+    }
+
+    // ── Get busy windows for a specific therapist on a given date ─────────────
+    // Returns array of ['start' => 'HH:MM', 'end' => 'HH:MM'] (sorted by start)
+    public function getBusyWindowsForTherapist(int $therapist_id, string $date): array {
+        $date_esc = $this->conn->real_escape_string($date);
+        $result   = $this->conn->query("
+            SELECT a.appointment_date, s.session_time AS svc_st,
+                   a.service_type, IFNULL(at2.people_handled, 1) AS ph
+            FROM appointment_therapists at2
+            JOIN appointments a ON at2.appointment_id = a.id
+            JOIN services     s ON a.service_id       = s.id
+            WHERE at2.therapist_id = $therapist_id
+              AND a.status IN ('pending','approved','assigned')
+              AND DATE(a.appointment_date) = '$date_esc'
+            ORDER BY a.appointment_date
+        ");
+        $windows = [];
+        while ($r = $result->fetch_assoc()) {
+            $buf    = ($r['service_type'] === 'home') ? 30 : 0;
+            $dt     = new DateTime($r['appointment_date'], $this->tz);
+            $appt_m = (int)$dt->format('H') * 60 + (int)$dt->format('i');
+            $ws_m   = $appt_m - $buf;
+            $we_m   = $appt_m + intval($r['svc_st']) * intval($r['ph']) + $buf;
+            $windows[] = [
+                'start' => sprintf('%02d:%02d', intdiv($ws_m, 60), $ws_m % 60),
+                'end'   => sprintf('%02d:%02d', intdiv($we_m, 60), $we_m % 60),
+            ];
+        }
+        return $windows;
+    }
+
+    // ── Get combined blocked windows for any-available mode ───────────────────
+    // A window is "blocked" only when EVERY qualified therapist is occupied.
+    public function getBusyWindowsAnyAvailable(
+        array  $therapist_ids,
+        string $date,
+        int    $session_time,
+        int    $buffer
+    ): array {
+        if (empty($therapist_ids)) return [];
+
+        $open_m  = self::OPEN_HOUR  * 60;
+        $max_end = 22 * 60; // sessions may run until 10 PM
+
+        // Per-therapist free intervals (minutes since midnight)
+        $all_free = [];
+        foreach ($therapist_ids as $tid) {
+            $busy = [];
+            foreach ($this->getBusyWindowsForTherapist($tid, $date) as $w) {
+                [$h, $m] = array_map('intval', explode(':', $w['start']));
+                $s = $h * 60 + $m;
+                [$h, $m] = array_map('intval', explode(':', $w['end']));
+                $e = $h * 60 + $m;
+                $busy[] = [$s, $e];
+            }
+            usort($busy, fn($a, $b) => $a[0] - $b[0]);
+
+            $cur = $open_m;
+            foreach ($busy as [$bs, $be]) {
+                if ($bs > $cur) $all_free[] = [$cur, $bs];
+                $cur = max($cur, $be);
+            }
+            if ($cur < $max_end) $all_free[] = [$cur, $max_end];
+        }
+
+        // Union of all free intervals
+        usort($all_free, fn($a, $b) => $a[0] - $b[0]);
+        $mfree = [];
+        foreach ($all_free as [$s, $e]) {
+            if (empty($mfree) || $s > $mfree[count($mfree)-1][1]) {
+                $mfree[] = [$s, $e];
+            } else {
+                $mfree[count($mfree)-1][1] = max($mfree[count($mfree)-1][1], $e);
+            }
+        }
+
+        // Blocked = [open_m, max_end] MINUS merged free
+        $blocked = [];
+        $cur = $open_m;
+        foreach ($mfree as [$s, $e]) {
+            if ($s > $cur) $blocked[] = [$cur, $s];
+            $cur = max($cur, $e);
+        }
+        if ($cur < $max_end) $blocked[] = [$cur, $max_end];
+
+        $out = [];
+        foreach ($blocked as [$s, $e]) {
+            $out[] = [
+                'start' => sprintf('%02d:%02d', intdiv($s, 60), $s % 60),
+                'end'   => sprintf('%02d:%02d', intdiv($e, 60), $e % 60),
+            ];
+        }
+        return $out;
     }
 }

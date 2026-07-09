@@ -274,6 +274,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     }
                 }
 
+                // ── Tamper guard: reject conflicting specific-therapist bookings ──────
+                if ($therapist_id > 0 && empty($walkin_message)) {
+                    require_once __DIR__ . '/availability.php';
+                    $av_engine = new AvailabilityEngine($conn);
+                    $appt_rate_check = ($rate_type === 'home') ? 'home' : 'regular';
+                    $av_check = $av_engine->checkSlot($item_id, $booking_date, $people_count, $appt_rate_check, 0, $therapist_id);
+                    if (!$av_check['available']) {
+                        $walkin_message = '⛔ ' . ($av_check['reason'] ?? 'Selected therapist is not available at this time.');
+                        $walkin_type    = 'danger';
+                    }
+                }
+
                 if (empty($walkin_message)) {
                 $conn->begin_transaction();
                 $specialty_error = false;
@@ -515,22 +527,8 @@ require_once 'admin_header.php';
 
             <div>
                 <div class="form-section">
-                    <div class="form-section-header">📅 Booking Details</div>
-                    <div class="form-section-body">
-                        <div class="form-group" style="margin-bottom:1rem;">
-                            <label>Booking Date & Time <span class="required">*</span></label>
-                            <input type="datetime-local" name="booking_date" id="service_booking_date" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Number of People <span class="required">*</span></label>
-                            <input type="number" name="people_count" value="1" min="1" required>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="form-section">
                     <div class="form-section-header" id="therapist-section-header">
-                        💆 Assign Therapist
+                        💆 Select Therapist <span class="required">*</span>
                         <span id="therapist-mode-badge" style="font-size:0.72rem;font-weight:400;color:var(--gray);margin-left:0.4rem;"></span>
                     </div>
                     <div class="form-section-body">
@@ -547,14 +545,6 @@ require_once 'admin_header.php';
                         </div>
                         <?php else: ?>
                         <div style="display:flex;flex-direction:column;gap:0.4rem;" id="therapist-btn-list">
-                            <div class="therapist-pick-btn" id="tbtn-0" onclick="selectWalkinTherapist(0)"
-                                 style="display:flex;align-items:center;gap:0.65rem;padding:0.55rem 0.75rem;border:2px solid var(--gold);background:#fff8f2;border-radius:9px;cursor:pointer;transition:all .15s;">
-                                <div style="width:28px;height:28px;border-radius:50%;background:#e5e7eb;display:flex;align-items:center;justify-content:center;font-size:0.85rem;flex-shrink:0;">🚫</div>
-                                <div>
-                                    <div style="font-size:0.82rem;font-weight:700;color:var(--brown);">No assignment yet</div>
-                                    <div style="font-size:0.7rem;color:var(--gray);">Assign later from Appointments panel</div>
-                                </div>
-                            </div>
                             <?php foreach ($all_therapists_list as $th):
                                 $is_checked_out = !empty($th['time_out']);
                                 $is_on_break    = !empty($th['is_on_break']);
@@ -589,6 +579,27 @@ require_once 'admin_header.php';
                             <?php endforeach; ?>
                         </div>
                         <?php endif; ?>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-header">📅 Booking Details</div>
+                    <div class="form-section-body">
+                        <div class="form-group" style="margin-bottom:1rem;">
+                            <label>Booking Date & Time <span class="required">*</span></label>
+                            <input type="hidden" name="booking_date" id="walkin_booking_date">
+                            <button type="button" class="walkin-dt-pick-btn" id="walkinPickDateBtn"
+                                    onclick="openWalkinBM()" disabled>
+                                📅 Pick Date &amp; Time
+                            </button>
+                            <div id="walkinSelectedDateTime" style="font-size:0.78rem;color:var(--gray);margin-top:5px;">
+                                Select a service and therapist first
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Number of People <span class="required">*</span></label>
+                            <input type="number" name="people_count" value="1" min="1" required>
+                        </div>
                     </div>
                 </div>
 
@@ -800,13 +811,105 @@ require_once 'admin_header.php';
     </form>
 </div>
 
+<!-- ── Walk-in Booking Date & Time Modal ──────────────────────────────────────── -->
+<div id="walkinBMOverlay" style="display:none;position:fixed;inset:0;background:rgba(59,42,26,0.55);z-index:9990;align-items:center;justify-content:center;backdrop-filter:blur(4px);animation:walkinBMFadeIn .25s ease;">
+    <div style="background:#fff;border-radius:18px;width:min(520px,96vw);max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,0.25);animation:walkinBMPopIn .3s cubic-bezier(.34,1.56,.64,1);">
+        <!-- Header -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.35rem;border-bottom:1px solid var(--border2);background:var(--bg3);flex-shrink:0;">
+            <span id="walkinBMTitle" style="font-size:1rem;font-weight:700;color:var(--brown);">📅 Pick Date &amp; Time</span>
+            <button type="button" onclick="closeWalkinBM()" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--gray);padding:0.2rem 0.4rem;border-radius:6px;transition:color .15s;">✕</button>
+        </div>
+        <!-- Body -->
+        <div style="overflow-y:auto;padding:1.2rem 1.35rem;flex:1;">
+            <!-- Calendar nav -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem;">
+                <button type="button" onclick="walkinBMPrevMonth()"
+                        style="background:var(--bg3);border:1.5px solid var(--border2);border-radius:8px;width:32px;height:32px;cursor:pointer;font-size:1rem;color:var(--brown);display:flex;align-items:center;justify-content:center;transition:all .15s;">‹</button>
+                <span id="walkinBMMonthLabel" style="font-size:1rem;font-weight:700;color:var(--brown);"></span>
+                <button type="button" onclick="walkinBMNextMonth()"
+                        style="background:var(--bg3);border:1.5px solid var(--border2);border-radius:8px;width:32px;height:32px;cursor:pointer;font-size:1rem;color:var(--brown);display:flex;align-items:center;justify-content:center;transition:all .15s;">›</button>
+            </div>
+            <!-- Calendar grid -->
+            <div id="walkinCalGrid" class="bm-cal-grid"></div>
+
+            <!-- Time picker (shown after date selected) -->
+            <div id="walkinBMSlotsSection" style="display:none;margin-top:1.1rem;">
+                <div style="font-size:0.72rem;color:var(--gray);margin-bottom:0.6rem;display:flex;gap:0.85rem;">
+                    <span>🟢 Available</span><span>⬜ Occupied</span>
+                </div>
+                <div id="walkinBMSlotsLoading" style="display:none;text-align:center;padding:1.2rem;color:var(--gray);font-size:0.85rem;">⏳ Checking availability…</div>
+                <div id="walkinBMSlotsUnavail" style="display:none;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;"></div>
+                <div id="walkinTimeCols" style="display:none;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:0.85rem;">
+                    <div>
+                        <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;text-align:center;margin-bottom:0.45rem;">HOUR</div>
+                        <div id="walkinHourList" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;"></div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;text-align:center;margin-bottom:0.45rem;">MINUTE</div>
+                        <div id="walkinMinuteList" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;">
+                            <div style="font-size:0.78rem;color:var(--gray);text-align:center;padding:1rem;">← Select an hour</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Footer -->
+        <div id="walkinBMFooter" style="display:none;padding:0.95rem 1.35rem;border-top:1px solid var(--border2);background:var(--bg3);flex-shrink:0;align-items:center;gap:1rem;">
+            <div id="walkinBMSelectedInfo" style="flex:1;font-size:0.85rem;color:var(--brown);"></div>
+            <button type="button" id="walkinBMConfirmBtn" onclick="confirmWalkinBM()" disabled
+                    style="padding:0.65rem 1.2rem;background:linear-gradient(135deg,var(--gold),var(--rust));color:#fff;border:none;border-radius:10px;font-size:0.88rem;font-weight:700;cursor:pointer;transition:all .18s;white-space:nowrap;opacity:.45;">
+                ✅ Confirm
+            </button>
+        </div>
+    </div>
+</div>
+
 <style>
+/* ── Time picker shared classes ──────────────────────────────────────────── */
+.bm-hour-item, .bm-minute-item { padding:0.45rem 0.6rem;border-radius:7px;font-size:0.82rem;font-weight:600;text-align:center;border:1px solid;cursor:pointer;transition:all .12s; }
+.bm-hour-item.available, .bm-minute-item.available { background:#f0fdf4;color:#15803d;border-color:#86efac; }
+.bm-hour-item.available:hover, .bm-minute-item.available:hover { background:#dcfce7;border-color:#4ade80; }
+.bm-hour-item.blocked, .bm-minute-item.blocked { background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb;cursor:not-allowed;pointer-events:none; }
+.bm-hour-item.selected, .bm-minute-item.selected { background:#C96A2C;color:#fff;border-color:#C96A2C; }
+
 .pay-method-btn { padding:0.55rem 0.4rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.78rem;font-weight:600;color:var(--brown);font-family:var(--font-body);transition:all .15s; }
 .pay-method-btn:hover { border-color:var(--gold);background:#fff8f2; }
 .pay-method-btn.active-pay { border-color:var(--gold);background:#fff8f2;color:var(--rust); }
 .rate-type-btn { display:flex;flex-direction:column;align-items:center;gap:0.2rem;padding:0.7rem 0.5rem;border:2px solid var(--border2);border-radius:10px;background:var(--bg3);cursor:pointer;text-align:center;transition:all .15s;color:var(--brown); }
 .rate-type-btn:hover { border-color:var(--gold); }
 .rate-type-btn.active { border-color:var(--gold);background:linear-gradient(135deg,var(--gold),var(--rust));color:#fff; }
+
+/* ── Walk-in booking date picker button ────────────────────────────────── */
+.walkin-dt-pick-btn {
+    width:100%;padding:0.7rem 0.9rem;
+    border:2px dashed var(--border2);border-radius:10px;
+    background:var(--bg3);color:var(--brown);
+    font-size:0.88rem;font-weight:600;cursor:pointer;
+    text-align:center;transition:all .18s;
+}
+.walkin-dt-pick-btn:hover:not(:disabled) { border-color:var(--gold);background:#fff8f2; }
+.walkin-dt-pick-btn:disabled { opacity:.45;cursor:not-allowed; }
+.walkin-dt-pick-btn.has-value { border-style:solid;border-color:var(--gold);background:#fff8f2; }
+
+/* ── Booking modal (shared .bm-* classes) ─────────────────────────────── */
+.bm-cal-grid { display:grid;grid-template-columns:repeat(7,1fr);gap:3px; }
+.bm-cal-dow { text-align:center;font-size:0.68rem;font-weight:700;color:var(--gray);padding:0.3rem 0;text-transform:uppercase;letter-spacing:.04em; }
+.bm-day { aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:0.82rem;border-radius:8px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;color:var(--brown);font-weight:500; }
+.bm-day:hover:not(.disabled):not(.empty) { border-color:var(--gold);background:#fff8f2; }
+.bm-day.today  { border-color:var(--border2);font-weight:700; }
+.bm-day.selected { background:var(--gold);color:#fff;border-color:var(--gold);font-weight:700; }
+.bm-day.disabled { color:#ccc;cursor:not-allowed;text-decoration:line-through; }
+.bm-day.empty  { cursor:default; }
+.bm-slot-grid { display:grid;grid-template-columns:repeat(4,1fr);gap:0.45rem; }
+.bm-slot { padding:0.5rem 0.3rem;border-radius:8px;font-size:0.78rem;font-weight:600;border:1.5px solid var(--border2);background:var(--bg3);color:var(--brown);cursor:pointer;text-align:center;transition:all .15s; }
+.bm-slot:hover { border-color:var(--gold); }
+.bm-slot.selected { background:var(--gold);border-color:var(--gold);color:#fff; }
+.bm-slot.warning { border-color:#f59e0b;background:#fffbeb;color:#92400e; }
+.bm-slot.warning.selected { background:#f59e0b;border-color:#f59e0b;color:#fff; }
+.bm-slot.unavailable { background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb;cursor:not-allowed;opacity:.55; }
+
+@keyframes walkinBMPopIn { from { transform:scale(.86);opacity:0; } to { transform:scale(1);opacity:1; } }
+@keyframes walkinBMFadeIn { from { opacity:0; } to { opacity:1; } }
 </style>
 
 <script>
@@ -857,9 +960,12 @@ function selectItem(type, id, el) {
     document.getElementById(type + '_item_id').value = id;
     if (type === 'service') {
         currentServiceId = id;
-        selectWalkinTherapist(0); // clear stale therapist when service changes
+        selectWalkinTherapist(0); // resets therapist + clears date + calls updatePickDateBtn
+        const hint = document.getElementById('walkinSelectedDateTime');
+        if (hint) hint.textContent = 'Select a therapist above to pick a date';
         updatePricePreview();
         updateTherapistMode();
+        updatePickDateBtn();
     }
     if (type === 'product') {
         const stock = parseInt(el.querySelector('.slots-info').textContent.replace(/\D/g,''));
@@ -885,10 +991,18 @@ function selectWalkinTherapist(id) {
         btn.style.borderColor = isSelected ? 'var(--gold)' : 'var(--border2)';
         btn.style.background  = isSelected ? '#fff8f2'     : 'var(--bg3)';
     });
+    // Clear booking date when therapist changes — different therapist = different availability
+    const hiddenDate = document.getElementById('walkin_booking_date');
+    if (hiddenDate) hiddenDate.value = '';
+    const pickBtn = document.getElementById('walkinPickDateBtn');
+    if (pickBtn) { pickBtn.textContent = '📅 Pick Date & Time'; pickBtn.classList.remove('has-value'); }
+    const hint = document.getElementById('walkinSelectedDateTime');
+    if (hint) hint.textContent = id > 0 ? 'Tap to pick a date and time slot' : 'Select a therapist above to pick a date';
+    updatePickDateBtn();
 }
 
 function updateTherapistMode() {
-    const bookingInput = document.getElementById('service_booking_date');
+    const bookingInput = document.getElementById('walkin_booking_date');
     const peopleInput  = document.querySelector('[name="people_count"]');
     const btnList      = document.getElementById('therapist-btn-list');
     const noSvcNotice  = document.getElementById('therapist-no-svc-notice');
@@ -931,7 +1045,7 @@ function updateTherapistMode() {
         return;
     }
 
-    const bookingTs   = new Date(bookingInput.value).getTime() / 1000;
+    const bookingTs   = new Date(bookingInput.value.replace(' ', 'T')).getTime() / 1000;
     const nowTs       = Date.now() / 1000;
     const isFuture    = (bookingTs - nowTs) > 1800;
     const isHome      = currentRateType === 'home';
@@ -1001,7 +1115,7 @@ function updateTherapistMode() {
             // Feature B-1: qualified on duty but none free at the picked time
             walkinAvailBlocked = true;
             const nextTs = findNextAvailableTime(qualifiedOnDutyTids, bookingTs, sessionTime, buffer);
-            const pickedLabel = new Date(bookingInput.value)
+            const pickedLabel = new Date(bookingInput.value.replace(' ', 'T'))
                 .toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'});
             let msg;
             if (nextTs === null) {
@@ -1019,7 +1133,7 @@ function updateTherapistMode() {
             walkinAvailBlocked = false;
             if (todayBlock) todayBlock.style.display = 'none';
             if (warnEl && peopleCount > qualifiedFree) {
-                const t = new Date(bookingInput.value)
+                const t = new Date(bookingInput.value.replace(' ', 'T'))
                     .toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'});
                 warnEl.style.display = 'block';
                 warnEl.innerHTML = `⚠️ <strong>${peopleCount} people</strong> requested but only `
@@ -1031,7 +1145,7 @@ function updateTherapistMode() {
         walkinAvailBlocked = false;
         if (todayBlock) todayBlock.style.display = 'none';
         if (warnEl && peopleCount > qualifiedFree && qualifiedFree > 0) {
-            const t = new Date(bookingInput.value)
+            const t = new Date(bookingInput.value.replace(' ', 'T'))
                 .toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'});
             warnEl.style.display = 'block';
             warnEl.innerHTML = `⚠️ <strong>${peopleCount} people</strong> requested but only `
@@ -1041,8 +1155,6 @@ function updateTherapistMode() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const bi = document.getElementById('service_booking_date');
-    if (bi) { bi.addEventListener('change', updateTherapistMode); bi.addEventListener('input', updateTherapistMode); }
     const pi = document.querySelector('[name="people_count"]');
     if (pi) {
         pi.addEventListener('change', () => {
@@ -1177,6 +1289,7 @@ window.addEventListener('message', function(event) {
 
 document.getElementById('serviceForm').addEventListener('submit', function(e) {
     if (!document.getElementById('service_item_id').value) { e.preventDefault(); alert('Please select a service first.'); return; }
+    if (!document.getElementById('walkin_booking_date').value) { e.preventDefault(); alert('Please pick a booking date and time first.'); return; }
     if (currentRateType === 'hotel' && currentPartnerId === 0) { e.preventDefault(); alert('Please select a hotel/partner for the Hotel rate.'); return; }
 });
 document.getElementById('productForm').addEventListener('submit', function(e) {
@@ -1184,8 +1297,6 @@ document.getElementById('productForm').addEventListener('submit', function(e) {
 });
 
 const now = new Date(); const pad = n => String(n).padStart(2,'0');
-const minDate = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-document.getElementById('service_booking_date').min = minDate;
 
 (function() {
     const year = now.getFullYear();
@@ -1230,6 +1341,298 @@ document.addEventListener('click', function(e) {
     if (e.target.closest('#product-grid .item-card')) setTimeout(() => updateWalkinPreview('product'), 80);
 });
 document.getElementById('product_quantity')?.addEventListener('input', () => updateWalkinPreview('product'));
+</script>
+
+<script>
+// ── Walk-in booking date/time modal ─────────────────────────────────────────
+
+const WALKIN_BM_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const WALKIN_BM_DAYS   = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+let walkinBMYear, walkinBMMonth, walkinBMSelectedDate = null;
+let walkinBwData = null, walkinBMSelectedHour = null, walkinBMSelectedMinute = null;
+
+function updatePickDateBtn() {
+    const svcId = currentServiceId ? parseInt(currentServiceId) : 0;
+    const thId  = parseInt(document.getElementById('svc_therapist_id')?.value || 0);
+    const btn   = document.getElementById('walkinPickDateBtn');
+    if (!btn) return;
+    const enabled = svcId > 0 && thId > 0;
+    btn.disabled = !enabled;
+    if (enabled && !document.getElementById('walkin_booking_date')?.value) {
+        const hint = document.getElementById('walkinSelectedDateTime');
+        if (hint) hint.textContent = 'Tap to pick a date and time slot';
+    }
+}
+
+function openWalkinBM() {
+    const svcId = currentServiceId ? parseInt(currentServiceId) : 0;
+    const thId  = parseInt(document.getElementById('svc_therapist_id')?.value || 0);
+    if (!svcId || !thId) return;
+
+    const tnBtn = document.getElementById('tbtn-' + thId);
+    const thName = tnBtn ? tnBtn.querySelector('[style*="font-weight:700"]')?.textContent?.trim() : '';
+    const lbl = document.getElementById('walkinBMTitle');
+    if (lbl) lbl.textContent = '📅 Pick Date & Time' + (thName ? ' — ' + thName : '');
+
+    const now = new Date();
+    walkinBMYear  = now.getFullYear();
+    walkinBMMonth = now.getMonth();
+    walkinBMSelectedDate   = null;
+    walkinBwData           = null;
+    walkinBMSelectedHour   = null;
+    walkinBMSelectedMinute = null;
+
+    const slotsSection = document.getElementById('walkinBMSlotsSection');
+    const footer = document.getElementById('walkinBMFooter');
+    const confirmBtn = document.getElementById('walkinBMConfirmBtn');
+    if (slotsSection) slotsSection.style.display = 'none';
+    if (footer) footer.style.display = 'none';
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.style.opacity = '.45'; }
+
+    walkinBMRenderCalendar();
+    document.getElementById('walkinBMOverlay').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+}
+
+function closeWalkinBM() {
+    document.getElementById('walkinBMOverlay').style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+document.getElementById('walkinBMOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeWalkinBM();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeWalkinBM();
+});
+
+function walkinBMRenderCalendar() {
+    document.getElementById('walkinBMMonthLabel').textContent = WALKIN_BM_MONTHS[walkinBMMonth] + ' ' + walkinBMYear;
+    const grid = document.getElementById('walkinCalGrid');
+    grid.innerHTML = '';
+
+    WALKIN_BM_DAYS.forEach(d => {
+        const el = document.createElement('div');
+        el.className = 'bm-cal-dow';
+        el.textContent = d;
+        grid.appendChild(el);
+    });
+
+    const firstDay    = new Date(walkinBMYear, walkinBMMonth, 1).getDay();
+    const daysInMonth = new Date(walkinBMYear, walkinBMMonth + 1, 0).getDate();
+    const today = new Date(); today.setHours(0,0,0,0);
+    const maxD  = new Date(today); maxD.setDate(maxD.getDate() + 60);
+
+    for (let i = 0; i < firstDay; i++) {
+        const el = document.createElement('div'); el.className = 'bm-day empty'; grid.appendChild(el);
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+        const cellDate = new Date(walkinBMYear, walkinBMMonth, d);
+        const el = document.createElement('div');
+        el.className = 'bm-day';
+        el.textContent = d;
+        // Build dateStr from raw ints — NO toISOString() to avoid timezone shift
+        const year = walkinBMYear, month = walkinBMMonth, day = d;
+        const dateStr    = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+        const isToday    = cellDate.getTime() === today.getTime();
+        const isPast     = cellDate < today;
+        const isFuture   = cellDate > maxD;
+        const isSelected = walkinBMSelectedDate === dateStr;
+
+        if (isPast || isFuture) {
+            el.classList.add('disabled');
+        } else {
+            if (isToday)    el.classList.add('today');
+            if (isSelected) el.classList.add('selected');
+            el.onclick = () => walkinBMSelectDate(dateStr, el);
+        }
+        grid.appendChild(el);
+    }
+}
+
+function walkinBMPrevMonth() {
+    walkinBMMonth--;
+    if (walkinBMMonth < 0) { walkinBMMonth = 11; walkinBMYear--; }
+    walkinBMRenderCalendar();
+}
+function walkinBMNextMonth() {
+    walkinBMMonth++;
+    if (walkinBMMonth > 11) { walkinBMMonth = 0; walkinBMYear++; }
+    walkinBMRenderCalendar();
+}
+
+function walkinBMSelectDate(dateStr, el) {
+    walkinBMSelectedDate   = dateStr;
+    walkinBwData           = null;
+    walkinBMSelectedHour   = null;
+    walkinBMSelectedMinute = null;
+    const confirmBtn = document.getElementById('walkinBMConfirmBtn');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.style.opacity = '.45'; }
+    document.getElementById('walkinBMSelectedInfo').textContent = '';
+    document.querySelectorAll('#walkinCalGrid .bm-day.selected').forEach(d => d.classList.remove('selected'));
+    el.classList.add('selected');
+    walkinBMLoadBusyWindows(dateStr);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function walkinParseMinutes(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
+function walkinFormatHour12(h) {
+    const s   = h < 12 ? 'AM' : 'PM';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return h12 + ':00 ' + s;
+}
+
+function walkinMinuteAvailable(h, m, d) {
+    const startMin = h * 60 + m;
+    const endMin   = startMin + d.session_time;
+    if (h < d.open_hour || h > d.close_hour) return false;
+    if (h === d.close_hour && m > 0) return false;
+    if (d.is_today && startMin <= d.now_minutes) return false;
+    for (const w of d.busy) {
+        if (startMin < walkinParseMinutes(w.end) && endMin > walkinParseMinutes(w.start)) return false;
+    }
+    return true;
+}
+
+function walkinHourAvailable(h, d) {
+    for (let m = 0; m < 60; m++) { if (walkinMinuteAvailable(h, m, d)) return true; }
+    return false;
+}
+
+function walkinBMLoadBusyWindows(dateStr) {
+    const svcId    = currentServiceId || 0;
+    const people   = parseInt(document.querySelector('[name="people_count"]')?.value) || 1;
+    const rateType = document.getElementById('rate_type_val')?.value || 'regular';
+    const thId     = parseInt(document.getElementById('svc_therapist_id')?.value) || 0;
+
+    const section   = document.getElementById('walkinBMSlotsSection');
+    const loading   = document.getElementById('walkinBMSlotsLoading');
+    const unavail   = document.getElementById('walkinBMSlotsUnavail');
+    const timeCols  = document.getElementById('walkinTimeCols');
+    const footer    = document.getElementById('walkinBMFooter');
+
+    if (section)  section.style.display  = 'block';
+    if (loading)  loading.style.display  = 'block';
+    if (unavail)  unavail.style.display  = 'none';
+    if (timeCols) timeCols.style.display = 'none';
+    if (footer)   footer.style.display   = 'none';
+    document.getElementById('walkinHourList').innerHTML   = '';
+    document.getElementById('walkinMinuteList').innerHTML = '<div style="font-size:0.78rem;color:var(--gray);text-align:center;padding:1rem;">← Select an hour</div>';
+
+    fetch('busy_windows.php?service_id=' + svcId + '&date=' + dateStr + '&people=' + people + '&rate_type=' + rateType + '&therapist_id=' + thId)
+        .then(r => r.json())
+        .then(data => {
+            if (loading) loading.style.display = 'none';
+            if (data.error) {
+                if (unavail) { unavail.style.display = 'block'; unavail.textContent = '⚠️ ' + (data.error || 'Could not check availability.'); }
+                return;
+            }
+            if (data.reason_code && !data.on_duty && data.is_today) {
+                if (unavail) { unavail.style.display = 'block'; unavail.innerHTML = '<div style="text-align:center;padding:1.25rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">📅 ' + data.message + '</div>'; }
+                return;
+            }
+            if (data.reason_code === 'NOT_QUALIFIED') {
+                if (unavail) { unavail.style.display = 'block'; unavail.textContent = '⚠️ ' + data.message; }
+                return;
+            }
+            walkinBwData = data;
+            walkinBMRenderHours();
+            if (timeCols) timeCols.style.display = 'grid';
+        })
+        .catch(() => {
+            if (loading) loading.style.display = 'none';
+            if (unavail) { unavail.style.display = 'block'; unavail.textContent = '⚠️ Could not load availability. Please try again.'; }
+        });
+}
+
+function walkinBMRenderHours() {
+    const list = document.getElementById('walkinHourList');
+    list.innerHTML = '';
+    for (let h = walkinBwData.open_hour; h <= walkinBwData.close_hour; h++) {
+        const avail = walkinHourAvailable(h, walkinBwData);
+        const el = document.createElement('div');
+        el.className   = 'bm-hour-item ' + (avail ? 'available' : 'blocked');
+        el.textContent = walkinFormatHour12(h);
+        if (avail) el.onclick = () => walkinBMSelectHour(h, el);
+        list.appendChild(el);
+    }
+}
+
+function walkinBMSelectHour(h, el) {
+    walkinBMSelectedHour   = h;
+    walkinBMSelectedMinute = null;
+    const confirmBtn = document.getElementById('walkinBMConfirmBtn');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.style.opacity = '.45'; }
+    document.getElementById('walkinBMSelectedInfo').textContent = '';
+    const footer = document.getElementById('walkinBMFooter');
+    if (footer) footer.style.display = 'none';
+    document.querySelectorAll('#walkinHourList .bm-hour-item').forEach(x => x.classList.remove('selected'));
+    el.classList.add('selected');
+    walkinBMRenderMinutes(h);
+}
+
+function walkinBMRenderMinutes(h) {
+    const list = document.getElementById('walkinMinuteList');
+    list.innerHTML = '';
+    let firstAvail = null;
+    for (let m = 0; m < 60; m++) {
+        const avail = walkinMinuteAvailable(h, m, walkinBwData);
+        const el = document.createElement('div');
+        el.className   = 'bm-minute-item ' + (avail ? 'available' : 'blocked');
+        el.textContent = String(m).padStart(2, '0');
+        if (avail) {
+            el.onclick = () => walkinBMSelectMinute(m, el);
+            if (firstAvail === null) firstAvail = el;
+        }
+        list.appendChild(el);
+    }
+    if (firstAvail) {
+        setTimeout(() => firstAvail.scrollIntoView({ block: 'nearest' }), 0);
+    }
+}
+
+function walkinBMSelectMinute(m, el) {
+    walkinBMSelectedMinute = m;
+    document.querySelectorAll('#walkinMinuteList .bm-minute-item').forEach(x => x.classList.remove('selected'));
+    el.classList.add('selected');
+
+    const parts = walkinBMSelectedDate.split('-').map(Number);
+    const h12   = walkinBMSelectedHour === 0 ? 12 : walkinBMSelectedHour > 12 ? walkinBMSelectedHour - 12 : walkinBMSelectedHour;
+    const ampm  = walkinBMSelectedHour < 12 ? 'AM' : 'PM';
+    const timeLabel = h12 + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+
+    const info = document.getElementById('walkinBMSelectedInfo');
+    if (info) info.textContent = WALKIN_BM_MONTHS[parts[1] - 1] + ' ' + parts[2] + ' · ' + timeLabel;
+
+    const footer = document.getElementById('walkinBMFooter');
+    if (footer) footer.style.display = 'flex';
+
+    const confirmBtn = document.getElementById('walkinBMConfirmBtn');
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.style.opacity = '1'; }
+}
+
+function confirmWalkinBM() {
+    if (!walkinBMSelectedDate || walkinBMSelectedHour === null || walkinBMSelectedMinute === null) return;
+
+    const [yr, mo, dy] = walkinBMSelectedDate.split('-').map(Number);
+    const dateStr = yr + '-' + String(mo).padStart(2, '0') + '-' + String(dy).padStart(2, '0');
+    const timeStr = String(walkinBMSelectedHour).padStart(2, '0') + ':' + String(walkinBMSelectedMinute).padStart(2, '0') + ':00';
+    document.getElementById('walkin_booking_date').value = dateStr + ' ' + timeStr;
+
+    const h12   = walkinBMSelectedHour === 0 ? 12 : walkinBMSelectedHour > 12 ? walkinBMSelectedHour - 12 : walkinBMSelectedHour;
+    const ampm  = walkinBMSelectedHour < 12 ? 'AM' : 'PM';
+    const timeLabel = h12 + ':' + String(walkinBMSelectedMinute).padStart(2, '0') + ' ' + ampm;
+    const displayText = '📅 ' + WALKIN_BM_MONTHS[mo - 1] + ' ' + dy + ', ' + yr + ' · ' + timeLabel + ' — Change';
+
+    const pickBtn = document.getElementById('walkinPickDateBtn');
+    if (pickBtn) { pickBtn.textContent = displayText; pickBtn.classList.add('has-value'); }
+
+    const hint = document.getElementById('walkinSelectedDateTime');
+    if (hint) hint.textContent = '';
+
+    closeWalkinBM();
+    updateTherapistMode();
+}
 </script>
 
 <!-- ── PayMongo OTP / Intent Payment Modal ─────────────────────────────────── -->
