@@ -3,6 +3,7 @@ require_once '../config.php';
 require_once __DIR__ . '/admin_access.php';
 enforce_page_access();
 redirect_if_not_admin();
+require_once __DIR__ . '/../notify.php';
 
 $message = ''; $message_type = '';
 
@@ -27,6 +28,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_today'])) {
             $ok = $stmt->execute(); $stmt->close();
             $message      = $ok ? "✅ {$row['full_name']} checked in." : "Error checking in.";
             $message_type = $ok ? "success" : "danger";
+            if ($ok) log_activity($conn, 'therapist_login',
+                "{$row['full_name']} clocked in for duty",
+                'therapist', $tid);
         }
     }
 }
@@ -53,8 +57,13 @@ if (isset($_GET['reordered'])) {
 if (isset($_GET['check_out'])) {
     $aid     = intval($_GET['check_out']);
     $timeout = date('H:i:s');
-    $stmt    = $conn->prepare("UPDATE therapist_attendance SET time_out=? WHERE id=? AND duty_date=CURDATE()");
+    // Fetch therapist name for the activity log before updating
+    $co_row = $conn->query("SELECT t.id, t.full_name FROM therapist_attendance ta JOIN therapists t ON t.id=ta.therapist_id WHERE ta.id={$aid} LIMIT 1")->fetch_assoc();
+    $stmt   = $conn->prepare("UPDATE therapist_attendance SET time_out=? WHERE id=? AND duty_date=CURDATE()");
     $stmt->bind_param("si", $timeout, $aid); $stmt->execute(); $stmt->close();
+    if ($co_row) log_activity($conn, 'therapist_logout',
+        "{$co_row['full_name']} clocked out",
+        'therapist', (int)$co_row['id']);
     header("Location: therapists.php"); exit();
 }
 

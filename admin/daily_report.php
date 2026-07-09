@@ -10,6 +10,56 @@ redirect_if_not_admin();
 $msg      = '';
 $msg_type = 'success';
 
+// Receptionist PIN gate — session-based so only prompted once per session
+if (is_cashier() && empty($_SESSION['report_pin_ok'])) {
+    $pin_error = '';
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['report_pin'])) {
+        $entered = trim($_POST['report_pin']);
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered); $ps->execute();
+        $pr_row = $ps->get_result()->fetch_assoc(); $ps->close();
+        if ($pr_row) {
+            $_SESSION['report_pin_ok'] = true;
+            $_SESSION['report_receptionist_name'] = $pr_row['full_name'];
+            header("Location: daily_report.php?date=" . urlencode($_GET['date'] ?? date('Y-m-d'))); exit();
+        } else {
+            $pin_error = 'Incorrect PIN. Please try again.';
+        }
+    }
+    // Render PIN gate page
+    ?><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Daily Report — PIN Required</title>
+<style>
+body{font-family:'Segoe UI',sans-serif;background:#f5f0eb;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
+.gate-box{background:#fff;border-radius:16px;padding:2.5rem 2rem;max-width:380px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.12);text-align:center;}
+.gate-box h2{margin:0 0 0.5rem;font-size:1.25rem;color:#5c3a1e;}
+.gate-box p{color:#888;font-size:0.9rem;margin:0 0 1.5rem;}
+.gate-box input{width:100%;padding:0.65rem;border:1px solid #ddd;border-radius:10px;font-size:1.4rem;letter-spacing:0.5em;text-align:center;box-sizing:border-box;color:#5c3a1e;margin-bottom:1rem;}
+.gate-box button{width:100%;padding:0.75rem;background:#c96a2c;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;}
+.gate-box button:hover{background:#a85520;}
+.err{color:#dc2626;font-size:0.85rem;margin-bottom:0.75rem;}
+</style>
+</head>
+<body>
+<div class="gate-box">
+    <h2>Daily Report</h2>
+    <p>Enter your 4-digit PIN to access the report.</p>
+    <form method="POST">
+        <?php echo csrf_field(); ?>
+        <input type="password" name="report_pin" maxlength="4" placeholder="••••" autofocus>
+        <?php if ($pin_error): ?><div class="err"><?php echo htmlspecialchars($pin_error); ?></div><?php endif; ?>
+        <button type="submit">Unlock Report</button>
+    </form>
+</div>
+</body>
+</html><?php
+    exit();
+}
+
 // Validate and sanitize the date parameter — prevents SQL injection via $report_date
 $report_date = $_GET['date'] ?? date('Y-m-d');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $report_date) || !strtotime($report_date)) {

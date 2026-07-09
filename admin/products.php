@@ -3,6 +3,7 @@ require_once '../config.php';
 require_once __DIR__ . '/admin_access.php';
 enforce_page_access();
 redirect_if_not_admin();
+require_once __DIR__ . '/../notify.php';
 
 $conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS deleted_at DATETIME NULL DEFAULT NULL");
 
@@ -19,6 +20,20 @@ while ($row = $cat_result->fetch_assoc()) {
 // ─── ARCHIVE (SOFT DELETE) ────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_product') {
     verify_csrf_token();
+
+    // Receptionist PIN check for archive
+    $pr_prod_del = null;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pr_prod_del = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pr_prod_del) {
+            $message = "⚠️ Incorrect PIN. Archive action cancelled."; $message_type = "danger";
+            goto end_prod_delete;
+        }
+    }
+
     $id = intval($_POST['id'] ?? 0);
     $stmt = $conn->prepare("SELECT id FROM products WHERE id = ?");
     $stmt->bind_param("i", $id);
@@ -31,12 +46,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         if ($stmt->execute()) {
             $message      = "Product archived.";
             $message_type = "success";
+            $_actor_prod_del = (is_cashier() && !empty($pr_prod_del['full_name']))
+                ? ['id' => null, 'name' => $pr_prod_del['full_name'], 'role' => 'receptionist']
+                : null;
+            log_activity($conn, 'product_deleted', "Archived product ID {$id}", 'product', $id, $_actor_prod_del);
         } else {
             $message      = "Error archiving product.";
             $message_type = "danger";
         }
         $stmt->close();
     }
+    end_prod_delete:;
 }
 
 // ─── RESTORE ─────────────────────────────────────────────────────────────────
@@ -54,6 +74,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resto
 if ($_SERVER['REQUEST_METHOD'] === 'POST'
     && !in_array($_POST['action'] ?? '', ['delete_product', 'restore_product'])) {
     verify_csrf_token();
+
+    // Receptionist PIN check for add/edit
+    $pr_prod_action = null;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pr_prod_action = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pr_prod_action) {
+            $message = "⚠️ Incorrect PIN. Action cancelled."; $message_type = "danger";
+            goto end_prod_action;
+        }
+    }
+
     $id          = isset($_POST['id']) ? intval($_POST['id']) : null;
     $name        = sanitize_input($_POST['name']);
     $description = sanitize_input($_POST['description']);
@@ -124,6 +158,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             if ($stmt->execute()) {
                 $message      = $id ? "Product updated successfully!" : "Product added successfully!";
                 $message_type = "success";
+                $prod_logged_id = $id ?? (int)$conn->insert_id;
+                $_actor_prod = (is_cashier() && !empty($pr_prod_action['full_name']))
+                    ? ['id' => null, 'name' => $pr_prod_action['full_name'], 'role' => 'receptionist']
+                    : null;
+                if ($id) {
+                    log_activity($conn, 'product_updated', "Updated product: {$name}", 'product', $prod_logged_id, $_actor_prod);
+                } else {
+                    log_activity($conn, 'product_created', "Created product: {$name}", 'product', $prod_logged_id, $_actor_prod);
+                }
             } else {
                 $message      = "Error saving product: " . $conn->error;
                 $message_type = "danger";
@@ -131,6 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             $stmt->close();
         }
     }
+    end_prod_action:;
 }
 
 // ─── FETCH FOR EDITING ────────────────────────────────────────────────────────
@@ -272,6 +316,13 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
+            <?php if (is_cashier()): ?>
+            <div class="form-group" style="max-width:200px;">
+                <label>Your 4-digit PIN <span class="required">*</span></label>
+                <input type="password" name="pin" maxlength="4" placeholder="••••" required
+                       style="letter-spacing:0.3em;text-align:center;font-size:1rem;">
+            </div>
+            <?php endif; ?>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">
                     <?php echo $edit_product ? '✅ Update Product' : '✅ Add Product'; ?>
@@ -315,7 +366,6 @@ require_once 'admin_header.php';
         <table>
             <thead>
                 <tr>
-                    <th>ID</th>
                     <th>Image</th>
                     <th>Name</th>
                     <th>Category</th>
@@ -337,7 +387,6 @@ require_once 'admin_header.php';
                 <?php if (!empty($filtered)): ?>
                     <?php foreach ($filtered as $product): ?>
                     <tr<?php if ($product['deleted_at']): ?> style="opacity:0.5;"<?php endif; ?>>
-                        <td><strong style="color:var(--gold);">#<?php echo $product['id']; ?></strong></td>
                         <td>
                             <?php if ($product['image']): ?>
                                 <img src="../uploads/products/<?php echo htmlspecialchars($product['image']); ?>"
@@ -384,6 +433,10 @@ require_once 'admin_header.php';
                                 <?php echo csrf_field(); ?>
                                 <input type="hidden" name="action" value="delete_product">
                                 <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">
+                                <?php if (is_cashier()): ?>
+                                <input type="password" name="pin" maxlength="4" placeholder="PIN" required
+                                       style="width:58px;padding:0.25rem 0.4rem;border:1px solid var(--border2);border-radius:6px;font-size:0.8rem;letter-spacing:0.2em;text-align:center;vertical-align:middle;">
+                                <?php endif; ?>
                                 <button type="submit" class="btn btn-danger btn-sm">🗃️ Archive</button>
                             </form>
                             <?php endif; ?>

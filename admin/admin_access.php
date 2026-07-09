@@ -34,6 +34,7 @@ function admin_page_roles(): array {
         'vouchers'              => ['owner','it','marketing'],
         'discounts'             => ['owner','it','marketing'],
         'daily_report'          => ['owner','it','marketing','cashier'],
+        'activity'              => ['owner','it','marketing'],
         // ── Sub-pages (no sidebar entry) ─────────────────────────────────────
         'assign_therapist'      => ['owner','it','marketing','cashier'],
         'feedback'              => ['owner','it','marketing'],
@@ -63,6 +64,7 @@ function admin_nav_items(): array {
         ['file' => 'partners',     'icon' => '🤝', 'label' => 'Partners',     'roles' => ['owner','it']],
         ['file' => 'discounts',    'icon' => '🎟️', 'label' => 'Discounts',    'roles' => ['owner','it','marketing']],
         ['file' => 'daily_report', 'icon' => '📋', 'label' => 'Daily Report', 'roles' => ['owner','it','marketing','cashier']],
+        ['file' => 'activity',    'icon' => '🕐', 'label' => 'Activity Log', 'roles' => ['owner','it','marketing']],
     ];
 }
 
@@ -87,7 +89,7 @@ function creatable_roles(string $creator_role): array {
  */
 function enforce_page_access(): void {
     if (!is_logged_in() || !is_admin()) {
-        header('Location: ' . BASE_URL . 'user/auth.php');
+        header('Location: ' . BASE_URL . 'admin/admin_login.php');
         exit();
     }
 

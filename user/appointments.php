@@ -130,6 +130,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'custo
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTION: CUSTOMER CANCEL ORDER
+// ═══════════════════════════════════════════════════════════════════════════
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancel_order') {
+    verify_csrf_token();
+    $order_id      = intval($_POST['order_id'] ?? 0);
+    $cancel_reason = trim($_POST['cancel_reason'] ?? '');
+
+    $chk = $conn->prepare("
+        SELECT id FROM orders
+        WHERE id = ? AND user_id = ? AND approval_status = 'pending'
+    ");
+    $chk->bind_param("ii", $order_id, $user_id);
+    $chk->execute();
+    $ord = $chk->get_result()->fetch_assoc();
+    $chk->close();
+
+    if ($ord) {
+        $has_reason_col = $conn->query("SHOW COLUMNS FROM orders LIKE 'cancel_reason'")->num_rows > 0;
+        if ($has_reason_col && $cancel_reason !== '') {
+            $upd = $conn->prepare("UPDATE orders SET approval_status = 'cancelled', cancel_reason = ? WHERE id = ?");
+            $upd->bind_param("si", $cancel_reason, $order_id);
+        } else {
+            $upd = $conn->prepare("UPDATE orders SET approval_status = 'cancelled' WHERE id = ?");
+            $upd->bind_param("i", $order_id);
+        }
+        $upd->execute(); $upd->close();
+        $_SESSION['flash_success'] = "Order cancelled successfully.";
+    } else {
+        $_SESSION['flash_error'] = "Cannot cancel this order.";
+    }
+    header("Location: appointments.php#orders");
+    exit();
+}
+
 $filter_status = isset($_GET['filter']) ? sanitize_input($_GET['filter']) : '';
 
 // ── Fetch appointments ────────────────────────────────────────────────────────
@@ -179,7 +214,7 @@ $result = $stmt->get_result();
 while ($row = $result->fetch_assoc()) $appointments[] = $row;
 $stmt->close();
 
-// ── Fetch assigned therapists ─────────────────────────────────────────────────
+// ── Fetch assigned therapists & extra services per appointment ────────────────
 foreach ($appointments as &$appt) {
     $ts = $conn->prepare("
         SELECT t.full_name, t.specialties, at2.notes
@@ -191,6 +226,17 @@ foreach ($appointments as &$appt) {
     $ts->bind_param("i", $appt['id']); $ts->execute();
     $appt['assigned_therapists'] = $ts->get_result()->fetch_all(MYSQLI_ASSOC);
     $ts->close();
+
+    $es = $conn->prepare("
+        SELECT aes.charged_price AS price, s.name AS svc_name, t.full_name AS therapist_name
+        FROM appointment_extra_services aes
+        JOIN services s ON s.id = aes.service_id
+        LEFT JOIN therapists t ON t.id = aes.therapist_id
+        WHERE aes.appointment_id = ?
+    ");
+    $es->bind_param("i", $appt['id']); $es->execute();
+    $appt['extra_services'] = $es->get_result()->fetch_all(MYSQLI_ASSOC);
+    $es->close();
 }
 unset($appt);
 
@@ -226,6 +272,7 @@ $product_orders = [];
 $stmt = $conn->prepare("
     SELECT o.id AS order_id, o.created_at AS order_date, o.total_amount,
            o.payment_method, o.payment_status, o.approval_status,
+           o.discount_type, o.discount_amount, o.final_amount, o.paymongo_method,
            oi.quantity, oi.price, oi.subtotal,
            p.name AS product_name, p.image AS product_image
     FROM orders o
@@ -250,6 +297,10 @@ foreach ($product_orders as $row) {
             'order_id' => $oid, 'order_date' => $row['order_date'],
             'total_amount' => $row['total_amount'], 'payment_method' => $row['payment_method'],
             'payment_status' => $row['payment_status'], 'approval_status' => $row['approval_status'],
+            'discount_type' => $row['discount_type'] ?? 'none',
+            'discount_amount' => floatval($row['discount_amount'] ?? 0),
+            'final_amount' => floatval($row['final_amount'] ?? 0),
+            'paymongo_method' => $row['paymongo_method'] ?? null,
             'items' => [],
         ];
     }
@@ -258,6 +309,12 @@ foreach ($product_orders as $row) {
         'quantity' => $row['quantity'], 'price' => $row['price'], 'subtotal' => $row['subtotal'],
     ];
 }
+
+// ── Fetch logged-in user info (shown in "Your Information" collapsible) ───────
+$ui_stmt = $conn->prepare("SELECT full_name, email, phone, address FROM users WHERE id = ? LIMIT 1");
+$ui_stmt->bind_param("i", $user_id); $ui_stmt->execute();
+$user_info = $ui_stmt->get_result()->fetch_assoc() ?? [];
+$ui_stmt->close();
 
 $page_title = 'My Appointments & Orders';
 require_once 'header.php';
@@ -376,6 +433,14 @@ function render_payment_badge(string $pay_method, string $pay_status, string $ap
 .modal-overlay.open { display:flex; }
 .modal-box { background:#fff; border-radius:16px; padding:2rem; width:min(480px, 92vw); box-shadow:0 24px 60px rgba(0,0,0,0.2); animation: modalIn 0.2s ease; }
 @keyframes modalIn { from { transform:scale(0.92); opacity:0; } to { transform:scale(1); opacity:1; } }
+details.card-section { border-top:1px solid #EAD8C0; margin-top:0.85rem; padding-top:0.85rem; }
+details.card-section > summary { font-weight:600; color:#3B2A1A; cursor:pointer; font-size:0.88rem; list-style:none; display:flex; align-items:center; justify-content:space-between; padding:0.1rem 0; }
+details.card-section > summary::after { content:'▸'; font-size:0.75rem; color:#9a7c68; margin-left:0.5rem; flex-shrink:0; }
+details.card-section[open] > summary::after { content:'▾'; }
+details.card-section summary::-webkit-details-marker { display:none; }
+.info-grid { display:grid; grid-template-columns:max-content 1fr; gap:0.35rem 1.25rem; margin-top:0.6rem; font-size:0.87rem; }
+.info-grid .lbl { color:#9a7c68; font-weight:600; white-space:nowrap; }
+.info-grid .val { color:#3B2A1A; word-break:break-word; }
 </style>
 
 <div class="container">
@@ -396,6 +461,17 @@ function render_payment_badge(string $pay_method, string $pay_status, string $ap
 <?php if (!empty($cancel_error)): ?>
 <div style="background:#f8d7da;color:#842029;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #f1aeb5;">
     ❌ <?php echo htmlspecialchars($cancel_error); ?>
+</div>
+<?php endif; ?>
+
+<?php if (!empty($_SESSION['flash_success'])): ?>
+<div style="background:#d1e7dd;color:#0a3622;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #a3cfbb;">
+    ✅ <?php echo htmlspecialchars($_SESSION['flash_success']); unset($_SESSION['flash_success']); ?>
+</div>
+<?php endif; ?>
+<?php if (!empty($_SESSION['flash_error'])): ?>
+<div style="background:#f8d7da;color:#842029;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #f1aeb5;">
+    ❌ <?php echo htmlspecialchars($_SESSION['flash_error']); unset($_SESSION['flash_error']); ?>
 </div>
 <?php endif; ?>
 
@@ -463,14 +539,17 @@ function render_payment_badge(string $pay_method, string $pay_status, string $ap
 
     function render_therapists(array $appt): void {
         $therapists = $appt['assigned_therapists'] ?? [];
-        if (empty($therapists)) return;
         echo '<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.5rem;">';
-        foreach ($therapists as $t) {
-            $initials = strtoupper(substr($t['full_name'], 0, 1));
-            echo '<span class="therapist-pill"><span class="avatar">' . $initials . '</span>';
-            echo htmlspecialchars($t['full_name']);
-            if (!empty($t['specialties'])) echo ' <span style="opacity:0.7;">· ' . htmlspecialchars($t['specialties']) . '</span>';
-            echo '</span>';
+        if (empty($therapists)) {
+            echo '<span style="font-size:0.82rem;color:#9a7c68;font-style:italic;">💆 Therapist to be assigned</span>';
+        } else {
+            foreach ($therapists as $t) {
+                $initials = strtoupper(substr($t['full_name'], 0, 1));
+                echo '<span class="therapist-pill"><span class="avatar">' . $initials . '</span>';
+                echo htmlspecialchars($t['full_name']);
+                if (!empty($t['specialties'])) echo ' <span style="opacity:0.7;">· ' . htmlspecialchars($t['specialties']) . '</span>';
+                echo '</span>';
+            }
         }
         echo '</div>';
     }
@@ -549,6 +628,60 @@ function render_payment_badge(string $pay_method, string $pay_status, string $ap
                 </div>
 
                 <?php render_therapists($appt); ?>
+
+                <!-- Meta pills: booked date, service type, rate -->
+                <div style="display:flex;flex-wrap:wrap;gap:0.3rem 1.5rem;margin-top:0.55rem;font-size:0.82rem;color:#6b7280;">
+                    <span>📆 Booked <?php echo date('M d, Y', strtotime($appt['created_at'])); ?></span>
+                    <?php if (!empty($appt['service_type'])): ?><span>🏠 <?php echo ucfirst(str_replace('_',' ',$appt['service_type'])); ?></span><?php endif; ?>
+                    <?php if (!empty($appt['rate_type'])): ?><span>💲 <?php echo ucfirst($appt['rate_type']); ?> rate</span><?php endif; ?>
+                </div>
+
+                <details class="card-section">
+                    <summary>👤 Your Information</summary>
+                    <div class="info-grid">
+                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
+                        <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
+                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
+                        <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
+                    </div>
+                </details>
+
+                <?php if ($pay_method): ?>
+                <details class="card-section">
+                    <summary>💰 Payment & Pricing</summary>
+                    <div class="info-grid">
+                        <span class="lbl">Original Price</span>
+                        <span class="val">₱<?php echo number_format(floatval($orow['total_amount'] ?: $appt['price']), 2); ?></span>
+                        <?php if (!empty($orow['discount_type']) && $orow['discount_type'] !== 'none'): ?>
+                        <span class="lbl">Discount</span>
+                        <span class="val"><?php echo ucfirst($orow['discount_type']); echo floatval($orow['discount_amount']) > 0 ? ' — ₱'.number_format(floatval($orow['discount_amount']),2) : ' (pending confirmation)'; ?></span>
+                        <?php endif; ?>
+                        <span class="lbl">Final Amount</span>
+                        <span class="val" style="font-weight:700;color:#15803d;">₱<?php echo number_format(floatval($orow['final_amount'] ?: ($orow['total_amount'] ?: $appt['price'])), 2); ?></span>
+                        <span class="lbl">Payment Method</span>
+                        <span class="val"><?php echo $pm_actual ? ucfirst($pm_actual) : ucfirst($pay_method); ?></span>
+                        <span class="lbl">Payment Status</span>
+                        <span class="val"><?php echo $pay_status ? ucfirst($pay_status) : '—'; ?></span>
+                    </div>
+                </details>
+                <?php endif; ?>
+
+                <?php if (!empty($appt['extra_services'])): ?>
+                <details class="card-section">
+                    <summary>✨ Extra Services (<?php echo count($appt['extra_services']); ?>)</summary>
+                    <div style="margin-top:0.5rem;">
+                        <?php foreach ($appt['extra_services'] as $xsvc): ?>
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid #f3f4f6;font-size:0.87rem;">
+                            <div>
+                                <span style="color:#3B2A1A;font-weight:600;"><?php echo htmlspecialchars($xsvc['svc_name']); ?></span>
+                                <?php if (!empty($xsvc['therapist_name'])): ?><span style="color:#9a7c68;"> · <?php echo htmlspecialchars($xsvc['therapist_name']); ?></span><?php endif; ?>
+                            </div>
+                            <span style="color:#C96A2C;font-weight:700;">₱<?php echo number_format(floatval($xsvc['price']), 2); ?></span>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </details>
+                <?php endif; ?>
 
                 <?php if ($appt['status'] === 'pending'): ?>
                 <div style="margin-top:0.75rem;padding:0.6rem 0.9rem;background:#fff8f2;border-left:3px solid #f59e0b;border-radius:6px;font-size:0.82rem;color:#92400e;">
@@ -648,7 +781,60 @@ function render_payment_badge(string $pay_method, string $pay_status, string $ap
                     <p><strong>📆 Booked on:</strong><br><?php echo date('F d, Y', strtotime($appt['created_at'])); ?></p>
                 </div>
 
-                <?php if (!empty($appt['assigned_therapists'])): render_therapists($appt); endif; ?>
+                <?php render_therapists($appt); ?>
+
+                <!-- Meta pills: service type, rate (booked date already in grid above) -->
+                <div style="display:flex;flex-wrap:wrap;gap:0.3rem 1.5rem;margin-top:0.55rem;font-size:0.82rem;color:#6b7280;">
+                    <?php if (!empty($appt['service_type'])): ?><span>🏠 <?php echo ucfirst(str_replace('_',' ',$appt['service_type'])); ?></span><?php endif; ?>
+                    <?php if (!empty($appt['rate_type'])): ?><span>💲 <?php echo ucfirst($appt['rate_type']); ?> rate</span><?php endif; ?>
+                </div>
+
+                <details class="card-section">
+                    <summary>👤 Your Information</summary>
+                    <div class="info-grid">
+                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
+                        <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
+                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
+                        <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
+                    </div>
+                </details>
+
+                <?php if ($pay_method): ?>
+                <details class="card-section">
+                    <summary>💰 Payment & Pricing</summary>
+                    <div class="info-grid">
+                        <span class="lbl">Original Price</span>
+                        <span class="val">₱<?php echo number_format(floatval($orow['total_amount'] ?: $appt['price']), 2); ?></span>
+                        <?php if (!empty($orow['discount_type']) && $orow['discount_type'] !== 'none'): ?>
+                        <span class="lbl">Discount</span>
+                        <span class="val"><?php echo ucfirst($orow['discount_type']); echo floatval($orow['discount_amount']) > 0 ? ' — ₱'.number_format(floatval($orow['discount_amount']),2) : ' (pending confirmation)'; ?></span>
+                        <?php endif; ?>
+                        <span class="lbl">Final Amount</span>
+                        <span class="val" style="font-weight:700;color:#15803d;">₱<?php echo number_format(floatval($orow['final_amount'] ?: ($orow['total_amount'] ?: $appt['price'])), 2); ?></span>
+                        <span class="lbl">Payment Method</span>
+                        <span class="val"><?php echo $pm_actual ? ucfirst($pm_actual) : ucfirst($pay_method); ?></span>
+                        <span class="lbl">Payment Status</span>
+                        <span class="val"><?php echo $pay_status ? ucfirst($pay_status) : '—'; ?></span>
+                    </div>
+                </details>
+                <?php endif; ?>
+
+                <?php if (!empty($appt['extra_services'])): ?>
+                <details class="card-section">
+                    <summary>✨ Extra Services (<?php echo count($appt['extra_services']); ?>)</summary>
+                    <div style="margin-top:0.5rem;">
+                        <?php foreach ($appt['extra_services'] as $xsvc): ?>
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid #f3f4f6;font-size:0.87rem;">
+                            <div>
+                                <span style="color:#3B2A1A;font-weight:600;"><?php echo htmlspecialchars($xsvc['svc_name']); ?></span>
+                                <?php if (!empty($xsvc['therapist_name'])): ?><span style="color:#9a7c68;"> · <?php echo htmlspecialchars($xsvc['therapist_name']); ?></span><?php endif; ?>
+                            </div>
+                            <span style="color:#C96A2C;font-weight:700;">₱<?php echo number_format(floatval($xsvc['price']), 2); ?></span>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </details>
+                <?php endif; ?>
 
                 <?php if ($appt['status'] === 'cancelled' && !empty($appt['cancel_reason'])): ?>
                 <div style="margin-top:0.65rem;padding:0.55rem 0.85rem;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;font-size:0.82rem;color:#374151;">
@@ -732,52 +918,123 @@ function render_payment_badge(string $pay_method, string $pay_status, string $ap
             else { $badge_style = 'background:#fff3cd;color:#664d03;'; $badge_label = '✅ Ready for Pickup — 🏪 Pay at Shop'; }
         } elseif ($pstatus === 'paid' && $apvl === 'pending') { $badge_style = 'background:#fff3cd;color:#664d03;'; $badge_label = '⏳ Paid — Awaiting Approval'; }
         elseif ($apvl === 'declined' || $pstatus === 'refunded') { $badge_style = 'background:#f8d7da;color:#842029;'; $badge_label = ($pstatus === 'refunded') ? '↩️ Refunded' : '❌ Declined'; }
+        elseif ($apvl === 'cancelled') { $badge_style = 'background:#f3f4f6;color:#374151;'; $badge_label = '🚫 Cancelled'; }
         else { $badge_style = 'background:#fff3cd;color:#664d03;'; $badge_label = ($method === 'online') ? '⏳ Awaiting Online Payment' : '⏳ Unpaid — Pay at counter'; }
-        $order_border = in_array($apvl, ['approved','completed']) ? '#198754' : '#C96A2C';
+        $order_border = in_array($apvl, ['approved','completed']) ? '#198754' : ($apvl === 'cancelled' ? '#6b7280' : '#C96A2C');
+        $first_image  = $order['items'][0]['product_image'] ?? null;
+        $item_count   = count($order['items']);
+        $card_title   = $item_count === 1 ? $order['items'][0]['product_name'] : $item_count . ' Products';
     ?>
     <div class="order-card" style="border-left-color:<?php echo $order_border; ?>;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:1rem;padding-bottom:0.75rem;border-bottom:1px solid #EAD8C0;">
-            <div>
-                <strong style="color:#3B2A1A;font-size:1rem;">Order #<?php echo $order['order_id']; ?></strong>
-                <span style="color:#888;font-size:0.85rem;margin-left:0.75rem;"><?php echo date('F d, Y h:i A', strtotime($order['order_date'])); ?></span>
-            </div>
-            <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-                <span class="payment-badge method-<?php echo $method === 'online' ? 'online' : 'onsite'; ?>"><?php echo $method === 'online' ? '💳 Online' : '🏪 Onsite'; ?></span>
-                <span id="order-status-<?php echo $order['order_id']; ?>" class="payment-badge" style="<?php echo $badge_style; ?>"><?php echo $badge_label; ?></span>
-            </div>
-        </div>
-        <?php foreach ($order['items'] as $item): ?>
-        <div class="order-item-row">
-            <img src="../uploads/products/<?php echo htmlspecialchars($item['product_image']); ?>" style="width:70px;height:70px;object-fit:cover;border-radius:8px;flex-shrink:0;">
-            <div style="flex:1;">
-                <div style="font-weight:bold;color:#3B2A1A;margin-bottom:0.2rem;"><?php echo htmlspecialchars($item['product_name']); ?></div>
-                <div style="font-size:0.88rem;color:#666;">₱<?php echo number_format($item['price'], 2); ?> × <?php echo $item['quantity']; ?></div>
-            </div>
-            <div style="font-weight:bold;color:#C96A2C;white-space:nowrap;">₱<?php echo number_format($item['subtotal'], 2); ?></div>
-        </div>
-        <?php endforeach; ?>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem;padding-top:0.75rem;border-top:1px solid #EAD8C0;flex-wrap:wrap;gap:0.75rem;">
-            <div>
-                <?php if ($apvl === 'completed'):
-                    $fb = $conn->prepare("SELECT rating FROM feedback WHERE order_id = ? AND user_id = ? AND appointment_id IS NULL");
-                    $fb->bind_param("ii", $order['order_id'], $user_id); $fb->execute();
-                    $fb_row = $fb->get_result()->fetch_assoc(); $fb->close();
-                ?>
-                    <?php if ($fb_row): ?>
-                    <div class="feedback-stars">
-                        <span style="font-size:0.82rem;color:#888;">Your rating:</span>
-                        <?php for ($s = 1; $s <= 5; $s++): ?><span style="font-size:1.15rem;color:<?php echo $s <= $fb_row['rating'] ? '#f59e0b' : '#e5e7eb'; ?>;">&#9733;</span><?php endfor; ?>
+        <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;">
+            <!-- Card image: first product -->
+            <?php if ($first_image): ?>
+            <img src="../uploads/products/<?php echo htmlspecialchars($first_image); ?>"
+                 style="width:110px;height:110px;object-fit:cover;border-radius:10px;flex-shrink:0;">
+            <?php else: ?>
+            <div style="width:110px;height:110px;border-radius:10px;flex-shrink:0;background:#EAD8C0;display:flex;align-items:center;justify-content:center;font-size:2.5rem;">🛍️</div>
+            <?php endif; ?>
+
+            <div style="flex:1;min-width:220px;">
+                <!-- Header row: title + status badge -->
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+                    <div>
+                        <h3 style="color:#3B2A1A;margin:0;font-size:1rem;"><?php echo htmlspecialchars($card_title); ?></h3>
+                        <span style="font-size:0.82rem;color:#9a7c68;">Ordered <?php echo date('F d, Y h:i A', strtotime($order['order_date'])); ?></span>
                     </div>
-                    <?php else: ?>
-                    <a href="feedback.php?type=order&id=<?php echo $order['order_id']; ?>" class="feedback-btn">⭐ Leave Feedback</a>
+                    <span id="order-status-<?php echo $order['order_id']; ?>" class="payment-badge" style="<?php echo $badge_style; ?>"><?php echo $badge_label; ?></span>
+                </div>
+
+                <!-- Quick info row -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.3rem 2rem;font-size:0.92rem;color:#444;margin-bottom:0.25rem;">
+                    <p><strong>💳 Payment:</strong><br>
+                        <?php echo $method === 'online' ? '🌐 Online' : '🏪 Onsite'; ?>
+                        <?php
+                        $pm_icon_map = ['cash'=>'💵 Cash','gcash'=>'📱 GCash','maya'=>'💜 Maya','qrph'=>'📷 QRPH','bank'=>'🏦 Bank'];
+                        if ($method !== 'online' && isset($pm_icon_map[$method])) echo ' · ' . $pm_icon_map[$method];
+                        ?>
+                    </p>
+                    <p><strong>💰 Total:</strong><br>
+                        <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none' && $order['discount_amount'] > 0): ?>
+                        <span style="text-decoration:line-through;color:#9ca3af;font-size:0.85rem;">₱<?php echo number_format($order['total_amount'], 2); ?></span>
+                        <span style="color:#15803d;font-weight:800;"> ₱<?php echo number_format($order['final_amount'] ?: $order['total_amount'], 2); ?></span>
+                        <?php else: ?>
+                        ₱<?php echo number_format($order['total_amount'], 2); ?>
+                        <?php endif; ?>
+                    </p>
+                </div>
+
+                <!-- Products collapsible -->
+                <details class="card-section">
+                    <summary>🛍️ Products in this order (<?php echo $item_count; ?>)</summary>
+                    <div style="margin-top:0.5rem;">
+                        <?php foreach ($order['items'] as $item): ?>
+                        <div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0;border-bottom:1px solid #f3f4f6;">
+                            <?php if ($item['product_image']): ?>
+                            <img src="../uploads/products/<?php echo htmlspecialchars($item['product_image']); ?>"
+                                 style="width:60px;height:60px;object-fit:cover;border-radius:8px;flex-shrink:0;">
+                            <?php else: ?>
+                            <div style="width:60px;height:60px;border-radius:8px;flex-shrink:0;background:#EAD8C0;display:flex;align-items:center;justify-content:center;font-size:1.4rem;">📦</div>
+                            <?php endif; ?>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-weight:700;color:#3B2A1A;font-size:0.9rem;"><?php echo htmlspecialchars($item['product_name']); ?></div>
+                                <div style="font-size:0.82rem;color:#9a7c68;">×<?php echo $item['quantity']; ?> &nbsp;·&nbsp; ₱<?php echo number_format($item['price'], 2); ?> each</div>
+                            </div>
+                            <div style="font-weight:700;color:#C96A2C;white-space:nowrap;font-size:0.92rem;">₱<?php echo number_format($item['subtotal'], 2); ?></div>
+                        </div>
+                        <?php endforeach; ?>
+                        <div style="display:flex;justify-content:flex-end;align-items:baseline;gap:0.4rem;padding-top:0.5rem;font-size:0.9rem;font-weight:700;color:#3B2A1A;">
+                            Total:
+                            <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none' && $order['discount_amount'] > 0): ?>
+                            <span style="text-decoration:line-through;color:#9ca3af;font-size:0.82rem;">₱<?php echo number_format($order['total_amount'], 2); ?></span>
+                            <span style="color:#15803d;">₱<?php echo number_format($order['final_amount'] ?: $order['total_amount'], 2); ?></span>
+                            <span style="font-size:0.72rem;color:#92400e;">−₱<?php echo number_format($order['discount_amount'], 2); ?> <?php echo ucfirst($order['discount_type']); ?></span>
+                            <?php else: ?>
+                            <span>₱<?php echo number_format($order['total_amount'], 2); ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Your Information collapsible -->
+                <details class="card-section">
+                    <summary>👤 Your Information</summary>
+                    <div class="info-grid">
+                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
+                        <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
+                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
+                        <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
+                    </div>
+                </details>
+
+                <!-- Footer: cancel + feedback + receipt -->
+                <div style="margin-top:0.85rem;padding-top:0.75rem;border-top:1px solid #EAD8C0;display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
+                        <?php if ($apvl === 'pending'): ?>
+                        <button type="button" class="cancel-btn" onclick="openCancelOrderModal(<?php echo $order['order_id']; ?>)">
+                            🚫 Cancel Order
+                        </button>
+                        <?php endif; ?>
+
+                        <?php if ($apvl === 'completed'):
+                            $fb = $conn->prepare("SELECT rating FROM feedback WHERE order_id = ? AND user_id = ? AND appointment_id IS NULL");
+                            $fb->bind_param("ii", $order['order_id'], $user_id); $fb->execute();
+                            $fb_row = $fb->get_result()->fetch_assoc(); $fb->close();
+                        ?>
+                            <?php if ($fb_row): ?>
+                            <div class="feedback-stars">
+                                <span style="font-size:0.82rem;color:#888;">Your rating:</span>
+                                <?php for ($s = 1; $s <= 5; $s++): ?><span style="font-size:1.15rem;color:<?php echo $s <= $fb_row['rating'] ? '#f59e0b' : '#e5e7eb'; ?>;">&#9733;</span><?php endfor; ?>
+                            </div>
+                            <?php else: ?>
+                            <a href="feedback.php?type=order&id=<?php echo $order['order_id']; ?>" class="feedback-btn">⭐ Leave Feedback</a>
+                            <?php endif; ?>
+                        <?php endif; ?>
+                    </div>
+
+                    <?php if ($pstatus === 'paid'): ?>
+                    <a href="payment_success.php?order_id=<?php echo $order['order_id']; ?>" class="receipt-btn">🧾 View Receipt</a>
                     <?php endif; ?>
-                <?php endif; ?>
-            </div>
-            <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-                <?php if ($pstatus === 'paid'): ?><a href="payment_success.php?order_id=<?php echo $order['order_id']; ?>" class="receipt-btn">🧾 View Receipt</a><?php endif; ?>
-                <div style="text-align:right;">
-                    <div style="font-size:0.85rem;color:#888;">Order Total</div>
-                    <div style="font-size:1.2rem;font-weight:bold;color:#C96A2C;">₱<?php echo number_format($order['total_amount'], 2); ?></div>
                 </div>
             </div>
         </div>
@@ -793,6 +1050,36 @@ function render_payment_badge(string $pay_method, string $pay_status, string $ap
     </div>
     <?php endif; ?>
 </div>
+</div>
+
+<!-- Cancel Order Modal -->
+<div class="modal-overlay" id="cancelOrderModal">
+    <div class="modal-box">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
+            <h3 style="margin:0;color:#991b1b;font-size:1.1rem;">🚫 Cancel Order</h3>
+            <button onclick="closeCancelOrderModal()" style="border:none;background:none;font-size:1.3rem;cursor:pointer;color:#9ca3af;line-height:1;">✕</button>
+        </div>
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.83rem;color:#991b1b;">
+            ⚠️ <strong>Are you sure?</strong> This action cannot be undone.
+        </div>
+        <form method="POST" id="cancelOrderForm">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="action"   value="cancel_order">
+            <input type="hidden" name="order_id" id="cancel-order-id" value="">
+            <div style="margin-bottom:1rem;">
+                <label style="display:block;font-size:0.85rem;font-weight:600;color:#374151;margin-bottom:0.4rem;">
+                    Reason <span style="font-weight:400;color:#9ca3af;">(optional)</span>
+                </label>
+                <textarea name="cancel_reason" id="cancel-order-reason" rows="3"
+                          placeholder="e.g. Changed mind, wrong item..."
+                          style="width:100%;padding:0.6rem 0.75rem;border:1px solid #d1d5db;border-radius:8px;font-size:0.88rem;color:#374151;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea>
+            </div>
+            <div style="display:flex;gap:0.75rem;justify-content:flex-end;">
+                <button type="button" onclick="closeCancelOrderModal()" style="padding:0.55rem 1.25rem;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#374151;font-size:0.88rem;font-weight:600;cursor:pointer;">Keep Order</button>
+                <button type="submit" style="padding:0.55rem 1.25rem;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:0.88rem;font-weight:600;cursor:pointer;">🚫 Yes, Cancel Order</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <!-- Cancel Modal -->
@@ -901,6 +1188,19 @@ function updateOrderStatuses() {
     }).catch(err => console.error('Real-time update error:', err));
 }
 setInterval(updateOrderStatuses, 3000);
+
+function openCancelOrderModal(orderId) {
+    document.getElementById('cancel-order-id').value    = orderId;
+    document.getElementById('cancel-order-reason').value = '';
+    document.getElementById('cancelOrderModal').classList.add('open');
+    document.body.style.overflow = 'hidden';
+}
+function closeCancelOrderModal() {
+    document.getElementById('cancelOrderModal').classList.remove('open');
+    document.body.style.overflow = '';
+}
+document.getElementById('cancelOrderModal').addEventListener('click', function(e) { if (e.target === this) closeCancelOrderModal(); });
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeCancelOrderModal(); });
 </script>
 
 <footer class="spa-footer">

@@ -38,6 +38,31 @@ if (isset($_SESSION['service_booking'])) {
     ];
     $total_amount = $service['price'];
 
+    // ── Fetch qualified therapists for selection ──────────────────────────────
+    $therapists_for_selection = [];
+    $th_res = $conn->query("
+        SELECT DISTINCT t.id, t.full_name
+        FROM therapists t
+        WHERE t.id IN (
+            SELECT therapist_id FROM therapist_specialty_services WHERE service_id = $service_id
+            UNION
+            SELECT ts.therapist_id FROM therapist_specialties ts
+            JOIN services s ON s.category_id = ts.category_id WHERE s.id = $service_id
+            UNION
+            SELECT id FROM therapists WHERE is_generalist = 1
+        )
+        ORDER BY t.full_name ASC
+    ");
+    if ($th_res) {
+        while ($th_row = $th_res->fetch_assoc()) $therapists_for_selection[] = $th_row;
+    }
+
+    // ── Ensure preferred_therapist_id column exists on appointments ───────────
+    $_pref_chk = $conn->query("SHOW COLUMNS FROM appointments LIKE 'preferred_therapist_id'");
+    if ($_pref_chk && $_pref_chk->num_rows === 0) {
+        $conn->query("ALTER TABLE appointments ADD COLUMN preferred_therapist_id INT NULL DEFAULT NULL");
+    }
+
     // ── Pre-calculate therapist capacity for this service ─────────────────────
     $booking_date_check = $_SESSION['service_booking']['booking_date']
                        ?? $_POST['booking_date']
@@ -109,17 +134,18 @@ if (!empty($_SESSION['checkout_error'])) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     verify_csrf_token();
-    $customer_name   = sanitize_input($_POST['customer_name']);
-    $email           = sanitize_input($_POST['email']);
-    $phone           = sanitize_input($_POST['phone']);
-    $address         = sanitize_input($_POST['address']);
-    $booking_date    = $_POST['booking_date'] ?? null;
-    $people_count    = intval($_POST['people_count'] ?? 1);
-    $payment_method  = $_POST['payment_method'] ?? 'onsite';
-    $service_type    = $_POST['service_type']   ?? 'onsite';
-    $home_address    = sanitize_input($_POST['home_address'] ?? '');
-    $home_notes      = sanitize_input($_POST['home_notes']   ?? '');
-    $customer_note   = sanitize_input($_POST['customer_note'] ?? '');
+    $customer_name          = sanitize_input($_POST['customer_name']);
+    $email                  = sanitize_input($_POST['email']);
+    $phone                  = sanitize_input($_POST['phone']);
+    $address                = sanitize_input($_POST['address']);
+    $booking_date           = $_POST['booking_date'] ?? null;
+    $people_count           = intval($_POST['people_count'] ?? 1);
+    $payment_method         = $_POST['payment_method'] ?? 'onsite';
+    $service_type           = $_POST['service_type']   ?? 'onsite';
+    $home_address           = sanitize_input($_POST['home_address'] ?? '');
+    $home_notes             = sanitize_input($_POST['home_notes']   ?? '');
+    $customer_note          = sanitize_input($_POST['customer_note'] ?? '');
+    $preferred_therapist_id = intval($_POST['preferred_therapist_id'] ?? 0);
 
     // ── Discount fields ───────────────────────────────────────────────────────
     // Customers declare their discount type only. The actual amount is confirmed
@@ -234,6 +260,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         $message      = '❌ ' . $reason . '.' . $next_txt;
                         $message_type = 'danger';
                     }
+
+                    // ── Preferred therapist conflict check ────────────────────
+                    if (empty($message) && $preferred_therapist_id > 0) {
+                        $pref_check = $engine->checkSlot(
+                            (int)$service_id,
+                            date('Y-m-d H:i:s', $chosen_time),
+                            (int)$people_count,
+                            $appt_rate,
+                            0,
+                            $preferred_therapist_id
+                        );
+                        if (!$pref_check['available']) {
+                            $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
+                            $tn->bind_param("i", $preferred_therapist_id);
+                            $tn->execute();
+                            $tn_name = $tn->get_result()->fetch_assoc()['full_name'] ?? 'Your preferred therapist';
+                            $tn->close();
+                            $_SESSION['checkout_error'] = "⚠️ {$tn_name} is not available at that time. Please pick a different time or choose Any Available Therapist.";
+                            header('Location: ' . BASE_URL . 'user/checkout.php');
+                            exit;
+                        }
+                    }
                 }
             }
         }
@@ -327,18 +375,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                             INSERT INTO appointments
                                 (user_id, service_id, order_item_id, appointment_date, status,
                                  people_count, service_type, home_address, home_notes, customer_note,
-                                 charged_price)
-                            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
+                                 charged_price, preferred_therapist_id)
+                            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
                         ");
                         // FIXED: Bug 2 — store total for all people, not per-person
-                        $appt_charged = floatval($item['price']) * $people_count;
-                        $appt_stmt->bind_param("iiisissssd",
+                        $appt_charged  = floatval($item['price']) * $people_count;
+                        $pref_th_val   = $preferred_therapist_id > 0 ? $preferred_therapist_id : null;
+                        $appt_stmt->bind_param(
+                            str_repeat('i',3) . 's' . 'i' . str_repeat('s',4) . 'di',
                             $user_id, $item['id'], $order_item_id,
                             $booking_date, $people_count,
                             $service_type, $home_address, $home_notes, $customer_note,
-                            $appt_charged
+                            $appt_charged, $pref_th_val
                         );
-                        $appt_stmt->execute(); $appt_stmt->close();
+                        $appt_stmt->execute();
+                        $new_appt_id = $appt_stmt->insert_id;
+                        $appt_stmt->close();
+
+                        if ($preferred_therapist_id > 0 && $new_appt_id > 0) {
+                            $af_notes = 'Customer preferred therapist';
+                            $af_comm  = 0.00;
+                            $af_ins   = $conn->prepare("
+                                INSERT INTO appointment_therapists
+                                    (appointment_id, therapist_id, notes, commission, people_handled)
+                                VALUES (?, ?, ?, ?, ?)
+                            ");
+                            $af_ins->bind_param("iisdi",
+                                $new_appt_id, $preferred_therapist_id,
+                                $af_notes, $af_comm, $people_count);
+                            $af_ins->execute(); $af_ins->close();
+                        }
                     }
                 }
 
@@ -897,6 +963,196 @@ require_once 'header.php';
 
 @keyframes slideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
 
+/* ── Therapist selection cards ── */
+.therapist-scroll {
+    display: flex;
+    gap: 0.65rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    scrollbar-width: thin;
+    scrollbar-color: var(--cream2) transparent;
+}
+.therapist-scroll::-webkit-scrollbar { height: 4px; }
+.therapist-scroll::-webkit-scrollbar-thumb { background: var(--cream2); border-radius: 4px; }
+.therapist-card {
+    flex-shrink: 0;
+    width: 88px;
+    padding: 0.75rem 0.5rem;
+    border: 2px solid var(--cream2);
+    border-radius: 12px;
+    background: var(--cream);
+    cursor: pointer;
+    text-align: center;
+    transition: all .18s;
+    font-family: 'DM Sans', sans-serif;
+}
+.therapist-card:hover { border-color: var(--gold); }
+.therapist-card.active {
+    border-color: var(--gold);
+    background: #fff8f2;
+    box-shadow: 0 2px 10px rgba(201,106,44,0.18);
+}
+.therapist-avatar {
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--cream2), #d4b896);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.3rem;
+    margin: 0 auto 0.45rem;
+    overflow: hidden;
+    border: 2px solid var(--cream2);
+}
+.therapist-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.therapist-card.active .therapist-avatar { border-color: var(--gold); }
+.therapist-name { font-size: 0.72rem; font-weight: 700; color: var(--brown); line-height: 1.3; word-break: break-word; }
+.therapist-sub  { font-size: 0.65rem; color: var(--gray); margin-top: 0.2rem; }
+
+/* ── Booking modal ── */
+.bm-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(59,42,26,0.55);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+    animation: fadeIn .25s ease;
+}
+.bm-overlay.open { display: flex; }
+.bm-box {
+    background: #fff;
+    border-radius: 20px;
+    width: min(540px, 96vw);
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.25);
+    animation: popIn .3s cubic-bezier(.34,1.56,.64,1);
+}
+.bm-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.1rem 1.4rem;
+    border-bottom: 1px solid var(--cream2);
+    background: var(--cream);
+    flex-shrink: 0;
+}
+.bm-header-title { font-family: 'Cormorant Garamond', serif; font-size: 1.1rem; font-weight: 600; color: var(--brown); }
+.bm-close {
+    background: none; border: none; cursor: pointer;
+    font-size: 1.1rem; color: var(--gray); padding: 0.2rem 0.4rem; border-radius: 6px;
+    transition: color .15s;
+}
+.bm-close:hover { color: var(--brown); }
+.bm-body { overflow-y: auto; padding: 1.25rem 1.4rem; flex: 1; }
+
+/* Calendar */
+.bm-cal-nav {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 0.85rem;
+}
+.bm-cal-nav button {
+    background: var(--cream); border: 1.5px solid var(--cream2);
+    border-radius: 8px; width: 32px; height: 32px;
+    cursor: pointer; font-size: 1rem; color: var(--brown);
+    display: flex; align-items: center; justify-content: center;
+    transition: all .15s;
+}
+.bm-cal-nav button:hover { border-color: var(--gold); color: var(--gold); }
+.bm-cal-month { font-family: 'Cormorant Garamond', serif; font-size: 1rem; font-weight: 600; color: var(--brown); }
+.bm-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+}
+.bm-cal-dow {
+    text-align: center;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--gray);
+    padding: 0.3rem 0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.bm-day {
+    aspect-ratio: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.82rem;
+    font-family: 'DM Sans', sans-serif;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 1.5px solid transparent;
+    transition: all .15s;
+    color: var(--brown);
+    font-weight: 500;
+}
+.bm-day:hover:not(.disabled):not(.empty) { border-color: var(--gold); background: #fff8f2; }
+.bm-day.today { border-color: var(--cream2); font-weight: 700; }
+.bm-day.selected { background: var(--gold); color: #fff; border-color: var(--gold); font-weight: 700; }
+.bm-day.disabled { color: #ccc; cursor: not-allowed; text-decoration: line-through; }
+.bm-day.empty { cursor: default; }
+
+/* Slot grid inside modal */
+.bm-slots-section { margin-top: 1.1rem; }
+.bm-slots-label { font-size: 0.75rem; font-weight: 700; color: var(--brown); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 0.6rem; }
+.bm-slot-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.45rem; }
+.bm-slot {
+    padding: 0.5rem 0.3rem;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    border: 1.5px solid var(--cream2);
+    background: var(--cream);
+    color: var(--brown);
+    cursor: pointer;
+    text-align: center;
+    transition: all .15s;
+}
+.bm-slot:hover { border-color: var(--gold); }
+.bm-slot.selected { background: var(--gold); border-color: var(--gold); color: #fff; }
+.bm-slot.warning { border-color: #f59e0b; background: #fffbeb; color: #92400e; }
+.bm-slot.warning.selected { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.bm-slot.unavailable { background: #f9fafb; color: #9ca3af; border-color: #e5e7eb; cursor: not-allowed; opacity: .6; }
+
+.bm-footer {
+    padding: 1rem 1.4rem;
+    border-top: 1px solid var(--cream2);
+    background: var(--cream);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+.bm-selected-info { flex: 1; font-size: 0.85rem; color: var(--brown); font-family: 'DM Sans', sans-serif; }
+.bm-confirm {
+    padding: 0.65rem 1.25rem;
+    background: linear-gradient(135deg, #C96A2C, #a94f1d);
+    color: #fff; border: none; border-radius: 10px;
+    font-size: 0.88rem; font-weight: 700; cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: all .18s; white-space: nowrap;
+}
+.bm-confirm:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(201,106,44,0.3); }
+.bm-confirm:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* Trigger button */
+.dt-pick-btn {
+    width: 100%;
+    padding: 0.85rem;
+    border: 2px dashed var(--cream2);
+    border-radius: 12px;
+    background: var(--cream);
+    color: var(--brown);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: all .18s;
+    text-align: center;
+}
+.dt-pick-btn:hover { border-color: var(--gold); background: #fff8f2; }
+.dt-pick-btn.has-value { border-style: solid; border-color: var(--gold); background: #fff8f2; }
+
 /* ── Success overlay ── */
 .co-success-overlay {
     display: none;
@@ -1114,6 +1370,34 @@ require_once 'header.php';
                     </div>
                 </div>
 
+                <!-- Preferred Therapist -->
+                <?php if (!empty($therapists_for_selection)): ?>
+                <div class="co-field">
+                    <label class="co-label">Preferred Therapist</label>
+                    <input type="hidden" name="preferred_therapist_id" id="preferred_therapist_id" value="0">
+                    <div class="therapist-scroll">
+                        <div class="therapist-card active" onclick="selectTherapist(0, this)">
+                            <div class="therapist-avatar">🌿</div>
+                            <div class="therapist-name">Any Available</div>
+                            <div class="therapist-sub">Best fit assigned</div>
+                        </div>
+                        <?php foreach ($therapists_for_selection as $th): ?>
+                        <div class="therapist-card" onclick="selectTherapist(<?php echo intval($th['id']); ?>, this)">
+                            <div class="therapist-avatar">
+                                <?php echo strtoupper(substr($th['full_name'], 0, 1)); ?>
+                            </div>
+                            <div class="therapist-name"><?php echo htmlspecialchars(explode(' ', $th['full_name'])[0]); ?></div>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <div style="font-size:0.72rem;color:var(--gray);margin-top:4px;">
+                        We'll do our best to honour your preference. Availability may vary.
+                    </div>
+                </div>
+                <?php else: ?>
+                <input type="hidden" name="preferred_therapist_id" id="preferred_therapist_id" value="0">
+                <?php endif; ?>
+
                 <!-- Home address (hidden by default) -->
                 <div id="homeAddressBlock" style="display:none;">
                     <div class="co-field">
@@ -1128,64 +1412,43 @@ require_once 'header.php';
                     </div>
                 </div>
 
-                <!-- Date & people -->
-                <div class="co-input-row">
-                    <div class="co-field">
-                        <label class="co-label">Date <span>*</span></label>
-                        <input type="date" id="booking_date_picker"
+                <!-- People count -->
+                <div class="co-field">
+                    <label class="co-label">Number of People <span>*</span></label>
+                    <div style="display:flex;align-items:center;gap:0.6rem;max-width:200px;">
+                        <button type="button" onclick="changePeople(-1)"
+                                style="width:38px;height:38px;border-radius:10px;border:1.5px solid var(--cream2);
+                                       background:var(--cream);font-size:1.1rem;cursor:pointer;
+                                       display:flex;align-items:center;justify-content:center;flex-shrink:0;
+                                       transition:all .15s;" onmouseover="this.style.borderColor='var(--gold)'"
+                                onmouseout="this.style.borderColor='var(--cream2)'">−</button>
+                        <input type="number" name="people_count" id="people_count"
+                               value="1" min="1" max="<?php echo max($total_qualified, 10); ?>" readonly
                                class="co-input"
-                               min="<?php echo date('Y-m-d'); ?>"
-                               max="<?php echo date('Y-m-d', strtotime('+30 days')); ?>"
-                               onchange="loadSlots()"
-                               required>
-                        <div style="font-size:0.72rem;color:var(--gray);margin-top:4px;">
-                            Open 10:00 AM – 10:00 PM · Book up to 30 days ahead
-                        </div>
+                               style="text-align:center;font-weight:700;font-size:1.05rem;cursor:default;">
+                        <button type="button" onclick="changePeople(1)"
+                                style="width:38px;height:38px;border-radius:10px;border:1.5px solid var(--cream2);
+                                       background:var(--cream);font-size:1.1rem;cursor:pointer;
+                                       display:flex;align-items:center;justify-content:center;flex-shrink:0;
+                                       transition:all .15s;" onmouseover="this.style.borderColor='var(--gold)'"
+                                onmouseout="this.style.borderColor='var(--cream2)'">+</button>
                     </div>
-                    <div class="co-field">
-                        <label class="co-label">Number of People <span>*</span></label>
-                        <div style="display:flex;align-items:center;gap:0.6rem;">
-                            <button type="button" onclick="changePeople(-1)"
-                                    style="width:38px;height:38px;border-radius:10px;border:1.5px solid var(--cream2);
-                                           background:var(--cream);font-size:1.1rem;cursor:pointer;
-                                           display:flex;align-items:center;justify-content:center;flex-shrink:0;
-                                           transition:all .15s;" onmouseover="this.style.borderColor='var(--gold)'"
-                                    onmouseout="this.style.borderColor='var(--cream2)'">−</button>
-                            <input type="number" name="people_count" id="people_count"
-                                   value="1" min="1" max="<?php echo max($total_qualified, 10); ?>" readonly
-                                   class="co-input"
-                                   style="text-align:center;font-weight:700;font-size:1.05rem;
-                                          flex:1;cursor:default;">
-                            <button type="button" onclick="changePeople(1)"
-                                    style="width:38px;height:38px;border-radius:10px;border:1.5px solid var(--cream2);
-                                           background:var(--cream);font-size:1.1rem;cursor:pointer;
-                                           display:flex;align-items:center;justify-content:center;flex-shrink:0;
-                                           transition:all .15s;" onmouseover="this.style.borderColor='var(--gold)'"
-                                    onmouseout="this.style.borderColor='var(--cream2)'">+</button>
-                        </div>
-                        <div id="capacity-warning" style="display:none;margin-top:0.5rem;
-                             padding:0.5rem 0.75rem;background:#fffbeb;border-radius:8px;
-                             border:1px solid #f59e0b;font-size:0.76rem;color:#92400e;
-                             font-family:'DM Sans',sans-serif;"></div>
-                    </div>
+                    <div id="capacity-warning" style="display:none;margin-top:0.5rem;
+                         padding:0.5rem 0.75rem;background:#fffbeb;border-radius:8px;
+                         border:1px solid #f59e0b;font-size:0.76rem;color:#92400e;
+                         font-family:'DM Sans',sans-serif;"></div>
                 </div>
 
-                <!-- Hidden actual booking_date submitted with form -->
-                <input type="hidden" name="booking_date" id="booking_date_input" required>
-
-                <!-- Slot picker -->
-                <div id="slot-section" style="display:none;margin-bottom:1.1rem;">
-                    <label class="co-label">Available Times <span>*</span></label>
-                    <div id="slot-loading" style="display:none;text-align:center;padding:1.5rem;color:var(--gray);font-size:0.85rem;">
-                        ⏳ Checking availability...
+                <!-- Date & Time picker -->
+                <div class="co-field">
+                    <label class="co-label">Date &amp; Time <span>*</span></label>
+                    <input type="hidden" name="booking_date" id="booking_date_input">
+                    <button type="button" class="dt-pick-btn" id="dtPickBtn" onclick="openBM()">
+                        📅 Pick Date &amp; Time
+                    </button>
+                    <div style="font-size:0.72rem;color:var(--gray);margin-top:4px;">
+                        Open 10:00 AM – 8:00 PM · Book up to 30 days ahead
                     </div>
-                    <div id="slot-unavailable" style="display:none;padding:1rem;background:#fff5f5;
-                         border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;">
-                    </div>
-                    <div id="slot-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;"></div>
-                    <div id="slot-warning" style="display:none;margin-top:0.65rem;padding:0.55rem 0.85rem;
-                         background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;
-                         font-size:0.76rem;color:#92400e;font-family:'DM Sans',sans-serif;"></div>
                 </div>
 
             </div>
@@ -1409,6 +1672,45 @@ require_once 'header.php';
     </div><!-- end co-grid -->
 </div><!-- end co-wrap -->
 
+<!-- ── Booking Date & Time Modal ─────────────────────────────────────────────── -->
+<div class="bm-overlay" id="bmOverlay">
+    <div class="bm-box">
+        <div class="bm-header">
+            <span class="bm-header-title">📅 Pick Date &amp; Time</span>
+            <button class="bm-close" type="button" onclick="closeBM()" aria-label="Close">✕</button>
+        </div>
+        <div class="bm-body">
+            <!-- Calendar -->
+            <div class="bm-cal-nav">
+                <button type="button" onclick="bmPrevMonth()">‹</button>
+                <span class="bm-cal-month" id="bmMonthLabel"></span>
+                <button type="button" onclick="bmNextMonth()">›</button>
+            </div>
+            <div class="bm-cal-grid" id="bmCalGrid"></div>
+
+            <!-- Slot section (appears after date selected) -->
+            <div class="bm-slots-section" id="bmSlotsSection" style="display:none;">
+                <div class="bm-slots-label" id="bmSlotsLabel">Available Times</div>
+                <div id="bmSlotsLoading" style="text-align:center;padding:1.2rem;color:var(--gray);font-size:0.85rem;display:none;">
+                    ⏳ Checking availability…
+                </div>
+                <div id="bmSlotsUnavail" style="display:none;padding:0.85rem;background:#fff5f5;
+                     border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;"></div>
+                <div class="bm-slot-grid" id="bmSlotGrid"></div>
+                <div id="bmSlotWarning" style="display:none;margin-top:0.6rem;padding:0.5rem 0.8rem;
+                     background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;
+                     font-size:0.76rem;color:#92400e;font-family:'DM Sans',sans-serif;"></div>
+            </div>
+        </div>
+        <div class="bm-footer" id="bmFooter" style="display:none;">
+            <div class="bm-selected-info" id="bmSelectedInfo"></div>
+            <button type="button" class="bm-confirm" id="bmConfirmBtn" onclick="confirmBM()" disabled>
+                ✅ Confirm
+            </button>
+        </div>
+    </div>
+</div>
+
 <?php
 $total_qualified   = $total_qualified   ?? 0;
 $on_duty_qualified = $on_duty_qualified ?? 0;
@@ -1417,16 +1719,6 @@ $on_duty_qualified = $on_duty_qualified ?? 0;
 // ── Capacity data from PHP ────────────────────────────────────────────────────
 const TOTAL_QUALIFIED   = <?php echo $total_qualified; ?>;
 const ON_DUTY_QUALIFIED = <?php echo $on_duty_qualified; ?>;
-
-// ── People counter ────────────────────────────────────────────────────────────
-function changePeople(delta) {
-    const inp = document.getElementById('people_count');
-    let val = parseInt(inp.value) + delta;
-    if (val < 1) val = 1;
-    if (val > Math.max(TOTAL_QUALIFIED, 10)) val = Math.max(TOTAL_QUALIFIED, 10);
-    inp.value = val;
-    checkCapacityWarning(val);
-}
 
 function checkCapacityWarning(count) {
     const warn    = document.getElementById('capacity-warning');
@@ -1521,127 +1813,18 @@ function addQuickNote(tag) {
     noteTA.focus();
 }
 
-// ── SLOT PICKER ───────────────────────────────────────────────────────────────
-const SERVICE_ID = <?php echo intval($service_id ?? 0); ?>;
-let selectedSlot = null;
-
-function loadSlots() {
-    const datePicker = document.getElementById('booking_date_picker');
-    const people     = parseInt(document.getElementById('people_count').value) || 1;
-    const rateType   = document.querySelector('[name="rate_type"]')?.value || 'regular';
-    if (!datePicker.value) return;
-
-    const slotSection    = document.getElementById('slot-section');
-    const slotLoading    = document.getElementById('slot-loading');
-    const slotGrid       = document.getElementById('slot-grid');
-    const slotUnavail    = document.getElementById('slot-unavailable');
-    const slotWarning    = document.getElementById('slot-warning');
-    const bookingHidden  = document.getElementById('booking_date_input');
-
-    slotSection.style.display = 'block';
-    slotLoading.style.display = 'block';
-    slotGrid.style.display    = 'none';
-    slotGrid.innerHTML        = '';
-    slotUnavail.style.display = 'none';
-    slotWarning.style.display = 'none';
-    bookingHidden.value       = '';
-    selectedSlot              = null;
-
-    fetch(`../admin/slots.php?service_id=${SERVICE_ID}&date=${datePicker.value}&people=${people}&rate_type=${rateType}`)
-        .then(r => r.json())
-        .then(data => {
-            slotLoading.style.display = 'none';
-
-            if (data.error || data.service_status === 'unavailable') {
-                slotUnavail.style.display = 'block';
-                slotUnavail.textContent   = '⚠️ ' + (data.message || 'This service is currently unavailable.');
-                return;
-            }
-
-            if (!data.slots || data.slots.length === 0) {
-                slotUnavail.style.display = 'block';
-                slotUnavail.textContent   = '⚠️ No time slots available for this date.';
-                return;
-            }
-
-            slotGrid.style.display = 'grid';
-            data.slots.forEach(slot => {
-                const btn = document.createElement('button');
-                btn.type  = 'button';
-                btn.textContent = slot.time_label;
-
-                if (slot.status === 'unavailable' || slot.is_past) {
-                    btn.disabled = true;
-                    btn.style.cssText = `
-                        padding:0.55rem 0.4rem;border-radius:8px;font-size:0.8rem;font-weight:600;
-                        border:1.5px solid #e5e7eb;background:#f9fafb;color:#9ca3af;cursor:not-allowed;
-                        opacity:0.6;text-decoration:${slot.is_past ? 'line-through' : 'none'};`;
-                    if (slot.reason && !slot.is_past) {
-                        btn.title = slot.reason;
-                    }
-                } else if (slot.status === 'warning') {
-                    btn.style.cssText = `
-                        padding:0.55rem 0.4rem;border-radius:8px;font-size:0.8rem;font-weight:600;
-                        border:1.5px solid #f59e0b;background:#fffbeb;color:#92400e;cursor:pointer;
-                        transition:all .15s;`;
-                    btn.title = slot.reason;
-                    btn.onclick = () => selectSlot(btn, slot, data.slots);
-                } else {
-                    btn.style.cssText = `
-                        padding:0.55rem 0.4rem;border-radius:8px;font-size:0.8rem;font-weight:600;
-                        border:1.5px solid var(--cream2);background:var(--cream);color:var(--brown);
-                        cursor:pointer;transition:all .15s;`;
-                    btn.onclick = () => selectSlot(btn, slot, data.slots);
-                }
-                slotGrid.appendChild(btn);
-            });
-
-            if (data.available_count === 0) {
-                slotUnavail.style.display = 'block';
-                slotUnavail.innerHTML = '⚠️ No available slots for this date. <br><small>Please try a different date.</small>';
-            }
-        })
-        .catch(() => {
-            slotLoading.style.display = 'none';
-            slotUnavail.style.display = 'block';
-            slotUnavail.textContent   = '⚠️ Could not load availability. Please try again.';
-        });
+// ── Therapist selection ───────────────────────────────────────────────────────
+let selectedTherapistId = 0;
+function selectTherapist(id, card) {
+    selectedTherapistId = id;
+    document.getElementById('preferred_therapist_id').value = id;
+    document.querySelectorAll('.therapist-card').forEach(c => c.classList.remove('active'));
+    card.classList.add('active');
+    // If a date is already picked in the modal, reload slots for the new therapist
+    if (bmSelectedDate) bmLoadSlots(bmSelectedDate);
 }
 
-function selectSlot(btn, slot, allSlots) {
-    // Deselect all
-    document.querySelectorAll('#slot-grid button').forEach(b => {
-        if (!b.disabled) {
-            const isWarning = b.style.borderColor.includes('f59e0b');
-            b.style.background = isWarning ? '#fffbeb' : 'var(--cream)';
-            b.style.borderColor = isWarning ? '#f59e0b' : 'var(--cream2)';
-            b.style.color = isWarning ? '#92400e' : 'var(--brown)';
-        }
-    });
-
-    // Select this slot
-    btn.style.background  = '#C96A2C';
-    btn.style.borderColor = '#C96A2C';
-    btn.style.color       = '#fff';
-
-    selectedSlot = slot;
-    document.getElementById('booking_date_input').value = slot.datetime;
-
-    // Show warning if applicable
-    const warnEl = document.getElementById('slot-warning');
-    if (slot.status === 'warning') {
-        warnEl.style.display = 'block';
-        warnEl.innerHTML = `⚠️ ${slot.reason} — <strong>Receptionist will contact you to confirm arrangement.</strong>`;
-    } else {
-        warnEl.style.display = 'none';
-    }
-
-    // Update booking confirmation area
-    updateBookingConfirmation();
-}
-
-// Reload slots and totals when people count changes
-const origChangePeople = window.changePeople;
+// ── People counter ────────────────────────────────────────────────────────────
 function changePeople(delta) {
     const inp = document.getElementById('people_count');
     let val = parseInt(inp.value) + delta;
@@ -1650,8 +1833,234 @@ function changePeople(delta) {
     inp.value = val;
     checkCapacityWarning(val);
     updateDiscountPreview();
-    // Reload slots with new people count
-    if (document.getElementById('booking_date_picker')?.value) loadSlots();
+    if (bmSelectedDate) bmLoadSlots(bmSelectedDate);
+}
+
+// ── Booking Modal ─────────────────────────────────────────────────────────────
+const SERVICE_ID = <?php echo intval($service_id ?? 0); ?>;
+const BM_MIN_DATE = new Date('<?php echo date('Y-m-d'); ?>');
+const BM_MAX_DATE = new Date('<?php echo date('Y-m-d', strtotime('+30 days')); ?>');
+
+let bmYear, bmMonth, bmSelectedDate = null, bmSelectedSlot = null;
+
+function openBM() {
+    const now = new Date();
+    bmYear  = now.getFullYear();
+    bmMonth = now.getMonth();
+    bmSelectedDate = null;
+    bmSelectedSlot = null;
+    document.getElementById('bmSlotsSection').style.display = 'none';
+    document.getElementById('bmFooter').style.display = 'none';
+    document.getElementById('bmConfirmBtn').disabled = true;
+    bmRenderCalendar();
+    document.getElementById('bmOverlay').classList.add('open');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeBM() {
+    document.getElementById('bmOverlay').classList.remove('open');
+    document.body.style.overflow = '';
+}
+
+document.getElementById('bmOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeBM();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeBM();
+});
+
+const BM_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const BM_DAYS   = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+function bmRenderCalendar() {
+    document.getElementById('bmMonthLabel').textContent = BM_MONTHS[bmMonth] + ' ' + bmYear;
+    const grid = document.getElementById('bmCalGrid');
+    grid.innerHTML = '';
+
+    // Day-of-week headers
+    BM_DAYS.forEach(d => {
+        const el = document.createElement('div');
+        el.className = 'bm-cal-dow';
+        el.textContent = d;
+        grid.appendChild(el);
+    });
+
+    const firstDay = new Date(bmYear, bmMonth, 1).getDay();
+    const daysInMonth = new Date(bmYear, bmMonth + 1, 0).getDate();
+    const today = new Date(); today.setHours(0,0,0,0);
+    const maxD  = new Date(today); maxD.setDate(maxD.getDate() + 30);
+
+    // Empty cells before first day
+    for (let i = 0; i < firstDay; i++) {
+        const el = document.createElement('div');
+        el.className = 'bm-day empty';
+        grid.appendChild(el);
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+        const cellDate = new Date(bmYear, bmMonth, d);
+        const el = document.createElement('div');
+        el.className = 'bm-day';
+        el.textContent = d;
+
+        const isToday    = cellDate.getTime() === today.getTime();
+        const isPast     = cellDate < today;
+        const isFuture   = cellDate > maxD;
+        const dateStr    = bmYear + '-' + String(bmMonth + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        const isSelected = bmSelectedDate === dateStr;
+
+        if (isPast || isFuture) {
+            el.classList.add('disabled');
+        } else {
+            if (isToday)    el.classList.add('today');
+            if (isSelected) el.classList.add('selected');
+            el.onclick = () => bmSelectDate(dateStr, el);
+        }
+        grid.appendChild(el);
+    }
+}
+
+function bmPrevMonth() {
+    bmMonth--;
+    if (bmMonth < 0) { bmMonth = 11; bmYear--; }
+    bmRenderCalendar();
+}
+function bmNextMonth() {
+    bmMonth++;
+    if (bmMonth > 11) { bmMonth = 0; bmYear++; }
+    bmRenderCalendar();
+}
+
+function bmSelectDate(dateStr, el) {
+    bmSelectedDate = dateStr;
+    bmSelectedSlot = null;
+    document.getElementById('bmConfirmBtn').disabled = true;
+    document.getElementById('bmSelectedInfo').textContent = '';
+    document.querySelectorAll('.bm-day.selected').forEach(d => d.classList.remove('selected'));
+    el.classList.add('selected');
+    bmLoadSlots(dateStr);
+}
+
+function bmLoadSlots(dateStr) {
+    const people   = parseInt(document.getElementById('people_count').value) || 1;
+    const rateType = document.getElementById('service_type_hidden')?.value === 'home' ? 'home' : 'regular';
+    const thId     = selectedTherapistId;
+
+    const section  = document.getElementById('bmSlotsSection');
+    const loading  = document.getElementById('bmSlotsLoading');
+    const unavail  = document.getElementById('bmSlotsUnavail');
+    const slotGrid = document.getElementById('bmSlotGrid');
+    const warning  = document.getElementById('bmSlotWarning');
+    const footer   = document.getElementById('bmFooter');
+    const lbl      = document.getElementById('bmSlotsLabel');
+
+    const [_yr, _mo, _dy] = dateStr.split('-').map(Number);
+    lbl.textContent = 'Times for ' + BM_MONTHS[_mo - 1] + ' ' + _dy;
+
+    section.style.display = 'block';
+    loading.style.display = 'block';
+    unavail.style.display = 'none';
+    warning.style.display = 'none';
+    slotGrid.innerHTML    = '';
+    footer.style.display  = 'none';
+    bmSelectedSlot        = null;
+
+    fetch(`../admin/slots.php?service_id=${SERVICE_ID}&date=${dateStr}&people=${people}&rate_type=${rateType}&therapist_id=${thId}`)
+        .then(r => r.json())
+        .then(data => {
+            loading.style.display = 'none';
+
+            if (data.error) {
+                unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
+                unavail.textContent   = '⚠️ ' + (data.message || 'Could not check availability. Please try again.');
+                return;
+            }
+            if (data.service_status === 'unavailable') {
+                if (data.reason_code === 'no_duty_today' || data.reason_code === 'fully_booked') {
+                    unavail.style.cssText = 'display:block;';
+                    unavail.innerHTML     = '<div style="text-align:center;padding:1.5rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">📅 ' + data.message + '</div>';
+                } else {
+                    unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
+                    unavail.textContent   = '⚠️ ' + (data.message || 'This service is currently unavailable.');
+                }
+                return;
+            }
+            if (!data.slots || data.slots.length === 0) {
+                unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
+                unavail.textContent   = '⚠️ No time slots available for this date.';
+                return;
+            }
+
+            data.slots.forEach(slot => {
+                const btn = document.createElement('button');
+                btn.type        = 'button';
+                btn.textContent = slot.time_label;
+                btn.className   = 'bm-slot';
+
+                if (slot.status === 'unavailable' || slot.is_past) {
+                    btn.classList.add('unavailable');
+                    btn.disabled = true;
+                    if (slot.is_past) btn.style.textDecoration = 'line-through';
+                    if (slot.reason && !slot.is_past) btn.title = slot.reason;
+                } else if (slot.status === 'warning') {
+                    btn.classList.add('warning');
+                    btn.title  = slot.reason;
+                    btn.onclick = () => bmSelectSlot(btn, slot);
+                } else {
+                    btn.onclick = () => bmSelectSlot(btn, slot);
+                }
+                slotGrid.appendChild(btn);
+            });
+
+            if (data.available_count === 0) {
+                if (data.message && data.reason_code) {
+                    unavail.style.cssText = 'display:block;';
+                    unavail.innerHTML     = '<div style="text-align:center;padding:1.5rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">📅 ' + data.message + '</div>';
+                } else {
+                    unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
+                    unavail.innerHTML     = '⚠️ No available slots for this date.<br><small>Please try a different date.</small>';
+                }
+            }
+        })
+        .catch(() => {
+            loading.style.display = 'none';
+            unavail.style.display = 'block';
+            unavail.textContent   = '⚠️ Could not load availability. Please try again.';
+        });
+}
+
+function bmSelectSlot(btn, slot) {
+    document.querySelectorAll('.bm-slot').forEach(b => {
+        b.classList.remove('selected');
+    });
+    btn.classList.add('selected');
+    bmSelectedSlot = slot;
+
+    const warn = document.getElementById('bmSlotWarning');
+    if (slot.status === 'warning') {
+        warn.style.display = 'block';
+        warn.innerHTML = `⚠️ ${slot.reason} — <strong>Receptionist will contact you to confirm.</strong>`;
+    } else {
+        warn.style.display = 'none';
+    }
+
+    const [_syr, _smo, _sdy] = bmSelectedDate.split('-').map(Number);
+    document.getElementById('bmSelectedInfo').textContent =
+        BM_MONTHS[_smo - 1] + ' ' + _sdy + ' · ' + slot.time_label;
+    document.getElementById('bmFooter').style.display = 'flex';
+    document.getElementById('bmConfirmBtn').disabled  = false;
+}
+
+function confirmBM() {
+    if (!bmSelectedDate || !bmSelectedSlot) return;
+    document.getElementById('booking_date_input').value = bmSelectedSlot.datetime;
+
+    const [_cyr, _cmo, _cdy] = bmSelectedDate.split('-').map(Number);
+    const btn = document.getElementById('dtPickBtn');
+    btn.textContent = '📅 ' + BM_MONTHS[_cmo - 1] + ' ' + _cdy + ', ' + _cyr + ' · ' + bmSelectedSlot.time_label + ' — Change';
+    btn.classList.add('has-value');
+
+    closeBM();
 }
 
 // ── Discount / Voucher ────────────────────────────────────────────────────────
@@ -1758,24 +2167,16 @@ document.getElementById('checkoutForm').addEventListener('submit', function(e) {
     if (bookingDate) return; // slot selected — proceed
 
     e.preventDefault();
-
-    const datePicker  = document.getElementById('booking_date_picker');
-    const slotSection = document.getElementById('slot-section');
-    const errBox      = document.getElementById('slot-unavailable');
-
-    if (!datePicker.value) {
-        // User hasn't even chosen a date yet — highlight the date picker
-        datePicker.style.outline = '2px solid #ef4444';
-        datePicker.focus();
-        datePicker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        setTimeout(() => { datePicker.style.outline = ''; }, 3000);
-    } else {
-        // Date chosen but no slot clicked — reveal the slot grid with an inline error
-        slotSection.style.display = 'block';
-        errBox.style.display      = 'block';
-        errBox.textContent        = '⚠️ Please select a time slot before confirming your booking.';
-        slotSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
+    const pickBtn = document.getElementById('dtPickBtn');
+    pickBtn.style.borderColor = '#ef4444';
+    pickBtn.style.background  = '#fff5f5';
+    pickBtn.focus();
+    pickBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    setTimeout(() => {
+        pickBtn.style.borderColor = '';
+        pickBtn.style.background  = '';
+    }, 3000);
+    openBM();
 });
 <?php endif; ?>
 </script>

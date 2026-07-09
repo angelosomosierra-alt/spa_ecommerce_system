@@ -15,6 +15,7 @@ use PHPMailer\PHPMailer\Exception;
 
 // ─── LOGOUT ───────────────────────────────────────────────────────────────────
 if (isset($_GET['logout'])) {
+    $logout_is_admin = isset($_SESSION['role']) && $_SESSION['role'] === 'admin';
     if (isset($_SESSION['user_id']) && !empty($_SESSION['cart'])) {
         save_cart_to_db($conn, $_SESSION['user_id'], $_SESSION['cart']);
     }
@@ -26,7 +27,7 @@ if (isset($_GET['logout'])) {
     }
     session_unset();
     session_destroy();
-    header('Location: auth.php');
+    header($logout_is_admin ? 'Location: ../admin/admin_login.php' : 'Location: auth.php');
     exit();
 }
 
@@ -40,6 +41,21 @@ $register_error   = '';
 $register_success = '';
 $fp_error         = '';
 $fp_success       = '';
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AJAX: VERIFY ADMIN GATE CODE
+// ══════════════════════════════════════════════════════════════════════════════
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'verify_gate_code') {
+    ob_clean();
+    header('Content-Type: application/json');
+    $entered = trim($_POST['code'] ?? '');
+    if ($entered === ADMIN_GATE_CODE) {
+        echo json_encode(['ok' => true]);
+    } else {
+        echo json_encode(['ok' => false, 'error' => 'Incorrect code.']);
+    }
+    exit();
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AJAX: SEND OTP (registration)
@@ -283,97 +299,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
         $stmt->bind_param("s", $email); $stmt->execute();
         $user = $stmt->get_result()->fetch_assoc(); $stmt->close();
 
-        if ($user && password_verify($password, $user['password'])) {
-            // Block deactivated accounts from logging in
+        // Only authenticate customer accounts here — admin accounts use admin/admin_login.php
+        $password_ok = $user ? password_verify($password, $user['password']) : false;
+        if ($user && $password_ok && $user['role'] === 'user') {
             if (!empty($user['deleted_at'])) {
                 $login_error = "This account has been deactivated. Please contact us or create a new account.";
-
-            // ── Receptionist-specific restrictions ───────────────────────────
-            } elseif ($user['role'] === 'admin' && ($user['admin_role'] ?? '') === 'cashier') {
-
-                // Ensure tables/columns exist (safe if migration not run yet)
-                $conn->query("CREATE TABLE IF NOT EXISTS system_settings (
-                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    setting_key VARCHAR(100) NOT NULL UNIQUE,
-                    setting_value VARCHAR(255) NOT NULL,
-                    updated_by INT NULL, updated_at DATETIME NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-                $col_chk = $conn->query("SHOW COLUMNS FROM users LIKE 'session_token'");
-                if ($col_chk && $col_chk->num_rows === 0) {
-                    $conn->query("ALTER TABLE users ADD COLUMN session_token   VARCHAR(64) NULL DEFAULT NULL");
-                    $conn->query("ALTER TABLE users ADD COLUMN session_started DATETIME    NULL DEFAULT NULL");
-                }
-
-                // [R1] Time window restriction
-                $tz_row   = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_timezone' LIMIT 1")->fetch_assoc();
-                $st_row   = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_login_start' LIMIT 1")->fetch_assoc();
-                $en_row   = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_login_end' LIMIT 1")->fetch_assoc();
-
-                $tz       = $tz_row['setting_value'] ?? 'Asia/Manila';
-                $t_start  = $st_row['setting_value'] ?? '07:00';
-                $t_end    = $en_row['setting_value'] ?? '23:59';
-
-                date_default_timezone_set($tz);
-                $now_time  = date('H:i');
-                $now_label = date('h:i A');
-
-                if ($now_time < $t_start || $now_time > $t_end) {
-                    $start_label = date('h:i A', strtotime($t_start));
-                    $end_label   = date('h:i A', strtotime($t_end));
-                    $login_error = "Receptionist login is only allowed between {$start_label} and {$end_label}. Current time: {$now_label}.";
-
-                } else {
-                    // [R2] Single active session check
-                    $existing_token = $user['session_token'] ?? null;
-                    $session_started = $user['session_started'] ?? null;
-
-                    if (!empty($existing_token) && !empty($session_started)) {
-                        // Check if old session is still alive (within last 8 hours)
-                        $session_age_hours = (time() - strtotime($session_started)) / 3600;
-                        if ($session_age_hours < 8) {
-                            $login_error = "⚠️ Receptionist account is already logged in on another device. Please log out from the other session first, or contact the owner to clear it.";
-                        } else {
-                            // Session expired — auto-clear and allow login
-                            $existing_token = null;
-                        }
-                    }
-
-                    if (empty($login_error)) {
-                        // All checks passed — log in and set session token
-                        $new_token = bin2hex(random_bytes(32));
-                        $now_dt    = date('Y-m-d H:i:s');
-                        $upd = $conn->prepare("UPDATE users SET session_token=?, session_started=? WHERE id=?");
-                        $upd->bind_param("ssi", $new_token, $now_dt, $user['id']); $upd->execute(); $upd->close();
-
-                        $_SESSION['user_id']        = $user['id'];
-                        $_SESSION['email']          = $user['email'];
-                        $_SESSION['role']           = $user['role'];
-                        $_SESSION['username']       = $user['username'];
-                        $_SESSION['full_name']      = $user['full_name'];
-                        $_SESSION['admin_role']     = 'cashier';
-                        $_SESSION['session_token']  = $new_token;
-                        header("Location: ../admin/index.php");
-                        exit();
-                    }
-                }
-
-            // ── Normal admin / user login ─────────────────────────────────────
             } else {
                 $_SESSION['user_id']   = $user['id'];
                 $_SESSION['email']     = $user['email'];
                 $_SESSION['role']      = $user['role'];
                 $_SESSION['username']  = $user['username'];
                 $_SESSION['full_name'] = $user['full_name'];
-                if ($user['role'] === 'admin') {
-                    $_SESSION['admin_role'] = $user['admin_role'] ?? 'cashier';
-                }
-                if ($user['role'] === 'user') {
-                    $_SESSION['cart'] = load_cart_from_db($conn, $user['id']);
-                }
-                header($user['role'] === 'admin' ? "Location: ../admin/index.php" : "Location: ../user/index.php");
+                $_SESSION['cart']      = load_cart_from_db($conn, $user['id']);
+                header("Location: ../user/index.php");
                 exit();
             }
         } else {
+            // Generic message — do not reveal whether an admin account exists
             $login_error = "Invalid email or password.";
         }
     }
@@ -599,7 +541,8 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
         <span class="logo-icon">
         </span>
 
-        <h1>RECOVERY ILOILO</h1>
+        <h1 id="secret-admin-trigger"
+            style="cursor:default;user-select:none;">RECOVERY ILOILO</h1>
         <p>
             <?php
             if ($show_otp_step)    echo 'Verify your email to complete registration';
@@ -834,7 +777,21 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
         </div>
         <div class="form-group">
             <label>Password</label>
-            <input type="password" name="password" placeholder="Enter your password" required>
+            <div style="position:relative;">
+                <input type="password" name="password" id="loginPwd"
+                       placeholder="Enter your password" required
+                       style="width:100%;padding:0.7rem 2.8rem 0.7rem 0.9rem;
+                              border:2px solid #EAD8C0;border-radius:8px;
+                              font-size:0.9rem;color:#3B2A1A;background:#FDFAF6;
+                              box-sizing:border-box;transition:border-color 0.18s;">
+                <button type="button" onclick="toggleLoginPwd()"
+                        id="loginPwdToggle"
+                        style="position:absolute;right:0.75rem;top:50%;
+                               transform:translateY(-50%);background:none;
+                               border:none;cursor:pointer;font-size:1rem;
+                               color:#A07850;padding:0;line-height:1;"
+                        aria-label="Show password">👁</button>
+            </div>
         </div>
         <button type="submit" name="login" class="btn-primary">Login</button>
     </form>
@@ -1083,6 +1040,141 @@ document.getElementById('confirmInput').addEventListener('input', function() {
 });
 </script>
 <?php endif; ?>
+
+<script>
+(function() {
+    var clicks = 0;
+    var timer  = null;
+    var trigger = document.getElementById('secret-admin-trigger');
+    if (!trigger) return;
+    trigger.addEventListener('click', function() {
+        clicks++;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(function() { clicks = 0; }, 2000);
+        if (clicks >= 3) {
+            clicks = 0;
+            clearTimeout(timer);
+            openGateModal();
+        }
+    });
+})();
+
+function openGateModal() {
+    document.getElementById('gateModal').style.display = 'flex';
+    var inp = document.getElementById('gateCodeInput');
+    inp.value = '';
+    document.getElementById('gateError').textContent = '';
+    setTimeout(function(){ inp.focus(); }, 120);
+}
+
+function closeGateModal() {
+    document.getElementById('gateModal').style.display = 'none';
+}
+
+async function submitGateCode() {
+    var btn   = document.getElementById('gateSubmitBtn');
+    var errEl = document.getElementById('gateError');
+    var code  = document.getElementById('gateCodeInput').value.trim();
+    errEl.textContent = '';
+    if (!/^\d{4}$/.test(code)) {
+        errEl.textContent = 'Please enter a 4-digit code.';
+        return;
+    }
+    btn.disabled = true; btn.textContent = 'Checking…';
+    try {
+        var fd = new FormData();
+        fd.append('action', 'verify_gate_code');
+        fd.append('code', code);
+        var res  = await fetch(window.location.pathname, { method:'POST', body:fd });
+        var data = await res.json();
+        if (data.ok) {
+            window.location.href = '../admin/admin_login.php';
+        } else {
+            errEl.textContent = data.error || 'Incorrect code.';
+            document.getElementById('gateCodeInput').value = '';
+            document.getElementById('gateCodeInput').focus();
+            btn.disabled = false; btn.textContent = 'Continue →';
+        }
+    } catch(e) {
+        errEl.textContent = 'Network error. Try again.';
+        btn.disabled = false; btn.textContent = 'Continue →';
+    }
+}
+
+document.addEventListener('keydown', function(e) {
+    var modal = document.getElementById('gateModal');
+    if (modal && modal.style.display === 'flex' && e.key === 'Enter') {
+        submitGateCode();
+    }
+    if (modal && modal.style.display === 'flex' && e.key === 'Escape') {
+        closeGateModal();
+    }
+});
+</script>
+
+<script>
+function toggleLoginPwd() {
+    const input  = document.getElementById('loginPwd');
+    const btn    = document.getElementById('loginPwdToggle');
+    const isHide = input.type === 'password';
+    input.type   = isHide ? 'text' : 'password';
+    btn.textContent = isHide ? '🙈' : '👁';
+    btn.setAttribute('aria-label', isHide ? 'Hide password' : 'Show password');
+}
+</script>
+
+<style>
+@keyframes popIn {
+    from { opacity:0; transform:scale(0.88); }
+    to   { opacity:1; transform:scale(1); }
+}
+</style>
+
+<div id="gateModal" style="display:none;position:fixed;inset:0;
+     z-index:99999;background:rgba(30,20,10,0.65);
+     backdrop-filter:blur(6px);align-items:center;
+     justify-content:center;padding:1rem;">
+    <div style="background:#fff;border-radius:16px;
+                padding:2rem 1.75rem;max-width:340px;width:100%;
+                box-shadow:0 24px 60px rgba(0,0,0,0.3);
+                animation:popIn .3s cubic-bezier(.34,1.56,.64,1);
+                text-align:center;">
+        <div style="width:52px;height:52px;border-radius:50%;
+                    background:linear-gradient(135deg,#3B2A1A,#6B4C30);
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:1.4rem;margin:0 auto 0.85rem;">🔒</div>
+        <div style="font-size:1.05rem;font-weight:700;
+                    color:#3B2A1A;margin-bottom:0.35rem;">
+            Access Code Required
+        </div>
+        <div style="font-size:0.8rem;color:#A07850;margin-bottom:1.25rem;">
+            Enter the 4-digit code to continue
+        </div>
+        <input type="password" id="gateCodeInput" maxlength="4"
+               inputmode="numeric" placeholder="• • • •"
+               style="width:100%;padding:0.85rem;border:2px solid #EAD8C0;
+                      border-radius:10px;font-size:1.6rem;text-align:center;
+                      letter-spacing:0.5em;color:#3B2A1A;background:#FDFAF6;
+                      box-sizing:border-box;font-family:monospace;"
+               oninput="this.value=this.value.replace(/\D/g,'')">
+        <div id="gateError" style="color:#dc2626;font-size:0.78rem;
+             margin-top:0.5rem;min-height:1.1em;"></div>
+        <div style="display:flex;gap:0.65rem;margin-top:1rem;">
+            <button type="button" onclick="closeGateModal()"
+                    style="flex:1;padding:0.7rem;background:#FAF3E8;
+                           color:#3B2A1A;border:2px solid #EAD8C0;
+                           border-radius:8px;font-weight:600;
+                           cursor:pointer;">Cancel</button>
+            <button type="button" onclick="submitGateCode()"
+                    id="gateSubmitBtn"
+                    style="flex:2;padding:0.7rem;
+                           background:linear-gradient(135deg,#C96A2C,#A94F1D);
+                           color:#fff;border:none;border-radius:8px;
+                           font-weight:700;cursor:pointer;">
+                Continue →</button>
+        </div>
+    </div>
+</div>
 
 </body>
 </html>

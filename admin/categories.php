@@ -3,6 +3,7 @@ require_once '../config.php';
 require_once __DIR__ . '/admin_access.php';
 enforce_page_access();
 redirect_if_not_admin();
+require_once __DIR__ . '/../notify.php';
 
 $message = ''; $message_type = '';
 
@@ -35,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['add_category'])) {
             if ($success) {
                 $message = "Category added!";
                 $message_type = "success";
+                log_activity($conn, 'category_created', "Created category: {$name} ({$type})", 'category', (int)$conn->insert_id);
             } else {
                 $message = "Error adding.";
                 $message_type = "danger";
@@ -57,6 +59,7 @@ if (isset($_GET['delete'])) {
         $ok = $stmt->execute();
         $message      = $ok ? "Deleted." : "Error deleting category.";
         $message_type = $ok ? "success"  : "danger";
+        if ($ok) log_activity($conn, 'category_deleted', "Deleted category ID {$id}", 'category', $id);
         $stmt->close();
     }
 }
@@ -69,6 +72,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['edit_category'])) {
     $ok = $stmt->execute();
     $message      = $ok ? "Category updated!" : "Error updating category.";
     $message_type = $ok ? "success"           : "danger";
+    if ($ok) log_activity($conn, 'category_updated', "Updated category: {$name} ({$type})", 'category', $id);
     $stmt->close();
 }
 

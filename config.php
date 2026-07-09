@@ -130,6 +130,9 @@ if (PAYMONGO_SECRET_KEY === '') {
 // and linked.
 define('SHOW_GCASH_MAYA', false);
 
+// ── Secret gate code for reaching the admin login page ───────────────────────
+define('ADMIN_GATE_CODE', '2024');
+
 // ─── DATABASE CONNECTION ──────────────────────────────────────────────────────
 $conn = new mysqli(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_NAME);
 
@@ -141,6 +144,22 @@ if ($conn->connect_error) {
 }
 
 $conn->set_charset('utf8mb4');
+
+// ─── ACTIVITY LOG TABLE (auto-create once if missing) ────────────────────────
+$conn->query("CREATE TABLE IF NOT EXISTS activity_logs (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    actor_id    INT NULL,
+    actor_name  VARCHAR(150) NOT NULL,
+    actor_role  VARCHAR(50)  NOT NULL,
+    action_type VARCHAR(60)  NOT NULL,
+    target_type VARCHAR(60)  NULL,
+    target_id   INT          NULL,
+    description VARCHAR(500) NOT NULL,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_created (created_at),
+    INDEX idx_actor   (actor_id),
+    INDEX idx_action  (action_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
 // ─── BASE URL ─────────────────────────────────────────────────────────────────
 $protocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
@@ -255,7 +274,7 @@ function redirect_if_not_owner(): void {
 
 function redirect_if_not_admin(): void {
     if (!is_logged_in() || !is_admin()) {
-        header('Location: ' . BASE_URL . 'user/auth.php');
+        header('Location: ' . BASE_URL . 'admin/admin_login.php');
         exit();
     }
 }
@@ -278,9 +297,10 @@ function logout($conn = null): void {
     if ($conn && isset($_SESSION['user_id']) && !empty($_SESSION['cart'])) {
         save_cart_to_db($conn, $_SESSION['user_id'], $_SESSION['cart']);
     }
+    $is_admin = isset($_SESSION['role']) && $_SESSION['role'] === 'admin';
     session_unset();
     session_destroy();
-    header('Location: ' . BASE_URL . 'user/auth.php');
+    header('Location: ' . BASE_URL . ($is_admin ? 'admin/admin_login.php' : 'user/auth.php'));
     exit();
 }
 

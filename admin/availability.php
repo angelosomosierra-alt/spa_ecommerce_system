@@ -148,7 +148,8 @@ class AvailabilityEngine {
         string $datetime,
         int    $people_count = 1,
         string $rate_type    = 'regular',
-        int    $exclude_appt_id = 0
+        int    $exclude_appt_id = 0,
+        int    $preferred_therapist_id = 0
     ): array {
         $svc = $this->getService($service_id);
         if (!$svc) return ['available' => false, 'reason' => 'Service not found'];
@@ -203,6 +204,15 @@ class AvailabilityEngine {
             $therapist_ids = $this->getQualifiedTherapistIds($service_id);
         }
 
+        // ── Filter to preferred therapist if requested ───────────────────────
+        if ($preferred_therapist_id > 0) {
+            if (!in_array($preferred_therapist_id, $therapist_ids)) {
+                $label = $use_today_roster ? 'not on duty today' : 'not available for this service';
+                return ['available' => false, 'reason' => "Selected therapist is $label"];
+            }
+            $therapist_ids = [$preferred_therapist_id];
+        }
+
         // ── Count free therapists at this slot ───────────────────────────────
         $free = $this->countFreeTherapists(
             $therapist_ids, $datetime, $session_time, $rate_type, $exclude_appt_id
@@ -233,9 +243,10 @@ class AvailabilityEngine {
     // ── Get all available slots for a service on a given date ─────────────────
     public function getAvailableSlots(
         int    $service_id,
-        string $date,          // Y-m-d
+        string $date,
         int    $people_count  = 1,
-        string $rate_type     = 'regular'
+        string $rate_type     = 'regular',
+        int    $preferred_therapist_id = 0
     ): array {
         $svc = $this->getService($service_id);
         if (!$svc) return [];
@@ -255,7 +266,7 @@ class AvailabilityEngine {
             if ($end > $close) break;
 
             $slot_str = $current->format('Y-m-d H:i:s');
-            $check    = $this->checkSlot($service_id, $slot_str, $people_count, $rate_type);
+            $check    = $this->checkSlot($service_id, $slot_str, $people_count, $rate_type, 0, $preferred_therapist_id);
 
             $slots[] = [
                 'time'      => $current->format('H:i'),

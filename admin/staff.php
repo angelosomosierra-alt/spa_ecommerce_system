@@ -9,6 +9,7 @@ require_once __DIR__ . '/admin_access.php';
 enforce_page_access();
 redirect_if_not_admin();
 redirect_if_not_owner(); // owners + full-access staff only
+require_once __DIR__ . '/../notify.php';
 
 $comm_from = $_GET['comm_from'] ?? date('Y-m-d');
 $comm_to   = $_GET['comm_to']   ?? date('Y-m-d');
@@ -63,8 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
     if (!in_array($admin_role_val, creatable_roles($creator_role), true)) {
         $errors[] = '⚠️ You are not permitted to create that account type.';
     }
-    if (empty($username) || empty($email) || empty($full_name) || empty($password))
-        $errors[] = 'All fields are required.';
+    if (empty($username) || empty($email) || empty($password))
+        $errors[] = 'Username, email and password are required.';
+    if ($admin_role_val !== 'cashier' && empty($full_name))
+        $errors[] = 'Full name is required.';
     if ($password !== $confirm)
         $errors[] = 'Passwords do not match.';
     if (strlen($password) < 8)
@@ -98,6 +101,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
     }
 
     if (empty($errors)) {
+        // Receptionist is a shared account — no personal name on the account itself
+        if ($admin_role_val === 'cashier') $full_name = 'Receptionist';
         $hashed = password_hash($password, PASSWORD_DEFAULT);
         $stmt   = $conn->prepare("
             INSERT INTO users (username, email, password, full_name, phone, address, role, admin_role, created_at)
@@ -105,7 +110,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
         ");
         $stmt->bind_param("ssssss", $username, $email, $hashed, $full_name, $phone, $admin_role_val);
         $stmt->execute(); $stmt->close();
-        $msg = "✅ {$role_label} account for <strong>{$full_name}</strong> created.";
+        $msg = $admin_role_val === 'cashier'
+            ? "✅ Receptionist account created."
+            : "✅ {$role_label} account for <strong>{$full_name}</strong> created.";
     } else {
         $msg = implode('<br>', $errors); $msg_type = 'danger';
     }
@@ -197,6 +204,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
             $stmt->bind_param("sssii", $full_name, $phone, $specialties_text, $is_generalist, $tid);
             $stmt->execute(); $stmt->close();
             $msg = "✅ Therapist <strong>{$full_name}</strong> updated.";
+            log_activity($conn, 'therapist_updated', "Updated therapist: {$full_name}", 'therapist', $tid);
         } else {
             $chk = $conn->prepare("SELECT id FROM therapists WHERE LOWER(full_name)=LOWER(?)");
             $chk->bind_param("s", $full_name); $chk->execute();
@@ -208,6 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
                 $stmt->bind_param("sssi", $full_name, $phone, $specialties_text, $is_generalist);
                 $stmt->execute(); $tid = $conn->insert_id; $stmt->close();
                 $msg = "✅ Therapist <strong>{$full_name}</strong> added.";
+                log_activity($conn, 'therapist_added', "Added therapist: {$full_name}", 'therapist', (int)$tid);
             }
             $chk->close();
         }
@@ -284,10 +293,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
 
 // ── DELETE THERAPIST ──────────────────────────────────────────────────────────
 if (isset($_GET['delete_therapist'])) {
-    $did = intval($_GET['delete_therapist']);
+    $did     = intval($_GET['delete_therapist']);
+    $del_row = $conn->query("SELECT full_name FROM therapists WHERE id={$did} LIMIT 1")->fetch_assoc();
     $conn->query("DELETE FROM therapist_specialty_services WHERE therapist_id=$did");
     $stmt = $conn->prepare("DELETE FROM therapists WHERE id=?");
     $stmt->bind_param("i", $did); $stmt->execute(); $stmt->close();
+    if ($del_row) log_activity($conn, 'therapist_deleted', "Deleted therapist: {$del_row['full_name']}", 'therapist', $did);
     header("Location: staff.php?tab=therapists&deleted=therapist"); exit();
 }
 
@@ -818,9 +829,9 @@ require_once 'admin_header.php';
                     <?php echo $_rd['note_text']; ?>
                 </div>
                 <?php endforeach; ?>
-                <div style="margin-bottom:0.75rem;">
+                <div id="fullname-field" style="margin-bottom:0.75rem;">
                     <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">Full Name *</label>
-                    <input type="text" name="full_name" required placeholder="e.g. Maria Santos"
+                    <input type="text" name="full_name" id="fullname_input" required placeholder="e.g. Maria Santos"
                            style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;
                                   background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
                 </div>
@@ -2229,7 +2240,17 @@ function selectRole(role) {
         const note = document.getElementById('access-note-' + r);
         if (note) note.style.display = r === role ? 'block' : 'none';
     });
+
+    // Toggle Full Name field — not needed for receptionist (shared account)
+    const ffDiv   = document.getElementById('fullname-field');
+    const ffInput = document.getElementById('fullname_input');
+    if (ffDiv && ffInput) {
+        const show = role !== 'cashier';
+        ffDiv.style.display  = show ? '' : 'none';
+        ffInput.required     = show;
+    }
 }
+(function(){ const ri = document.getElementById('role_type_input'); if (ri) selectRole(ri.value); })();
 
 function checkPwd(val) {
     const set = (id, ok) => {

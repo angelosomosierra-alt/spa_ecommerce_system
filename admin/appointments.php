@@ -216,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
             JOIN services     s2 ON a2.service_id = s2.id
             WHERE at2.therapist_id = ?
               AND a2.id     != ?
-              AND a2.status IN ('approved','assigned')
+              AND a2.status IN ('approved','assigned','pending')
               AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE)
                     < (? + INTERVAL ? MINUTE)
               AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + IF(a2.service_type='home',30,0)) MINUTE)
@@ -368,7 +368,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         // Columns: appointment_id(i) service_id(i) therapist_id(i) person_label(s)
         //          charged_price(d) commission(d) rate_type(s) payment_method(s)
         //          payment_status(s) notes(s) added_by(i) paymongo_reference(s) paymongo_method(s)
-        $es_pay_status = 'paid';
+        $es_pay_status = 'unpaid';
         $es_ins = $conn->prepare("
             INSERT INTO appointment_extra_services
                 (appointment_id, service_id, therapist_id, person_label, charged_price,
@@ -410,6 +410,20 @@ if (isset($_GET['remove_extra'])) {
 // ── EDIT APPOINTMENT ──────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_appointment') {
     verify_csrf_token();
+
+    // Receptionist PIN check for edit
+    $pr_edit = null;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pr_edit = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pr_edit) {
+            $message = "⚠️ Incorrect PIN. Edit action cancelled."; $message_type = "danger";
+            goto skip_edit;
+        }
+    }
+
     $appt_id      = intval($_POST['appt_id'] ?? 0);
     $booking_date = sanitize_input($_POST['booking_date'] ?? '');
     $service_type = in_array($_POST['service_type']??'',['regular','home','hotel','influencer'])
@@ -438,12 +452,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
             }
         }
 
-        $editor_name = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Admin';
+        $editor_name = (is_cashier() && !empty($pr_edit['full_name']))
+            ? $pr_edit['full_name']
+            : ($_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Admin');
         $editor_id   = (int)$_SESSION['user_id'];
         $upd = $conn->prepare("UPDATE appointments SET appointment_date=?, service_type=?, people_count=?, customer_note=?, rescheduled_by=?, rescheduled_by_name=?, rescheduled_at=NOW() WHERE id=?");
         $upd->bind_param("ssissii", $booking_date, $service_type, $people_count, $notes, $editor_id, $editor_name, $appt_id);
         $upd->execute(); $upd->close();
+
+        // Therapist reassignment (optional)
+        $reassign_id = intval($_POST['reassign_therapist_id'] ?? 0);
+        if ($reassign_id > 0) {
+            $del_at = $conn->prepare("DELETE FROM appointment_therapists WHERE appointment_id=?");
+            $del_at->bind_param("i", $appt_id); $del_at->execute(); $del_at->close();
+
+            $ra_people = max(1, $people_count);
+            $ra_notes  = 'Reassigned by admin';
+            $ra_comm   = 0.00;
+            $ins_at = $conn->prepare("INSERT INTO appointment_therapists
+                (appointment_id, therapist_id, notes, commission, people_handled)
+                VALUES (?, ?, ?, ?, ?)");
+            $ins_at->bind_param("iisdi", $appt_id, $reassign_id, $ra_notes, $ra_comm, $ra_people);
+            $ins_at->execute(); $ins_at->close();
+
+            $conn->query("UPDATE appointments SET status='pending'
+                WHERE id={$appt_id} AND status='assigned'");
+        }
+
         $message = '✅ Appointment updated.'; $message_type = 'success';
+        $_actor_edit = (is_cashier() && !empty($pr_edit['full_name']))
+            ? ['id' => null, 'name' => $pr_edit['full_name'], 'role' => 'receptionist']
+            : null;
+        log_activity($conn, 'appointment_edited',
+            "Edited appointment #{$appt_id}",
+            'appointment', $appt_id, $_actor_edit);
     }
     skip_edit:;
 }
@@ -486,6 +528,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_s
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reschedule') {
     verify_csrf_token();
+
+    // Receptionist PIN check for reschedule
+    $pr_rs = null;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pr_rs = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pr_rs) {
+            $message = "⚠️ Incorrect PIN. Reschedule action cancelled."; $message_type = "danger";
+            goto skip_reschedule;
+        }
+    }
+
     $appt_id  = intval($_POST['appt_id'] ?? 0);
     $new_date = sanitize_input($_POST['new_date'] ?? '');
     $new_time = sanitize_input($_POST['new_time'] ?? '');
@@ -499,7 +555,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resch
 
         if ($chk_row && in_array($chk_row['status'], ['pending','approved','assigned'])) {
             $rs_by   = (int)$_SESSION['user_id'];
-            $rs_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+            $rs_name = (is_cashier() && !empty($pr_rs['full_name']))
+                ? $pr_rs['full_name']
+                : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
             $upd = $conn->prepare("UPDATE appointments SET appointment_date=?, rescheduled_by=?, rescheduled_by_name=?, rescheduled_at=NOW() WHERE id=?");
             $upd->bind_param("sisi", $new_datetime, $rs_by, $rs_name, $appt_id);
             $upd->execute(); $upd->close();
@@ -511,6 +569,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resch
             );
             $message = "📅 Appointment #$appt_id rescheduled to " . date('F d, Y h:i A', strtotime($new_datetime)) . ".";
             $message_type = "success";
+            $_actor_rs = (is_cashier() && !empty($pr_rs['full_name']))
+                ? ['id' => null, 'name' => $pr_rs['full_name'], 'role' => 'receptionist']
+                : null;
+            log_activity($conn, 'appointment_rescheduled',
+                "Rescheduled appointment #{$appt_id} to " . date('M j, Y g:i A', strtotime($new_datetime)),
+                'appointment', $appt_id, $_actor_rs);
         } else {
             $message = "Cannot reschedule — appointment not found or status not allowed.";
             $message_type = "danger";
@@ -519,6 +583,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resch
         $message = "Please provide both a new date and time.";
         $message_type = "danger";
     }
+    skip_reschedule:;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -526,6 +591,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resch
 // ═══════════════════════════════════════════════════════════════════════════
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancel') {
     verify_csrf_token();
+
+    // Receptionist PIN check for cancel
+    $pr_cn = null;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pr_cn = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pr_cn) {
+            $message = "⚠️ Incorrect PIN. Cancel action cancelled."; $message_type = "danger";
+            goto skip_cancel;
+        }
+    }
+
     $appt_id      = intval($_POST['appt_id'] ?? 0);
     $cancel_reason = sanitize_input($_POST['cancel_reason'] ?? '');
 
@@ -535,7 +614,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
 
     if ($chk_row && in_array($chk_row['status'], ['pending','approved','assigned'])) {
         $cn_by   = (int)$_SESSION['user_id'];
-        $cn_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+        $cn_name = (is_cashier() && !empty($pr_cn['full_name']))
+            ? $pr_cn['full_name']
+            : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
         $upd = $conn->prepare("UPDATE appointments SET status='cancelled', cancel_reason=?, cancelled_by=?, cancelled_by_name=? WHERE id=?");
         $upd->bind_param("sisi", $cancel_reason, $cn_by, $cn_name, $appt_id); $upd->execute(); $upd->close();
 
@@ -546,10 +627,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
         );
         $message = "🚫 Appointment #$appt_id marked as cancelled.";
         $message_type = "success";
+        $_actor_cn = (is_cashier() && !empty($pr_cn['full_name']))
+            ? ['id' => null, 'name' => $pr_cn['full_name'], 'role' => 'receptionist']
+            : null;
+        log_activity($conn, 'appointment_cancelled',
+            "Cancelled appointment #{$appt_id} — {$chk_row['service_name']}",
+            'appointment', $appt_id, $_actor_cn);
     } else {
         $message = "Cannot cancel — appointment not found or already completed/declined.";
         $message_type = "danger";
     }
+    skip_cancel:;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -571,6 +659,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
         // ── APPROVE ──────────────────────────────────────────────────────────
         if ($action === 'approve' && $appt['status'] === 'pending') {
 
+            // Receptionist PIN check for approve
+            $pr_approve = null;
+            if (is_cashier()) {
+                $entered_pin = trim($_POST['pin'] ?? '');
+                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps->bind_param("s", $entered_pin); $ps->execute();
+                $pr_approve = $ps->get_result()->fetch_assoc(); $ps->close();
+                if (!$pr_approve) {
+                    $message = "⚠️ Incorrect PIN. Approve action cancelled."; $message_type = "danger";
+                    goto end_action;
+                }
+            }
+
             // Count total people covered (sum of people_handled, not row count)
             $chk = $conn->prepare("SELECT COALESCE(SUM(IFNULL(people_handled,1)),0) AS covered FROM appointment_therapists WHERE appointment_id=?");
             $chk->bind_param("i",$appt_id); $chk->execute();
@@ -586,7 +687,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                 $message_type = "danger";
             } else {
                 $approver_id = (int)$_SESSION['user_id'];
-                $approver_nm = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+                $approver_nm = (is_cashier() && !empty($pr_approve['full_name']))
+                    ? $pr_approve['full_name']
+                    : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
 
                 // ── Discount (submitted from PIN modal form) ──────────────────
                 $disc_type         = in_array($_POST['appt_discount_type'] ?? '', ['none','voucher','gift_card','senior','pwd','employee'])
@@ -652,16 +755,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                 send_approval_email($conn, $appt_id);
 
                 $message = "Appointment #$appt_id confirmed. Therapist: $notif_therapist."; $message_type = "success";
+                $_actor_ap = (is_cashier() && !empty($pr_approve['full_name']))
+                    ? ['id' => null, 'name' => $pr_approve['full_name'], 'role' => 'receptionist']
+                    : null;
+                log_activity($conn, 'appointment_approved',
+                    "Approved appointment #{$appt_id} — {$appt['service_name']} (therapist: {$notif_therapist})",
+                    'appointment', $appt_id, $_actor_ap);
             }
 
         // ── DECLINE ──────────────────────────────────────────────────────────
         } elseif ($action === 'decline' && in_array($appt['status'],['pending','approved','assigned'])) {
 
             // Receptionist PIN check for decline
+            $pr = null;
             if (is_cashier()) {
                 $entered_pin = trim($_POST['pin'] ?? '');
-                // FIXED: Bug 1 — query receptionist_pins by entered PIN
-                $ps = $conn->prepare("SELECT id FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
                 $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr = $ps->get_result()->fetch_assoc(); $ps->close();
                 if (!$pr) {
@@ -687,10 +796,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             add_notification($conn,$appt['user_id'],'appointment','❌ Appointment Declined',
                 'Your '.$appt['service_name'].' appointment has been declined.','appointments.php');
             $message = "Appointment #$appt_id declined."; $message_type = "danger";
+            $_actor_dc = (is_cashier() && !empty($pr['full_name']))
+                ? ['id' => null, 'name' => $pr['full_name'], 'role' => 'receptionist']
+                : null;
+            log_activity($conn, 'appointment_declined',
+                "Declined appointment #{$appt_id} — {$appt['service_name']}",
+                'appointment', $appt_id, $_actor_dc);
 
         // ── COMPLETE ─────────────────────────────────────────────────────────
         // ── CHECK IN (assigned → approved) ───────────────────────────────────
         } elseif ($action === 'checkin_appointment' && $appt['status'] === 'assigned') {
+
+            // Receptionist PIN check for check-in
+            $pr_ci = null;
+            if (is_cashier()) {
+                $entered_pin = trim($_POST['pin'] ?? '');
+                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps->bind_param("s", $entered_pin); $ps->execute();
+                $pr_ci = $ps->get_result()->fetch_assoc(); $ps->close();
+                if (!$pr_ci) {
+                    $message = "⚠️ Incorrect PIN. Check-in action cancelled."; $message_type = "danger";
+                    goto end_action;
+                }
+            }
 
             $ci_pay_method = sanitize_input($_POST['pay_method'] ?? 'cash');
             $ci_allowed_pm = ['cash','qrph','gcash','maya','bank','bpi_debit','bpi_credit'];
@@ -742,7 +870,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             }
 
             $ci_by   = (int)$_SESSION['user_id'];
-            $ci_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+            $ci_name = (is_cashier() && !empty($pr_ci['full_name']))
+                ? $pr_ci['full_name']
+                : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
             $ci_stmt = $conn->prepare("UPDATE appointments SET status='approved', approved_by=?, approved_by_name=? WHERE id=? AND status='assigned'");
             $ci_stmt->bind_param("isi", $ci_by, $ci_name, $appt_id);
             $ci_stmt->execute(); $ci_stmt->close();
@@ -752,15 +882,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                 'appointments.php');
 
             $message = "Customer checked in for Appointment #$appt_id."; $message_type = "success";
+            $_actor_ci = (is_cashier() && !empty($pr_ci['full_name']))
+                ? ['id' => null, 'name' => $pr_ci['full_name'], 'role' => 'receptionist']
+                : null;
+            log_activity($conn, 'appointment_checkedin',
+                "Checked in customer for appointment #{$appt_id} — {$appt['service_name']}",
+                'appointment', $appt_id, $_actor_ci);
 
         // ── COMPLETE (approved → completed) ──────────────────────────────────
         } elseif ($action === 'complete' && $appt['status'] === 'approved') {
 
             // Receptionist PIN check for complete
+            $pr = null;
             if (is_cashier()) {
                 $entered_pin = trim($_POST['pin'] ?? '');
-                // FIXED: Bug 1 — query receptionist_pins by entered PIN
-                $ps = $conn->prepare("SELECT id FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
                 $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr = $ps->get_result()->fetch_assoc(); $ps->close();
                 if (!$pr) {
@@ -769,7 +905,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                 }
             }
             $cp_by   = (int)$_SESSION['user_id'];
-            $cp_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+            $cp_name = (is_cashier() && !empty($pr['full_name']))
+                ? $pr['full_name']
+                : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
+            $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
+            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','bank'])) $cp_pay_method = 'cash';
+            // Mark base order paid if still unpaid (e.g. check-in was skipped)
+            if (!empty($appt['order_item_id'])) {
+                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
+                $oi_s2->bind_param("i", $appt['order_item_id']); $oi_s2->execute();
+                $oi_r2 = $oi_s2->get_result()->fetch_assoc(); $oi_s2->close();
+                if ($oi_r2 && $oi_r2['payment_status'] !== 'paid') {
+                    $upd_ord_pay = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=? WHERE id=?");
+                    $upd_ord_pay->bind_param("si", $cp_pay_method, $oi_r2['id']); $upd_ord_pay->execute(); $upd_ord_pay->close();
+                }
+            }
+            // Mark unpaid extra services as paid with the collected method
+            $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
+            $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
             $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=? WHERE id=?");
             $upd->bind_param("isi",$cp_by,$cp_name,$appt_id); $upd->execute(); $upd->close();
 
@@ -846,9 +999,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             add_notification($conn,$appt['user_id'],'appointment','🎉 Session Completed!',
                 'Your '.$appt['service_name'].' session is done. Thank you for visiting! Please leave a feedback.',
                 'appointments.php');
+            // Send completion receipt email with full breakdown
+            if (!empty($appt['order_item_id'])) {
+                $_ord_id_stmt = $conn->prepare("SELECT order_id FROM order_items WHERE id=? LIMIT 1");
+                $_ord_id_stmt->bind_param("i", $appt['order_item_id']); $_ord_id_stmt->execute();
+                $_ord_id_row = $_ord_id_stmt->get_result()->fetch_assoc(); $_ord_id_stmt->close();
+                if ($_ord_id_row) {
+                    require_once __DIR__ . '/../send_receipt.php';
+                    send_completion_receipt($conn, $appt_id, (int)$_ord_id_row['order_id']);
+                }
+            }
             $message = "🎉 Appointment #$appt_id completed. Therapist(s) returned to rotation."; $message_type = "success";
+            $_actor_cp = (is_cashier() && !empty($pr['full_name']))
+                ? ['id' => null, 'name' => $pr['full_name'], 'role' => 'receptionist']
+                : null;
+            log_activity($conn, 'appointment_completed',
+                "Completed appointment #{$appt_id} — {$appt['service_name']}",
+                'appointment', $appt_id, $_actor_cp);
 
         } elseif ($action === 'save_per_person_inline') {
+
+            // Receptionist PIN check for per-person therapist assignment
+            $pr_spi = null;
+            if (is_cashier()) {
+                $entered_pin = trim($_POST['pin'] ?? '');
+                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps->bind_param("s", $entered_pin); $ps->execute();
+                $pr_spi = $ps->get_result()->fetch_assoc(); $ps->close();
+                if (!$pr_spi) {
+                    $message = "⚠️ Incorrect PIN. Action cancelled."; $message_type = "danger";
+                    goto end_action;
+                }
+            }
 
             $therapist_ids = array_map('intval', (array)($_POST['therapist_ids'] ?? []));
             $people_needed = max(1, (int)($appt['people_count'] ?? 1));
@@ -900,7 +1082,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
                 $conn->query("UPDATE appointments SET status='assigned' WHERE id={$appt_id} AND status='pending'");
 
                 $conn->commit();
+
+                // Notify customer + send approval email + approve linked order
+                add_notification($conn, $appt['user_id'], 'appointment',
+                    '💆 Therapist Assigned — Appointment Confirmed!',
+                    'Your ' . $appt['service_name'] . ' appointment on ' .
+                    date('F j, Y g:i A', strtotime($appt['appointment_date'])) .
+                    ' has been confirmed.',
+                    'appointments.php');
+
+                send_approval_email($conn, $appt_id);
+
+                if (!empty($appt['order_item_id'])) {
+                    $po = $conn->prepare("SELECT o.id FROM orders o
+                        JOIN order_items oi ON oi.order_id=o.id
+                        WHERE oi.id=? LIMIT 1");
+                    $po->bind_param("i", $appt['order_item_id']);
+                    $po->execute();
+                    $po_r = $po->get_result()->fetch_assoc(); $po->close();
+                    if (!empty($po_r['id'])) {
+                        $conn->query("UPDATE orders SET approval_status='approved'
+                            WHERE id={$po_r['id']} AND approval_status='pending'");
+                    }
+                }
+
                 $message = "✅ Therapists assigned successfully."; $message_type = "success";
+                $_actor_spi = (is_cashier() && !empty($pr_spi['full_name']))
+                    ? ['id' => null, 'name' => $pr_spi['full_name'], 'role' => 'receptionist']
+                    : null;
+                log_activity($conn, 'therapist_assigned',
+                    "Assigned therapist(s) to appointment #{$appt_id} — {$appt['service_name']}",
+                    'appointment', $appt_id, $_actor_spi);
             } catch (Throwable $e) {
                 $conn->rollback();
                 $message = "Failed to save assignments. Please try again."; $message_type = "danger";
@@ -1224,7 +1436,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         <div>
             <div style="font-size:1.05rem;font-weight:800;color:var(--gold);"><?php echo htmlspecialchars($a['service_name']); ?></div>
             <div style="font-size:0.74rem;color:var(--gray);margin-top:0.18rem;">
-                Booking #<?php echo $appt_id; ?> &nbsp;·&nbsp; Booked <?php echo date('M d, Y — h:i A',strtotime($a['created_at'])); ?>
+                Booked <?php echo date('M d, Y — h:i A',strtotime($a['created_at'])); ?>
             </div>
         </div>
         <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0;flex-wrap:wrap;">
@@ -1392,6 +1604,25 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         </div>
         <?php endif; ?>
 
+        <?php
+        // Preferred therapist notice
+        $pref_th_name = null;
+        if (!empty($a['preferred_therapist_id'])) {
+            $pref_stmt = $conn->prepare("SELECT full_name FROM therapists WHERE id = ? LIMIT 1");
+            $pref_stmt->bind_param("i", $a['preferred_therapist_id']);
+            $pref_stmt->execute();
+            $pref_row = $pref_stmt->get_result()->fetch_assoc();
+            $pref_stmt->close();
+            $pref_th_name = $pref_row['full_name'] ?? null;
+        }
+        ?>
+        <?php if ($pref_th_name): ?>
+        <div style="margin-top:0.75rem;padding:0.6rem 0.9rem;background:#fefce8;border:1px solid #fde68a;
+                    border-radius:9px;font-size:0.8rem;color:#78350f;font-family:'DM Sans',sans-serif;">
+            ⭐ Customer's preferred therapist: <strong><?php echo htmlspecialchars($pref_th_name); ?></strong>
+        </div>
+        <?php endif; ?>
+
         <?php if ($status === 'pending'): ?>
         <div style="margin-top:0.85rem;padding:1rem;background:rgba(201,106,44,0.06);
                     border:1px solid rgba(201,106,44,0.2);border-radius:10px;">
@@ -1467,6 +1698,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 </div>
                 <?php endfor; ?>
 
+                <?php if (is_cashier()): ?>
+                <div style="margin-top:0.4rem;">
+                    <label style="font-size:0.75rem;color:var(--gray);display:block;margin-bottom:3px;">Your 4-digit PIN</label>
+                    <input type="password" name="pin" maxlength="4" placeholder="••••" required
+                           style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;
+                                  background:var(--bg2);color:var(--brown);font-size:0.9rem;letter-spacing:0.25em;text-align:center;box-sizing:border-box;">
+                </div>
+                <?php endif; ?>
                 <button type="submit" class="btn btn-primary btn-sm"
                         style="margin-top:0.25rem;font-size:0.8rem;padding:0.4rem 0.9rem;width:100%;">
                     💾 Save Therapist Assignment
@@ -1629,7 +1868,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         </div>
         <?php endif; ?>
 
-        <?php if (in_array($status,['pending','approved','assigned'])): ?>
+        <?php if ($status === 'approved'): ?>
         <button type="button" onclick="toggleAddService(<?php echo $appt_id; ?>)"
                 style="padding:0.38rem 0.9rem;border-radius:7px;border:1.5px dashed var(--gold);background:rgba(201,106,44,0.06);color:var(--gold);font-size:0.82rem;font-weight:700;cursor:pointer;transition:all .15s;"
                 onmouseover="this.style.background='rgba(201,106,44,0.12)'"
@@ -1695,35 +1934,8 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <input type="text" name="extra_notes" placeholder="e.g. VIP guest, specific request..."
                            style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.83rem;box-sizing:border-box;">
                 </div>
-                <div class="form-group" style="margin-bottom:0.85rem;">
-                    <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:4px;">Payment Method <span style="color:var(--rust);">*</span></label>
-                    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));gap:0.4rem;margin-top:0.3rem;">
-                        <?php
-                        $pm_options = [
-                            'cash'  => ['💵', 'Cash'],
-                            'gcash' => ['📱', 'GCash'],
-                            'maya'  => ['💜', 'Maya'],
-                            'qrph'  => ['📷', 'QR Ph'],
-                            'card'  => ['💳', 'Card'],
-                            'bank'  => ['🏦', 'Bank'],
-                        ];
-                        foreach ($pm_options as $val => $info):
-                            if (in_array($val, ['gcash','maya']) && !SHOW_GCASH_MAYA) continue;
-                        ?>
-                        <label style="display:flex;align-items:center;gap:0.4rem;
-                                      padding:0.45rem 0.6rem;border:1.5px solid var(--border2);
-                                      border-radius:8px;cursor:pointer;font-size:0.82rem;
-                                      transition:border-color 0.15s,background 0.15s;"
-                               id="pm-label-<?php echo $val; ?>">
-                            <input type="radio" name="extra_payment_method"
-                                   value="<?php echo $val; ?>"
-                                   onchange="highlightPaymentMethod()"
-                                   <?php echo $val === 'cash' ? 'checked' : ''; ?>
-                                   style="accent-color:var(--brown);">
-                            <?php echo $info[0]; ?> <?php echo $info[1]; ?>
-                        </label>
-                        <?php endforeach; ?>
-                    </div>
+                <div style="margin-bottom:0.85rem;padding:0.6rem 0.8rem;background:rgba(201,106,44,0.06);border:1px dashed var(--gold);border-radius:8px;font-size:0.75rem;color:#78350f;">
+                    💡 Payment for extra services is collected when you mark the session complete.
                 </div>
                 <div style="display:flex;gap:0.6rem;">
                     <button type="submit" id="extra-confirm-<?php echo $appt_id; ?>" class="btn btn-primary btn-sm" disabled style="opacity:0.5;cursor:not-allowed;">✅ Confirm Add Service</button>
@@ -1791,20 +2003,32 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </form>
 
         <?php elseif ($status === 'approved'): ?>
-            <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
+            <!-- Hidden form submitted by the Complete Payment modal -->
+            <form id="complete-form-<?php echo $appt_id; ?>" method="POST" style="display:none;">
                 <?php echo csrf_field(); ?>
-                <input type="hidden" name="action"  value="complete">
-                <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                <input type="hidden" name="action"              value="complete">
+                <input type="hidden" name="appt_id"             value="<?php echo $appt_id; ?>">
+                <input type="hidden" name="complete_pay_method" id="cp-method-<?php echo $appt_id; ?>" value="cash">
                 <?php if (is_cashier()): ?>
-                <input type="password" name="pin" maxlength="4" inputmode="numeric"
-                       placeholder="PIN" required
-                       style="width:60px;padding:0.32rem 0.4rem;border:1px solid var(--border2);
-                              border-radius:6px;font-size:0.88rem;text-align:center;
-                              letter-spacing:0.2em;color:var(--brown);background:var(--bg3);
-                              font-family:monospace;">
+                <input type="hidden" name="pin" id="cp-pin-<?php echo $appt_id; ?>" value="">
                 <?php endif; ?>
-                <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('Mark this session as completed?')">🎉 Mark Complete</button>
             </form>
+            <?php
+            $order_is_paid     = (($pm_row['payment_status'] ?? '') === 'paid');
+            $order_owed        = $order_is_paid ? 0.0 : floatval(max($pm_row['final_amount'] ?? 0, $pm_row['total_amount'] ?? 0));
+            $unpaid_extras_sum = 0.0;
+            foreach ($extra_services as $_ces) {
+                if (($_ces['payment_status'] ?? '') !== 'paid') $unpaid_extras_sum += floatval($_ces['charged_price']);
+            }
+            ?>
+            <button type="button" class="btn btn-primary btn-sm"
+                    onclick="openCompleteModal(
+                        <?php echo $appt_id; ?>,
+                        '<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>',
+                        <?php echo $order_is_paid ? 'true' : 'false'; ?>,
+                        <?php echo $order_owed; ?>,
+                        <?php echo $unpaid_extras_sum; ?>
+                    )">🎉 Mark Complete</button>
             <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
@@ -1821,7 +2045,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </form>
         <?php endif; ?>
 
-        <?php if (in_array($status, ['pending','approved','assigned'])): ?>
+        <?php if (in_array($status, ['pending','assigned'])): ?>
         <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $appt_id; ?>)">📅 Reschedule</button>
         <button type="button"
                 onclick="openEditModal(
@@ -1830,7 +2054,8 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     '<?php echo $a['appointment_date']; ?>',
                     '<?php echo $a['service_type']; ?>',
                     <?php echo $a['people_count']??1; ?>,
-                    '<?php echo addslashes($a['customer_note']??''); ?>'
+                    '<?php echo addslashes($a['customer_note']??''); ?>',
+                    '<?php echo addslashes(implode(', ', array_column($assigned_therapists, 'full_name'))); ?>'
                 )"
                 class="btn btn-secondary btn-sm">✏️ Edit</button>
         <button type="button"
@@ -1841,7 +2066,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         <?php endif; ?>
     </div>
 
-    <?php if (in_array($status, ['pending','approved','assigned'])): ?>
+    <?php if (in_array($status, ['pending','assigned'])): ?>
     <!-- Reschedule inline form -->
     <div id="reschedule-<?php echo $appt_id; ?>" style="display:none;margin-top:0.85rem;padding:1rem 1.1rem;background:var(--bg3);border-radius:10px;border:1px solid var(--border2);">
         <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">📅 Reschedule Appointment</div>
@@ -1859,6 +2084,13 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="time" name="new_time" required value="<?php echo date('H:i', strtotime($a['appointment_date'])); ?>"
                        style="padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.85rem;">
             </div>
+            <?php if (is_cashier()): ?>
+            <div>
+                <label style="font-size:0.75rem;color:var(--gray);display:block;margin-bottom:3px;">Your PIN</label>
+                <input type="password" name="pin" maxlength="4" placeholder="••••" required
+                       style="width:70px;padding:0.4rem 0.5rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.9rem;letter-spacing:0.2em;text-align:center;">
+            </div>
+            <?php endif; ?>
             <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('Reschedule this appointment?')">💾 Confirm Reschedule</button>
             <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $appt_id; ?>)">Cancel</button>
         </form>
@@ -1876,6 +2108,13 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="text" name="cancel_reason" placeholder="e.g. Customer called to cancel, personal reason..."
                        style="width:100%;padding:0.4rem 0.65rem;border:1px solid #fecaca;border-radius:7px;background:#fff;color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
             </div>
+            <?php if (is_cashier()): ?>
+            <div>
+                <label style="font-size:0.75rem;color:#991b1b;display:block;margin-bottom:3px;">Your 4-digit PIN</label>
+                <input type="password" name="pin" maxlength="4" placeholder="••••" required
+                       style="padding:0.4rem 0.65rem;border:1px solid #fecaca;border-radius:7px;background:#fff;color:var(--brown);font-size:0.9rem;letter-spacing:0.2em;text-align:center;width:90px;">
+            </div>
+            <?php endif; ?>
             <div style="display:flex;gap:0.6rem;">
                 <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Mark this appointment as cancelled by customer?')">🚫 Confirm Cancellation</button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCancel(<?php echo $appt_id; ?>)">Back</button>
@@ -2241,6 +2480,83 @@ function clearApptSearch() {
     if (inp) { inp.value = ''; inp.focus(); }
     filterAdminAppointments('');
 }
+
+// ── COMPLETE PAYMENT MODAL ────────────────────────────────────────────────────
+var cmState = { apptId: 0, payMethod: 'cash' };
+
+function openCompleteModal(apptId, customerName, orderIsPaid, orderOwed, unpaidExtrasTotal) {
+    cmState.apptId    = apptId;
+    cmState.payMethod = 'cash';
+    document.getElementById('cm-customer-name').textContent = customerName;
+    var totalOwed = (orderIsPaid ? 0 : orderOwed) + unpaidExtrasTotal;
+    var fmt = function(n) { return n.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); };
+    var noPayEl  = document.getElementById('cm-no-payment');
+    var paySecEl = document.getElementById('cm-payment-section');
+    if (totalOwed <= 0) {
+        noPayEl.style.display  = 'block';
+        paySecEl.style.display = 'none';
+    } else {
+        noPayEl.style.display  = 'none';
+        paySecEl.style.display = 'block';
+        var baseRow    = document.getElementById('cm-base-row');
+        var extrasRow  = document.getElementById('cm-extras-row');
+        var baseAmt    = document.getElementById('cm-base-amt');
+        var extrasAmt  = document.getElementById('cm-extras-amt');
+        var totalEl    = document.getElementById('cm-total-amt');
+        if (!orderIsPaid && orderOwed > 0) {
+            baseRow.style.display = 'flex'; baseAmt.textContent = fmt(orderOwed);
+        } else {
+            baseRow.style.display = 'none';
+        }
+        if (unpaidExtrasTotal > 0) {
+            extrasRow.style.display = 'flex'; extrasAmt.textContent = fmt(unpaidExtrasTotal);
+        } else {
+            extrasRow.style.display = 'none';
+        }
+        totalEl.textContent = fmt(totalOwed);
+        cmSelectPayment('cash');
+    }
+    var pinErr = document.getElementById('cm-pin-error');
+    if (pinErr) pinErr.textContent = '';
+    var pinInp = document.getElementById('cm-pin-input');
+    if (pinInp) pinInp.value = '';
+    document.getElementById('completeModal').style.display = 'flex';
+    if (pinInp) setTimeout(function() { pinInp.focus(); }, 120);
+}
+
+function closeCompleteModal() {
+    document.getElementById('completeModal').style.display = 'none';
+}
+
+function cmSelectPayment(method) {
+    cmState.payMethod = method;
+    ['cash','qrph','bank'].forEach(function(m) {
+        var btn = document.getElementById('cm-pay-' + m);
+        if (!btn) return;
+        btn.style.borderColor = m === method ? '#C96A2C' : '#e5e7eb';
+        btn.style.background  = m === method ? '#fff8f2' : '';
+    });
+}
+
+function submitComplete() {
+    var pinInp = document.getElementById('cm-pin-input');
+    var pinErr = document.getElementById('cm-pin-error');
+    if (pinErr) pinErr.textContent = '';
+    if (_isCashier && pinInp) {
+        var pin = pinInp.value.trim();
+        if (!/^\d{4}$/.test(pin)) {
+            if (pinErr) pinErr.textContent = 'Please enter your 4-digit PIN.';
+            pinInp.focus(); return;
+        }
+        var hiddenPin = document.getElementById('cp-pin-' + cmState.apptId);
+        if (hiddenPin) hiddenPin.value = pin;
+    }
+    var hiddenMethod = document.getElementById('cp-method-' + cmState.apptId);
+    if (hiddenMethod) hiddenMethod.value = cmState.payMethod;
+    closeCompleteModal();
+    var form = document.getElementById('complete-form-' + cmState.apptId);
+    if (form) form.submit();
+}
 </script>
 
 <!-- ══ APPROVE + DISCOUNT FLOW ═══════════════════════════════════════════════ -->
@@ -2254,6 +2570,7 @@ function clearApptSearch() {
     <input type="hidden" name="appt_voucher_type"   id="approve-voucher-type"    value="cash">
     <input type="hidden" name="appt_discount_value" id="approve-discount-value"  value="0">
     <input type="hidden" name="appt_payment_method" id="approve-payment-method"  value="cash">
+    <?php if (is_cashier()): ?><input type="hidden" name="pin" id="approve-pin-input" value=""><?php endif; ?>
 </form>
 
 <!-- STEP 1: Discount Modal -->
@@ -2544,12 +2861,97 @@ function clearApptSearch() {
             <input type="hidden" name="ci_discount_type"  id="ci-discount-type"    value="none">
             <input type="hidden" name="ci_discount_amount" id="ci-discount-amount" value="0">
             <input type="hidden" name="ci_final_amount"   id="ci-final-amount-input" value="">
+            <?php if (is_cashier()): ?><input type="hidden" name="pin" id="ci-pin-hidden" value=""><?php endif; ?>
         </form>
+
+        <?php if (is_cashier()): ?>
+        <div style="margin-top:0.75rem;">
+            <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">Your 4-digit PIN</label>
+            <input type="password" id="ci-pin-input" maxlength="4" placeholder="••••"
+                   style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;
+                          background:var(--bg3);color:var(--brown);font-size:1rem;box-sizing:border-box;letter-spacing:0.3em;text-align:center;">
+        </div>
+        <?php endif; ?>
 
         <div style="display:flex;gap:0.65rem;margin-top:0.5rem;">
             <button type="button" onclick="closeCheckinModal()" class="btn btn-secondary" style="flex:1;">Cancel</button>
             <button type="button" onclick="submitCheckin()" class="btn btn-success" style="flex:2;">✅ Confirm Check-In</button>
         </div>
+    </div>
+</div>
+
+<!-- ══ COMPLETE PAYMENT MODAL ══════════════════════════════════════════════ -->
+<div id="completeModal" style="display:none;position:fixed;inset:0;z-index:9998;
+     background:rgba(30,20,10,0.5);backdrop-filter:blur(4px);
+     align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:16px;padding:2rem 1.75rem;
+                max-width:440px;width:92vw;box-shadow:0 24px 60px rgba(0,0,0,0.2);
+                animation:popIn .3s cubic-bezier(.34,1.56,.64,1);">
+        <div style="text-align:center;margin-bottom:1.25rem;">
+            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;">🎉</div>
+            <div style="font-size:1.05rem;font-weight:700;color:var(--brown);">Mark Session Complete</div>
+            <div style="font-size:0.8rem;color:var(--gray);margin-top:0.3rem;" id="cm-customer-name"></div>
+        </div>
+
+        <!-- No payment needed -->
+        <div id="cm-no-payment" style="display:none;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.2);border-radius:10px;padding:0.85rem;text-align:center;font-size:0.85rem;color:#0a3622;margin-bottom:1rem;">
+            ✅ All payments already collected. No outstanding balance.
+        </div>
+
+        <!-- Payment breakdown -->
+        <div id="cm-payment-section" style="display:none;">
+            <div style="background:var(--bg3);border-radius:10px;padding:0.85rem 1rem;margin-bottom:1rem;font-size:0.85rem;">
+                <div id="cm-base-row" style="display:none;justify-content:space-between;margin-bottom:0.35rem;">
+                    <span style="color:var(--gray);">Base session (unpaid)</span>
+                    <span>₱<span id="cm-base-amt">0.00</span></span>
+                </div>
+                <div id="cm-extras-row" style="display:none;justify-content:space-between;margin-bottom:0.35rem;">
+                    <span style="color:var(--gray);">Extra services (unpaid)</span>
+                    <span>₱<span id="cm-extras-amt">0.00</span></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border2);padding-top:0.45rem;font-weight:700;font-size:0.9rem;">
+                    <span>Total to Collect</span>
+                    <span style="color:var(--brown);">₱<span id="cm-total-amt">0.00</span></span>
+                </div>
+            </div>
+            <div style="margin-bottom:1rem;">
+                <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Payment Method</div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;">
+                    <div id="cm-pay-cash" onclick="cmSelectPayment('cash')"
+                         style="padding:0.7rem 0.4rem;border:2px solid #C96A2C;background:#fff8f2;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
+                        <div style="font-size:1rem;">💵</div>
+                        <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Cash</div>
+                    </div>
+                    <div id="cm-pay-qrph" onclick="cmSelectPayment('qrph')"
+                         style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
+                        <div style="font-size:1rem;">📷</div>
+                        <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">QR Ph</div>
+                    </div>
+                    <div id="cm-pay-bank" onclick="cmSelectPayment('bank')"
+                         style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
+                        <div style="font-size:1rem;">🏦</div>
+                        <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <?php if (is_cashier()): ?>
+        <div style="margin-bottom:1rem;">
+            <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">Your 4-digit PIN</label>
+            <input type="password" id="cm-pin-input" maxlength="4" placeholder="••••"
+                   style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;
+                          background:var(--bg3);color:var(--brown);font-size:1rem;box-sizing:border-box;
+                          letter-spacing:0.3em;text-align:center;">
+            <div id="cm-pin-error" style="color:#dc2626;font-size:0.78rem;margin-top:0.4rem;min-height:1.1em;"></div>
+        </div>
+        <?php endif; ?>
+
+        <div style="display:flex;gap:0.65rem;margin-top:0.5rem;">
+            <button type="button" onclick="closeCompleteModal()" class="btn btn-secondary" style="flex:1;">Cancel</button>
+            <button type="button" onclick="submitComplete()" class="btn btn-primary" style="flex:2;" id="cm-confirm-btn">🎉 Complete Session</button>
+        </div>
+        <div style="margin-top:0.85rem;text-align:center;font-size:0.72rem;color:var(--gray);">🔒 Action recorded under your name for accountability.</div>
     </div>
 </div>
 
@@ -2854,6 +3256,9 @@ async function submitApproval() {
             btn.disabled = false; btn.textContent = '✅ Approve'; return;
         }
         closePinModal();
+        // Pass PIN to hidden form field for server-side re-verification (cashier only)
+        const approvePin = document.getElementById('approve-pin-input');
+        if (approvePin) approvePin.value = pin;
         document.getElementById('appt-approve-form').submit();
     } catch(e) {
         if (errEl) errEl.textContent = 'Network error. Try again.';
@@ -2864,7 +3269,7 @@ async function submitApproval() {
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
         closeDiscountModal(); closePinModal();
-        closeCheckinModal();
+        closeCheckinModal(); closeCompleteModal();
         closeEditModal(); closeAddServiceModal();
     }
     if (e.key === 'Enter' && document.getElementById('pinModal').style.display === 'flex') submitApproval();
@@ -3037,11 +3442,15 @@ function submitCheckin() {
         openAddonQrphModal(form, amt);
         return;
     }
+    // Copy PIN to hidden form field (cashier only)
+    const ciPinVisible = document.getElementById('ci-pin-input');
+    const ciPinHidden  = document.getElementById('ci-pin-hidden');
+    if (ciPinVisible && ciPinHidden) ciPinHidden.value = ciPinVisible.value;
     document.getElementById('checkinForm').submit();
 }
 
 // ── FULL EDIT APPOINTMENT ─────────────────────────────────────────────────────
-function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount, notes) {
+function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount, notes, currentTherapistNames) {
     document.getElementById('edit_appt_id').value      = apptId;
     document.getElementById('edit_service_id').value   = serviceId;
     document.getElementById('edit_date_picker').value  = currentDate ? currentDate.substring(0,10) : '';
@@ -3049,8 +3458,18 @@ function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount,
     document.getElementById('edit_people_count').value = peopleCount || 1;
     document.getElementById('edit_notes').value        = notes || '';
     document.getElementById('edit_booking_date').value = currentDate || '';
+
+    const thWrap = document.getElementById('edit_current_therapists_wrap');
+    const thDisp = document.getElementById('edit_current_therapists_display');
+    if (currentTherapistNames) {
+        thDisp.textContent  = currentTherapistNames;
+        thWrap.style.display = 'block';
+    } else {
+        thWrap.style.display = 'none';
+    }
+    document.getElementById('edit_reassign_therapist').value = '0';
+
     document.getElementById('editModal').style.display = 'flex';
-    // Load slots for current date
     if (currentDate) loadEditSlots(currentDate.substring(0,10), serviceId, parseInt(peopleCount)||1);
 }
 function closeEditModal() {
@@ -3133,6 +3552,7 @@ function loadAddSvcSlots() {
 </script>
 
 <!-- ── EDIT APPOINTMENT MODAL ─────────────────────────────────────────────── -->
+<?php $all_therapists_modal = $conn->query("SELECT id, full_name FROM therapists ORDER BY full_name ASC")->fetch_all(MYSQLI_ASSOC); ?>
 <div id="editModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem;">
     <div style="background:var(--bg2);border-radius:16px;padding:1.5rem;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
@@ -3163,6 +3583,29 @@ function loadAddSvcSlots() {
                            onchange="loadEditSlots(document.getElementById('edit_date_picker').value, document.getElementById('edit_service_id').value, parseInt(this.value)||1)">
                 </div>
             </div>
+            <!-- Current therapist(s) — shown when present -->
+            <div id="edit_current_therapists_wrap" style="display:none;margin-bottom:0.85rem;">
+                <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Current Therapist(s)</label>
+                <div id="edit_current_therapists_display"
+                     style="padding:0.5rem 0.75rem;background:var(--bg3);border:1px solid var(--border2);
+                            border-radius:8px;font-size:0.85rem;color:var(--brown);"></div>
+            </div>
+            <!-- Reassign therapist -->
+            <div style="margin-bottom:0.85rem;">
+                <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Reassign Therapist <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                <select name="reassign_therapist_id" id="edit_reassign_therapist"
+                        style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;">
+                    <option value="0">— Keep current assignment —</option>
+                    <?php foreach ($all_therapists_modal as $tm): ?>
+                    <option value="<?php echo intval($tm['id']); ?>">
+                        <?php echo htmlspecialchars($tm['full_name']); ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <div style="font-size:0.72rem;color:var(--gray);margin-top:3px;">
+                    Selecting a therapist clears the current assignment and sets status back to pending.
+                </div>
+            </div>
             <div style="margin-bottom:0.85rem;">
                 <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Date</label>
                 <input type="date" id="edit_date_picker"
@@ -3181,6 +3624,14 @@ function loadAddSvcSlots() {
                           style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;resize:vertical;box-sizing:border-box;"
                           placeholder="Special requests, address for home service..."></textarea>
             </div>
+            <?php if (is_cashier()): ?>
+            <div style="margin-bottom:0.85rem;">
+                <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Your 4-digit PIN</label>
+                <input type="password" name="pin" maxlength="4" placeholder="••••" required
+                       style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;
+                              background:var(--bg3);color:var(--brown);font-size:1rem;letter-spacing:0.3em;text-align:center;box-sizing:border-box;">
+            </div>
+            <?php endif; ?>
             <div style="display:flex;gap:0.75rem;">
                 <button type="submit" class="btn btn-primary" style="flex:1;">💾 Save Changes</button>
                 <button type="button" onclick="closeEditModal()" class="btn btn-secondary">Cancel</button>

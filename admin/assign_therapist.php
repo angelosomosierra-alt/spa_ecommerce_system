@@ -23,6 +23,17 @@ $appt = $stmt->get_result()->fetch_assoc(); $stmt->close();
 
 if (!$appt) { header("Location: appointments.php"); exit(); }
 
+// ── Preferred therapist notice ────────────────────────────────────────────────
+$pref_th_name = null;
+if (!empty($appt['preferred_therapist_id'])) {
+    $pref_stmt = $conn->prepare("SELECT full_name FROM therapists WHERE id = ? LIMIT 1");
+    $pref_stmt->bind_param("i", $appt['preferred_therapist_id']);
+    $pref_stmt->execute();
+    $pref_row = $pref_stmt->get_result()->fetch_assoc();
+    $pref_stmt->close();
+    $pref_th_name = $pref_row['full_name'] ?? null;
+}
+
 // Only allow assignment on approved or assigned appointments
 if (!in_array($appt['status'], ['pending','approved','assigned'])) {
     header("Location: appointments.php?msg=cannot_assign"); exit();
@@ -450,6 +461,13 @@ require_once 'admin_header.php';
             <?php endif; ?>
         </div>
         <div class="panel-body" style="padding:1.1rem;">
+
+        <?php if ($pref_th_name): ?>
+        <div style="margin-bottom:1rem;padding:0.6rem 0.9rem;background:#fefce8;border:1px solid #fde68a;
+                    border-radius:9px;font-size:0.8rem;color:#78350f;font-family:'DM Sans',sans-serif;">
+            ⭐ Customer's preferred therapist: <strong><?php echo htmlspecialchars($pref_th_name); ?></strong>
+        </div>
+        <?php endif; ?>
 
         <?php if ($slots_left <= 0): ?>
         <div style="margin-bottom:1rem;padding:0.7rem 0.9rem;background:rgba(25,135,84,0.08);
