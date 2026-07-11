@@ -98,6 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     $category_id      = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
     $is_home_service  = isset($_POST['is_home_service']) ? 1 : 0;
     $home_service_fee = $is_home_service ? floatval($_POST['home_service_fee'] ?? 0) : 0.00;
+    $at_cost          = max(0.0, floatval($_POST['at_cost'] ?? 0));
 
     $image_name = '';
 
@@ -129,17 +130,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         if ($id) {
             // EDITING
             if ($image_name !== '') {
-                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_fee=? WHERE id=?");
-                // FIX: Corrected type definitions string to match exactly 9 elements (ssdisiidi)
-                $stmt->bind_param("ssdisiidi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee, $id);
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_fee=?, at_cost=? WHERE id=?");
+                $stmt->bind_param("ssdisiiddi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee, $at_cost, $id);
             } else {
-                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_fee=? WHERE id=?");
-                $stmt->bind_param("ssdiiidi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_fee, $id);
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_fee=?, at_cost=? WHERE id=?");
+                $stmt->bind_param("ssdiiiddi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_fee, $at_cost, $id);
             }
         } else {
             // NEW SERVICE
-            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("ssdisiid", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee);
+            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_fee, at_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("ssdisiidd", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee, $at_cost);
         }
 
         if ($stmt->execute()) {
@@ -301,6 +301,18 @@ require_once 'admin_header.php';
                         Extra charge added to the total when customer selects Home Service. Set to 0 for no extra fee.
                     </small>
                 </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:1.25rem;">
+                <label>🎯 At Cost (₱) — Influencer / Marketing</label>
+                <input type="number" name="at_cost" step="0.01" min="0"
+                       value="<?php echo floatval($edit_service['at_cost'] ?? 0); ?>"
+                       placeholder="0.00">
+                <small style="color:var(--gray);">
+                    Cost borne by the salon for influencer/marketing appointments.
+                    Used in Marketing Expense = At Cost + Therapist CF.
+                    Leave 0 for regular services.
+                </small>
             </div>
             <script>
             document.getElementById('homeServiceToggle').addEventListener('change', function() {

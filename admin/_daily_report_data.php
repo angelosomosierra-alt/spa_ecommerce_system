@@ -8,6 +8,29 @@
  * Sets all data arrays, summary totals, payment-mix, and analysis variables.
  */
 
+// ── Idempotent DB migrations ──────────────────────────────────────────────────
+(function() use ($conn) {
+    $appt_cols = [];
+    $res = $conn->query("SHOW COLUMNS FROM appointments");
+    if ($res) { while ($r = $res->fetch_assoc()) $appt_cols[] = $r['Field']; }
+    if (!in_array('celebration_discount', $appt_cols))
+        $conn->query("ALTER TABLE appointments ADD COLUMN celebration_discount DECIMAL(10,2) NOT NULL DEFAULT 0.00");
+    if (!in_array('advance_payment', $appt_cols))
+        $conn->query("ALTER TABLE appointments ADD COLUMN advance_payment DECIMAL(10,2) NOT NULL DEFAULT 0.00");
+
+    $svc_cols = [];
+    $res2 = $conn->query("SHOW COLUMNS FROM services");
+    if ($res2) { while ($r = $res2->fetch_assoc()) $svc_cols[] = $r['Field']; }
+    if (!in_array('at_cost', $svc_cols))
+        $conn->query("ALTER TABLE services ADD COLUMN at_cost DECIMAL(10,2) NULL");
+
+    $rpt_cols = [];
+    $res3 = $conn->query("SHOW COLUMNS FROM daily_reports");
+    if ($res3) { while ($r = $res3->fetch_assoc()) $rpt_cols[] = $r['Field']; }
+    if (!in_array('maya_dp', $rpt_cols))
+        $conn->query("ALTER TABLE daily_reports ADD COLUMN maya_dp DECIMAL(10,2) NOT NULL DEFAULT 0.00");
+})();
+
 // ── Report header ─────────────────────────────────────────────────────────────
 if (!isset($rpt)) {
     $_rpt_q = $conn->prepare("SELECT * FROM daily_reports WHERE report_date = ? LIMIT 1");
@@ -41,6 +64,8 @@ $_s = $conn->prepare("
         -- charged_price is stored as total (per_person × people_count)
         -- multiplication was removed after storage fix was confirmed
         a.charged_price,
+        a.celebration_discount,
+        a.advance_payment,
         a.status          AS appt_status,
         GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
         IFNULL(SUM(at2.commission),0) AS total_commission
@@ -103,6 +128,7 @@ $_i = $conn->prepare("
         -- multiplication was removed after storage fix was confirmed
         a.charged_price,
         a.status          AS appt_status,
+        s.at_cost,
         GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
         IFNULL(SUM(at2.commission),0) AS commission
     FROM orders o
@@ -211,22 +237,41 @@ $_ex->bind_param("s", $report_date); $_ex->execute();
 $expenses = $_ex->get_result()->fetch_all(MYSQLI_ASSOC); $_ex->close();
 
 // ── Compute Summary ───────────────────────────────────────────────────────────
-$gross_sales     = array_sum(array_column($service_rows, 'charged_price'));
-$staff_cf        = array_sum(array_column($service_rows, 'total_commission'));
-$total_discounts = array_sum(array_column($service_rows, 'discount_amount'));
-$gc_sold_total   = array_sum(array_column($gc_sold,     'amount'));
-$gc_redeem_total = array_sum(array_column($gc_redeemed, 'amount'));
-$unpaids_total   = array_sum(array_column($unpaids,     'amount'));
-$expenses_total  = array_sum(array_column($expenses,    'amount'));
-$mktg_expense    = array_sum(array_column($influencer_rows, 'commission'));
-$prod_sold_total = array_sum(array_column($product_sales,        'amount'))
-                 + array_sum(array_column($system_product_sales, 'amount'));
-$net_sales       = array_sum(array_column($service_rows, 'final_amount')) ?: ($gross_sales - $staff_cf);
-$addon_gross     = array_sum(array_column($addon_rows, 'charged_price'));
-$addon_cf        = array_sum(array_column($addon_rows, 'commission'));
-$gross_sales    += $addon_gross;
-$staff_cf       += $addon_cf;
-$net_sales      += $addon_gross - $addon_cf;
+$staff_cf              = array_sum(array_column($service_rows, 'total_commission'));
+$total_discounts       = array_sum(array_column($service_rows, 'discount_amount'));
+$celeb_discount        = array_sum(array_column($service_rows, 'celebration_discount'));
+$advance_payment_total = array_sum(array_column($service_rows, 'advance_payment'));
+$gc_sold_total         = array_sum(array_column($gc_sold,      'amount'));
+$gc_redeem_total       = array_sum(array_column($gc_redeemed,  'amount'));
+$unpaids_total         = array_sum(array_column($unpaids,      'amount'));
+$expenses_total        = array_sum(array_column($expenses,     'amount'));
+$prod_sold_total       = array_sum(array_column($product_sales,        'amount'))
+                       + array_sum(array_column($system_product_sales, 'amount'));
+$addon_gross           = array_sum(array_column($addon_rows, 'charged_price'));
+$addon_cf              = array_sum(array_column($addon_rows, 'commission'));
+$staff_cf             += $addon_cf;
+
+// mktg_expense = SUM(at_cost + commission) per influencer row; commission (fixed CF) flows into staff_cf
+$mktg_expense              = 0.0;
+$influencer_at_cost_total  = 0.0;
+foreach ($influencer_rows as $_inf_r) {
+    $_inf_at   = floatval($_inf_r['at_cost']    ?? 0);
+    $_inf_cf   = floatval($_inf_r['commission'] ?? 0);
+    $mktg_expense             += $_inf_at + $_inf_cf;
+    $influencer_at_cost_total += $_inf_at;
+    $staff_cf                 += $_inf_cf;
+}
+
+// POS Reading: manual from DB; computed = sum of all service+addon+influencer revenue + products
+$pos_reading          = floatval($rpt['pos_reading'] ?? 0);
+$pos_reading_computed = array_sum(array_column($service_rows, 'charged_price'))
+                      + $addon_gross + $mktg_expense + $prod_sold_total;
+$pos_variance         = $pos_reading - $pos_reading_computed;
+
+// GROSS SALES = POS_READING + SOLD_GC − MARKETING_EXPENSE
+$gross_sales   = $pos_reading + $gc_sold_total - $mktg_expense;
+$net_sales     = $gross_sales - $staff_cf;
+$maya_dp_total = floatval($rpt['maya_dp'] ?? 0);
 
 // Payment method totals
 $pm_totals = [];
@@ -252,15 +297,62 @@ $qrph_total   = ($pm_totals['qrph']   ?? 0);
 $card_total   = ($pm_totals['card']   ?? 0) + ($pm_totals['bank'] ?? 0);
 $online_total = ($pm_totals['online'] ?? 0);
 
-$pos_reading  = floatval($rpt['pos_reading'] ?? 0);
 $denom_total  = array_sum(array_map(fn($d) => floatval($d['total']), $denoms_saved));
 $cash_on_hand = $denom_total;
 
-// Net Cash matches Recovery Spa's Google Sheet formula:
-// Net Cash = Gross Sales − Discounts − Expenses
-// (Staff CF and Marketing Expense are paid separately, not deducted from the daily cash)
-// Verified: 9005 − 67.35 − 510 = 8427.65 ✓
-$net_cash = $gross_sales - $total_discounts - $expenses_total;
+// ── NET CASH — mirrors source workbook sheet "28" cell B52 ───────────────────
+//
+// B52 formula (verbatim from SALES REPORT RECOVERY SPA.xlsx, sheet "28"):
+//   =B39-B40-B41-B42-B43-B44-B45-B46-B47-B48-B49-B50-B51
+//
+// Cell map (verified by reading the workbook directly):
+//   $pos_reading           ← B39  POS READING         (manual entry)
+//   $total_discounts       ← B40  DISCOUNTS            (374.50 on test date)
+//   $celeb_discount        ← B41  CELEB. DISCOUNTS 10%
+//   $gc_redeem_total       ← B42  REDEEMED GC
+//   $card_total            ← B43  SWIPER
+//   $gcash_total           ← B44  GCASH (SALES)
+//   $maya_total            ← B45  MAYA (SALES)
+//   $maya_dp_total         ← B46  MAYA (DP)
+//   $unpaids_total         ← B47  UNPAIDS
+//   $advance_payment_total ← B48  ADVANCE PAYMENT
+//   $expenses_total        ← B49  EXPENSES
+//   $mktg_expense          ← B50  MARKETING EXPENSE
+//   $prod_sold_total       ← B51  PRODUCT SOLD         (not yet used below)
+//
+// STAFF CF (B37 = =O58+P58+Q58+N76) is NOT in B52 and is intentionally absent
+// here. B40 is DISCOUNTS, not Staff CF. Proof: with the test-date numbers,
+// subtracting Staff CF would yield 753 − 1,992.10 = −1,239.10, which contradicts
+// the verified result of ₱753. Commissions are settled outside the cash drawer.
+//
+// MARKETING EXPENSE appears in BOTH $gross_sales and $net_cash. This is correct
+// and is NOT a double-deduction: $net_cash derives from $pos_reading directly
+// (not from $gross_sales), so each formula independently deducts mktg_expense
+// from its own base. The Excel does the same: B36 = B39+B38−B50 and
+// B52 = B39−…−B50, both referencing B39 and B50 independently.
+//
+// Golden-test arithmetic (sheet "28", date 2026-06-28):
+//   12,576.00 (POS)
+//  −  374.50  (discounts)   −    0.00 (celeb)
+//  −    0.00  (gc_redeem)   − 8,177.50 (card/swiper)
+//  −    0.00  (gcash/maya/qrph/maya_dp)
+//  − 2,072.50 (unpaids)     −  644.50  (advance)
+//  −  554.00  (expenses)    −    0.00  (mktg)
+//  ─────────────────────────────────────────────
+//  =  753.00  ✓  (matches COH; SHORT/OVER = 0)
+$net_cash = $pos_reading
+          - $gc_redeem_total
+          - $card_total
+          - $gcash_total
+          - $maya_total
+          - $qrph_total
+          - $maya_dp_total
+          - $unpaids_total
+          - $advance_payment_total
+          - $total_discounts
+          - $celeb_discount
+          - $expenses_total
+          - $mktg_expense;
 
 // ── Cash received today (drawer / paid-date basis) ────────────────────────────
 $_cash_q = $conn->prepare("

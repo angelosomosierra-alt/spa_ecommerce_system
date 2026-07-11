@@ -123,23 +123,26 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
     <tr><th style="width:65%;">Item</th><th class="r">Amount</th></tr>
     <?php
     $sum_rows=[
-        ['Gross Sales',       $gross_sales,     '#198754',true],
-        ['Staff CF',          $staff_cf,        '#c9280c',false],
-        ['Sold GC',           $gc_sold_total,   '',false],
-        ['POS Reading',       $pos_reading,     '',false],
-        ['Discounts',         $total_discounts, '#c9280c',false],
-        ['Redeemed GC',       $gc_redeem_total, '#c9280c',false],
-        ['Swiper',            $card_total,      '',false],
-        ['GCash',             $gcash_total,     '',false],
-        ['Maya',              $maya_total,      '',false],
-        ['QRPH',              $qrph_total,      '',false],
-        ['Unpaids',           $unpaids_total,   '#c9280c',false],
-        ['Expenses',          $expenses_total,  '#c9280c',false],
-        ['Marketing Expense', $mktg_expense,    '#c9280c',false],
-        ['Product Sold',      $prod_sold_total, '#198754',false],
-        ['Net Cash',          $net_cash,        '#198754',true],
-        ['COH (Cash on Hand)',$cash_on_hand,    '#0070f3',true],
-        ['(Short)/Over',      $short_over,      $short_over>=0?'#198754':'#c9280c',true],
+        ['Gross Sales',          $gross_sales,          '#198754',true],
+        ['Staff CF',             $staff_cf,             '#c9280c',false],
+        ['Sold GC',              $gc_sold_total,        '',false],
+        ['POS Reading',          $pos_reading,          '',false],
+        ['Discounts',            $total_discounts,      '#c9280c',false],
+        ['Celeb. Discounts 10%', $celeb_discount,       '#c9280c',false],
+        ['Redeemed GC',          $gc_redeem_total,      '#c9280c',false],
+        ['Swiper',               $card_total,           '',false],
+        ['GCash',                $gcash_total,          '',false],
+        ['Maya',                 $maya_total,           '',false],
+        ['QRPH',                 $qrph_total,           '',false],
+        ['Unpaids',              $unpaids_total,        '#c9280c',false],
+        ['Marketing Expense',    $mktg_expense,         '#c9280c',false],
+        ['Advance Payment',      $advance_payment_total,'#c9280c',false],
+        ['Maya (DP)',             $maya_dp_total,        '#c9280c',false],
+        ['Product Sold',         $prod_sold_total,      '#198754',false],
+        ['Expenses',             $expenses_total,       '#c9280c',false],
+        ['Net Cash',             $net_cash,             '#198754',true],
+        ['COH (Cash on Hand)',   $cash_on_hand,         '#0070f3',true],
+        ['(Short)/Over',         $short_over,           $short_over>=0?'#198754':'#c9280c',true],
     ];
     foreach ($sum_rows as $i=>[$sl,$sv,$sc,$bold]):
         $bs=$bold?'font-weight:700;':'';
@@ -158,31 +161,32 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
 
 <!-- ══ SALES SERVICES ═══════════════════════════════════════════════════════ -->
 <div class="sec-banner">SALES SERVICES &mdash; <?php echo $fn_date; ?></div>
-<p style="font-size:6pt;color:#888;margin:0 0 2px 0;">Time In | Time Out | Slip No. | Client | Services | Stylist | Regular | Promo | Disc 20% (PWD/SNR) | 30% CF | 20% CF | 15% CF | 50% Staff Disc | Net Sales | Payment | Remarks</p>
+<p style="font-size:6pt;color:#888;margin:0 0 2px 0;">Time In | Time Out | Slip No. | Client | Services | Stylist | Regular | Promo | Celeb 10% | Disc 20% (PWD/SNR) | 30% CF | 20% CF | 15% CF | 50% Staff Disc | Net Sales | Payment | Remarks</p>
 <table style="font-size:6pt;">
     <tr>
         <th style="width:5%;">In</th>
         <th style="width:5%;">Out</th>
         <th style="width:6%;">Slip</th>
         <th style="width:9%;">Client</th>
-        <th style="width:13%;">Services</th>
-        <th style="width:8%;">Stylist</th>
+        <th style="width:12%;">Services</th>
+        <th style="width:7%;">Stylist</th>
         <th class="r" style="width:6%;">Regular</th>
         <th class="r" style="width:6%;">Promo</th>
-        <th class="r" style="width:6%;">Disc 20%</th>
+        <th class="r" style="width:5%;">Celeb 10%</th>
+        <th class="r" style="width:5%;">Disc 20%</th>
         <th class="r" style="width:5%;">30% CF</th>
         <th class="r" style="width:5%;">20% CF</th>
         <th class="r" style="width:5%;">15% CF</th>
         <th class="r" style="width:5%;">50% Disc</th>
-        <th class="r" style="width:7%;">Net Sales</th>
-        <th style="width:5%;">Pymt</th>
-        <th style="width:5%;">Rmks</th>
+        <th class="r" style="width:6%;">Net Sales</th>
+        <th style="width:4%;">Pymt</th>
+        <th style="width:4%;">Rmks</th>
     </tr>
 <?php if (empty($service_rows)): ?>
-    <tr><td colspan="16" class="c" style="color:#888;padding:6px;">No service transactions for this date.</td></tr>
+    <tr><td colspan="17" class="c" style="color:#888;padding:6px;">No service transactions for this date.</td></tr>
 <?php else:
     $prev_order=null;
-    $_pt=array_fill_keys(['reg','promo','dpwd','c30','c20','c15','d50','net'],0.0);
+    $_pt=array_fill_keys(['reg','promo','celeb','dpwd','c30','c20','c15','d50','net'],0.0);
     foreach ($service_rows as $i=>$row):
         $is_same=($prev_order===$row['order_id']);
         $ts=strtotime($row['appointment_date']);
@@ -193,11 +197,12 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
         $c15=($tier===15)?(float)$row['total_commission']:0;
         $dpwd=in_array($row['discount_type'],['senior','pwd'])?(float)$row['discount_amount']:0;
         $d50=($row['discount_type']==='employee')?(float)$row['discount_amount']:0;
+        $celeb_d=floatval($row['celebration_discount']??0);
         $net=(float)$row['charged_price']-(float)$row['total_commission'];
         $pm=!empty($row['paymongo_method'])?$row['paymongo_method']:($row['payment_method']??'cash');
         $rc=($i%2===0)?'':'class="zebra"';
         $prev_order=$row['order_id'];
-        $_pt['reg']+=(float)$row['regular_price'];$_pt['promo']+=(float)$row['charged_price'];
+        $_pt['reg']+=(float)$row['regular_price'];$_pt['promo']+=(float)$row['charged_price'];$_pt['celeb']+=$celeb_d;
         $_pt['dpwd']+=$dpwd;$_pt['c30']+=$c30;$_pt['c20']+=$c20;$_pt['c15']+=$c15;$_pt['d50']+=$d50;$_pt['net']+=$net;
 ?>
     <tr <?php echo $rc; ?>>
@@ -209,6 +214,7 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
         <td style="color:#888;"><?php echo htmlspecialchars($row['therapists']??'—'); ?></td>
         <td class="r" style="font-family:monospace;color:#888;"><?php echo pdf_money($row['regular_price']); ?></td>
         <td class="r" style="font-family:monospace;font-weight:700;"><?php echo pdf_money($row['charged_price']); ?></td>
+        <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $celeb_d>0?pdf_money($celeb_d):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $dpwd>0?pdf_money($dpwd):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $c30>0?pdf_money($c30):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $c20>0?pdf_money($c20):'—'; ?></td>
@@ -230,7 +236,7 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
         <td style="color:#888;"><?php echo htmlspecialchars($addon['therapist_name']??'—'); ?></td>
         <td></td>
         <td class="r" style="font-family:monospace;"><?php echo pdf_money($addon['charged_price']); ?></td>
-        <td></td>
+        <td></td><td></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $ac30>0?pdf_money($ac30):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $ac20>0?pdf_money($ac20):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $ac15>0?pdf_money($ac15):'—'; ?></td>
@@ -245,6 +251,7 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
         <td colspan="6">TOTALS</td>
         <td class="r" style="font-family:monospace;"><?php echo pdf_money($_pt['reg']); ?></td>
         <td class="r" style="font-family:monospace;"><?php echo pdf_money($_pt['promo']); ?></td>
+        <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $_pt['celeb']>0?pdf_money($_pt['celeb']):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $_pt['dpwd']>0?pdf_money($_pt['dpwd']):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $_pt['c30']>0?pdf_money($_pt['c30']):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $_pt['c20']>0?pdf_money($_pt['c20']):'—'; ?></td>
@@ -281,9 +288,9 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
         <td style="font-weight:600;"><?php echo htmlspecialchars($row['customer_name']); ?></td>
         <td><?php echo htmlspecialchars($row['service_name']); ?></td>
         <td style="color:#888;"><?php echo htmlspecialchars($row['therapists']??'—'); ?></td>
-        <td class="r" style="font-family:monospace;"><?php echo pdf_money($row['charged_price']); ?></td>
-        <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo pdf_money($row['commission']); ?></td>
-        <td class="r" style="font-family:monospace;font-weight:700;color:#c9280c;"><?php echo pdf_money($row['commission']); ?></td>
+        <td class="r" style="font-family:monospace;"><?php echo pdf_money(floatval($row['at_cost']??0)); ?></td>
+        <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo pdf_money(floatval($row['commission']??0)); ?></td>
+        <td class="r" style="font-family:monospace;font-weight:700;color:#c9280c;"><?php echo pdf_money(floatval($row['at_cost']??0)+floatval($row['commission']??0)); ?></td>
         <td style="font-size:7pt;">INFLUENCER</td>
     </tr>
     <?php endforeach; ?>

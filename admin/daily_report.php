@@ -96,21 +96,22 @@ if (isset($_GET['lock']) && is_full_access()) {
 // ── SAVE REPORT HEADER ────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_header'])) {
     verify_csrf_token();
-    $oc  = sanitize_input($_POST['opening_cashier'] ?? '');
-    $cc  = sanitize_input($_POST['closing_cashier'] ?? '');
-    $coh = floatval($_POST['cash_on_hand'] ?? 0);
-    $pos = floatval($_POST['pos_reading']  ?? 0);
+    $oc    = sanitize_input($_POST['opening_cashier'] ?? '');
+    $cc    = sanitize_input($_POST['closing_cashier'] ?? '');
+    $coh   = floatval($_POST['cash_on_hand'] ?? 0);
+    $pos   = floatval($_POST['pos_reading']  ?? 0);
+    $mdp   = floatval($_POST['maya_dp']      ?? 0);
     $notes = sanitize_input($_POST['notes'] ?? '');
     if ($rpt) {
         if (!$rpt['is_locked']) {
-            $stmt = $conn->prepare("UPDATE daily_reports SET opening_cashier=?,closing_cashier=?,cash_on_hand=?,pos_reading=?,notes=? WHERE id=?");
-            $stmt->bind_param("ssddsi", $oc, $cc, $coh, $pos, $notes, $rpt['id']); $stmt->execute(); $stmt->close();
+            $stmt = $conn->prepare("UPDATE daily_reports SET opening_cashier=?,closing_cashier=?,cash_on_hand=?,pos_reading=?,notes=?,maya_dp=? WHERE id=?");
+            $stmt->bind_param("ssddsdi", $oc, $cc, $coh, $pos, $notes, $mdp, $rpt['id']); $stmt->execute(); $stmt->close();
             $msg = "✅ Report header saved.";
         } else { $msg = "⚠️ Report is locked."; $msg_type = 'warning'; }
     } else {
         $uid = (int)$_SESSION['user_id'];
-        $stmt = $conn->prepare("INSERT INTO daily_reports (report_date,opening_cashier,closing_cashier,cash_on_hand,pos_reading,notes,created_by) VALUES (?,?,?,?,?,?,?)");
-        $stmt->bind_param("sssddsi", $report_date, $oc, $cc, $coh, $pos, $notes, $uid); $stmt->execute(); $stmt->close();
+        $stmt = $conn->prepare("INSERT INTO daily_reports (report_date,opening_cashier,closing_cashier,cash_on_hand,pos_reading,notes,maya_dp,created_by) VALUES (?,?,?,?,?,?,?,?)");
+        $stmt->bind_param("sssddsdi", $report_date, $oc, $cc, $coh, $pos, $notes, $mdp, $uid); $stmt->execute(); $stmt->close();
         $msg = "✅ Daily report created.";
     }
     // Re-fetch after save using prepared statement
@@ -307,9 +308,9 @@ $locked = !empty($rpt['is_locked']);
         <?php
         // ── Per-row commission-tier & totals accumulators ─────────────────────
         $pm_icons = ['cash'=>'💵','gcash'=>'📱','maya'=>'💜','qrph'=>'📷','bank'=>'🏦','card'=>'💳','online'=>'💳'];
-        $t_reg=$t_promo=$t_dpwd=$t_c30=$t_c20=$t_c15=$t_d50=$t_net=0;
+        $t_reg=$t_promo=$t_celeb=$t_dpwd=$t_c30=$t_c20=$t_c15=$t_d50=$t_net=0;
         ?>
-            <table style="min-width:1760px;font-size:0.78rem;">
+            <table style="min-width:1900px;font-size:0.78rem;">
                 <thead>
                     <tr>
                         <th style="width:68px;">Time In</th>
@@ -320,6 +321,7 @@ $locked = !empty($rpt['is_locked']);
                         <th>Stylist</th>
                         <th style="text-align:right;">Regular<br>Price</th>
                         <th style="text-align:right;">Promo<br>Price</th>
+                        <th style="text-align:right;">Celeb<br>10%</th>
                         <th style="text-align:right;">Disc 20%<br>(PWD/SNR)</th>
                         <th style="text-align:right;">30%<br>Commission Fee</th>
                         <th style="text-align:right;">20%<br>Commission Fee</th>
@@ -332,7 +334,7 @@ $locked = !empty($rpt['is_locked']);
                 </thead>
                 <tbody>
                 <?php if (empty($service_rows)): ?>
-                <tr><td colspan="16" style="text-align:center;color:var(--gray);padding:2rem;">
+                <tr><td colspan="17" style="text-align:center;color:var(--gray);padding:2rem;">
                     No service transactions for <?php echo date('M d, Y', strtotime($report_date)); ?>.
                 </td></tr>
                 <?php else:
@@ -351,14 +353,16 @@ $locked = !empty($rpt['is_locked']);
                     $c20 = ($tier_pct === 20) ? (float)$row['total_commission'] : 0;
                     $c15 = ($tier_pct === 15) ? (float)$row['total_commission'] : 0;
                     // Discount columns
-                    $disc_pwd = in_array($row['discount_type'], ['senior','pwd']) ? (float)$row['discount_amount'] : 0;
-                    $disc_50  = ($row['discount_type'] === 'employee')            ? (float)$row['discount_amount'] : 0;
-                    $net      = (float)$row['charged_price'] - (float)$row['total_commission'];
+                    $disc_pwd  = in_array($row['discount_type'], ['senior','pwd']) ? (float)$row['discount_amount'] : 0;
+                    $disc_50   = ($row['discount_type'] === 'employee')            ? (float)$row['discount_amount'] : 0;
+                    $disc_celeb= floatval($row['celebration_discount'] ?? 0);
+                    $net       = (float)$row['charged_price'] - (float)$row['total_commission'];
                     // Accumulate totals
-                    $t_reg  += (float)$row['regular_price'];
+                    $t_reg   += (float)$row['regular_price'];
                     $t_promo += (float)$row['charged_price'];
-                    $t_dpwd += $disc_pwd; $t_c30 += $c30; $t_c20 += $c20; $t_c15 += $c15;
-                    $t_d50  += $disc_50;  $t_net += $net;
+                    $t_celeb += $disc_celeb;
+                    $t_dpwd  += $disc_pwd; $t_c30 += $c30; $t_c20 += $c20; $t_c15 += $c15;
+                    $t_d50   += $disc_50;  $t_net += $net;
                     // Payment display
                     $display_pm = !empty($row['paymongo_method']) ? $row['paymongo_method'] : ($row['payment_method'] ?? 'cash');
                     $status_color = match($row['appt_status']) {
@@ -380,6 +384,7 @@ $locked = !empty($rpt['is_locked']);
                     <td style="color:var(--gray);white-space:nowrap;"><?php echo htmlspecialchars($row['therapists'] ?? '—'); ?></td>
                     <td style="text-align:right;color:var(--gray);">₱<?php echo number_format($row['regular_price'], 2); ?></td>
                     <td style="text-align:right;font-weight:700;color:var(--brown);">₱<?php echo number_format($row['charged_price'], 2); ?></td>
+                    <td style="text-align:right;color:var(--rust);"><?php echo $disc_celeb > 0 ? '₱'.number_format($disc_celeb, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $disc_pwd > 0 ? '₱'.number_format($disc_pwd, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $c30 > 0 ? '₱'.number_format($c30, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $c20 > 0 ? '₱'.number_format($c20, 2) : '—'; ?></td>
@@ -415,6 +420,7 @@ $locked = !empty($rpt['is_locked']);
                     <td></td>
                     <td style="text-align:right;font-weight:700;color:var(--brown);">₱<?php echo number_format($addon['charged_price'], 2); ?></td>
                     <td></td>
+                    <td></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $a_c30>0?'₱'.number_format($a_c30,2):'—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $a_c20>0?'₱'.number_format($a_c20,2):'—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $a_c15>0?'₱'.number_format($a_c15,2):'—'; ?></td>
@@ -431,6 +437,7 @@ $locked = !empty($rpt['is_locked']);
                         <td colspan="6" style="text-align:right;font-size:0.8rem;padding-right:0.5rem;">TOTALS →</td>
                         <td style="text-align:right;">₱<?php echo number_format($t_reg, 2); ?></td>
                         <td style="text-align:right;color:var(--brown);">₱<?php echo number_format($t_promo, 2); ?></td>
+                        <td style="text-align:right;color:var(--rust);"><?php echo $t_celeb>0?'₱'.number_format($t_celeb,2):'—'; ?></td>
                         <td style="text-align:right;color:var(--rust);"><?php echo $t_dpwd>0?'₱'.number_format($t_dpwd,2):'—'; ?></td>
                         <td style="text-align:right;color:var(--rust);"><?php echo $t_c30>0?'₱'.number_format($t_c30,2):'—'; ?></td>
                         <td style="text-align:right;color:var(--rust);"><?php echo $t_c20>0?'₱'.number_format($t_c20,2):'—'; ?></td>
@@ -478,6 +485,26 @@ $locked = !empty($rpt['is_locked']);
                                style="width:100%;padding:0.45rem 0.65rem;border:1px solid var(--border2);
                                       border-radius:7px;background:var(--bg3);color:var(--brown);
                                       font-size:0.85rem;box-sizing:border-box;">
+                        <?php if (isset($pos_reading_computed)): ?>
+                        <div style="font-size:0.7rem;color:<?php echo abs($pos_variance ?? 0) > 0.01 ? '#dc3545' : 'var(--gray)'; ?>;margin-top:2px;">
+                            Computed: ₱<?php echo number_format($pos_reading_computed, 2); ?>
+                            <?php if (abs($pos_variance ?? 0) > 0.01): ?>
+                            — Variance: <?php echo ($pos_variance > 0 ? '+' : ''); ?>₱<?php echo number_format($pos_variance, 2); ?>
+                            <?php endif; ?>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <div style="margin-bottom:0.65rem;">
+                        <label style="font-size:0.75rem;font-weight:600;color:var(--brown);display:block;margin-bottom:3px;">Maya (DP) (₱)</label>
+                        <input type="number" name="maya_dp" step="0.01" min="0"
+                               value="<?php echo floatval($rpt['maya_dp'] ?? 0); ?>"
+                               <?php echo $locked ? 'disabled' : ''; ?>
+                               style="width:100%;padding:0.45rem 0.65rem;border:1px solid var(--border2);
+                                      border-radius:7px;background:var(--bg3);color:var(--brown);
+                                      font-size:0.85rem;box-sizing:border-box;">
+                        <div style="font-size:0.7rem;color:var(--gray);margin-top:2px;">
+                            Advance payments via Maya DP (deducted from Net Cash)
+                        </div>
                     </div>
                     <div style="margin-bottom:0.65rem;">
                         <label style="font-size:0.75rem;font-weight:600;color:var(--brown);display:block;margin-bottom:3px;">Cash on Hand / COH (₱)</label>
@@ -547,9 +574,9 @@ $locked = !empty($rpt['is_locked']);
                 <td style="font-size:0.85rem;"><?php echo htmlspecialchars($row['service_name']); ?></td>
                 <td style="font-size:0.82rem;color:var(--gray);"><?php echo htmlspecialchars($row['therapists'] ?? '—'); ?></td>
                 <td style="text-align:right;font-size:0.82rem;color:var(--gray);">₱<?php echo number_format(floatval($row['regular_price'] ?? 0),2); ?></td>
-                <td style="text-align:right;font-size:0.82rem;">₱<?php echo number_format($row['charged_price'],2); ?></td>
-                <td style="text-align:right;color:var(--rust);">₱<?php echo number_format($row['commission'],2); ?></td>
-                <td style="text-align:right;font-weight:700;color:var(--rust);">₱<?php echo number_format($row['commission'],2); ?></td>
+                <td style="text-align:right;font-size:0.82rem;">₱<?php echo number_format(floatval($row['at_cost']??0),2); ?></td>
+                <td style="text-align:right;color:var(--rust);">₱<?php echo number_format(floatval($row['commission']??0),2); ?></td>
+                <td style="text-align:right;font-weight:700;color:var(--rust);">₱<?php echo number_format(floatval($row['at_cost']??0)+floatval($row['commission']??0),2); ?></td>
                 <td style="font-size:0.78rem;background:rgba(201,106,44,0.08);color:var(--rust);font-weight:600;">INFLUENCER</td>
             </tr>
             <?php endforeach; endif; ?>
@@ -558,8 +585,8 @@ $locked = !empty($rpt['is_locked']);
                 <tr style="background:var(--bg3);font-weight:700;border-top:2px solid var(--border2);">
                     <td colspan="4" style="text-align:right;font-size:0.82rem;padding-right:0.5rem;">Totals →</td>
                     <td style="text-align:right;color:var(--gray);">₱<?php echo number_format(array_sum(array_column($influencer_rows,'regular_price')),2); ?></td>
-                    <td style="text-align:right;">₱<?php echo number_format(array_sum(array_column($influencer_rows,'charged_price')),2); ?></td>
-                    <td style="text-align:right;color:var(--rust);">₱<?php echo number_format($mktg_expense,2); ?></td>
+                    <td style="text-align:right;">₱<?php echo number_format($influencer_at_cost_total,2); ?></td>
+                    <td style="text-align:right;color:var(--rust);">₱<?php echo number_format(array_sum(array_column($influencer_rows,'commission')),2); ?></td>
                     <td style="text-align:right;color:var(--rust);">₱<?php echo number_format($mktg_expense,2); ?></td>
                     <td></td>
                 </tr>
@@ -672,27 +699,34 @@ $locked = !empty($rpt['is_locked']);
         <div class="panel-header"><span class="panel-title">📊 Summary Report</span></div>
         <div class="panel-body" style="padding:0;">
             <?php
-            // Exact Google Sheets summary order
+            // Exact Excel summary order
             $summary_rows = [
-                ['label' => 'GROSS SALES',       'val' => $gross_sales,     'color' => '#198754',      'bold' => true],
-                ['label' => 'STAFF CF',           'val' => $staff_cf,        'color' => 'var(--rust)'],
-                ['label' => 'SOLD GC',            'val' => $gc_sold_total,   'color' => 'var(--brown)'],
-                ['label' => 'POS READING',        'val' => $pos_reading,     'color' => 'var(--brown)', 'note' => 'Manual entry from POS machine'],
-                ['label' => 'DISCOUNTS',          'val' => $total_discounts, 'color' => 'var(--rust)'],
-                ['label' => 'REDEEMED GC',        'val' => $gc_redeem_total, 'color' => 'var(--rust)'],
-                ['label' => 'SWIPER',             'val' => $card_total,      'color' => 'var(--brown)', 'note' => 'Card / bank swiper'],
-                ['label' => 'GCASH',              'val' => $gcash_total,     'color' => 'var(--brown)'],
-                ['label' => 'MAYA',               'val' => $maya_total,      'color' => 'var(--brown)'],
-                ['label' => 'QRPH',               'val' => $qrph_total,      'color' => 'var(--brown)'],
-                ['label' => 'UNPAIDS',            'val' => $unpaids_total,   'color' => 'var(--rust)'],
-                ['label' => 'EXPENSES',           'val' => $expenses_total,  'color' => 'var(--rust)'],
-                ['label' => 'MARKETING EXPENSE',  'val' => $mktg_expense,    'color' => 'var(--rust)'],
-                ['label' => 'PRODUCT SOLD',       'val' => $prod_sold_total, 'color' => '#198754'],
-                ['label' => 'NET CASH',           'val' => $net_cash,        'color' => '#198754', 'bold' => true,
-                 'bg' => 'rgba(25,135,84,0.07)', 'note' => 'Gross Sales − Discounts − Expenses'],
-                ['label' => 'COH (Cash on Hand)', 'val' => $cash_on_hand,   'color' => '#0070f3', 'bold' => true,
+                ['label' => 'GROSS SALES',            'val' => $gross_sales,          'color' => '#198754', 'bold' => true,
+                 'note' => 'POS Reading + Sold GC − Mktg Expense'],
+                ['label' => 'STAFF CF',               'val' => $staff_cf,             'color' => 'var(--rust)'],
+                ['label' => 'SOLD GC',                'val' => $gc_sold_total,        'color' => 'var(--brown)'],
+                ['label' => 'POS READING',            'val' => $pos_reading,          'color' => 'var(--brown)',
+                 'note' => 'Manual entry from POS machine'],
+                ['label' => 'DISCOUNTS',              'val' => $total_discounts,      'color' => 'var(--rust)'],
+                ['label' => 'CELEB. DISCOUNTS 10%',  'val' => $celeb_discount,       'color' => 'var(--rust)'],
+                ['label' => 'REDEEMED GC',            'val' => $gc_redeem_total,      'color' => 'var(--rust)'],
+                ['label' => 'SWIPER',                 'val' => $card_total,           'color' => 'var(--brown)',
+                 'note' => 'Card / bank swiper'],
+                ['label' => 'GCASH',                  'val' => $gcash_total,          'color' => 'var(--brown)'],
+                ['label' => 'MAYA',                   'val' => $maya_total,           'color' => 'var(--brown)'],
+                ['label' => 'QRPH',                   'val' => $qrph_total,           'color' => 'var(--brown)'],
+                ['label' => 'UNPAIDS',                'val' => $unpaids_total,        'color' => 'var(--rust)'],
+                ['label' => 'MARKETING EXPENSE',      'val' => $mktg_expense,         'color' => 'var(--rust)'],
+                ['label' => 'ADVANCE PAYMENT',        'val' => $advance_payment_total,'color' => 'var(--rust)'],
+                ['label' => 'MAYA (DP)',              'val' => $maya_dp_total,        'color' => 'var(--rust)'],
+                ['label' => 'PRODUCT SOLD',           'val' => $prod_sold_total,      'color' => '#198754'],
+                ['label' => 'EXPENSES',               'val' => $expenses_total,       'color' => 'var(--rust)'],
+                ['label' => 'NET CASH',               'val' => $net_cash,             'color' => '#198754', 'bold' => true,
+                 'bg' => 'rgba(25,135,84,0.07)',
+                 'note' => 'POS Reading − payments − discounts − unpaids − advance − expenses − mktg'],
+                ['label' => 'COH (Cash on Hand)',     'val' => $cash_on_hand,         'color' => '#0070f3', 'bold' => true,
                  'id' => 'live-coh'],
-                ['label' => '(SHORT) / OVER',     'val' => $short_over,
+                ['label' => '(SHORT) / OVER',         'val' => $short_over,
                  'color' => $short_over >= 0 ? '#198754' : '#dc3545', 'bold' => true,
                  'bg' => $short_over >= 0 ? 'rgba(25,135,84,0.1)' : 'rgba(220,53,69,0.1)',
                  'note' => 'COH − Net Cash', 'id' => 'live-short-over'],

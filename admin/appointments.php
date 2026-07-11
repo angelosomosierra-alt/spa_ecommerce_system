@@ -908,8 +908,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             $cp_name = (is_cashier() && !empty($pr['full_name']))
                 ? $pr['full_name']
                 : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
-            $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
+            $cp_pay_method   = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
             if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','bank'])) $cp_pay_method = 'cash';
+            $celeb_disc_val  = max(0.0, floatval($_POST['celebration_discount'] ?? 0));
+            $advance_pay_val = max(0.0, floatval($_POST['advance_payment']      ?? 0));
             // Mark base order paid if still unpaid (e.g. check-in was skipped)
             if (!empty($appt['order_item_id'])) {
                 $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
@@ -923,8 +925,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             // Mark unpaid extra services as paid with the collected method
             $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
             $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
-            $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=? WHERE id=?");
-            $upd->bind_param("isi",$cp_by,$cp_name,$appt_id); $upd->execute(); $upd->close();
+            $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=?, celebration_discount=?, advance_payment=? WHERE id=?");
+            $upd->bind_param("isddi", $cp_by, $cp_name, $celeb_disc_val, $advance_pay_val, $appt_id);
+            $upd->execute(); $upd->close();
 
             if (!empty($appt['order_item_id'])) {
                 $oi_stmt = $conn->prepare("SELECT order_id FROM order_items WHERE id=?");
@@ -2009,6 +2012,8 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="action"              value="complete">
                 <input type="hidden" name="appt_id"             value="<?php echo $appt_id; ?>">
                 <input type="hidden" name="complete_pay_method" id="cp-method-<?php echo $appt_id; ?>" value="cash">
+                <input type="hidden" name="celebration_discount" id="cp-celeb-<?php echo $appt_id; ?>"   value="0">
+                <input type="hidden" name="advance_payment"      id="cp-advance-<?php echo $appt_id; ?>" value="0">
                 <?php if (is_cashier()): ?>
                 <input type="hidden" name="pin" id="cp-pin-<?php echo $appt_id; ?>" value="">
                 <?php endif; ?>
@@ -2520,6 +2525,10 @@ function openCompleteModal(apptId, customerName, orderIsPaid, orderOwed, unpaidE
     if (pinErr) pinErr.textContent = '';
     var pinInp = document.getElementById('cm-pin-input');
     if (pinInp) pinInp.value = '';
+    var cmCelebEl   = document.getElementById('cm-celeb-disc');
+    var cmAdvanceEl = document.getElementById('cm-advance-pay');
+    if (cmCelebEl)   cmCelebEl.value   = '0';
+    if (cmAdvanceEl) cmAdvanceEl.value = '0';
     document.getElementById('completeModal').style.display = 'flex';
     if (pinInp) setTimeout(function() { pinInp.focus(); }, 120);
 }
@@ -2553,6 +2562,12 @@ function submitComplete() {
     }
     var hiddenMethod = document.getElementById('cp-method-' + cmState.apptId);
     if (hiddenMethod) hiddenMethod.value = cmState.payMethod;
+    var cmCeleb   = document.getElementById('cm-celeb-disc');
+    var cmAdvance = document.getElementById('cm-advance-pay');
+    var hiddenCeleb   = document.getElementById('cp-celeb-'   + cmState.apptId);
+    var hiddenAdvance = document.getElementById('cp-advance-' + cmState.apptId);
+    if (hiddenCeleb)   hiddenCeleb.value   = parseFloat(cmCeleb   ? cmCeleb.value   : 0) || 0;
+    if (hiddenAdvance) hiddenAdvance.value = parseFloat(cmAdvance ? cmAdvance.value : 0) || 0;
     closeCompleteModal();
     var form = document.getElementById('complete-form-' + cmState.apptId);
     if (form) form.submit();
@@ -2932,6 +2947,24 @@ function submitComplete() {
                         <div style="font-size:1rem;">🏦</div>
                         <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-bottom:1rem;border-top:1px solid var(--border2);padding-top:0.85rem;">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem;">Discounts &amp; Adjustments</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+                <div>
+                    <label style="font-size:0.73rem;color:var(--gray);display:block;margin-bottom:2px;">Celeb. Discount 10% (₱)</label>
+                    <input type="number" id="cm-celeb-disc" step="0.01" min="0" value="0" placeholder="0.00"
+                           style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:8px;
+                                  background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
+                </div>
+                <div>
+                    <label style="font-size:0.73rem;color:var(--gray);display:block;margin-bottom:2px;">Advance Payment (₱)</label>
+                    <input type="number" id="cm-advance-pay" step="0.01" min="0" value="0" placeholder="0.00"
+                           style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:8px;
+                                  background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
                 </div>
             </div>
         </div>
