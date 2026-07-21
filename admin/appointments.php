@@ -35,6 +35,21 @@ foreach ([
     }
 }
 
+// ── Ensure completion-discount columns exist on orders ────────────────────────
+foreach ([
+    "completion_discount_type   VARCHAR(20)   NOT NULL DEFAULT 'none'",
+    "completion_discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00",
+    "completion_voucher_type    VARCHAR(10)   NULL DEFAULT NULL",
+    "completion_voucher_value   DECIMAL(10,2) NOT NULL DEFAULT 0.00",
+] as $_ocd_col) {
+    $_ocd_name = explode(' ', trim($_ocd_col))[0];
+    $_ocd_chk  = $conn->query("SHOW COLUMNS FROM orders LIKE '$_ocd_name'");
+    if ($_ocd_chk && $_ocd_chk->num_rows === 0) {
+        $conn->query("ALTER TABLE orders ADD COLUMN $_ocd_col");
+    }
+}
+unset($_ocd_col, $_ocd_name, $_ocd_chk);
+
 // ── AJAX: VERIFY PIN (for approve modal) ─────────────────────────────────────
 if (isset($_POST['verify_pin_only'])) {
     header('Content-Type: application/json');
@@ -912,16 +927,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','bank'])) $cp_pay_method = 'cash';
             $celeb_disc_val  = max(0.0, floatval($_POST['celebration_discount'] ?? 0));
             $advance_pay_val = max(0.0, floatval($_POST['advance_payment']      ?? 0));
-            // Mark base order paid if still unpaid (e.g. check-in was skipped)
+
+            // ── Completion discount — server-side recompute (never trust client totals) ──
+            $cd_type  = sanitize_input($_POST['complete_disc_type'] ?? 'none');
+            if (!in_array($cd_type, ['none','voucher','senior','pwd','employee'])) $cd_type = 'none';
+            $cd_vtype  = sanitize_input($_POST['complete_voucher_type'] ?? 'cash');
+            if (!in_array($cd_vtype, ['cash','percent'])) $cd_vtype = 'cash';
+            $cd_vvalue = max(0.0, floatval($_POST['complete_voucher_value'] ?? 0));
+
+            // Fetch unpaid extras for server-side math
+            $sv_es_stmt = $conn->prepare("SELECT charged_price, payment_status FROM appointment_extra_services WHERE appointment_id=?");
+            $sv_es_stmt->bind_param("i", $appt_id); $sv_es_stmt->execute();
+            $sv_es_rows = $sv_es_stmt->get_result()->fetch_all(MYSQLI_ASSOC); $sv_es_stmt->close();
+            $sv_extras = array_sum(array_map(
+                fn($r) => ($r['payment_status'] !== 'paid') ? floatval($r['charged_price']) : 0.0,
+                $sv_es_rows
+            ));
+
             if (!empty($appt['order_item_id'])) {
-                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
+                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status, o.total_amount, o.discount_amount, o.final_amount FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
                 $oi_s2->bind_param("i", $appt['order_item_id']); $oi_s2->execute();
                 $oi_r2 = $oi_s2->get_result()->fetch_assoc(); $oi_s2->close();
-                if ($oi_r2 && $oi_r2['payment_status'] !== 'paid') {
-                    $upd_ord_pay = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=? WHERE id=?");
-                    $upd_ord_pay->bind_param("si", $cp_pay_method, $oi_r2['id']); $upd_ord_pay->execute(); $upd_ord_pay->close();
+                if ($oi_r2) {
+                    $sv_orig  = floatval($oi_r2['total_amount']);
+                    $sv_bdisc = floatval($oi_r2['discount_amount']);
+                    $sv_gross = $sv_orig + $sv_extras;
+
+                    // Compute completion discount server-side
+                    $cd_amount = 0.0;
+                    if ($cd_type === 'senior' || $cd_type === 'pwd') {
+                        $cd_amount = round($sv_gross * 0.20, 2);
+                    } elseif ($cd_type === 'employee') {
+                        $cd_amount = round($sv_gross * 0.50, 2);
+                    } elseif ($cd_type === 'voucher' && $cd_vvalue > 0) {
+                        $cd_amount = ($cd_vtype === 'percent')
+                            ? round($sv_gross * min(100.0, $cd_vvalue) / 100.0, 2)
+                            : min($cd_vvalue, $sv_gross);
+                    }
+                    // Clamp: completion discount cannot make combined discount exceed gross
+                    $cd_amount = max(0.0, min($cd_amount, max(0.0, $sv_gross - $sv_bdisc)));
+
+                    $new_final = max(0.0, $sv_orig - $sv_bdisc - $cd_amount - $celeb_disc_val - $advance_pay_val);
+
+                    if ($oi_r2['payment_status'] !== 'paid') {
+                        $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
+                        $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
+                    } else {
+                        $upd_ord = $conn->prepare("UPDATE orders SET final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
+                        $upd_ord->bind_param("dsdsdi", $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
+                    }
+                    $upd_ord->execute(); $upd_ord->close();
                 }
             }
+
             // Mark unpaid extra services as paid with the collected method
             $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
             $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
@@ -1016,8 +1074,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action']) && $_POST[
             $_actor_cp = (is_cashier() && !empty($pr['full_name']))
                 ? ['id' => null, 'name' => $pr['full_name'], 'role' => 'receptionist']
                 : null;
+            $cd_log = ($cd_type !== 'none') ? " | completion disc: {$cd_type}" . ($cd_type === 'voucher' ? " {$cd_vvalue}" . ($cd_vtype === 'percent' ? '%' : '₱') : '') : '';
             log_activity($conn, 'appointment_completed',
-                "Completed appointment #{$appt_id} — {$appt['service_name']}",
+                "Completed appointment #{$appt_id} — {$appt['service_name']}{$cd_log}",
                 'appointment', $appt_id, $_actor_cp);
 
         } elseif ($action === 'save_per_person_inline') {
@@ -2011,29 +2070,38 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"              value="complete">
                 <input type="hidden" name="appt_id"             value="<?php echo $appt_id; ?>">
-                <input type="hidden" name="complete_pay_method" id="cp-method-<?php echo $appt_id; ?>" value="cash">
+                <input type="hidden" name="complete_pay_method"  id="cp-method-<?php echo $appt_id; ?>"  value="cash">
                 <input type="hidden" name="celebration_discount" id="cp-celeb-<?php echo $appt_id; ?>"   value="0">
                 <input type="hidden" name="advance_payment"      id="cp-advance-<?php echo $appt_id; ?>" value="0">
+                <input type="hidden" name="complete_disc_type"   id="cp-cdtype-<?php echo $appt_id; ?>"  value="none">
+                <input type="hidden" name="complete_voucher_type" id="cp-cvtype-<?php echo $appt_id; ?>" value="cash">
+                <input type="hidden" name="complete_voucher_value" id="cp-cvvalue-<?php echo $appt_id; ?>" value="0">
                 <?php if (is_cashier()): ?>
                 <input type="hidden" name="pin" id="cp-pin-<?php echo $appt_id; ?>" value="">
                 <?php endif; ?>
             </form>
             <?php
-            $order_is_paid     = (($pm_row['payment_status'] ?? '') === 'paid');
-            $order_owed        = $order_is_paid ? 0.0 : floatval(max($pm_row['final_amount'] ?? 0, $pm_row['total_amount'] ?? 0));
-            $unpaid_extras_sum = 0.0;
+            $_cm_orig   = floatval($pm_row['total_amount']    ?? 0);
+            $_cm_bdisc  = floatval($pm_row['discount_amount'] ?? 0);
+            $_cm_bdtype = $pm_row['discount_type'] ?? 'none';
+            $_cm_paid   = ($pm_row['payment_status'] === 'paid') ? floatval($pm_row['final_amount'] ?? 0) : 0.0;
+            $_cm_extras = 0.0;
             foreach ($extra_services as $_ces) {
-                if (($_ces['payment_status'] ?? '') !== 'paid') $unpaid_extras_sum += floatval($_ces['charged_price']);
+                if (($_ces['payment_status'] ?? '') !== 'paid') $_cm_extras += floatval($_ces['charged_price']);
             }
             ?>
+            <script>
+            (window.cmData = window.cmData || {})[<?php echo $appt_id; ?>] = {
+                name:           '<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>',
+                originalTotal:  <?php echo $_cm_orig; ?>,
+                bookingDisc:    <?php echo $_cm_bdisc; ?>,
+                bookingDiscType:'<?php echo htmlspecialchars(addslashes($_cm_bdtype)); ?>',
+                extrasTotal:    <?php echo $_cm_extras; ?>,
+                alreadyPaid:    <?php echo $_cm_paid; ?>
+            };
+            </script>
             <button type="button" class="btn btn-primary btn-sm"
-                    onclick="openCompleteModal(
-                        <?php echo $appt_id; ?>,
-                        '<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>',
-                        <?php echo $order_is_paid ? 'true' : 'false'; ?>,
-                        <?php echo $order_owed; ?>,
-                        <?php echo $unpaid_extras_sum; ?>
-                    )">🎉 Mark Complete</button>
+                    onclick="openCompleteModal(<?php echo $appt_id; ?>)">🎉 Mark Complete</button>
             <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
@@ -2487,48 +2555,127 @@ function clearApptSearch() {
 }
 
 // ── COMPLETE PAYMENT MODAL ────────────────────────────────────────────────────
-var cmState = { apptId: 0, payMethod: 'cash' };
+var cmData  = window.cmData || {};
+var cmState = { apptId: 0, payMethod: 'cash', discType: 'none' };
 
-function openCompleteModal(apptId, customerName, orderIsPaid, orderOwed, unpaidExtrasTotal) {
-    cmState.apptId    = apptId;
-    cmState.payMethod = 'cash';
-    document.getElementById('cm-customer-name').textContent = customerName;
-    var totalOwed = (orderIsPaid ? 0 : orderOwed) + unpaidExtrasTotal;
-    var fmt = function(n) { return n.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); };
+function cmFmt(n) {
+    return parseFloat(n).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function cmDiscLabel(type) {
+    return {none:'None', voucher:'Voucher', senior:'Senior Citizen (20%)', pwd:'PWD (20%)', employee:'Staff (50%)'}[type] || type;
+}
+
+function cmSetDiscount(type) {
+    cmState.discType = type;
+    ['none','voucher','senior','pwd','employee'].forEach(function(t) {
+        var btn = document.getElementById('cm-discbtn-' + t);
+        if (!btn) return;
+        btn.style.borderColor = (t === type) ? 'var(--gold)' : 'var(--border2)';
+        btn.style.background  = (t === type) ? '#fff8f2'    : 'var(--bg3)';
+    });
+    document.getElementById('cm-voucher-inputs').style.display = (type === 'voucher') ? 'block' : 'none';
+    cmRecompute();
+}
+
+function cmRecompute() {
+    var orig    = cmState.originalTotal  || 0;
+    var bDisc   = cmState.bookingDisc    || 0;
+    var extras  = cmState.extrasTotal    || 0;
+    var already = cmState.alreadyPaid    || 0;
+    var celeb   = parseFloat(document.getElementById('cm-celeb-disc')?.value)  || 0;
+    var advance = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
+    var vtype   = document.getElementById('cm-voucher-type')?.value  || 'cash';
+    var vvalue  = parseFloat(document.getElementById('cm-voucher-value')?.value) || 0;
+
+    var gross = orig + extras;
+
+    var cdAmt = 0;
+    var dtype = cmState.discType;
+    if (dtype === 'senior' || dtype === 'pwd') {
+        cdAmt = Math.round(gross * 0.20 * 100) / 100;
+    } else if (dtype === 'employee') {
+        cdAmt = Math.round(gross * 0.50 * 100) / 100;
+    } else if (dtype === 'voucher') {
+        if (vtype === 'percent') {
+            cdAmt = Math.round(gross * Math.min(100, vvalue) / 100 * 100) / 100;
+        } else {
+            cdAmt = Math.min(Math.max(0, vvalue), gross);
+        }
+    }
+    cdAmt = Math.max(0, Math.min(cdAmt, Math.max(0, gross - bDisc)));
+
+    var totalDue = Math.max(0, gross - bDisc - cdAmt - celeb - advance - already);
+
+    // Build breakdown
+    var rs = 'display:flex;justify-content:space-between;margin-bottom:0.28rem;';
+    var gray = 'color:var(--gray);';
+    var amber = 'color:#b45309;';
+    var html = '';
+    html += '<div style="' + rs + '"><span style="' + gray + '">Original session</span><span>₱' + cmFmt(orig) + '</span></div>';
+    if (extras > 0) html += '<div style="' + rs + '"><span style="' + gray + '">Extra services</span><span>₱' + cmFmt(extras) + '</span></div>';
+    html += '<div style="' + rs + 'border-top:1px solid var(--border2);padding-top:0.28rem;margin-top:0.1rem;font-weight:600;"><span>Subtotal</span><span>₱' + cmFmt(gross) + '</span></div>';
+    if (bDisc > 0) html += '<div style="' + rs + '"><span style="' + amber + '">' + cmDiscLabel(cmState.bookingDiscType) + ' (booking)</span><span style="' + amber + '">−₱' + cmFmt(bDisc) + '</span></div>';
+    if (cdAmt > 0) {
+        var cdLabel = cmDiscLabel(dtype);
+        if (dtype === 'voucher') cdLabel += ' (' + (vtype === 'percent' ? vvalue + '% off' : '₱ off') + ')';
+        html += '<div style="' + rs + '"><span style="' + amber + '">' + cdLabel + '</span><span style="' + amber + '">−₱' + cmFmt(cdAmt) + '</span></div>';
+    }
+    if (celeb > 0)   html += '<div style="' + rs + '"><span style="' + amber + '">Celeb. Discount</span><span style="' + amber + '">−₱' + cmFmt(celeb) + '</span></div>';
+    if (advance > 0) html += '<div style="' + rs + '"><span style="' + amber + '">Advance payment</span><span style="' + amber + '">−₱' + cmFmt(advance) + '</span></div>';
+    if (already > 0) html += '<div style="' + rs + '"><span style="' + gray + '">Already paid</span><span style="' + gray + '">−₱' + cmFmt(already) + '</span></div>';
+    var tcolor = totalDue > 0 ? 'var(--brown)' : '#198754';
+    html += '<div style="' + rs + 'border-top:1px solid var(--border2);padding-top:0.4rem;margin-top:0.15rem;font-weight:700;font-size:0.9rem;"><span>TOTAL DUE</span><span style="color:' + tcolor + ';">₱' + cmFmt(totalDue) + '</span></div>';
+    document.getElementById('cm-breakdown').innerHTML = html;
+
     var noPayEl  = document.getElementById('cm-no-payment');
     var paySecEl = document.getElementById('cm-payment-section');
-    if (totalOwed <= 0) {
+    if (totalDue <= 0) {
         noPayEl.style.display  = 'block';
         paySecEl.style.display = 'none';
     } else {
         noPayEl.style.display  = 'none';
         paySecEl.style.display = 'block';
-        var baseRow    = document.getElementById('cm-base-row');
-        var extrasRow  = document.getElementById('cm-extras-row');
-        var baseAmt    = document.getElementById('cm-base-amt');
-        var extrasAmt  = document.getElementById('cm-extras-amt');
-        var totalEl    = document.getElementById('cm-total-amt');
-        if (!orderIsPaid && orderOwed > 0) {
-            baseRow.style.display = 'flex'; baseAmt.textContent = fmt(orderOwed);
-        } else {
-            baseRow.style.display = 'none';
-        }
-        if (unpaidExtrasTotal > 0) {
-            extrasRow.style.display = 'flex'; extrasAmt.textContent = fmt(unpaidExtrasTotal);
-        } else {
-            extrasRow.style.display = 'none';
-        }
-        totalEl.textContent = fmt(totalOwed);
-        cmSelectPayment('cash');
+        cmSelectPayment(cmState.payMethod || 'cash');
     }
+}
+
+function openCompleteModal(apptId) {
+    var data = cmData[apptId];
+    if (!data) return;
+    cmState.apptId         = apptId;
+    cmState.payMethod      = 'cash';
+    cmState.discType       = 'none';
+    cmState.originalTotal  = data.originalTotal;
+    cmState.bookingDisc    = data.bookingDisc;
+    cmState.bookingDiscType= data.bookingDiscType;
+    cmState.extrasTotal    = data.extrasTotal;
+    cmState.alreadyPaid    = data.alreadyPaid;
+
+    document.getElementById('cm-customer-name').textContent = data.name;
+
+    var noticeEl = document.getElementById('cm-booking-disc-notice');
+    var noticeText = document.getElementById('cm-booking-disc-text');
+    if (data.bookingDisc > 0) {
+        noticeEl.style.display = 'block';
+        noticeText.textContent = '🎟️ Already applied at booking: ' + cmDiscLabel(data.bookingDiscType) + ' −₱' + cmFmt(data.bookingDisc);
+    } else {
+        noticeEl.style.display = 'none';
+    }
+
+    var vtype  = document.getElementById('cm-voucher-type');
+    var vvalue = document.getElementById('cm-voucher-value');
+    if (vtype)  vtype.value  = 'cash';
+    if (vvalue) vvalue.value = '0';
+    var celebEl   = document.getElementById('cm-celeb-disc');
+    var advanceEl = document.getElementById('cm-advance-pay');
+    if (celebEl)   celebEl.value   = '0';
+    if (advanceEl) advanceEl.value = '0';
     var pinErr = document.getElementById('cm-pin-error');
-    if (pinErr) pinErr.textContent = '';
     var pinInp = document.getElementById('cm-pin-input');
+    if (pinErr) pinErr.textContent = '';
     if (pinInp) pinInp.value = '';
-    var cmCelebEl   = document.getElementById('cm-celeb-disc');
-    var cmAdvanceEl = document.getElementById('cm-advance-pay');
-    if (cmCelebEl)   cmCelebEl.value   = '0';
-    if (cmAdvanceEl) cmAdvanceEl.value = '0';
+
+    cmSetDiscount('none'); // resets buttons + calls cmRecompute
     document.getElementById('completeModal').style.display = 'flex';
     if (pinInp) setTimeout(function() { pinInp.focus(); }, 120);
 }
@@ -2560,14 +2707,18 @@ function submitComplete() {
         var hiddenPin = document.getElementById('cp-pin-' + cmState.apptId);
         if (hiddenPin) hiddenPin.value = pin;
     }
-    var hiddenMethod = document.getElementById('cp-method-' + cmState.apptId);
-    if (hiddenMethod) hiddenMethod.value = cmState.payMethod;
-    var cmCeleb   = document.getElementById('cm-celeb-disc');
-    var cmAdvance = document.getElementById('cm-advance-pay');
+    var hiddenMethod  = document.getElementById('cp-method-'  + cmState.apptId);
     var hiddenCeleb   = document.getElementById('cp-celeb-'   + cmState.apptId);
     var hiddenAdvance = document.getElementById('cp-advance-' + cmState.apptId);
-    if (hiddenCeleb)   hiddenCeleb.value   = parseFloat(cmCeleb   ? cmCeleb.value   : 0) || 0;
-    if (hiddenAdvance) hiddenAdvance.value = parseFloat(cmAdvance ? cmAdvance.value : 0) || 0;
+    var hiddenCdType  = document.getElementById('cp-cdtype-'  + cmState.apptId);
+    var hiddenCvType  = document.getElementById('cp-cvtype-'  + cmState.apptId);
+    var hiddenCvVal   = document.getElementById('cp-cvvalue-' + cmState.apptId);
+    if (hiddenMethod)  hiddenMethod.value  = cmState.payMethod;
+    if (hiddenCeleb)   hiddenCeleb.value   = parseFloat(document.getElementById('cm-celeb-disc')?.value)  || 0;
+    if (hiddenAdvance) hiddenAdvance.value = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
+    if (hiddenCdType)  hiddenCdType.value  = cmState.discType;
+    if (hiddenCvType)  hiddenCvType.value  = document.getElementById('cm-voucher-type')?.value  || 'cash';
+    if (hiddenCvVal)   hiddenCvVal.value   = document.getElementById('cm-voucher-value')?.value || '0';
     closeCompleteModal();
     var form = document.getElementById('complete-form-' + cmState.apptId);
     if (form) form.submit();
@@ -2908,45 +3059,75 @@ function submitComplete() {
             <div style="font-size:0.8rem;color:var(--gray);margin-top:0.3rem;" id="cm-customer-name"></div>
         </div>
 
+        <!-- Booking discount notice (shown if order already has a booking discount) -->
+        <div id="cm-booking-disc-notice" style="display:none;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;padding:0.6rem 0.85rem;margin-bottom:0.75rem;font-size:0.8rem;color:#92400e;">
+            <div style="font-weight:700;" id="cm-booking-disc-text"></div>
+            <div style="font-size:0.74rem;color:#b45309;margin-top:2px;">Any discount selected below will ADD to this.</div>
+        </div>
+
+        <!-- Completion discount selector -->
+        <div style="margin-bottom:0.65rem;">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">🎟️ Completion Discount</div>
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.35rem;">
+                <button type="button" id="cm-discbtn-none"     onclick="cmSetDiscount('none')"
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🚫 None</button>
+                <button type="button" id="cm-discbtn-voucher"  onclick="cmSetDiscount('voucher')"
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🎟️ Voucher</button>
+                <button type="button" id="cm-discbtn-senior"   onclick="cmSetDiscount('senior')"
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">👴 Senior<br><small style="font-weight:400;">20%</small></button>
+                <button type="button" id="cm-discbtn-pwd"      onclick="cmSetDiscount('pwd')"
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">♿ PWD<br><small style="font-weight:400;">20%</small></button>
+                <button type="button" id="cm-discbtn-employee" onclick="cmSetDiscount('employee')"
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🪪 Staff<br><small style="font-weight:400;">50%</small></button>
+            </div>
+        </div>
+
+        <!-- Voucher inputs (shown only when voucher selected) -->
+        <div id="cm-voucher-inputs" style="display:none;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;padding:0.75rem;margin-bottom:0.65rem;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+                <div>
+                    <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;">Voucher Type</label>
+                    <select id="cm-voucher-type" onchange="cmRecompute()"
+                            style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;background:var(--bg3);">
+                        <option value="cash">💵 Cash Off (₱)</option>
+                        <option value="percent">% Percentage Off</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;">Amount</label>
+                    <input type="number" id="cm-voucher-value" min="0" step="0.01" placeholder="0.00" value="0"
+                           oninput="cmRecompute()"
+                           style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--bg3);">
+                </div>
+            </div>
+        </div>
+
+        <!-- Live breakdown (populated by cmRecompute) -->
+        <div id="cm-breakdown" style="background:var(--bg3);border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.85rem;font-size:0.83rem;"></div>
+
         <!-- No payment needed -->
         <div id="cm-no-payment" style="display:none;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.2);border-radius:10px;padding:0.85rem;text-align:center;font-size:0.85rem;color:#0a3622;margin-bottom:1rem;">
             ✅ All payments already collected. No outstanding balance.
         </div>
 
-        <!-- Payment breakdown -->
-        <div id="cm-payment-section" style="display:none;">
-            <div style="background:var(--bg3);border-radius:10px;padding:0.85rem 1rem;margin-bottom:1rem;font-size:0.85rem;">
-                <div id="cm-base-row" style="display:none;justify-content:space-between;margin-bottom:0.35rem;">
-                    <span style="color:var(--gray);">Base session (unpaid)</span>
-                    <span>₱<span id="cm-base-amt">0.00</span></span>
+        <!-- Payment method selector (shown only when TOTAL DUE > 0) -->
+        <div id="cm-payment-section" style="display:none;margin-bottom:1rem;">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Payment Method</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;">
+                <div id="cm-pay-cash" onclick="cmSelectPayment('cash')"
+                     style="padding:0.7rem 0.4rem;border:2px solid #C96A2C;background:#fff8f2;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
+                    <div style="font-size:1rem;">💵</div>
+                    <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Cash</div>
                 </div>
-                <div id="cm-extras-row" style="display:none;justify-content:space-between;margin-bottom:0.35rem;">
-                    <span style="color:var(--gray);">Extra services (unpaid)</span>
-                    <span>₱<span id="cm-extras-amt">0.00</span></span>
+                <div id="cm-pay-qrph" onclick="cmSelectPayment('qrph')"
+                     style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
+                    <div style="font-size:1rem;">📷</div>
+                    <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">QR Ph</div>
                 </div>
-                <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border2);padding-top:0.45rem;font-weight:700;font-size:0.9rem;">
-                    <span>Total to Collect</span>
-                    <span style="color:var(--brown);">₱<span id="cm-total-amt">0.00</span></span>
-                </div>
-            </div>
-            <div style="margin-bottom:1rem;">
-                <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Payment Method</div>
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;">
-                    <div id="cm-pay-cash" onclick="cmSelectPayment('cash')"
-                         style="padding:0.7rem 0.4rem;border:2px solid #C96A2C;background:#fff8f2;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                        <div style="font-size:1rem;">💵</div>
-                        <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Cash</div>
-                    </div>
-                    <div id="cm-pay-qrph" onclick="cmSelectPayment('qrph')"
-                         style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                        <div style="font-size:1rem;">📷</div>
-                        <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">QR Ph</div>
-                    </div>
-                    <div id="cm-pay-bank" onclick="cmSelectPayment('bank')"
-                         style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                        <div style="font-size:1rem;">🏦</div>
-                        <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
-                    </div>
+                <div id="cm-pay-bank" onclick="cmSelectPayment('bank')"
+                     style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
+                    <div style="font-size:1rem;">🏦</div>
+                    <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
                 </div>
             </div>
         </div>
@@ -2957,12 +3138,14 @@ function submitComplete() {
                 <div>
                     <label style="font-size:0.73rem;color:var(--gray);display:block;margin-bottom:2px;">Celeb. Discount 10% (₱)</label>
                     <input type="number" id="cm-celeb-disc" step="0.01" min="0" value="0" placeholder="0.00"
+                           oninput="cmRecompute()"
                            style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:8px;
                                   background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
                 </div>
                 <div>
                     <label style="font-size:0.73rem;color:var(--gray);display:block;margin-bottom:2px;">Advance Payment (₱)</label>
                     <input type="number" id="cm-advance-pay" step="0.01" min="0" value="0" placeholder="0.00"
+                           oninput="cmRecompute()"
                            style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:8px;
                                   background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
                 </div>
