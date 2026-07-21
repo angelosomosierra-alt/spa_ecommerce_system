@@ -46,6 +46,20 @@ $people     = max(1, intval($appt['people_count']));  // how many therapists nee
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_per_person'])) {
     verify_csrf_token();
 
+    // Receptionist PIN check (cashier role must enter their PIN)
+    $assign_actor_name = null;
+    if (($_SESSION['admin_role'] ?? '') === 'cashier') {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pin_row = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pin_row) {
+            $message = "⚠️ Incorrect PIN. Assignment cancelled."; $message_type = "danger";
+            goto end_assign;
+        }
+        $assign_actor_name = $pin_row['full_name'];
+    }
+
     $therapist_ids = array_map('intval', (array)($_POST['therapist_ids'] ?? []));
 
     if (count($therapist_ids) !== $people || in_array(0, $therapist_ids, true)) {
@@ -142,9 +156,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_per_person'])) {
                 'appointments.php'
             );
 
+            $assign_log_actor = $assign_actor_name
+                ? ['id' => null, 'name' => $assign_actor_name, 'role' => 'receptionist']
+                : null;
+            log_activity($conn, 'appointment_assigned',
+                "Assigned " . implode(' & ', $therapist_names) . " to appointment #{$appt_id}",
+                'appointment', $appt_id, $assign_log_actor);
+
             header("Location: assign_therapist.php?appt_id={$appt_id}&msg=assigned"); exit();
         }
     }
+    end_assign:;
 }
 
 // ── REMOVE therapist assignment ───────────────────────────────────────────────
@@ -525,6 +547,15 @@ require_once 'admin_header.php';
         </div>
         <?php endif; ?>
 
+        <?php if (($admin_role ?? '') === 'cashier'): ?>
+        <div style="margin-bottom:0.85rem;">
+            <label style="font-size:0.78rem;font-weight:600;color:var(--gray);display:block;margin-bottom:4px;">Your 4-digit PIN</label>
+            <input type="password" name="pin" maxlength="4" placeholder="••••" autocomplete="off"
+                   style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;
+                          background:var(--bg3);color:var(--cream);font-size:1.1rem;box-sizing:border-box;
+                          letter-spacing:0.3em;text-align:center;" required>
+        </div>
+        <?php endif; ?>
         <button type="submit" name="save_per_person" class="btn btn-primary" style="width:100%;">
             💾 Save All Assignments
         </button>
