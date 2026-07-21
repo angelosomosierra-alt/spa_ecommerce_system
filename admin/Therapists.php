@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reorder'])) {
         $stmt = $conn->prepare("UPDATE therapist_attendance SET rotation_order=? WHERE id=? AND duty_date=CURDATE()");
         $stmt->bind_param("ii", $order, $aid); $stmt->execute(); $stmt->close();
     }
-    header("Location: therapists.php?reordered=1"); exit();
+    header("Location: Therapists.php?reordered=1"); exit();
 }
 
 if (isset($_GET['reordered'])) {
@@ -64,7 +64,7 @@ if (isset($_GET['check_out'])) {
     if ($co_row) log_activity($conn, 'therapist_logout',
         "{$co_row['full_name']} clocked out",
         'therapist', (int)$co_row['id']);
-    header("Location: therapists.php"); exit();
+    header("Location: Therapists.php"); exit();
 }
 
 // ── TOGGLE BREAK ─────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ if (isset($_GET['toggle_break'])) {
     $aid  = intval($_GET['toggle_break']);
     $stmt = $conn->prepare("UPDATE therapist_attendance SET is_on_break = !is_on_break WHERE id=? AND duty_date=CURDATE()");
     $stmt->bind_param("i", $aid); $stmt->execute(); $stmt->close();
-    header("Location: therapists.php"); exit();
+    header("Location: Therapists.php"); exit();
 }
 
 // ── CHECK OUT ────────────────────────────────────────────────────────────────
@@ -83,7 +83,7 @@ if (isset($_GET['remove_today'])) {
     $aid  = intval($_GET['remove_today']);
     $stmt = $conn->prepare("DELETE FROM therapist_attendance WHERE id=? AND duty_date=CURDATE()");
     $stmt->bind_param("i", $aid); $stmt->execute(); $stmt->close();
-    header("Location: therapists.php"); exit();
+    header("Location: Therapists.php"); exit();
 }
 
 // ── FETCH TODAY'S ROSTER ─────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ require_once 'admin_header.php';
     $total_ratings = (int)$avg_row['total_r'];
 ?>
 <div style="margin-bottom:1rem;">
-    <a href="therapists.php" class="btn btn-secondary btn-sm">← Back to Roster</a>
+    <a href="Therapists.php" class="btn btn-secondary btn-sm">← Back to Roster</a>
 </div>
 
 <div class="panel" style="margin-bottom:1.5rem;">
@@ -585,7 +585,7 @@ require_once 'admin_header.php';
                         <span><?php echo $r['current_people']; ?> pax</span>
                         <?php endif; ?>
                         <?php if ($r['current_appt_id']): ?>
-                        <a href="admin_appointments.php?highlight=<?php echo $r['current_appt_id']; ?>"
+                        <a href="appointments.php?highlight=<?php echo $r['current_appt_id']; ?>"
                            style="color:var(--gold);text-decoration:none;font-weight:700;" title="View appointment">↗</a>
                         <?php endif; ?>
                     </div>
@@ -601,17 +601,17 @@ require_once 'admin_header.php';
 
                 <!-- Actions -->
                 <div style="display:flex;gap:0.3rem;flex-shrink:0;">
-                    <a href="therapists.php?history=<?php echo $r['therapist_id']; ?>"
+                    <a href="Therapists.php?history=<?php echo $r['therapist_id']; ?>"
                        class="btn btn-secondary btn-sm"
                        style="font-size:0.72rem;padding:0.25rem 0.5rem;"
                        title="View history">📋</a>
-                    <a href="therapists.php?toggle_break=<?php echo $r['id']; ?>"
+                    <a href="Therapists.php?toggle_break=<?php echo $r['id']; ?>"
                        class="btn btn-sm <?php echo $r['is_on_break'] ? 'btn-primary' : 'btn-secondary'; ?>"
                        style="font-size:0.72rem;padding:0.25rem 0.5rem;"
                        title="<?php echo $r['is_on_break'] ? 'End break' : 'Set on break'; ?>">
                         ☕
                     </a>
-                    <a href="therapists.php?remove_today=<?php echo $r['id']; ?>"
+                    <a href="Therapists.php?remove_today=<?php echo $r['id']; ?>"
                        class="btn btn-danger btn-sm" style="font-size:0.72rem;padding:0.25rem 0.5rem;"
                        onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($r['full_name'])); ?> from today?')">
                         ✕
@@ -623,7 +623,7 @@ require_once 'admin_header.php';
             <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.65rem;
                         padding-top:0.65rem;border-top:1px solid var(--border2);flex-wrap:wrap;">
                 <?php if (empty($r['time_out'])): ?>
-                <a href="therapists.php?check_out=<?php echo $r['id']; ?>"
+                <a href="Therapists.php?check_out=<?php echo $r['id']; ?>"
                    class="btn btn-secondary btn-sm" style="font-size:0.75rem;"
                    onclick="return confirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?')">
                     🏁 Out
