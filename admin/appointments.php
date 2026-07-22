@@ -1760,16 +1760,10 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 </div>
                 <?php endfor; ?>
 
-                <?php if (is_cashier()): ?>
-                <div style="margin-top:0.4rem;">
-                    <label style="font-size:0.75rem;color:var(--gray);display:block;margin-bottom:3px;">Your 4-digit PIN</label>
-                    <input type="password" name="pin" maxlength="4" placeholder="••••" required
-                           style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;
-                                  background:var(--bg2);color:var(--brown);font-size:0.9rem;letter-spacing:0.25em;text-align:center;box-sizing:border-box;">
-                </div>
-                <?php endif; ?>
-                <button type="submit" class="btn btn-primary btn-sm"
-                        style="margin-top:0.25rem;font-size:0.8rem;padding:0.4rem 0.9rem;width:100%;">
+                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary btn-sm"
+                        style="margin-top:0.25rem;font-size:0.8rem;padding:0.4rem 0.9rem;width:100%;"
+                        <?php if (is_cashier()): ?>onclick="openPinGate('Save Therapist Assignment',this.closest('form'))"<?php endif; ?>>
                     💾 Save Therapist Assignment
                 </button>
             </form>
@@ -2027,15 +2021,9 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
-                <?php if (is_cashier()): ?>
-                <input type="password" name="pin" maxlength="4" inputmode="numeric"
-                       placeholder="PIN" required
-                       style="width:60px;padding:0.32rem 0.4rem;border:1px solid var(--border2);
-                              border-radius:6px;font-size:0.88rem;text-align:center;
-                              letter-spacing:0.2em;color:var(--brown);background:var(--bg3);
-                              font-family:monospace;">
-                <?php endif; ?>
-                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Decline this appointment?')">❌ Decline</button>
+                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
+                        <?php if (is_cashier()): ?>onclick="if(!confirm('Decline this appointment?'))return;openPinGate('Decline Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Decline this appointment?')"<?php endif; ?>>❌ Decline</button>
             </form>
 
         <?php elseif ($status === 'assigned'): ?>
@@ -2053,15 +2041,9 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
-                <?php if (is_cashier()): ?>
-                <input type="password" name="pin" maxlength="4" inputmode="numeric"
-                       placeholder="PIN" required
-                       style="width:60px;padding:0.32rem 0.4rem;border:1px solid var(--border2);
-                              border-radius:6px;font-size:0.88rem;text-align:center;
-                              letter-spacing:0.2em;color:var(--brown);background:var(--bg3);
-                              font-family:monospace;">
-                <?php endif; ?>
-                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Decline this appointment?')">❌ Decline</button>
+                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
+                        <?php if (is_cashier()): ?>onclick="if(!confirm('Decline this appointment?'))return;openPinGate('Decline Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Decline this appointment?')"<?php endif; ?>>❌ Decline</button>
             </form>
 
         <?php elseif ($status === 'approved'): ?>
@@ -2106,15 +2088,9 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
-                <?php if (is_cashier()): ?>
-                <input type="password" name="pin" maxlength="4" inputmode="numeric"
-                       placeholder="PIN" required
-                       style="width:60px;padding:0.32rem 0.4rem;border:1px solid var(--border2);
-                              border-radius:6px;font-size:0.88rem;text-align:center;
-                              letter-spacing:0.2em;color:var(--brown);background:var(--bg3);
-                              font-family:monospace;">
-                <?php endif; ?>
-                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Decline this appointment?')">❌ Decline</button>
+                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
+                        <?php if (is_cashier()): ?>onclick="if(!confirm('Decline this appointment?'))return;openPinGate('Decline Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Decline this appointment?')"<?php endif; ?>>❌ Decline</button>
             </form>
         <?php endif; ?>
 
@@ -2157,14 +2133,9 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="time" name="new_time" required value="<?php echo date('H:i', strtotime($a['appointment_date'])); ?>"
                        style="padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.85rem;">
             </div>
-            <?php if (is_cashier()): ?>
-            <div>
-                <label style="font-size:0.75rem;color:var(--gray);display:block;margin-bottom:3px;">Your PIN</label>
-                <input type="password" name="pin" maxlength="4" placeholder="••••" required
-                       style="width:70px;padding:0.4rem 0.5rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.9rem;letter-spacing:0.2em;text-align:center;">
-            </div>
-            <?php endif; ?>
-            <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('Reschedule this appointment?')">💾 Confirm Reschedule</button>
+            <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+            <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary btn-sm"
+                    <?php if (is_cashier()): ?>onclick="if(!confirm('Reschedule this appointment?'))return;openPinGate('Reschedule Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Reschedule this appointment?')"<?php endif; ?>>💾 Confirm Reschedule</button>
             <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $appt_id; ?>)">Cancel</button>
         </form>
     </div>
@@ -2181,15 +2152,10 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="text" name="cancel_reason" placeholder="e.g. Customer called to cancel, personal reason..."
                        style="width:100%;padding:0.4rem 0.65rem;border:1px solid #fecaca;border-radius:7px;background:#fff;color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
             </div>
-            <?php if (is_cashier()): ?>
-            <div>
-                <label style="font-size:0.75rem;color:#991b1b;display:block;margin-bottom:3px;">Your 4-digit PIN</label>
-                <input type="password" name="pin" maxlength="4" placeholder="••••" required
-                       style="padding:0.4rem 0.65rem;border:1px solid #fecaca;border-radius:7px;background:#fff;color:var(--brown);font-size:0.9rem;letter-spacing:0.2em;text-align:center;width:90px;">
-            </div>
-            <?php endif; ?>
+            <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
             <div style="display:flex;gap:0.6rem;">
-                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Mark this appointment as cancelled by customer?')">🚫 Confirm Cancellation</button>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
+                        <?php if (is_cashier()): ?>onclick="if(!confirm('Mark this appointment as cancelled by customer?'))return;openPinGate('Cancel Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Mark this appointment as cancelled by customer?')"<?php endif; ?>>🚫 Confirm Cancellation</button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCancel(<?php echo $appt_id; ?>)">Back</button>
             </div>
         </form>
@@ -3840,16 +3806,10 @@ function loadAddSvcSlots() {
                           style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;resize:vertical;box-sizing:border-box;"
                           placeholder="Special requests, address for home service..."></textarea>
             </div>
-            <?php if (is_cashier()): ?>
-            <div style="margin-bottom:0.85rem;">
-                <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Your 4-digit PIN</label>
-                <input type="password" name="pin" maxlength="4" placeholder="••••" required
-                       style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;
-                              background:var(--bg3);color:var(--brown);font-size:1rem;letter-spacing:0.3em;text-align:center;box-sizing:border-box;">
-            </div>
-            <?php endif; ?>
+            <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
             <div style="display:flex;gap:0.75rem;">
-                <button type="submit" class="btn btn-primary" style="flex:1;">💾 Save Changes</button>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary" style="flex:1;"
+                        <?php if (is_cashier()): ?>onclick="openPinGate('Save Changes',this.closest('form'))"<?php endif; ?>>💾 Save Changes</button>
                 <button type="button" onclick="closeEditModal()" class="btn btn-secondary">Cancel</button>
             </div>
         </form>

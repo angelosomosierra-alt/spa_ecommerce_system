@@ -10,27 +10,42 @@ $message = ''; $message_type = '';
 // ── CHECK IN EXISTING THERAPIST ───────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_today'])) {
     verify_csrf_token();
-    $time_in = sanitize_input($_POST['time_in'] ?? date('H:i'));
-    $tid     = intval($_POST['existing_therapist_id'] ?? 0);
-    if ($tid <= 0) {
-        $message = "Please select a therapist."; $message_type = "danger";
-    } else {
-        $chk = $conn->prepare("SELECT id, full_name FROM therapists WHERE id=?");
-        $chk->bind_param("i", $tid); $chk->execute();
-        $row = $chk->get_result()->fetch_assoc(); $chk->close();
-        if (!$row) {
-            $message = "Therapist not found."; $message_type = "danger";
+    $actor = null;
+    if (is_cashier()) {
+        $entered = sanitize_input($_POST['pin'] ?? '');
+        if (!ctype_digit($entered) || strlen($entered) !== 4) {
+            $message = 'Invalid PIN.'; $message_type = 'danger';
         } else {
-            $rot  = $conn->query("SELECT IFNULL(MAX(rotation_order),0)+1 AS next_order FROM therapist_attendance WHERE duty_date=CURDATE()")->fetch_assoc()['next_order'];
-            $date = date('Y-m-d');
-            $stmt = $conn->prepare("INSERT INTO therapist_attendance (therapist_id, duty_date, time_in, rotation_order) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE time_in=VALUES(time_in)");
-            $stmt->bind_param("issi", $tid, $date, $time_in, $rot);
-            $ok = $stmt->execute(); $stmt->close();
-            $message      = $ok ? "✅ {$row['full_name']} checked in." : "Error checking in.";
-            $message_type = $ok ? "success" : "danger";
-            if ($ok) log_activity($conn, 'therapist_login',
-                "{$row['full_name']} clocked in for duty",
-                'therapist', $tid);
+            $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+            $ps->bind_param("s", $entered); $ps->execute();
+            $pr = $ps->get_result()->fetch_assoc(); $ps->close();
+            if (!$pr) { $message = 'Incorrect PIN.'; $message_type = 'danger'; }
+            else       $actor = $pr['full_name'];
+        }
+    }
+    if (empty($message)) {
+        $time_in = sanitize_input($_POST['time_in'] ?? date('H:i'));
+        $tid     = intval($_POST['existing_therapist_id'] ?? 0);
+        if ($tid <= 0) {
+            $message = "Please select a therapist."; $message_type = "danger";
+        } else {
+            $chk = $conn->prepare("SELECT id, full_name FROM therapists WHERE id=?");
+            $chk->bind_param("i", $tid); $chk->execute();
+            $row = $chk->get_result()->fetch_assoc(); $chk->close();
+            if (!$row) {
+                $message = "Therapist not found."; $message_type = "danger";
+            } else {
+                $rot  = $conn->query("SELECT IFNULL(MAX(rotation_order),0)+1 AS next_order FROM therapist_attendance WHERE duty_date=CURDATE()")->fetch_assoc()['next_order'];
+                $date = date('Y-m-d');
+                $stmt = $conn->prepare("INSERT INTO therapist_attendance (therapist_id, duty_date, time_in, rotation_order) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE time_in=VALUES(time_in)");
+                $stmt->bind_param("issi", $tid, $date, $time_in, $rot);
+                $ok = $stmt->execute(); $stmt->close();
+                $message      = $ok ? "✅ {$row['full_name']} checked in." : "Error checking in.";
+                $message_type = $ok ? "success" : "danger";
+                if ($ok) log_activity($conn, 'therapist_login',
+                    "{$row['full_name']} clocked in for duty",
+                    'therapist', $tid, $actor);
+            }
         }
     }
 }
@@ -53,37 +68,78 @@ if (isset($_GET['reordered'])) {
     $message = "✅ Rotation order saved."; $message_type = "success";
 }
 
-// ── CHECK OUT (GET — avoids nested form problem) ──────────────────────────────
-if (isset($_GET['check_out'])) {
-    $aid     = intval($_GET['check_out']);
-    $timeout = date('H:i:s');
-    // Fetch therapist name for the activity log before updating
-    $co_row = $conn->query("SELECT t.id, t.full_name FROM therapist_attendance ta JOIN therapists t ON t.id=ta.therapist_id WHERE ta.id={$aid} LIMIT 1")->fetch_assoc();
-    $stmt   = $conn->prepare("UPDATE therapist_attendance SET time_out=? WHERE id=? AND duty_date=CURDATE()");
-    $stmt->bind_param("si", $timeout, $aid); $stmt->execute(); $stmt->close();
-    if ($co_row) log_activity($conn, 'therapist_logout',
-        "{$co_row['full_name']} clocked out",
-        'therapist', (int)$co_row['id']);
-    header("Location: Therapists.php"); exit();
+// ── CHECK OUT ────────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check_out') {
+    verify_csrf_token();
+    $actor = null; $pin_ok = true;
+    if (is_cashier()) {
+        $entered = sanitize_input($_POST['pin'] ?? '');
+        if (!ctype_digit($entered) || strlen($entered) !== 4) {
+            $message = 'Invalid PIN.'; $message_type = 'danger'; $pin_ok = false;
+        } else {
+            $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+            $ps->bind_param("s", $entered); $ps->execute();
+            $pr = $ps->get_result()->fetch_assoc(); $ps->close();
+            if (!$pr) { $message = 'Incorrect PIN.'; $message_type = 'danger'; $pin_ok = false; }
+            else $actor = $pr['full_name'];
+        }
+    }
+    if ($pin_ok) {
+        $aid    = intval($_POST['attendance_id'] ?? 0);
+        $timeout = date('H:i:s');
+        $co_row = $conn->query("SELECT t.id, t.full_name FROM therapist_attendance ta JOIN therapists t ON t.id=ta.therapist_id WHERE ta.id={$aid} LIMIT 1")->fetch_assoc();
+        $stmt   = $conn->prepare("UPDATE therapist_attendance SET time_out=? WHERE id=? AND duty_date=CURDATE()");
+        $stmt->bind_param("si", $timeout, $aid); $stmt->execute(); $stmt->close();
+        if ($co_row) log_activity($conn, 'therapist_logout',
+            "{$co_row['full_name']} clocked out", 'therapist', (int)$co_row['id'], $actor);
+        header("Location: Therapists.php"); exit();
+    }
 }
 
 // ── TOGGLE BREAK ─────────────────────────────────────────────────────────────
-if (isset($_GET['toggle_break'])) {
-    $aid  = intval($_GET['toggle_break']);
-    $stmt = $conn->prepare("UPDATE therapist_attendance SET is_on_break = !is_on_break WHERE id=? AND duty_date=CURDATE()");
-    $stmt->bind_param("i", $aid); $stmt->execute(); $stmt->close();
-    header("Location: Therapists.php"); exit();
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'toggle_break') {
+    verify_csrf_token();
+    $pin_ok = true;
+    if (is_cashier()) {
+        $entered = sanitize_input($_POST['pin'] ?? '');
+        if (!ctype_digit($entered) || strlen($entered) !== 4) {
+            $message = 'Invalid PIN.'; $message_type = 'danger'; $pin_ok = false;
+        } else {
+            $ps = $conn->prepare("SELECT id FROM receptionist_pins WHERE pin = ? LIMIT 1");
+            $ps->bind_param("s", $entered); $ps->execute();
+            if (!$ps->get_result()->num_rows) { $message = 'Incorrect PIN.'; $message_type = 'danger'; $pin_ok = false; }
+            $ps->close();
+        }
+    }
+    if ($pin_ok) {
+        $aid  = intval($_POST['attendance_id'] ?? 0);
+        $stmt = $conn->prepare("UPDATE therapist_attendance SET is_on_break = !is_on_break WHERE id=? AND duty_date=CURDATE()");
+        $stmt->bind_param("i", $aid); $stmt->execute(); $stmt->close();
+        header("Location: Therapists.php"); exit();
+    }
 }
 
-// ── CHECK OUT ────────────────────────────────────────────────────────────────
-
-
 // ── REMOVE FROM TODAY ─────────────────────────────────────────────────────────
-if (isset($_GET['remove_today'])) {
-    $aid  = intval($_GET['remove_today']);
-    $stmt = $conn->prepare("DELETE FROM therapist_attendance WHERE id=? AND duty_date=CURDATE()");
-    $stmt->bind_param("i", $aid); $stmt->execute(); $stmt->close();
-    header("Location: Therapists.php"); exit();
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remove_today') {
+    verify_csrf_token();
+    $pin_ok = true;
+    if (is_cashier()) {
+        $entered = sanitize_input($_POST['pin'] ?? '');
+        if (!ctype_digit($entered) || strlen($entered) !== 4) {
+            $message = 'Invalid PIN.'; $message_type = 'danger'; $pin_ok = false;
+        } else {
+            $ps = $conn->prepare("SELECT id FROM receptionist_pins WHERE pin = ? LIMIT 1");
+            $ps->bind_param("s", $entered); $ps->execute();
+            if (!$ps->get_result()->num_rows) { $message = 'Incorrect PIN.'; $message_type = 'danger'; $pin_ok = false; }
+            $ps->close();
+        }
+    }
+    if ($pin_ok) {
+        $aid  = intval($_POST['attendance_id'] ?? 0);
+        $stmt = $conn->prepare("DELETE FROM therapist_attendance WHERE id=? AND duty_date=CURDATE()");
+        $stmt->bind_param("i", $aid); $stmt->execute(); $stmt->close();
+        header("Location: Therapists.php"); exit();
+    }
 }
 
 // ── FETCH TODAY'S ROSTER ─────────────────────────────────────────────────────
@@ -605,17 +661,30 @@ require_once 'admin_header.php';
                        class="btn btn-secondary btn-sm"
                        style="font-size:0.72rem;padding:0.25rem 0.5rem;"
                        title="View history">📋</a>
-                    <a href="Therapists.php?toggle_break=<?php echo $r['id']; ?>"
-                       class="btn btn-sm <?php echo $r['is_on_break'] ? 'btn-primary' : 'btn-secondary'; ?>"
-                       style="font-size:0.72rem;padding:0.25rem 0.5rem;"
-                       title="<?php echo $r['is_on_break'] ? 'End break' : 'Set on break'; ?>">
-                        ☕
-                    </a>
-                    <a href="Therapists.php?remove_today=<?php echo $r['id']; ?>"
-                       class="btn btn-danger btn-sm" style="font-size:0.72rem;padding:0.25rem 0.5rem;"
-                       onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($r['full_name'])); ?> from today?')">
-                        ✕
-                    </a>
+                    <form method="POST" action="Therapists.php" style="display:inline;margin:0;">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action"       value="toggle_break">
+                        <input type="hidden" name="attendance_id" value="<?php echo $r['id']; ?>">
+                        <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                        <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
+                                class="btn btn-sm <?php echo $r['is_on_break'] ? 'btn-primary' : 'btn-secondary'; ?>"
+                                style="font-size:0.72rem;padding:0.25rem 0.5rem;"
+                                title="<?php echo $r['is_on_break'] ? 'End break' : 'Set on break'; ?>"
+                                <?php if (is_cashier()): ?>onclick="openPinGate('<?php echo $r['is_on_break'] ? 'End Break' : 'Set Break'; ?>',this.closest('form'))"<?php endif; ?>>
+                            ☕
+                        </button>
+                    </form>
+                    <form method="POST" action="Therapists.php" style="display:inline;margin:0;">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action"        value="remove_today">
+                        <input type="hidden" name="attendance_id" value="<?php echo $r['id']; ?>">
+                        <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                        <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
+                                class="btn btn-danger btn-sm" style="font-size:0.72rem;padding:0.25rem 0.5rem;"
+                                <?php if (is_cashier()): ?>onclick="if(!confirm('Remove <?php echo htmlspecialchars(addslashes($r['full_name'])); ?> from today?'))return;openPinGate('Remove From Today',this.closest('form'))"<?php else: ?>onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($r['full_name'])); ?> from today?')"<?php endif; ?>>
+                            ✕
+                        </button>
+                    </form>
                 </div>
             </div>
 
@@ -623,11 +692,17 @@ require_once 'admin_header.php';
             <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.65rem;
                         padding-top:0.65rem;border-top:1px solid var(--border2);flex-wrap:wrap;">
                 <?php if (empty($r['time_out'])): ?>
-                <a href="Therapists.php?check_out=<?php echo $r['id']; ?>"
-                   class="btn btn-secondary btn-sm" style="font-size:0.75rem;"
-                   onclick="return confirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?')">
-                    🏁 Out
-                </a>
+                <form method="POST" action="Therapists.php" style="display:inline;margin:0;">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="action"        value="check_out">
+                    <input type="hidden" name="attendance_id" value="<?php echo $r['id']; ?>">
+                    <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                    <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
+                            class="btn btn-secondary btn-sm" style="font-size:0.75rem;"
+                            <?php if (is_cashier()): ?>onclick="if(!confirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?'))return;openPinGate('Check Out Therapist',this.closest('form'))"<?php else: ?>onclick="return confirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?')"<?php endif; ?>>
+                        🏁 Out
+                    </button>
+                </form>
                 <?php else: ?>
                 <span style="font-size:0.72rem;color:var(--gray);">
                     🏁 Checked out <?php echo date('g:i A', strtotime($r['time_out'])); ?>
@@ -749,7 +824,9 @@ require_once 'admin_header.php';
                                   border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;">
                 </div>
 
-                <button type="submit" name="add_today" class="btn btn-primary" style="width:100%;">
+                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" name="add_today" class="btn btn-primary" style="width:100%;"
+                        <?php if (is_cashier()): ?>onclick="openPinGate('Check In Therapist',this.closest('form'))"<?php endif; ?>>
                     ➕ Check In to Today's Roster
                 </button>
             </form>
