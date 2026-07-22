@@ -66,10 +66,11 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $report_date) || !strtotime($report_dat
     $report_date = date('Y-m-d');
 }
 
-// Receptionist can only view today's report
+// Receptionist can only view today's report — show notice instead of silently redirecting
 if (is_cashier() && $report_date !== date('Y-m-d')) {
     $report_date = date('Y-m-d');
-    header("Location: daily_report.php?date=" . date('Y-m-d')); exit();
+    $msg      = '⚠️ Receptionists can only view today\'s report. Showing today\'s data.';
+    $msg_type = 'warning';
 }
 
 $active_tab = $_GET['tab'] ?? 'log';
