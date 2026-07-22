@@ -277,10 +277,28 @@ function redirect_if_not_admin(): void {
         header('Location: ' . BASE_URL . 'admin/admin_login.php');
         exit();
     }
+    global $conn;
+    $chk = $conn->prepare("SELECT id FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1");
+    $chk->bind_param("i", $_SESSION['user_id']); $chk->execute();
+    $exists = $chk->get_result()->num_rows > 0; $chk->close();
+    if (!$exists) {
+        session_unset(); session_destroy();
+        header('Location: ' . BASE_URL . 'admin/admin_login.php');
+        exit();
+    }
 }
 
 function redirect_if_not_user(): void {
     if (!is_logged_in() || is_admin()) {
+        header('Location: ' . BASE_URL . 'user/auth.php');
+        exit();
+    }
+    global $conn;
+    $chk = $conn->prepare("SELECT id FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1");
+    $chk->bind_param("i", $_SESSION['user_id']); $chk->execute();
+    $exists = $chk->get_result()->num_rows > 0; $chk->close();
+    if (!$exists) {
+        session_unset(); session_destroy();
         header('Location: ' . BASE_URL . 'user/auth.php');
         exit();
     }
