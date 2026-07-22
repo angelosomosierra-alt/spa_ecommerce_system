@@ -224,7 +224,7 @@ require_once 'header.php';
 <?php endif; ?>
 <div class="cp-alert save" id="savedMsg">&#10003; Cart saved.</div>
 
-<div class="cp-grid">
+<div class="cp-grid cart-wrap">
 <?php if(!empty($cart_items)): ?>
 
 <!-- LEFT: Items -->

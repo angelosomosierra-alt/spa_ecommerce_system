@@ -802,66 +802,64 @@ function loadCartContent() {
 // ── Bind ALL interactivity after HTML is injected ─────────────────────────────
 function drawerBind() {
     const c = document.getElementById('cartSlideContent');
-    const form = c.querySelector('#cartForm');
+    const form = c ? c.querySelector('#cartForm') : null;
     if (!c || !form) return;
 
-    // 1. Handle Stepper Buttons (+ / -)
-    c.querySelectorAll('.cart-stepper button').forEach(btn => {
-        btn.type = "button"; // Force type to prevent reload
+    // 1. Stepper buttons
+    c.querySelectorAll('.cc-qty button').forEach(btn => {
+        btn.type = 'button';
         btn.onclick = function(e) {
             e.preventDefault();
             const input = this.parentElement.querySelector('input');
-            const delta = this.textContent === '+' ? 1 : -1;
-            let val = parseInt(input.value) + delta;
-            if (val < 1) val = 1;
+            if (!input) return;
+            const delta = this.textContent.trim() === '+' ? 1 : -1;
+            const max   = parseInt(input.max) || 9999;
+            let val = Math.max(1, Math.min(max, parseInt(input.value || 1) + delta));
             input.value = val;
-            
-            // Trigger the math update
-            updateDrawerMath(input);
+            drawerOnQtyChange(input);
         };
     });
 
-    // 2. Handle Manual Input
-    c.querySelectorAll('.cart-stepper input').forEach(input => {
-        input.oninput = function() { updateDrawerMath(this); };
+    // 2. Qty inputs (cart.php uses oninput="onQty()" which is undefined here)
+    c.querySelectorAll('.cc-qty input').forEach(input => {
+        input.oninput = function() { drawerOnQtyChange(this); };
     });
 
-    // 3. Handle Checkbox Changes
-    c.querySelectorAll('.item-checkbox').forEach(cb => {
+    // 3. Item checkboxes
+    c.querySelectorAll('.item-cb').forEach(cb => {
         cb.onchange = function() {
-            updateDrawerMath(null);
-            const card = document.getElementById('card_' + this.dataset.pid);
-            if (card) card.style.opacity = this.checked ? "1" : "0.4";
+            const card = c.querySelector('#card_' + this.dataset.pid);
+            if (card) { card.classList.toggle('dim', !this.checked); card.classList.toggle('on', this.checked); }
+            drawerSyncMaster(c);
+            drawerUpdateTotals(c);
         };
     });
 
-    // 4. Handle AJAX Save (The "Update Cart" button)
-    form.onsubmit = function(e) {
-        e.preventDefault();
-        const btn = document.getElementById('btnUpdate');
-        btn.textContent = '⏳ Saving...';
+    // 4. Master checkbox
+    const master = c.querySelector('#selectAll');
+    if (master) {
+        master.onchange = function() {
+            c.querySelectorAll('.item-cb').forEach(cb => {
+                cb.checked = this.checked;
+                const card = c.querySelector('#card_' + cb.dataset.pid);
+                if (card) { card.classList.toggle('dim', !cb.checked); card.classList.toggle('on', cb.checked); }
+            });
+            drawerUpdateTotals(c);
+        };
+    }
 
-        const formData = new FormData(this);
-        formData.append('update_quantities', '1');
-
-        fetch('cart.php', {
-            method: 'POST',
-            body: formData,
-            headers: {'X-Requested-With': 'XMLHttpRequest'}
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.status === 'success') {
-                btn.textContent = '✅ Saved';
-                btn.disabled = true;
-                btn.classList.remove('pulse');
-                document.getElementById('qtyNotice').style.display = 'none';
-                document.getElementById('checkoutBtn').disabled = false;
-                document.getElementById('checkoutBtn').textContent = 'Proceed to Checkout';
-                setTimeout(() => { btn.textContent = '🔄 Update Cart'; }, 2000);
+    // 5. Checkout button (cart.php's doCheckout() is undefined here)
+    const cob = c.querySelector('#checkoutBtn');
+    if (cob) {
+        cob.onclick = function() {
+            if (![...c.querySelectorAll('.item-cb')].some(cb => cb.checked)) {
+                alert('Please select at least one item.');
+                return;
             }
-        });
-    };
+            const hb = c.querySelector('#checkoutHiddenBtn');
+            if (hb) hb.click();
+        };
+    }
 }
 function updateDrawerMath(inputEl) {
     const c = document.getElementById('cartSlideContent');
@@ -879,25 +877,24 @@ function updateDrawerMath(inputEl) {
 
     // Update Grand Total
     let grandTotal = 0;
-    c.querySelectorAll('.item-checkbox').forEach(cb => {
+    c.querySelectorAll('.item-cb').forEach(cb => {
         if (cb.checked) {
-            const pid = cb.dataset.pid;
-            const input = document.getElementById('qty_' + pid);
-            grandTotal += parseFloat(input.dataset.price) * parseInt(input.value);
+            const pid   = cb.dataset.pid;
+            const input = c.querySelector('#qty_' + pid);
+            if (input) grandTotal += parseFloat(input.dataset.price || 0) * parseInt(input.value || 1);
         }
     });
 
-    document.getElementById('summary-total').textContent = '₱' + grandTotal.toLocaleString('en-PH', {minimumFractionDigits:2});
+    const elTotal = c.querySelector('#cs-total');
+    if (elTotal) elTotal.textContent = '₱' + grandTotal.toLocaleString('en-PH', {minimumFractionDigits:2});
 
-    // Show notice and Lock Checkout
-    document.getElementById('qtyNotice').style.display = 'block';
-    const btnUp = document.getElementById('btnUpdate');
-    btnUp.disabled = false;
-    btnUp.classList.add('pulse');
-    
-    const btnCheck = document.getElementById('checkoutBtn');
-    btnCheck.disabled = true;
-    btnCheck.textContent = '⚠️ Update Cart First';
+    // Show notice and lock checkout if elements exist
+    const qn       = c.querySelector('#qtyNotice');
+    const btnUp    = c.querySelector('button[name="update_quantities"]');
+    const btnCheck = c.querySelector('#checkoutBtn');
+    if (qn)      qn.style.display = 'block';
+    if (btnUp)   { btnUp.disabled = false; btnUp.classList.add('pulse'); }
+    if (btnCheck) { btnCheck.disabled = true; btnCheck.textContent = '⚠️ Update Cart First'; }
 }
 // ── Track dirty qty state ─────────────────────────────────────────────────────
 let drawerQtyDirty = false;
@@ -937,7 +934,7 @@ function drawerOnQtyChange(input) {
 
 // ── Sync master checkbox indeterminate state ──────────────────────────────────
 function drawerSyncMaster(c) {
-    const all    = [...c.querySelectorAll('.item-checkbox')];
+    const all    = [...c.querySelectorAll('.item-cb')];
     const master = c.querySelector('#selectAll');
     if (!master) return;
     const allOn  = all.every(cb => cb.checked);
@@ -949,9 +946,9 @@ function drawerSyncMaster(c) {
 // ── Recalculate and display totals ────────────────────────────────────────────
 function drawerUpdateTotals(c) {
     let total = 0, sel = 0;
-    const totalItems = c.querySelectorAll('.item-checkbox').length;
+    const totalItems = c.querySelectorAll('.item-cb').length;
 
-    c.querySelectorAll('.item-checkbox').forEach(cb => {
+    c.querySelectorAll('.item-cb').forEach(cb => {
         const pid   = cb.dataset.pid;
         const input = c.querySelector('#qty_' + pid);
         const price = input ? parseFloat(input.dataset.price || 0) : 0;
@@ -961,17 +958,17 @@ function drawerUpdateTotals(c) {
 
     const fmt = n => '₱' + n.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
 
-    const elSub   = c.querySelector('#summary-subtotal');
-    const elTotal = c.querySelector('#summary-total');
+    const elSub   = c.querySelector('#cs-subtotal');
+    const elTotal = c.querySelector('#cs-total');
     const elSel   = c.querySelector('#selCount');
-    const elBar   = c.querySelector('#selBarCount');
+    const elBar   = c.querySelector('#selBarCt');
 
     if (elSub)   elSub.textContent   = fmt(total);
     if (elTotal) elTotal.textContent = fmt(total);
-    if (elSel)   elSel.textContent   = sel;
+    if (elSel)   elSel.textContent   = sel + ' item' + (sel !== 1 ? 's' : '');
     if (elBar)   elBar.textContent   = sel + ' / ' + totalItems + ' selected';
 
-    const btn = c.querySelector('button[name="checkout_selected"]');
+    const btn = c.querySelector('#checkoutBtn');
     if (btn) {
         btn.disabled    = sel === 0;
         btn.textContent = sel === 0
@@ -986,7 +983,7 @@ function updateBadge() {
     .then(r => r.text())
     .then(html => {
         const doc   = new DOMParser().parseFromString(html, 'text/html');
-        const items = doc.querySelectorAll('.item-checkbox');
+        const items = doc.querySelectorAll('.item-cb');
         const badge = document.getElementById('cartIconBadge');
         if (!badge) return;
         badge.textContent   = items.length;
@@ -1047,7 +1044,7 @@ function renderSearchResults(data, query) {
                 ? `<img class="search-result-img" src="../uploads/products/${escHtml(p.image)}" alt="${escHtml(p.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
                 : '';
             html += `
-            <a href="index.php#products" class="search-result-item" onclick="closeSearchResults()">
+            <a href="index.php?open=product&id=${encodeURIComponent(p.id)}#products" class="search-result-item" onclick="closeSearchResults()">
                 ${img}
                 <div class="search-result-noimg" ${p.image ? 'style="display:none"' : ''}>🧴</div>
                 <div class="search-result-info">
@@ -1066,7 +1063,7 @@ function renderSearchResults(data, query) {
                 ? `<img class="search-result-img" src="../uploads/services/${escHtml(s.image)}" alt="${escHtml(s.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
                 : '';
             html += `
-            <a href="index.php#services" class="search-result-item" onclick="closeSearchResults()">
+            <a href="index.php?open=service&id=${encodeURIComponent(s.id)}#services" class="search-result-item" onclick="closeSearchResults()">
                 ${img}
                 <div class="search-result-noimg" ${s.image ? 'style="display:none"' : ''}>💆</div>
                 <div class="search-result-info">
@@ -1133,5 +1130,24 @@ function closeNavDrawer() {
 // Close on ESC
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeNavDrawer();
+});
+
+// ── Password eye-toggle auto-attach ──────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('input[type="password"]').forEach(function(inp) {
+        if (inp.dataset.eyeDone) return;
+        if (inp.parentElement && inp.parentElement.querySelector('button[aria-label*="assword"]')) { inp.dataset.eyeDone = '1'; return; }
+        inp.dataset.eyeDone = '1';
+        var wrap = document.createElement('span');
+        wrap.style.cssText = 'position:relative;display:block;';
+        inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
+        inp.style.paddingRight = '2.6rem';
+        var btn = document.createElement('button');
+        btn.type = 'button'; btn.textContent = '👁';
+        btn.setAttribute('aria-label', 'Show password');
+        btn.style.cssText = 'position:absolute;right:.6rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;padding:0;color:#A07850;';
+        btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.textContent = s ? '🙈' : '👁'; };
+        wrap.appendChild(btn);
+    });
 });
 </script>
