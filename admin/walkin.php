@@ -253,7 +253,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                               JOIN appointments a2 ON at2.appointment_id = a2.id
                               JOIN services    s2 ON a2.service_id = s2.id
                               WHERE at2.therapist_id = t.id
-                                AND a2.status IN ('approved','assigned')
+                                AND a2.status IN ('approved','assigned','pending')
                                 AND DATE(a2.appointment_date) = DATE(?)
                                 AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE)
                                     < (? + INTERVAL ? MINUTE)
@@ -287,11 +287,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 }
 
                 if (empty($walkin_message)) {
+                $is_pay_later    = ($payment_method === 'pay_later');
+                $order_pay_method = $is_pay_later ? 'onsite' : $payment_method;
+                $order_pay_status = $is_pay_later ? 'unpaid'  : 'paid';
                 $conn->begin_transaction();
                 $specialty_error = false;
                 try {
-                $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, 'paid', 'approved', ?, ?, ?, ?)");
-                $stmt->bind_param("isssdssdds", $walkin_user_id, $customer_name, $phone, $booking_date, $total_amount, $payment_method, $discount_type, $discount_amount_calc, $final_amount, $slip_number);
+                $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)");
+                $stmt->bind_param("isssdsssdds", $walkin_user_id, $customer_name, $phone, $booking_date, $total_amount, $order_pay_method, $order_pay_status, $discount_type, $discount_amount_calc, $final_amount, $slip_number);
                 $stmt->execute();
                 $order_id = $stmt->insert_id;
                 $stmt->close();
@@ -334,7 +337,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     $svc_buffer  = ($rate_type === 'home') ? 30 : 0;
                     // FIXED: Bug 3 — new slot duration = session_time × people_handled (back-to-back model)
                     // Also scale existing appointments' end by their people_handled to avoid double-booking
-                    $cf = $conn->prepare("SELECT COUNT(*) AS cnt FROM appointment_therapists at2 JOIN appointments a2 ON at2.appointment_id = a2.id JOIN services s2 ON a2.service_id = s2.id WHERE at2.therapist_id = ? AND a2.status IN ('approved','assigned') AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE) < (? + INTERVAL ? MINUTE) AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + IF(a2.service_type='home',30,0)) MINUTE) > (? - INTERVAL ? MINUTE)");
+                    $cf = $conn->prepare("SELECT COUNT(*) AS cnt FROM appointment_therapists at2 JOIN appointments a2 ON at2.appointment_id = a2.id JOIN services s2 ON a2.service_id = s2.id WHERE at2.therapist_id = ? AND a2.status IN ('approved','assigned','pending') AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE) < (? + INTERVAL ? MINUTE) AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + IF(a2.service_type='home',30,0)) MINUTE) > (? - INTERVAL ? MINUTE)");
                     $end_mins = ($svc_session * $people_handled_svc) + $svc_buffer;
                     $cf->bind_param("isisi", $therapist_id, $booking_date, $end_mins, $booking_date, $svc_buffer);
                     $cf->execute();
@@ -437,7 +440,7 @@ foreach ($all_therapists_list as $t) {
 $therapist_busy_slots = [];
 if (!empty($all_therapists_list)) {
     $tids = implode(',', array_map(fn($t) => intval($t['id']), $all_therapists_list));
-    $busy_q = $conn->query("SELECT at2.therapist_id, a.appointment_date, a.service_type, s.session_time FROM appointment_therapists at2 JOIN appointments a ON at2.appointment_id = a.id JOIN services s ON a.service_id = s.id WHERE at2.therapist_id IN ($tids) AND a.status IN ('approved','assigned') AND DATE(a.appointment_date) >= CURDATE()");
+    $busy_q = $conn->query("SELECT at2.therapist_id, a.appointment_date, a.service_type, s.session_time FROM appointment_therapists at2 JOIN appointments a ON at2.appointment_id = a.id JOIN services s ON a.service_id = s.id WHERE at2.therapist_id IN ($tids) AND a.status IN ('approved','assigned','pending') AND DATE(a.appointment_date) >= CURDATE()");
     while ($r = $busy_q->fetch_assoc()) {
         $buffer = ($r['service_type'] === 'home') ? 30 : 0;
         $therapist_busy_slots[$r['therapist_id']][] = [
@@ -456,7 +459,7 @@ if (!empty($all_therapists_list)) {
         FROM appointment_therapists at2
         JOIN appointments a ON at2.appointment_id = a.id
         WHERE at2.therapist_id IN ($tids_str)
-          AND a.status IN ('approved','assigned')
+          AND a.status IN ('approved','assigned','pending')
           AND DATE(a.appointment_date) = CURDATE()
     ");
     while ($r = $haq->fetch_assoc()) {
@@ -511,6 +514,8 @@ require_once 'admin_header.php';
                 <div class="form-section">
                     <div class="form-section-header">💆 Select Service <span class="required">*</span></div>
                     <div class="form-section-body" style="padding:1rem;">
+                        <input type="text" class="walkin-search" placeholder="Search services…"
+                               oninput="filterGrid('service-grid', this.value)">
                         <div class="item-select-grid" id="service-grid">
                             <?php foreach ($all_services as $svc): ?>
                             <div class="item-card" onclick="selectItem('service', <?php echo $svc['id']; ?>, this)" data-id="<?php echo $svc['id']; ?>">
@@ -700,6 +705,10 @@ require_once 'admin_header.php';
                         </div>
                         <div id="svc-online-status" style="display:none;margin-bottom:0.5rem;padding:0.55rem 0.75rem;border-radius:8px;font-size:0.8rem;font-weight:600;"></div>
                         <button type="button" id="svc-book-now" onclick="proceedBooking('service')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">✅ Book Now</button>
+                        <button type="button" class="pay-btn pay-btn-later" onclick="payLaterService()" style="width:100%;margin-top:0.4rem;font-size:0.9rem;">
+                            ⏳ Pay Later
+                            <span class="coming-soon-badge">at completion</span>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -910,6 +919,18 @@ require_once 'admin_header.php';
 
 @keyframes walkinBMPopIn { from { transform:scale(.86);opacity:0; } to { transform:scale(1);opacity:1; } }
 @keyframes walkinBMFadeIn { from { opacity:0; } to { opacity:1; } }
+
+.walkin-search {
+    width: 100%; box-sizing: border-box;
+    padding: 0.45rem 0.8rem 0.45rem 2rem;
+    border: 1px solid #d4bfa3; border-radius: 6px;
+    font-size: 0.88rem; color: #3B2A1A; background: #fff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a07850' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 0.5rem center;
+    margin-bottom: 0.65rem;
+    outline: none;
+}
+.walkin-search:focus { border-color: #C96A2C; box-shadow: 0 0 0 2px rgba(201,106,44,.15); }
 </style>
 
 <script>
@@ -1240,6 +1261,11 @@ function proceedBooking(formType) {
     form.submit();
 }
 
+function payLaterService() {
+    document.getElementById('service_payment_method').value = 'pay_later';
+    proceedBooking('service');
+}
+
 function syncSlipNumber(form, val) { const other = form === 'service' ? 'product_slip_number' : 'service_slip_number'; const el = document.getElementById(other); if (el) el.value = val; }
 
 function openPaymongoPopup(formType, method) {
@@ -1333,6 +1359,14 @@ function updateWalkinPreview(form) {
     const finalPrice = Math.max(0, basePrice - discountAmt);
     if (discountAmt > 0) { preview.style.display='block'; const fmt = n => n.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}); preview.innerHTML = label+'<br>Original: <strong>₱'+fmt(basePrice)+'</strong> &nbsp;−&nbsp; <strong style="color:var(--rust);">₱'+fmt(discountAmt)+'</strong> &nbsp;=&nbsp; <strong style="color:#15803d;">₱'+fmt(finalPrice)+'</strong>'; }
     else { preview.style.display='none'; }
+}
+
+function filterGrid(gridId, val) {
+    const q = val.toLowerCase().trim();
+    document.querySelectorAll('#' + gridId + ' .item-card').forEach(card => {
+        const name = (card.querySelector('.item-name')?.textContent || '').toLowerCase();
+        card.style.display = name.includes(q) ? '' : 'none';
+    });
 }
 
 document.addEventListener('click', function(e) {
