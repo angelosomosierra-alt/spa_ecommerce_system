@@ -1965,6 +1965,13 @@ function bmMinuteAvailable(h, m, d) {
     if (h === d.close_hour && m > 0) return false;
     // Grey out past times + 2-hour advance minimum (min_start_minutes = now+120 when is_today, else 0)
     if (d.min_start_minutes > 0 && startMin < d.min_start_minutes) return false;
+    // any-available mode: valid_starts gives exact ranges where at least one therapist
+    // is free for the full duration — check membership directly (no overlap approximation)
+    if (Array.isArray(d.valid_starts)) {
+        return d.valid_starts.some(r =>
+            startMin >= bmParseMinutes(r.start) && startMin <= bmParseMinutes(r.end)
+        );
+    }
     for (const w of d.busy) {
         if (startMin < bmParseMinutes(w.end) && endMin > bmParseMinutes(w.start)) return false;
     }

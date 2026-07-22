@@ -339,8 +339,13 @@ class AvailabilityEngine {
         return $windows;
     }
 
-    // ── Get combined blocked windows for any-available mode ───────────────────
-    // A window is "blocked" only when EVERY qualified therapist is occupied.
+    // ── Get valid-start time ranges for any-available mode ───────────────────
+    // Returns inclusive [start, end] (HH:MM) ranges where at least ONE qualified
+    // therapist is free for the full session duration [T, T+D].
+    // Correct approach: per-therapist, shrink each free interval [s, e] to valid-start
+    // range [s, e-D]; union across all therapists; return the merged result.
+    // This correctly handles staggered bookings where the union of free *instants*
+    // spans the day but no single therapist can cover the full duration.
     public function getBusyWindowsAnyAvailable(
         array  $therapist_ids,
         string $date,
@@ -350,51 +355,47 @@ class AvailabilityEngine {
         if (empty($therapist_ids)) return [];
 
         $open_m  = self::OPEN_HOUR  * 60;
-        $max_end = 22 * 60; // sessions may run until 10 PM
+        $close_m = self::CLOSE_HOUR * 60;
+        $D       = $session_time;   // total duration (session_time × people)
 
-        // Per-therapist free intervals (minutes since midnight)
-        $all_free = [];
+        $all_valid = [];
         foreach ($therapist_ids as $tid) {
             $busy = [];
             foreach ($this->getBusyWindowsForTherapist($tid, $date) as $w) {
-                [$h, $m] = array_map('intval', explode(':', $w['start']));
-                $s = $h * 60 + $m;
-                [$h, $m] = array_map('intval', explode(':', $w['end']));
-                $e = $h * 60 + $m;
-                $busy[] = [$s, $e];
+                [$wsh, $wsm] = array_map('intval', explode(':', $w['start']));
+                [$weh, $wem] = array_map('intval', explode(':', $w['end']));
+                $busy[] = [$wsh * 60 + $wsm, $weh * 60 + $wem];
             }
             usort($busy, fn($a, $b) => $a[0] - $b[0]);
 
             $cur = $open_m;
             foreach ($busy as [$bs, $be]) {
-                if ($bs > $cur) $all_free[] = [$cur, $bs];
+                if ($bs > $cur) {
+                    $ve = $bs - $D;          // free [cur, bs) → valid starts [cur, bs-D]
+                    if ($ve >= $cur) $all_valid[] = [$cur, $ve];
+                }
                 $cur = max($cur, $be);
             }
-            if ($cur < $max_end) $all_free[] = [$cur, $max_end];
+            // Tail free interval [cur, close_m)
+            $ve = $close_m - $D;
+            if ($cur < $close_m && $ve >= $cur) $all_valid[] = [$cur, $ve];
         }
 
-        // Union of all free intervals
-        usort($all_free, fn($a, $b) => $a[0] - $b[0]);
-        $mfree = [];
-        foreach ($all_free as [$s, $e]) {
-            if (empty($mfree) || $s > $mfree[count($mfree)-1][1]) {
-                $mfree[] = [$s, $e];
+        if (empty($all_valid)) return [];
+
+        // Union valid-start ranges across all therapists (with adjacency merge)
+        usort($all_valid, fn($a, $b) => $a[0] - $b[0]);
+        $merged = [];
+        foreach ($all_valid as [$s, $e]) {
+            if (empty($merged) || $s > $merged[count($merged)-1][1] + 1) {
+                $merged[] = [$s, $e];
             } else {
-                $mfree[count($mfree)-1][1] = max($mfree[count($mfree)-1][1], $e);
+                $merged[count($merged)-1][1] = max($merged[count($merged)-1][1], $e);
             }
         }
 
-        // Blocked = [open_m, max_end] MINUS merged free
-        $blocked = [];
-        $cur = $open_m;
-        foreach ($mfree as [$s, $e]) {
-            if ($s > $cur) $blocked[] = [$cur, $s];
-            $cur = max($cur, $e);
-        }
-        if ($cur < $max_end) $blocked[] = [$cur, $max_end];
-
         $out = [];
-        foreach ($blocked as [$s, $e]) {
+        foreach ($merged as [$s, $e]) {
             $out[] = [
                 'start' => sprintf('%02d:%02d', intdiv($s, 60), $s % 60),
                 'end'   => sprintf('%02d:%02d', intdiv($e, 60), $e % 60),

@@ -50,10 +50,11 @@ $is_today   = ($date === $today_str);
 $now_min         = $is_today ? ((int)$now->format('H') * 60 + (int)$now->format('i')) : 0;
 $min_start_min   = $is_today ? ($now_min + 120) : 0; // 2-hour advance minimum for checkout
 
-$on_duty     = false;
-$message     = '';
-$reason_code = '';
-$busy        = [];
+$on_duty      = false;
+$message      = '';
+$reason_code  = '';
+$busy         = [];
+$valid_starts = null; // non-null only in any-available mode; picker uses direct range check
 
 if ($therapist_id > 0) {
     // ── Specific therapist ────────────────────────────────────────────────────
@@ -109,9 +110,11 @@ if ($therapist_id > 0) {
     }
 
     if (!empty($therapist_ids)) {
-        $busy = $av->getBusyWindowsAnyAvailable(
+        // Returns valid-start ranges; picker checks membership directly (not overlap)
+        $valid_starts = $av->getBusyWindowsAnyAvailable(
             $therapist_ids, $date, $session_time * $people, $buffer
         );
+        // $busy stays [] — the JS picker uses valid_starts instead
     }
 }
 
@@ -121,6 +124,7 @@ echo json_encode([
     'open_hour'         => $open_hour,
     'close_hour'        => $close_hour,
     'busy'              => $busy,
+    'valid_starts'      => $valid_starts,
     'on_duty'           => $on_duty,
     'is_today'          => $is_today,
     'now_minutes'       => $now_min,
