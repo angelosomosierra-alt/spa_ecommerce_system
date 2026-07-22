@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_today'])) {
             $ps->bind_param("s", $entered); $ps->execute();
             $pr = $ps->get_result()->fetch_assoc(); $ps->close();
             if (!$pr) { $message = 'Incorrect PIN.'; $message_type = 'danger'; }
-            else       $actor = $pr['full_name'];
+            else $actor = ['id' => null, 'name' => $pr['full_name'], 'role' => 'receptionist'];
         }
     }
     if (empty($message)) {
@@ -81,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             $ps->bind_param("s", $entered); $ps->execute();
             $pr = $ps->get_result()->fetch_assoc(); $ps->close();
             if (!$pr) { $message = 'Incorrect PIN.'; $message_type = 'danger'; $pin_ok = false; }
-            else $actor = $pr['full_name'];
+            else $actor = ['id' => null, 'name' => $pr['full_name'], 'role' => 'receptionist'];
         }
     }
     if ($pin_ok) {

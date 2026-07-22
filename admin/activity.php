@@ -310,8 +310,8 @@ foreach ($logs as $log):
         <div class="al-meta">
             <span>by <strong><?php echo htmlspecialchars($log['actor_name']); ?></strong></span>
             <?php echo al_role_badge($log['actor_role']); ?>
-            <?php if ($log['target_type'] && $log['target_id']): ?>
-            <span style="color:#9ca3af;">· <?php echo htmlspecialchars(ucfirst($log['target_type'])); ?> #<?php echo intval($log['target_id']); ?></span>
+            <?php if ($log['target_type']): ?>
+            <span style="color:#9ca3af;">· <?php echo htmlspecialchars(ucfirst($log['target_type'])); ?></span>
             <?php endif; ?>
         </div>
         <div class="al-desc"><?php echo htmlspecialchars($log['description']); ?></div>
