@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
     $cf_name    = sanitize_input($_POST['cf_name'] ?? '');
     $cf_email   = sanitize_input($_POST['cf_email'] ?? '');
     $cf_message = sanitize_input($_POST['cf_message'] ?? '');
-    
+
     if (empty($cf_name) || empty($cf_email) || empty($cf_message)) {
         $contact_error = 'Please fill in all fields.';
     } else {
@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_service'])) {
 }
 
 $cart_count = (isset($_SESSION['user_id']) && isset($_SESSION['cart'])) ? count($_SESSION['cart']) : 0;
-$base_path  = BASE_URL;
+$base_path  = '';
 
 // 3. DATA FETCHING
 $services = []; $service_categories = ['All'];
@@ -58,6 +58,14 @@ while ($row = $res_svc->fetch_assoc()) {
     if (!empty($row['category_name']) && !in_array($row['category_name'], $service_categories)) $service_categories[] = $row['category_name'];
 }
 
+// Group services by category for per-category sliders
+$services_by_cat = [];
+foreach ($services as $svc) {
+    $key = $svc['category_id'] ? 'cat_' . $svc['category_id'] : 'cat_other';
+    $services_by_cat[$key]['label'] = $svc['category_name'] ?: 'Other';
+    $services_by_cat[$key]['items'][] = $svc;
+}
+
 $products = []; $product_categories = ['All'];
 $res_prd = $conn->query("SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.deleted_at IS NULL ORDER BY c.name, p.name");
 while ($row = $res_prd->fetch_assoc()) {
@@ -65,33 +73,152 @@ while ($row = $res_prd->fetch_assoc()) {
     if (!empty($row['category_name']) && !in_array($row['category_name'], $product_categories)) $product_categories[] = $row['category_name'];
 }
 ?>
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Recovery Spa — Home</title>
-    
+<?php
+$_css_v = file_exists('assets/style.css') ? filemtime('assets/style.css') : '1';
+?>
+<link rel="stylesheet" href="assets/style.css?v=<?php echo $_css_v; ?>">
+<style>
+    /* ── Logo: image + text ─────────────────────────────── */
+    .logo { display:flex; align-items:center; gap:0.75rem; }
+    .logo span { font-family:'Cormorant Garamond',serif; font-size:1.2rem; color:#C8A46B; letter-spacing:0.08em; }
 
-<link rel="stylesheet" href="assets/style.css">    <style>
-    .slider-wrapper   { position:relative; margin:0 30px; }
-    .slider-arrow.prev{ left:-34px; }
-    .slider-arrow.next{ right:-34px; }
-    .slider-track-outer{ overflow:hidden; width:100%; }
-    .slider-track { display:flex; gap:1.5rem; transition:transform 0.4s ease; }
-    .service-slide { flex:0 0 calc((100% - 3rem)/3); min-width:0; }
-    .product-slide { flex:0 0 calc((100% - 3rem)/3); min-width:0; }
-    @media(max-width:900px){ .service-slide,.product-slide{ flex:0 0 calc((100% - 1.5rem)/2); } }
-    @media(max-width:600px){ .service-slide,.product-slide{ flex:0 0 100%; } }
+    /* ── Nav auth extras ─────────────────────────────────── */
+    .cart-icon-btn {
+        position:relative; display:inline-flex; align-items:center; justify-content:center;
+        width:36px; height:36px; border-radius:50%;
+        background:rgba(255,255,255,0.12); color:#FAF3E8; text-decoration:none; font-size:1rem;
+        transition:background .2s, transform .2s; vertical-align:middle;
+    }
+    .cart-icon-btn:hover { background:rgba(255,255,255,0.32); transform:scale(1.1); }
+    .cart-icon-badge {
+        position:absolute; top:-4px; right:-4px;
+        background:#e74c3c; color:#fff; font-size:.6rem; font-weight:700;
+        min-width:16px; height:16px; border-radius:8px; display:flex;
+        align-items:center; justify-content:center; padding:0 3px;
+    }
 
-    /* About */
+    /* ── SERVICE GRID / CARDS ────────────────────────────── */
+    .svc-grid, .prd-grid {
+        display:grid; grid-template-columns:repeat(3,1fr); gap:2rem; }
+    @media(max-width:960px){ .svc-grid,.prd-grid{ grid-template-columns:repeat(2,1fr); } }
+    @media(max-width:580px){ .svc-grid,.prd-grid{ grid-template-columns:1fr; } }
+
+    .svc-card {
+        background:var(--white); border-radius:var(--radius);
+        overflow:hidden; border:1px solid var(--border);
+        box-shadow:0 4px 20px rgba(59,42,26,.06);
+        display:flex; flex-direction:column;
+        transition:transform .3s ease, box-shadow .3s ease; }
+    .svc-card:hover { transform:translateY(-6px); box-shadow:0 18px 50px rgba(59,42,26,.14); }
+    .svc-img-wrap {
+        position:relative; aspect-ratio:4/3; overflow:hidden; background:var(--warm); }
+    .svc-img-wrap img {
+        width:100%; height:100%; object-fit:cover;
+        transition:transform .5s ease; display:block; }
+    .svc-card:hover .svc-img-wrap img { transform:scale(1.05); }
+    .img-placeholder {
+        width:100%; height:100%; display:flex; flex-direction:column;
+        align-items:center; justify-content:center;
+        background:linear-gradient(135deg,var(--warm),#EAD8C0);
+        color:var(--brown-md); font-size:2.5rem; gap:.35rem; }
+    .img-placeholder small {
+        font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; color:var(--brown-lt); }
+    .svc-cat-badge {
+        position:absolute; top:.85rem; left:.85rem;
+        background:rgba(59,42,26,.72); backdrop-filter:blur(6px);
+        color:var(--gold-lt); font-size:.65rem; font-weight:500;
+        letter-spacing:.12em; text-transform:uppercase;
+        padding:.25rem .75rem; border-radius:50px; }
+    .svc-body { padding:1.5rem; display:flex; flex-direction:column; flex:1; }
+    .svc-name {
+        font-family:'Cormorant Garamond',serif; font-size:1.3rem; font-weight:600;
+        color:var(--brown); line-height:1.2; margin-bottom:.4rem; }
+    .svc-desc {
+        font-size:.83rem; color:var(--gray); line-height:1.65; flex:1;
+        display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+        overflow:hidden; margin-bottom:1rem; }
+    .svc-meta { display:flex; align-items:center; justify-content:space-between; margin-bottom:.9rem; }
+    .svc-price { font-family:'Cormorant Garamond',serif; font-size:1.5rem; font-weight:600; color:var(--rust); }
+    .svc-duration { font-size:.75rem; color:var(--gray); background:var(--warm); padding:.2rem .75rem; border-radius:50px; }
+    .btn-book-grid {
+        width:100%; padding:.75rem;
+        background:var(--brown); color:var(--cream);
+        border:none; border-radius:10px;
+        font-family:'DM Sans',sans-serif; font-size:.88rem; font-weight:500;
+        letter-spacing:.04em; cursor:pointer; transition:all .22s; }
+    .btn-book-grid:hover { background:var(--rust); transform:translateY(-1px); }
+
+    /* ── Per-category heading + slider ──────────────────── */
+    .cat-section-heading {
+        font-family:'Cormorant Garamond',serif; font-size:1.4rem; font-weight:600;
+        color:var(--brown); margin:0.5rem 0 1.1rem; padding-bottom:0.5rem;
+        border-bottom:2px solid var(--border); }
+    .slider-outer { position:relative; padding:0 28px; }
+    .slider-overflow { overflow:hidden; }
+    .slider-track { display:flex; gap:2rem; transition:transform .4s ease; will-change:transform; }
+    .service-slide { flex:0 0 calc(33.333% - 1.35rem); min-width:0; }
+    @media(max-width:960px){ .service-slide{ flex:0 0 calc(50% - 1rem); } }
+    @media(max-width:580px){ .service-slide{ flex:0 0 100%; } }
+    .slider-arrow {
+        position:absolute; top:40%; transform:translateY(-50%);
+        background:var(--brown); color:var(--cream); border:none; border-radius:50%;
+        width:38px; height:38px; cursor:pointer; font-size:1.1rem; z-index:10;
+        box-shadow:0 2px 8px rgba(0,0,0,.18); transition:background .2s;
+        display:flex; align-items:center; justify-content:center; }
+    .slider-arrow:hover { background:var(--rust); }
+    .slider-arrow.prev-btn { left:0; }
+    .slider-arrow.next-btn { right:0; }
+    .slider-dots { display:flex; justify-content:center; gap:0.45rem; margin-top:1rem; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--border); cursor:pointer; transition:background .2s,transform .2s; }
+    .dot.active { background:var(--brown); transform:scale(1.3); }
+
+    /* ── PRODUCT CARDS ───────────────────────────────────── */
+    .prd-card {
+        background:var(--white); border-radius:var(--radius);
+        overflow:hidden; border:1px solid var(--border);
+        box-shadow:0 4px 20px rgba(59,42,26,.06);
+        display:flex; flex-direction:column;
+        transition:transform .3s ease, box-shadow .3s ease; }
+    .prd-card:hover { transform:translateY(-6px); box-shadow:0 18px 50px rgba(59,42,26,.14); }
+    .prd-img-wrap {
+        position:relative; aspect-ratio:1/1; overflow:hidden; background:var(--warm); }
+    .prd-img-wrap img {
+        width:100%; height:100%; object-fit:cover;
+        transition:transform .5s ease; display:block; }
+    .prd-card:hover .prd-img-wrap img { transform:scale(1.06); }
+    .prd-body { padding:1.35rem; display:flex; flex-direction:column; flex:1; }
+    .prd-cat-badge {
+        font-size:.65rem; font-weight:500; letter-spacing:.1em;
+        text-transform:uppercase; color:var(--gold); margin-bottom:.3rem; display:inline-block; }
+    .prd-name {
+        font-family:'Cormorant Garamond',serif; font-size:1.2rem; font-weight:600;
+        color:var(--brown); line-height:1.2; margin-bottom:.35rem; }
+    .prd-desc {
+        font-size:.8rem; color:var(--gray); line-height:1.6; flex:1;
+        display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+        overflow:hidden; margin-bottom:.85rem; }
+    .prd-price-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:.8rem; }
+    .prd-price { font-family:'Cormorant Garamond',serif; font-size:1.4rem; font-weight:600; color:var(--rust); }
+    .prd-stock { font-size:.72rem; color:var(--gray); }
+    .btn-cart-grid {
+        width:100%; padding:.7rem;
+        background:transparent; color:var(--brown);
+        border:1.5px solid var(--brown); border-radius:10px;
+        font-family:'DM Sans',sans-serif; font-size:.85rem; font-weight:500;
+        cursor:pointer; transition:all .22s; }
+    .btn-cart-grid:hover { background:var(--brown); color:var(--cream); }
+    .btn-cart-grid:disabled { opacity:.4; cursor:not-allowed; }
+
+    /* ── About ───────────────────────────────────────────── */
     .about-inner { display:grid; grid-template-columns:1fr 1fr; gap:4rem; align-items:center; }
     .about-text p { color:var(--brown-md); font-size:0.97rem; line-height:1.85; margin-bottom:1rem; }
-    .about-visual { border-radius:20px; aspect-ratio:4/5; background:linear-gradient(160deg,#EAD8C0,#C8A46B 60%,#A07850); display:flex; align-items:center; justify-content:center; text-align:center; color:#3B2A1A; padding:2rem; }
-    .about-visual span { font-size:4rem; display:block; margin-bottom:1rem; }
-    .about-visual p { font-family:'Cormorant Garamond',serif; font-size:1.3rem; }
+    .about-visual { border-radius:0; aspect-ratio:4/5; display:flex; align-items:center; justify-content:center; text-align:center; padding:0; }
     .stats-bar { display:grid; grid-template-columns:repeat(4,1fr); background:#3B2A1A; border-radius:16px; overflow:hidden; margin-top:2rem; }
     .stat-item { padding:1.5rem 1rem; text-align:center; border-right:1px solid rgba(200,164,107,0.2); }
     .stat-item:last-child { border-right:none; }
@@ -104,7 +231,7 @@ while ($row = $res_prd->fetch_assoc()) {
     .value-card h3  { color:var(--brown); font-size:0.95rem; font-weight:700; margin-bottom:0.4rem; }
     .value-card p   { color:var(--gray); font-size:0.83rem; line-height:1.6; }
 
-    /* Contact */
+    /* ── Contact ─────────────────────────────────────────── */
     .contact-inner { display:grid; grid-template-columns:1fr 1.3fr; gap:3.5rem; align-items:start; }
     .contact-info-block { display:flex; flex-direction:column; gap:1.25rem; }
     .contact-detail { display:flex; align-items:flex-start; gap:1rem; }
@@ -112,7 +239,7 @@ while ($row = $res_prd->fetch_assoc()) {
     .contact-detail h4 { font-size:0.82rem; font-weight:700; color:var(--brown); margin-bottom:0.15rem; }
     .contact-detail p, .contact-detail a { font-size:0.85rem; color:var(--gray); line-height:1.5; text-decoration:none; }
     .contact-detail a:hover { color:var(--rust); }
-    .hours-box { background:#3B2A1A; border-radius:14px; padding:1.25rem 1.5rem; margin-top:0.5rem; }
+    .hours-box { background:#3B2A1A; border-radius:14px; padding:1.25rem 1.5rem; margin-top:1rem; }
     .hours-box h4 { font-size:0.72rem; letter-spacing:0.12em; text-transform:uppercase; color:#C8A46B; font-weight:700; margin-bottom:0.85rem; }
     .hours-row { display:flex; justify-content:space-between; font-size:0.82rem; padding:0.35rem 0; border-bottom:1px solid rgba(200,164,107,0.15); }
     .hours-row:last-child { border-bottom:none; }
@@ -134,8 +261,9 @@ while ($row = $res_prd->fetch_assoc()) {
     .contact-success h3 { color:var(--brown); font-size:1.2rem; margin-bottom:0.5rem; }
     .contact-success p  { color:var(--gray); font-size:0.88rem; }
     .alert-form-error { background:#FEE2E2; color:#991B1B; border-radius:8px; padding:0.65rem 0.9rem; font-size:0.85rem; margin-bottom:1rem; border-left:3px solid #dc3545; }
+    .stock-warn { display:none; background:#FEF3C7; color:#92400E; padding:0.5rem 0.75rem; border-radius:8px; font-size:0.82rem; margin-bottom:0.75rem; border-left:3px solid #F59E0B; }
 
-    /* Footer */
+    /* ── Footer ──────────────────────────────────────────── */
     .spa-footer { background:#3B2A1A; color:#EAD8C0; padding:3.5rem 2rem 2rem; }
     .footer-inner { max-width:1200px; margin:0 auto; display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:2.5rem; margin-bottom:2.5rem; }
     .footer-brand .ft-logo { font-family:'Cormorant Garamond',serif; font-size:1.6rem; color:#C8A46B; font-weight:400; margin-bottom:0.5rem; }
@@ -156,11 +284,41 @@ while ($row = $res_prd->fetch_assoc()) {
         .cf-row { grid-template-columns:1fr; }
         .footer-inner { grid-template-columns:1fr; }
     }
-    </style>
+</style>
 </head>
+<body>
+
+<!-- ── MOBILE NAV OVERLAY ─────────────────────────────────────────────────── -->
+<div class="nav-mobile-overlay" id="navMobileOverlay" onclick="closeNavDrawer()"></div>
+
+<!-- ── MOBILE NAV DRAWER ──────────────────────────────────────────────────── -->
+<div class="nav-mobile-drawer" id="navMobileDrawer">
+    <div class="nav-drawer-header">
+        <span class="nav-drawer-logo">Recovery Iloilo</span>
+        <button class="nav-drawer-close" onclick="closeNavDrawer()">✕</button>
+    </div>
+    <div class="nav-drawer-links">
+        <a href="#index">🏠 Home</a>
+        <a href="#services">💆 Services</a>
+        <a href="#products">🛍️ Products</a>
+        <a href="#about">ℹ️ About Us</a>
+        <a href="#contact">📞 Contact</a>
+        <div class="nav-drawer-divider"></div>
+        <?php if (isset($_SESSION['user_id'])): ?>
+        <a href="user/cart.php">🛒 Cart (<?php echo $cart_count; ?>)</a>
+        <a href="?logout=1" style="color:#ff8a8a;">🚪 Logout</a>
+        <?php else: ?>
+        <a href="user/auth.php">🔑 Login / Register</a>
+        <?php endif; ?>
+    </div>
+</div>
+
 <header>
     <nav>
-        <div class="logo">RECOVERY</div>
+        <div class="logo">
+            <img src="img/logo.png" width="60" height="48" alt="Recovery Spa Logo">
+            <span>RECOVERY ILOILO</span>
+        </div>
         <ul class="nav-links">
             <li><a href="#index">Home</a></li>
             <li><a href="#services">Services</a></li>
@@ -169,17 +327,24 @@ while ($row = $res_prd->fetch_assoc()) {
             <li><a href="#contact">Contact</a></li>
         </ul>
         <div class="auth-links">
+            <button class="nav-hamburger" id="navHamburger" onclick="toggleNavDrawer()" aria-label="Menu">
+                <span></span><span></span><span></span>
+            </button>
             <?php if (isset($_SESSION['user_id'])): ?>
-                <a href="user/cart.php" class="cart-btn">Cart (<?= $cart_count ?>)</a>
-                <a href="?logout=1">Logout</a>
+                <a href="user/cart.php" class="cart-icon-btn" title="View Cart">
+                    🛒
+                    <span class="cart-icon-badge" style="<?php echo $cart_count === 0 ? 'display:none' : ''; ?>">
+                        <?php echo $cart_count > 99 ? '99+' : $cart_count; ?>
+                    </span>
+                </a>
+                <a href="?logout=1" style="font-size:0.85rem;color:#FAF3E8;text-decoration:none;transition:color .2s;" onmouseover="this.style.color='#C8A46B'" onmouseout="this.style.color='#FAF3E8'">Logout</a>
             <?php else: ?>
-                <a href="user/auth.php">Login</a>
-                <a href="user/auth.php?register=1" class="hero-btn-primary" style="padding: 0.5rem 1rem; font-size: 0.8rem;">Register</a>
+                <a href="user/auth.php" style="font-size:0.85rem;color:#FAF3E8;text-decoration:none;transition:color .2s;" onmouseover="this.style.color='#C8A46B'" onmouseout="this.style.color='#FAF3E8'">Login</a>
+                <a href="user/auth.php?register=1" class="hero-btn-primary" style="padding:0.45rem 1rem;font-size:0.8rem;">Register</a>
             <?php endif; ?>
         </div>
     </nav>
 </header>
-<body>
 
 <section class="hero" id="index">
     <p class="hero-eyebrow">Welcome to RECOVERY ILOILO</p>
@@ -194,54 +359,74 @@ while ($row = $res_prd->fetch_assoc()) {
 
 <div class="spa-container">
 
+<!-- ── SERVICES SECTION ────────────────────────────────────────────────────── -->
 <section class="spa-section" id="services">
     <div class="section-header">
         <div>
             <p class="section-label">Our Treatments</p>
             <h2 class="section-title-spa">Spa <em>Services</em></h2>
         </div>
-        <?php if (count($service_categories) > 1): ?>
-        <div class="cat-dropdown-wrap">
-            <select class="cat-dropdown" id="svcCatDropdown" onchange="filterSliderDropdown('svc', this.value)">
-                <?php foreach ($service_categories as $cat): ?>
-                <option value="<?php echo htmlspecialchars($cat); ?>"><?php echo htmlspecialchars($cat); ?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <?php endif; ?>
     </div>
     <div class="section-panel"><div class="panel-inner">
-        <?php if (!empty($services)): ?>
-        <div class="slider-wrapper" id="svcSliderWrap">
-            <button class="slider-arrow prev" id="svcPrev" onclick="slideMove('svc',-1)">&#8592;</button>
-            <div class="slider-track-outer"><div class="slider-track" id="svcTrack">
-                <?php foreach ($services as $svc): ?>
-                <div class="service-slide" data-category="<?php echo htmlspecialchars($svc['category_name']??''); ?>">
-                    <div class="service-img-wrap">
-                        <img src="uploads/services/<?php echo htmlspecialchars($svc['image']); ?>" 
-                        alt="<?php echo htmlspecialchars($svc['name']); ?>" 
-                        onerror="this.onerror=null; this.src='uploads/products/default.png';">
-                        <?php if (!empty($svc['category_name'])): ?><span class="service-cat-badge"><?php echo htmlspecialchars($svc['category_name']); ?></span><?php endif; ?>
-                    </div>
-                    <div class="service-body">
-                        <h3 class="service-name"><?php echo htmlspecialchars($svc['name']); ?></h3>
-                        <p class="service-desc"><?php echo htmlspecialchars(substr($svc['description'],0,90)).'...'; ?></p>
-                        <div class="service-meta">
-                            <span class="service-price">₱<?php echo number_format($svc['price'],2); ?></span>
-                            <span class="service-duration">⏱ <?php echo $svc['session_time']; ?> min</span>
+        <?php if (!empty($services_by_cat)): ?>
+        <?php foreach ($services_by_cat as $cat_key => $cat_data):
+              $cat_items  = $cat_data['items'];
+              $has_slider = count($cat_items) > 3; ?>
+        <div style="margin-bottom:2.5rem;">
+            <h3 class="cat-section-heading">💆 <?php echo htmlspecialchars($cat_data['label']); ?></h3>
+            <div class="slider-outer">
+                <?php if ($has_slider): ?>
+                <button class="slider-arrow prev-btn" id="prev-<?php echo $cat_key; ?>"
+                        onclick="slideMove('<?php echo $cat_key; ?>',-1)"
+                        aria-label="Previous" style="display:none;">‹</button>
+                <?php endif; ?>
+                <div class="slider-overflow">
+                    <div class="slider-track" id="track-<?php echo $cat_key; ?>">
+                    <?php foreach ($cat_items as $svc): ?>
+                    <div class="service-slide">
+                    <div class="svc-card">
+                        <div class="svc-img-wrap">
+                            <?php if (!empty($svc['image'])): ?>
+                            <img src="uploads/services/<?php echo htmlspecialchars($svc['image']); ?>"
+                                 alt="<?php echo htmlspecialchars($svc['name']); ?>"
+                                 loading="lazy"
+                                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                            <div class="img-placeholder" style="display:none">💆<small>Spa Service</small></div>
+                            <?php else: ?>
+                            <div class="img-placeholder">💆<small>Spa Service</small></div>
+                            <?php endif; ?>
+                            <?php if (!empty($svc['category_name'])): ?>
+                            <span class="svc-cat-badge"><?php echo htmlspecialchars($svc['category_name']); ?></span>
+                            <?php endif; ?>
                         </div>
-                        <button class="btn-book" onclick="openSvcModal(<?php echo $svc['id']; ?>)">View & Book</button>
+                        <div class="svc-body">
+                            <h3 class="svc-name"><?php echo htmlspecialchars($svc['name']); ?></h3>
+                            <p class="svc-desc"><?php echo htmlspecialchars($svc['description']); ?></p>
+                            <div class="svc-meta">
+                                <span class="svc-price">₱<?php echo number_format($svc['price'],2); ?></span>
+                                <span class="svc-duration">⏱ <?php echo $svc['session_time']; ?> min</span>
+                            </div>
+                            <button class="btn-book-grid" onclick="openSvcModal(<?php echo $svc['id']; ?>)">View &amp; Book</button>
+                        </div>
+                    </div>
+                    </div>
+                    <?php endforeach; ?>
                     </div>
                 </div>
-                <?php endforeach; ?>
-            </div></div>
-            <button class="slider-arrow next" id="svcNext" onclick="slideMove('svc',1)">&#8594;</button>
+                <?php if ($has_slider): ?>
+                <button class="slider-arrow next-btn" id="next-<?php echo $cat_key; ?>"
+                        onclick="slideMove('<?php echo $cat_key; ?>',1)"
+                        aria-label="Next">›</button>
+                <?php endif; ?>
+            </div>
+            <?php if ($has_slider): ?><div class="slider-dots" id="dots-<?php echo $cat_key; ?>"></div><?php endif; ?>
         </div>
-        <div class="slider-dots" id="svcDots"></div>
+        <?php endforeach; ?>
         <?php else: ?><div class="empty-state"><div class="icon">💆</div><p>No services available yet.</p></div><?php endif; ?>
     </div></div>
 </section>
 
+<!-- ── PRODUCTS SECTION ────────────────────────────────────────────────────── -->
 <section class="spa-section" id="products">
     <div class="section-header">
         <div>
@@ -250,7 +435,7 @@ while ($row = $res_prd->fetch_assoc()) {
         </div>
         <?php if (count($product_categories) > 1): ?>
         <div class="cat-dropdown-wrap">
-            <select class="cat-dropdown" id="prdCatDropdown" onchange="filterSliderDropdown('prd', this.value)">
+            <select class="cat-dropdown" id="prdCatDropdown" onchange="filterGrid('prdGrid', this.value)">
                 <?php foreach ($product_categories as $cat): ?>
                 <option value="<?php echo htmlspecialchars($cat); ?>"><?php echo htmlspecialchars($cat); ?></option>
                 <?php endforeach; ?>
@@ -260,37 +445,44 @@ while ($row = $res_prd->fetch_assoc()) {
     </div>
     <div class="section-panel"><div class="panel-inner">
         <?php if (!empty($products)): ?>
-        <div class="slider-wrapper" id="prdSliderWrap">
-            <button class="slider-arrow prev" id="prdPrev" onclick="slideMove('prd',-1)">&#8592;</button>
-            <div class="slider-track-outer"><div class="slider-track" id="prdTrack">
-                <?php foreach ($products as $prd): $oos = $prd['stock'] <= 0; ?>
-                <div class="product-slide" data-category="<?php echo htmlspecialchars($prd['category_name']??''); ?>">
-                    <div class="product-img-oval">
-                        <img src="uploads/products/<?php echo htmlspecialchars($prd['image']); ?>" 
-                        alt="<?php echo htmlspecialchars($prd['name']); ?>" 
-                        onerror="this.onerror=null; this.src='uploads/products/default.png';">
-                        <?php if ($oos): ?><div class="oos-overlay"><span class="oos-text">Out of Stock</span></div><?php endif; ?>
-                    </div>
-                    <div class="product-info">
-                        <?php if (!empty($prd['category_name'])): ?><span class="product-cat-badge"><?php echo htmlspecialchars($prd['category_name']); ?></span><?php endif; ?>
-                        <h3 class="product-name"><?php echo htmlspecialchars($prd['name']); ?></h3>
-                        <p class="product-desc"><?php echo htmlspecialchars(substr($prd['description'],0,75)).'...'; ?></p>
-                        <div class="product-price-row">
-                            <span class="product-price">₱<?php echo number_format($prd['price'],2); ?></span>
-                            <span class="product-stock"><?php echo $oos ? '❌ Out of stock' : '✓ '.$prd['stock'].' left'; ?></span>
-                        </div>
-                        <button class="btn-add-cart" <?php echo $oos?'disabled':''; ?> onclick="openPrdModal(<?php echo $prd['id']; ?>)"><?php echo $oos?'Unavailable':'View Details'; ?></button>
-                    </div>
+        <div class="prd-grid" id="prdGrid">
+            <?php foreach ($products as $prd): $oos = $prd['stock'] <= 0; ?>
+            <div class="prd-card" data-category="<?php echo htmlspecialchars($prd['category_name']??''); ?>">
+                <div class="prd-img-wrap">
+                    <?php if (!empty($prd['image'])): ?>
+                    <img src="uploads/products/<?php echo htmlspecialchars($prd['image']); ?>"
+                         alt="<?php echo htmlspecialchars($prd['name']); ?>"
+                         loading="lazy"
+                         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                    <div class="img-placeholder" style="display:none">🧴<small>Spa Product</small></div>
+                    <?php else: ?>
+                    <div class="img-placeholder">🧴<small>Spa Product</small></div>
+                    <?php endif; ?>
+                    <?php if ($oos): ?><div class="oos-overlay"><span class="oos-text">Out of Stock</span></div><?php endif; ?>
                 </div>
-                <?php endforeach; ?>
-            </div></div>
-            <button class="slider-arrow next" id="prdNext" onclick="slideMove('prd',1)">&#8594;</button>
+                <div class="prd-body">
+                    <?php if (!empty($prd['category_name'])): ?>
+                    <span class="prd-cat-badge"><?php echo htmlspecialchars($prd['category_name']); ?></span>
+                    <?php endif; ?>
+                    <h3 class="prd-name"><?php echo htmlspecialchars($prd['name']); ?></h3>
+                    <p class="prd-desc"><?php echo htmlspecialchars($prd['description']); ?></p>
+                    <div class="prd-price-row">
+                        <span class="prd-price">₱<?php echo number_format($prd['price'],2); ?></span>
+                        <span class="prd-stock"><?php echo $oos ? '❌ Out of stock' : '✓ '.$prd['stock'].' left'; ?></span>
+                    </div>
+                    <button class="btn-cart-grid" <?php echo $oos ? 'disabled' : ''; ?>
+                            onclick="openPrdModal(<?php echo $prd['id']; ?>)">
+                        <?php echo $oos ? 'Unavailable' : 'View Details'; ?>
+                    </button>
+                </div>
+            </div>
+            <?php endforeach; ?>
         </div>
-        <div class="slider-dots" id="prdDots"></div>
         <?php else: ?><div class="empty-state"><div class="icon">🛍️</div><p>No products available yet.</p></div><?php endif; ?>
     </div></div>
 </section>
 
+<!-- ── ABOUT SECTION ──────────────────────────────────────────────────────── -->
 <section class="spa-section" id="about">
     <div class="section-header">
         <div>
@@ -308,7 +500,12 @@ while ($row = $res_prd->fetch_assoc()) {
                 <p>We use only premium, skin-safe products and maintain the highest standards of hygiene and comfort — because you deserve nothing less.</p>
             </div>
             <div class="about-visual">
-                <div><span>💆</span><p>Restore · Renew · Recover</p></div>
+                <div style="text-align:center;">
+                    <video autoplay loop muted playsinline
+                           style="width:70%; max-width:430px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1);">
+                        <source src="img/for_contactus.mp4" type="video/mp4">
+                    </video>
+                </div>
             </div>
         </div>
         <div class="stats-bar">
@@ -330,6 +527,7 @@ while ($row = $res_prd->fetch_assoc()) {
     </div></div>
 </section>
 
+<!-- ── CONTACT SECTION ─────────────────────────────────────────────────────── -->
 <section class="spa-section" id="contact">
     <div class="section-header">
         <div>
@@ -339,26 +537,50 @@ while ($row = $res_prd->fetch_assoc()) {
     </div>
     <div class="section-panel"><div class="panel-inner">
         <div class="contact-inner">
-            <div class="contact-info-block">
-                <h3 class="section-title-spa" style="font-size:1.6rem;margin-bottom:0.5rem;">Visit Us or<br><em>Send a Message</em></h3>
-                <p style="color:var(--brown-md);font-size:0.93rem;line-height:1.7;margin-bottom:0.5rem;">We're located in the heart of Iloilo City. Walk in anytime, or send us a message and we'll get back to you.</p>
-                <div class="contact-detail"><div class="contact-icon">📍</div><div><h4>Our Location</h4><p>Iloilo City, Philippines<br>Western Visayas</p></div></div>
-                <div class="contact-detail"><div class="contact-icon">📞</div><div><h4>Phone / Viber</h4><a href="tel:+639000000000">+63 900 000 0000</a></div></div>
-                <div class="contact-detail"><div class="contact-icon">✉️</div><div><h4>Email</h4><a href="mailto:recovery@spa.com">recovery@spa.com</a></div></div>
-                <div class="contact-detail"><div class="contact-icon">📱</div><div><h4>Social Media</h4><p>Facebook: Recovery Spa Iloilo<br>Instagram: @recoveryspa</p></div></div>
+            <div>
+                <div class="contact-info-block">
+                    <h3 class="section-title-spa" style="font-size:1.6rem;margin-bottom:0.5rem;">Visit Us or<br><em>Send a Message</em></h3>
+                    <p style="color:var(--brown-md);font-size:0.93rem;line-height:1.7;margin-bottom:0.5rem;">We're located in the heart of Iloilo City. Walk in anytime, or send us a message and we'll get back to you.</p>
+                    <div class="contact-detail"><div class="contact-icon">📍</div><div><h4>Our Location</h4><p>G&amp;R Building, M.H. Del Pilar Street, Molo, Iloilo City</p></div></div>
+                    <div class="contact-detail"><div class="contact-icon">📞</div><div><h4>Phone / Viber</h4><a href="tel:+639853359998">+639853359998</a></div></div>
+                    <div class="contact-detail"><div class="contact-icon">✉️</div><div><h4>Email</h4><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></div></div>
+                    <div class="contact-detail"><div class="contact-icon">📱</div><div><h4>Social Media</h4><p>Facebook: Recovery Spa Iloilo<br>Instagram: @recoveryspa</p></div></div>
+                </div>
+                <div class="hours-box">
+                    <h4>Operating Hours</h4>
+                    <div class="hours-row"><span>Monday – Sunday</span><span>10:00 AM – 10:00 PM</span></div>
+                    <div class="hours-row"><span>Holidays</span><span>10:00 AM – 10:00 PM</span></div>
+                </div>
             </div>
-            <div class="hours-box">
-                <h4>Operating Hours</h4>
-                <div class="hours-row"><span>Monday – Friday</span><span>9:00 AM – 8:00 PM</span></div>
-                <div class="hours-row"><span>Saturday</span><span>9:00 AM – 9:00 PM</span></div>
-                <div class="hours-row"><span>Sunday</span><span>10:00 AM – 7:00 PM</span></div>
-                <div class="hours-row"><span>Holidays</span><span>10:00 AM – 6:00 PM</span></div>
+            <div class="contact-form-card">
+                <?php if ($contact_sent): ?>
+                <div class="contact-success">
+                    <span>✅</span>
+                    <h3>Message Sent!</h3>
+                    <p>Thank you for reaching out. We'll get back to you shortly.</p>
+                </div>
+                <?php else: ?>
+                <h3>Send Us a Message</h3>
+                <p>Have questions? We'd love to hear from you.</p>
+                <?php if ($contact_error): ?><div class="alert-form-error">⚠️ <?php echo htmlspecialchars($contact_error); ?></div><?php endif; ?>
+                <form method="POST">
+                    <div class="cf-row">
+                        <div class="cf-group"><label>Your Name *</label><input type="text" name="cf_name" required placeholder="Juan dela Cruz"></div>
+                        <div class="cf-group"><label>Email *</label><input type="email" name="cf_email" required placeholder="you@email.com"></div>
+                    </div>
+                    <div class="cf-group"><label>Message *</label><textarea name="cf_message" required placeholder="Write your message here..."></textarea></div>
+                    <button type="submit" name="send_message" class="btn-send">✉️ Send Message</button>
+                </form>
+                <?php endif; ?>
             </div>
         </div>
     </div></div>
 </section>
 
-</div><footer class="spa-footer">
+</div>
+
+<!-- ── FOOTER ──────────────────────────────────────────────────────────────── -->
+<footer class="spa-footer">
     <div class="footer-inner">
         <div class="footer-brand">
             <div class="ft-logo">RECOVERY</div>
@@ -387,24 +609,25 @@ while ($row = $res_prd->fetch_assoc()) {
         <div class="footer-col">
             <h4>Contact</h4>
             <ul>
-                <li><a href="#contact">Iloilo City, Philippines</a></li>
-                <li><a href="mailto:recovery@spa.com">recovery@spa.com</a></li>
-                <li><a href="tel:+639000000000">+63 900 000 0000</a></li>
-                <li><a href="#contact">Mon – Sun: 9AM – 8PM</a></li>
+                <li><a href="#contact">G&amp;R Bldg., M.H. Del Pilar, Molo, Iloilo City</a></li>
+                <li><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></li>
+                <li><a href="tel:+639853359998">+639853359998</a></li>
+                <li><a href="#contact">Mon – Sun: 10AM – 10PM</a></li>
             </ul>
         </div>
     </div>
     <div class="footer-bottom">&copy; <?php echo date('Y'); ?> Recovery Spa Iloilo. All rights reserved.</div>
 </footer>
 
+<!-- ── SERVICE MODALS ──────────────────────────────────────────────────────── -->
 <?php foreach ($services as $svc): ?>
 <div class="spa-modal" id="svcModal<?php echo $svc['id']; ?>">
     <div class="modal-box" style="position:relative;">
         <button class="modal-close-btn" onclick="closeSvcModal(<?php echo $svc['id']; ?>)">✕</button>
-        <img class="modal-img" 
-             src="<?php echo $base_path; ?>uploads/services/<?php echo htmlspecialchars($svc['image']); ?>" 
-             alt="<?php echo htmlspecialchars($svc['name']); ?>" 
-             onerror="this.onerror=null; this.src='<?php echo $base_path; ?>uploads/products/default.png';">
+        <img class="modal-img"
+             src="uploads/services/<?php echo htmlspecialchars($svc['image']); ?>"
+             alt="<?php echo htmlspecialchars($svc['name']); ?>"
+             onerror="this.onerror=null; this.src='uploads/products/default.png';">
         <div class="modal-body-inner">
             <?php if (!empty($svc['category_name'])): ?><span class="modal-cat-badge">🏷 <?php echo htmlspecialchars($svc['category_name']); ?></span><?php endif; ?>
             <h2 class="modal-title"><?php echo htmlspecialchars($svc['name']); ?></h2>
@@ -416,8 +639,14 @@ while ($row = $res_prd->fetch_assoc()) {
             </div>
             <div class="modal-actions">
                 <?php if (isset($_SESSION['user_id'])): ?>
-                <form method="POST" style="flex:1;"><?php echo csrf_field(); ?><input type="hidden" name="service_id" value="<?php echo $svc['id']; ?>"><button type="submit" name="book_service" class="btn-modal-primary" style="width:100%;">Book Now</button></form>
-                <?php else: ?><a href="user/auth.php" class="btn-modal-primary" style="text-align:center;text-decoration:none;display:block;padding:0.85rem;flex:1;">Login to Book</a><?php endif; ?>
+                <form method="POST" action="index.php" style="flex:1;">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="service_id" value="<?php echo $svc['id']; ?>">
+                    <button type="submit" name="book_service" class="btn-modal-primary" style="width:100%;">Book Now</button>
+                </form>
+                <?php else: ?>
+                <a href="user/auth.php" class="btn-modal-primary" style="text-align:center;text-decoration:none;display:block;padding:0.85rem;flex:1;">Login to Book</a>
+                <?php endif; ?>
                 <button class="btn-modal-secondary" onclick="closeSvcModal(<?php echo $svc['id']; ?>)">Close</button>
             </div>
         </div>
@@ -425,25 +654,48 @@ while ($row = $res_prd->fetch_assoc()) {
 </div>
 <?php endforeach; ?>
 
+<!-- ── PRODUCT MODALS ──────────────────────────────────────────────────────── -->
 <?php foreach ($products as $prd): $oos = $prd['stock'] <= 0; ?>
 <div class="spa-modal" id="prdModal<?php echo $prd['id']; ?>">
     <div class="modal-box" style="position:relative;">
         <button class="modal-close-btn" onclick="closePrdModal(<?php echo $prd['id']; ?>)">✕</button>
-        <img class="modal-img" 
-             src="<?php echo $base_path; ?>uploads/products/<?php echo htmlspecialchars($prd['image']); ?>" 
-             alt="<?php echo htmlspecialchars($prd['name']); ?>" 
-             onerror="this.onerror=null; this.src='<?php echo $base_path; ?>uploads/products/default.png';">
+        <img class="modal-img"
+             src="uploads/products/<?php echo htmlspecialchars($prd['image']); ?>"
+             alt="<?php echo htmlspecialchars($prd['name']); ?>"
+             onerror="this.onerror=null; this.src='uploads/products/default.png';">
         <div class="modal-body-inner">
             <?php if (!empty($prd['category_name'])): ?><span class="modal-cat-badge">🏷 <?php echo htmlspecialchars($prd['category_name']); ?></span><?php endif; ?>
             <h2 class="modal-title"><?php echo htmlspecialchars($prd['name']); ?></h2>
             <p class="modal-desc"><?php echo htmlspecialchars($prd['description']); ?></p>
-            <div class="modal-price-row"><span class="modal-price">₱<?php echo number_format($prd['price'],2); ?></span><span class="modal-meta">📦 <?php echo $prd['stock']; ?> in stock</span></div>
+            <div class="modal-price-row">
+                <span class="modal-price">₱<?php echo number_format($prd['price'],2); ?></span>
+                <span class="modal-meta">📦 <?php echo intval($prd['stock']); ?> in stock</span>
+            </div>
             <?php if (!$oos): ?>
-            <div class="modal-qty-row"><span class="qty-label">Quantity:</span><input type="number" class="qty-input" id="qty<?php echo $prd['id']; ?>" value="1" min="1" max="<?php echo $prd['stock']; ?>" oninput="syncQty(<?php echo $prd['id']; ?>)"></div>
+            <div class="modal-qty-row">
+                <span class="qty-label">Quantity:</span>
+                <input type="number" class="qty-input" id="qty<?php echo $prd['id']; ?>"
+                       value="1" min="1" max="<?php echo intval($prd['stock']); ?>"
+                       oninput="syncQty(<?php echo $prd['id']; ?>, <?php echo intval($prd['stock']); ?>)">
+            </div>
+            <div class="stock-warn" id="stockWarn<?php echo $prd['id']; ?>">
+                ⚠️ Only <strong><?php echo intval($prd['stock']); ?></strong> item(s) available.
+            </div>
             <div class="modal-actions">
-                <form method="POST" style="flex:1;" id="addCartForm<?php echo $prd['id']; ?>"><input type="hidden" name="product_id"><a href="user/auth.php" class="btn-modal-primary" style="width:100%; text-align:center; text-decoration:none; display:block;">🛒 Add to Cart</a>
-                                <form method="POST" style="flex:1;" id="addCartForm<?php echo $prd['id']; ?>"><input type="hidden" name="product_id"><a href="user/auth.php" class="btn-modal-primary" style="width:100%; text-align:center; text-decoration:none; display:block;">🛒 Check out</a>
-
+                <?php if (isset($_SESSION['user_id'])): ?>
+                <form method="POST" action="index.php" style="flex:1;" id="addCartForm<?php echo $prd['id']; ?>">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="product_id" value="<?php echo $prd['id']; ?>">
+                    <input type="hidden" name="add_to_cart" value="1">
+                    <input type="hidden" name="quantity" id="cartQty<?php echo $prd['id']; ?>" value="1">
+                    <button type="submit" id="addCartBtn<?php echo $prd['id']; ?>"
+                            onclick="return validateQty(<?php echo $prd['id']; ?>, <?php echo intval($prd['stock']); ?>)"
+                            class="btn-modal-primary" style="width:100%;">🛒 Add to Cart</button>
+                </form>
+                <?php else: ?>
+                <a href="user/auth.php" class="btn-modal-primary" style="text-align:center;text-decoration:none;display:block;padding:0.85rem;flex:1;">Login to Shop</a>
+                <?php endif; ?>
+                <button class="btn-modal-secondary" onclick="closePrdModal(<?php echo $prd['id']; ?>)">✕</button>
             </div>
             <?php else: ?>
             <div style="background:#f8d7da;color:#842029;padding:0.75rem 1rem;border-radius:10px;font-size:0.88rem;margin-bottom:1rem;">❌ This product is currently out of stock.</div>
@@ -455,46 +707,143 @@ while ($row = $res_prd->fetch_assoc()) {
 <?php endforeach; ?>
 
 <script>
-const sliders = {};
-function initSlider(key) {
-    const track = document.getElementById(key+'Track');
-    const dotsEl = document.getElementById(key+'Dots');
+/* ── Mobile nav drawer ────────────────────────────────────────────── */
+function toggleNavDrawer() {
+    var drawer  = document.getElementById('navMobileDrawer');
+    var overlay = document.getElementById('navMobileOverlay');
+    var burger  = document.getElementById('navHamburger');
+    var open = drawer.classList.toggle('open');
+    overlay.classList.toggle('active', open);
+    if (burger) burger.classList.toggle('open', open);
+}
+function closeNavDrawer() {
+    document.getElementById('navMobileDrawer').classList.remove('open');
+    document.getElementById('navMobileOverlay').classList.remove('active');
+    var burger = document.getElementById('navHamburger');
+    if (burger) burger.classList.remove('open');
+}
+
+/* ── Per-category service sliders ────────────────────────────────── */
+var sliders = {};
+function getVisibleCount() {
+    return window.innerWidth <= 580 ? 1 : (window.innerWidth <= 960 ? 2 : 3);
+}
+function setWidths(key) {
+    var track = document.getElementById('track-' + key);
     if (!track) return;
-    const outer = track.parentElement;
-    sliders[key] = { outer, track, dotsEl, currentPage:0, perPage:getPerPage() };
+    var vis = getVisibleCount();
+    var gap  = vis === 1 ? '0px' : vis === 2 ? '1rem' : '1.35rem';
+    track.querySelectorAll('.service-slide').forEach(function(s) {
+        s.style.flex = '0 0 calc(' + (100 / vis) + '% - ' + gap + ')';
+    });
+}
+function buildDots(key) {
+    var dotsEl = document.getElementById('dots-' + key);
+    if (!dotsEl) return;
+    var track = document.getElementById('track-' + key);
+    var count = track ? track.querySelectorAll('.service-slide').length : 0;
+    var vis   = getVisibleCount();
+    var pages = Math.max(0, count - vis + 1);
+    dotsEl.innerHTML = '';
+    for (var i = 0; i < pages; i++) {
+        var d = document.createElement('span');
+        d.className = 'dot' + (i === 0 ? ' active' : '');
+        (function(k, idx) { d.addEventListener('click', function() { go(k, idx); }); })(key, i);
+        dotsEl.appendChild(d);
+    }
+}
+function go(key, newPos) {
+    var sl = sliders[key]; if (!sl) return;
+    var vis    = getVisibleCount();
+    var maxPos = Math.max(0, sl.count - vis);
+    newPos = Math.max(0, Math.min(newPos, maxPos)); sl.pos = newPos;
+    var track = document.getElementById('track-' + key);
+    if (track) track.style.transform = 'translateX(-' + (newPos * 100 / vis) + '%)';
+    var prev = document.getElementById('prev-' + key);
+    var next = document.getElementById('next-' + key);
+    if (prev) prev.style.display = newPos === 0 ? 'none' : '';
+    if (next) next.style.display = newPos >= maxPos ? 'none' : '';
+    document.querySelectorAll('#dots-' + key + ' .dot').forEach(function(d, i) {
+        d.classList.toggle('active', i === newPos);
+    });
+}
+function slideMove(key, dir) { if (sliders[key]) go(key, sliders[key].pos + dir); }
+function initSlider(key) {
+    var track = document.getElementById('track-' + key); if (!track) return;
+    sliders[key] = { pos: 0, count: track.querySelectorAll('.service-slide').length };
     setWidths(key); buildDots(key); go(key, 0);
 }
-function getPerPage() { return window.innerWidth<=600?1:window.innerWidth<=900?2:3; }
-function getSlideWidth(key) { const s=sliders[key]; return (s.outer.offsetWidth - 24*(s.perPage-1))/s.perPage; }
-function setWidths(key) { const s=sliders[key]; const sw=getSlideWidth(key); if(sw<=0)return; Array.from(s.track.children).forEach(sl=>{ if(sl.style.display!=='none') sl.style.width=sw+'px'; }); }
-function visibleSlides(key) { return Array.from(sliders[key].track.children).filter(sl=>sl.style.display!=='none'); }
-function totalPages(key) { return Math.ceil(visibleSlides(key).length/sliders[key].perPage); }
-function buildDots(key) {
-    const s=sliders[key]; const tp=totalPages(key); if(!s.dotsEl)return; s.dotsEl.innerHTML=''; if(tp<=1)return;
-    for(let i=0;i<tp;i++){ const d=document.createElement('div'); d.className='dot'+(i===s.currentPage?' active':''); d.onclick=()=>go(key,i); s.dotsEl.appendChild(d); }
+window.addEventListener('resize', function() {
+    Object.keys(sliders).forEach(function(key) {
+        setWidths(key); buildDots(key); go(key, sliders[key].pos);
+    });
+});
+
+/* ── Category filter for product grid ───────────────────────────── */
+function filterGrid(gridId, category) {
+    document.querySelectorAll('#' + gridId + ' [data-category]').forEach(function(card) {
+        card.style.display = (category === 'All' || card.dataset.category === category) ? '' : 'none';
+    });
 }
-function go(key, page) {
-    const s=sliders[key]; if(!s)return; const tp=totalPages(key);
-    s.currentPage=Math.max(0,Math.min(page,tp-1));
-    s.track.style.transform=`translateX(-${s.currentPage*s.perPage*(getSlideWidth(key)+24)}px)`;
-    if(s.dotsEl) s.dotsEl.querySelectorAll('.dot').forEach((d,i)=>d.classList.toggle('active',i===s.currentPage));
-    const prev=document.getElementById(key+'Prev'); const next=document.getElementById(key+'Next');
-    if(prev) prev.disabled=s.currentPage===0; if(next) next.disabled=s.currentPage>=tp-1;
-}
-function slideMove(key,dir) { if(sliders[key]) go(key,sliders[key].currentPage+dir); }
-function filterSliderDropdown(key,category) {
-    const s=sliders[key]; if(!s)return;
-    Array.from(s.track.children).forEach(sl=>{ const cat=sl.getAttribute('data-category')||''; sl.style.display=(category==='All'||cat===category)?'':'none'; });
-    s.currentPage=0; setWidths(key); buildDots(key); go(key,0);
-}
+
+/* ── Modal open / close ─────────────────────────────────────────── */
 function openSvcModal(id)  { document.getElementById('svcModal'+id).classList.add('active'); }
 function closeSvcModal(id) { document.getElementById('svcModal'+id).classList.remove('active'); }
 function openPrdModal(id)  { document.getElementById('prdModal'+id).classList.add('active'); }
 function closePrdModal(id) { document.getElementById('prdModal'+id).classList.remove('active'); }
-document.querySelectorAll('.spa-modal').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m) m.classList.remove('active'); }));
-function syncQty(id) { const h=document.getElementById('cartQty'+id); if(h) h.value=document.getElementById('qty'+id)?.value||1; }
-window.addEventListener('load', () => { initSlider('svc'); initSlider('prd'); });
-window.addEventListener('resize', () => { ['svc','prd'].forEach(k=>{ if(sliders[k]){ sliders[k].perPage=getPerPage(); setWidths(k); buildDots(k); go(k,sliders[k].currentPage); } }); });
+document.querySelectorAll('.spa-modal').forEach(function(m) {
+    m.addEventListener('click', function(e) { if (e.target === m) m.classList.remove('active'); });
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') document.querySelectorAll('.spa-modal.active').forEach(function(m) { m.classList.remove('active'); });
+});
+
+/* ── Qty sync for product modals ────────────────────────────────── */
+function syncQty(id, maxStock) {
+    var qtyInput = document.getElementById('qty'+id);
+    var cartQty  = document.getElementById('cartQty'+id);
+    var warnEl   = document.getElementById('stockWarn'+id);
+    var addBtn   = document.getElementById('addCartBtn'+id);
+    if (!qtyInput) return;
+    var val = parseInt(qtyInput.value) || 1;
+    if (val < 1) { val = 1; qtyInput.value = 1; }
+    var isOver = val > maxStock;
+    if (warnEl) warnEl.style.display = isOver ? 'block' : 'none';
+    if (addBtn) { addBtn.disabled = isOver; addBtn.style.opacity = isOver ? '0.5' : '1'; }
+    if (cartQty) cartQty.value = val;
+}
+function validateQty(id, maxStock) {
+    var qtyInput = document.getElementById('qty'+id);
+    var cartQty  = document.getElementById('cartQty'+id);
+    if (!qtyInput) return false;
+    var val = parseInt(qtyInput.value) || 1;
+    if (val < 1) { alert('Quantity must be at least 1.'); qtyInput.value = 1; syncQty(id, maxStock); return false; }
+    if (val > maxStock) { alert('Only '+maxStock+' item(s) left in stock.'); qtyInput.value = maxStock; syncQty(id, maxStock); return false; }
+    if (cartQty) cartQty.value = val;
+    return true;
+}
+
+/* ── Open specific item from URL params (search result) ─────────── */
+(function() {
+    var params = new URLSearchParams(window.location.search);
+    var open   = params.get('open');
+    var id     = parseInt(params.get('id'), 10);
+    if (!open || !id) return;
+    function tryOpen() {
+        if (open === 'product') openPrdModal(id);
+        else if (open === 'service') openSvcModal(id);
+        if (window.history && window.history.replaceState)
+            window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tryOpen);
+    else tryOpen();
+})();
+
+/* ── Init category sliders ──────────────────────────────────────── */
+(function(){
+    var keys = <?php echo json_encode(array_keys($services_by_cat)); ?>;
+    keys.forEach(function(k){ initSlider(k); });
+}());
 </script>
 </body>
 </html>
