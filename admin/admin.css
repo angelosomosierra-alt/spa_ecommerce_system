@@ -86,23 +86,6 @@ img { display: block; }
     position: relative;
     z-index: 20;
 }
-.logo {
-    display: flex;           /* Turns on the flexbox layout */
-    align-items: center;     /* Aligns logo and text vertically in the middle */
-    justify-content: center; /* Centers the whole group horizontally */
-    gap: 10px;               /* Adds a little space between the image and the text */
-    font-weight: bold;       /* Optional: makes the name stand out */
-    font-size: 1.5rem;       /* Optional: adjusts text size */
-}
-
-/* Ensure the image doesn't have weird bottom margins */
-.logo img {
-    display: block;
-}
-.logo.logo{
-    color: var(--cream);
-}
-
 .sidebar-logo {
     padding: 1.5rem 1.5rem 1rem;
     border-bottom: 1px solid rgba(255,255,255,0.1);
@@ -855,6 +838,9 @@ table tbody tr:hover { background: var(--bg3); }
 
 .pay-btn-online { background: #0070f3; color: #fff; }
 .pay-btn-online:hover { background: #0051b3; transform: translateY(-1px); }
+
+.pay-btn-later { background: #8B6F47; color: #FAF3E8; }
+.pay-btn-later:hover { background: #7a5f3b; transform: translateY(-1px); }
 
 .coming-soon-badge {
     font-size: 0.62rem;
