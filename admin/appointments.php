@@ -1450,6 +1450,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         $pm_row=$pm->get_result()->fetch_assoc()??$pm_row; $pm->close();
     }
 
+    // ── Pre-compute discount label for header badge ───────────────────────────
+    $_disc_type_h   = $pm_row['discount_type'] ?? 'none';
+    $_has_discount_h = ($_disc_type_h !== 'none' && $_disc_type_h !== '');
+    $_disc_icons_h   = ['senior'=>'👴','pwd'=>'♿','voucher'=>'🎟️','employee'=>'🪪'];
+    $_disc_names_h   = ['senior'=>'Senior','pwd'=>'PWD','voucher'=>'Voucher','employee'=>'Employee'];
+    $_dico_h  = $_disc_icons_h[$_disc_type_h]  ?? '🎟️';
+    $_dlbl_h  = $_disc_names_h[$_disc_type_h]  ?? ucfirst($_disc_type_h);
+
     $ts=$conn->prepare("SELECT at2.id AS at_id,at2.commission,at2.notes,t.id AS therapist_id,t.full_name,t.specialties FROM appointment_therapists at2 JOIN therapists t ON at2.therapist_id=t.id WHERE at2.appointment_id=? ORDER BY at2.assigned_at ASC");
     $ts->bind_param("i",$appt_id); $ts->execute();
     $assigned_therapists=$ts->get_result()->fetch_all(MYSQLI_ASSOC); $ts->close();
@@ -1478,6 +1486,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <p class="appt-name">
                 <?php echo htmlspecialchars($a['full_name']); ?>
                 <span style="background:<?php echo $bbg;?>;color:<?php echo $bfg;?>;padding:0.15rem 0.5rem;border-radius:20px;font-size:0.67rem;font-weight:700;vertical-align:middle;margin-left:0.35rem;"><?php echo $blabel; ?></span>
+                <?php if ($_has_discount_h): ?><span style="background:#fffbeb;color:#b45309;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fcd34d;margin-left:0.2rem;" title="Customer requested <?php echo htmlspecialchars($_dlbl_h); ?> discount — verify ID/voucher at check-in"><?php echo $_dico_h . ' ' . htmlspecialchars($_dlbl_h); ?></span><?php endif; ?>
                 <?php if (isset($conflict_appt_ids[$appt_id])): ?><span style="background:#fef3c7;color:#92400e;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fbbf24;margin-left:0.2rem;animation:pulse 2s infinite;">⚠️ Conflict</span><?php endif; ?>
             </p>
             <p class="appt-svc"><?php echo htmlspecialchars($a['service_name']); ?></p>
