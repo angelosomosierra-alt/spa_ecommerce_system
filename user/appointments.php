@@ -157,6 +157,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
             $upd->bind_param("i", $order_id);
         }
         $upd->execute(); $upd->close();
+        // Restock products — undo the stock deduction made at checkout/payment
+        $restock = $conn->prepare("
+            UPDATE products p
+            JOIN order_items oi ON oi.product_id = p.id
+            SET p.stock = p.stock + oi.quantity
+            WHERE oi.order_id = ? AND oi.product_id IS NOT NULL
+        ");
+        $restock->bind_param("i", $order_id);
+        $restock->execute(); $restock->close();
         $_SESSION['flash_success'] = "Order cancelled successfully.";
     } else {
         $_SESSION['flash_error'] = "Cannot cancel this order.";
