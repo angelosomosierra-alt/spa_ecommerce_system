@@ -1634,9 +1634,14 @@ function walkinBMSelectMinute(m, el) {
     const h12   = walkinBMSelectedHour === 0 ? 12 : walkinBMSelectedHour > 12 ? walkinBMSelectedHour - 12 : walkinBMSelectedHour;
     const ampm  = walkinBMSelectedHour < 12 ? 'AM' : 'PM';
     const timeLabel = h12 + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+    const _wEndTot = walkinBMSelectedHour * 60 + m + (walkinBwData ? walkinBwData.session_time : 0);
+    const _wEndH = Math.floor(_wEndTot / 60), _wEndM = _wEndTot % 60;
+    const _wEndH12 = _wEndH === 0 ? 12 : _wEndH > 12 ? _wEndH - 12 : _wEndH;
+    const _wEndAmpm = _wEndH < 12 ? 'AM' : 'PM';
+    const wEndLabel = _wEndH12 + ':' + String(_wEndM).padStart(2, '0') + ' ' + _wEndAmpm;
 
     const info = document.getElementById('walkinBMSelectedInfo');
-    if (info) info.textContent = WALKIN_BM_MONTHS[parts[1] - 1] + ' ' + parts[2] + ' · ' + timeLabel;
+    if (info) info.textContent = WALKIN_BM_MONTHS[parts[1] - 1] + ' ' + parts[2] + ' · ' + timeLabel + ' — ' + wEndLabel;
 
     const footer = document.getElementById('walkinBMFooter');
     if (footer) footer.style.display = 'flex';

@@ -2085,8 +2085,13 @@ function bmSelectMinute(m, el) {
     const h12 = bmSelectedHour === 0 ? 12 : bmSelectedHour > 12 ? bmSelectedHour - 12 : bmSelectedHour;
     const ampm = bmSelectedHour < 12 ? 'AM' : 'PM';
     const timeLabel = h12 + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+    const _endTot = bmSelectedHour * 60 + m + (bwData ? bwData.session_time : 0);
+    const _endH = Math.floor(_endTot / 60), _endM = _endTot % 60;
+    const _endH12 = _endH === 0 ? 12 : _endH > 12 ? _endH - 12 : _endH;
+    const _endAmpm = _endH < 12 ? 'AM' : 'PM';
+    const endLabel = _endH12 + ':' + String(_endM).padStart(2, '0') + ' ' + _endAmpm;
     document.getElementById('bmSelectedInfo').textContent =
-        BM_MONTHS[_smo - 1] + ' ' + _sdy + ' · ' + timeLabel;
+        BM_MONTHS[_smo - 1] + ' ' + _sdy + ' · ' + timeLabel + ' — ' + endLabel;
     document.getElementById('bmFooter').style.display = 'flex';
     document.getElementById('bmConfirmBtn').disabled  = false;
 }
