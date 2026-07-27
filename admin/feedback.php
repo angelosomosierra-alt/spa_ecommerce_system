@@ -8,6 +8,14 @@ require_once __DIR__ . '/admin_access.php';
 enforce_page_access();
 redirect_if_not_admin();
 
+// ── Ensure contact_messages table exists ─────────────────────────────────────
+$conn->query("CREATE TABLE IF NOT EXISTS `contact_messages` (`id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, `name` VARCHAR(100) NOT NULL, `email` VARCHAR(150) NOT NULL, `subject` VARCHAR(200) NOT NULL DEFAULT '', `message` TEXT NOT NULL, `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+
+// ── Contact messages ─────────────────────────────────────────────────────────
+$contact_msgs = [];
+$r = $conn->query("SELECT * FROM contact_messages ORDER BY created_at DESC");
+while ($row = $r->fetch_assoc()) $contact_msgs[] = $row;
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 $r          = $conn->query("SELECT COUNT(*) as c, ROUND(AVG(rating),1) as avg FROM feedback");
 $stats      = $r->fetch_assoc();
@@ -89,6 +97,11 @@ require_once 'admin_header.php';
         <div class="stat-icon">🛍️</div>
         <div class="stat-number"><?php echo count($order_feedback); ?></div>
         <div class="stat-label">Product Reviews</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">✉️</div>
+        <div class="stat-number"><?php echo count($contact_msgs); ?></div>
+        <div class="stat-label">Contact Messages</div>
     </div>
 </div>
 
@@ -249,6 +262,51 @@ require_once 'admin_header.php';
             </tr>
             <?php endforeach; else: ?>
             <tr><td colspan="6" style="text-align:center;color:var(--gray);padding:2rem;">No product feedback yet.</td></tr>
+            <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ── Contact Messages Table ─────────────────────────────────────────────── -->
+<div class="panel" style="margin-top:1.5rem;">
+    <div class="panel-header">
+        <span class="panel-title">✉️ Contact Messages</span>
+        <span class="badge badge-pending"><?php echo count($contact_msgs); ?> message<?php echo count($contact_msgs) !== 1 ? 's' : ''; ?></span>
+    </div>
+    <div class="table-wrap" style="border:none;border-radius:0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Subject</th>
+                    <th>Message</th>
+                    <th>Received</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php if (!empty($contact_msgs)): foreach ($contact_msgs as $cm): ?>
+            <tr>
+                <td style="font-weight:600;"><?php echo htmlspecialchars($cm['name']); ?></td>
+                <td>
+                    <a href="mailto:<?php echo htmlspecialchars($cm['email']); ?>"
+                       style="color:var(--gold);text-decoration:none;">
+                        <?php echo htmlspecialchars($cm['email']); ?>
+                    </a>
+                </td>
+                <td style="font-size:0.82rem;color:var(--gray);">
+                    <?php echo $cm['subject'] ? htmlspecialchars($cm['subject']) : '<em style="color:var(--gray);">—</em>'; ?>
+                </td>
+                <td style="max-width:280px;font-size:0.85rem;white-space:pre-wrap;">
+                    <?php echo htmlspecialchars($cm['message']); ?>
+                </td>
+                <td style="font-size:0.78rem;color:var(--gray);white-space:nowrap;">
+                    <?php echo date('M d, Y g:i A', strtotime($cm['created_at'])); ?>
+                </td>
+            </tr>
+            <?php endforeach; else: ?>
+            <tr><td colspan="5" style="text-align:center;color:var(--gray);padding:2rem;">No contact messages yet.</td></tr>
             <?php endif; ?>
             </tbody>
         </table>

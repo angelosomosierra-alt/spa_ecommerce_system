@@ -23,9 +23,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
     if (empty($cf_name) || empty($cf_email) || empty($cf_message)) {
         $contact_error = 'Please fill in all fields.';
     } else {
-        $stmt = $conn->prepare("INSERT INTO notifications (user_id, type, title, message) VALUES (NULL, 'general', ?, ?)");
-        $title = "Message from: $cf_name ($cf_email)";
-        $stmt->bind_param("ss", $title, $cf_message);
+        $conn->query("CREATE TABLE IF NOT EXISTS `contact_messages` (`id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, `name` VARCHAR(100) NOT NULL, `email` VARCHAR(150) NOT NULL, `subject` VARCHAR(200) NOT NULL DEFAULT '', `message` TEXT NOT NULL, `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+        $stmt = $conn->prepare("INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, '', ?)");
+        $stmt->bind_param("sss", $cf_name, $cf_email, $cf_message);
         $stmt->execute();
         $stmt->close();
         $contact_sent = true;
