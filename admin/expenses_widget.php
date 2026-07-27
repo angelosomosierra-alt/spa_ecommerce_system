@@ -193,7 +193,7 @@ $cat_icons      = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utiliti
                         <a href="?del_expense=<?php echo $e['id']; ?>"
                            style="color:var(--red);font-size:0.75rem;text-decoration:none;padding:0.1rem 0.3rem;
                                   border-radius:4px;border:1px solid var(--red);flex-shrink:0;"
-                           onclick="return confirm('Delete this expense?')">✕</a>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this expense?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
                         <?php endif; ?>
                     </div>
                     <?php endforeach; ?>

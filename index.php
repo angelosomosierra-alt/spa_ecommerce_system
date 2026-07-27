@@ -83,6 +83,7 @@ while ($row = $res_prd->fetch_assoc()) {
 $_css_v = file_exists('assets/style.css') ? filemtime('assets/style.css') : '1';
 ?>
 <link rel="stylesheet" href="assets/style.css?v=<?php echo $_css_v; ?>">
+<script src="assets/ui-modal.js"></script>
 <style>
     /* ── Logo: image + text ─────────────────────────────── */
     .logo { display:flex; align-items:center; gap:0.75rem; }
@@ -817,8 +818,8 @@ function validateQty(id, maxStock) {
     var cartQty  = document.getElementById('cartQty'+id);
     if (!qtyInput) return false;
     var val = parseInt(qtyInput.value) || 1;
-    if (val < 1) { alert('Quantity must be at least 1.'); qtyInput.value = 1; syncQty(id, maxStock); return false; }
-    if (val > maxStock) { alert('Only '+maxStock+' item(s) left in stock.'); qtyInput.value = maxStock; syncQty(id, maxStock); return false; }
+    if (val < 1) { uiAlert('Quantity must be at least 1.'); qtyInput.value = 1; syncQty(id, maxStock); return false; }
+    if (val > maxStock) { uiAlert('Only '+maxStock+' item(s) left in stock.'); qtyInput.value = maxStock; syncQty(id, maxStock); return false; }
     if (cartQty) cartQty.value = val;
     return true;
 }

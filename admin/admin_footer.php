@@ -2,6 +2,7 @@
 </div><!-- /admin-main -->
 </div><!-- /admin-shell -->
 <?php if (isset($extra_scripts)) echo $extra_scripts; ?>
+<script src="../assets/ui-modal.js"></script>
 
 <!-- ══ Shared PIN Gate Modal ════════════════════════════════════════════════ -->
 <div id="pinGateModal" style="display:none;position:fixed;inset:0;z-index:10001;

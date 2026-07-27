@@ -454,7 +454,7 @@ require_once 'admin_header.php';
                     </div>
                 </div>
                 <a href="assign_therapist.php?appt_id=<?php echo $appt_id; ?>&remove_assign=<?php echo $at['at_id']; ?>"
-                   onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($at['full_name'])); ?> from this appointment?')"
+                   onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($at['full_name'])); ?> from this appointment?').then(ok=>{if(ok)window.location.href=_h;})"
                    style="font-size:0.75rem;padding:0.3rem 0.65rem;background:rgba(220,53,69,0.15);color:#ff6b7a;
                           border-radius:6px;text-decoration:none;white-space:nowrap;border:1px solid rgba(220,53,69,0.25);">
                     ✕ Remove

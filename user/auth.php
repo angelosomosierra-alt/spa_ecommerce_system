@@ -468,6 +468,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
         ?> — Recovery Spa
     </title>
     <link rel="stylesheet" href="../assets/style.css">
+    <script src="../assets/ui-modal.js"></script>
     <style>
 .auth-wrap { 
     min-height: 100vh; 
@@ -893,7 +894,7 @@ document.getElementById('otpBox').style.display = 'none';
 <script>
 function sendFpOTP() {
     const email = document.getElementById('fpEmailInput').value.trim();
-    if (!email) { alert('Please enter your email address.'); return; }
+    if (!email) { uiAlert('Please enter your email address.'); return; }
     const btn = document.getElementById('fpSendOtpBtn');
     const msg = document.getElementById('fpSendMsg');
     btn.disabled = true; btn.textContent = '⏳ Sending…';
@@ -1176,5 +1177,23 @@ function toggleLoginPwd() {
     </div>
 </div>
 
+<script>
+// ── Password eye-toggle auto-attach ──────────────────────────────────────────
+document.querySelectorAll('input[type="password"]').forEach(function(inp) {
+    if (inp.dataset.eyeDone) return;
+    if (inp.parentElement && inp.parentElement.querySelector('button[aria-label*="assword"]')) { inp.dataset.eyeDone = '1'; return; }
+    inp.dataset.eyeDone = '1';
+    var wrap = document.createElement('span');
+    wrap.style.cssText = 'position:relative;display:block;';
+    inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
+    inp.style.paddingRight = '2.6rem';
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.textContent = '👁';
+    btn.setAttribute('aria-label', 'Show password');
+    btn.style.cssText = 'position:absolute;right:.6rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;padding:0;color:#A07850;';
+    btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.textContent = s ? '🙈' : '👁'; };
+    wrap.appendChild(btn);
+});
+</script>
 </body>
 </html>

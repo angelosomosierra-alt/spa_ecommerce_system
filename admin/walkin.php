@@ -1248,13 +1248,13 @@ function proceedBooking(formType) {
     const form = document.getElementById(formType === 'service' ? 'serviceForm' : 'productForm');
     if (!form) return;
     const itemId = form.querySelector('[name="item_id"]')?.value;
-    if (!itemId) { alert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
+    if (!itemId) { uiAlert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
     if (formType === 'service') {
         const bookingDate = form.querySelector('[name="booking_date"]')?.value;
-        if (!bookingDate) { alert('Please select a booking date first.'); return; }
-        if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { alert('Please select a hotel/partner for the Hotel rate.'); return; }
+        if (!bookingDate) { uiAlert('Please select a booking date first.'); return; }
+        if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
         if (walkinAvailBlocked) {
-            alert('⛔ Cannot book: no qualified therapist is available at the selected time. Please adjust the booking time or choose a future date.');
+            uiAlert('⛔ Cannot book: no qualified therapist is available at the selected time. Please adjust the booking time or choose a future date.');
             return;
         }
     }
@@ -1272,13 +1272,13 @@ function openPaymongoPopup(formType, method) {
     const form = document.getElementById(formType === 'service' ? 'serviceForm' : 'productForm');
     if (!form) return;
     const itemId = form.querySelector('[name="item_id"]')?.value;
-    if (!itemId) { alert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
+    if (!itemId) { uiAlert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
     const name  = form.querySelector('[name="customer_name"]')?.value?.trim();
     const phone = form.querySelector('[name="phone"]')?.value?.trim();
-    if (!name || !phone) { alert('Please fill in customer name and phone number first.'); return; }
+    if (!name || !phone) { uiAlert('Please fill in customer name and phone number first.'); return; }
     if (formType === 'service') {
-        if (!form.querySelector('[name="booking_date"]')?.value) { alert('Please select a booking date first.'); return; }
-        if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { alert('Please select a hotel/partner for the Hotel rate.'); return; }
+        if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
+        if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
     }
     const prefix = formType === 'service' ? 'svc' : 'prod';
     const statusEl = document.getElementById(prefix + '-online-status');
@@ -1314,12 +1314,12 @@ window.addEventListener('message', function(event) {
 });
 
 document.getElementById('serviceForm').addEventListener('submit', function(e) {
-    if (!document.getElementById('service_item_id').value) { e.preventDefault(); alert('Please select a service first.'); return; }
-    if (!document.getElementById('walkin_booking_date').value) { e.preventDefault(); alert('Please pick a booking date and time first.'); return; }
-    if (currentRateType === 'hotel' && currentPartnerId === 0) { e.preventDefault(); alert('Please select a hotel/partner for the Hotel rate.'); return; }
+    if (!document.getElementById('service_item_id').value) { e.preventDefault(); uiAlert('Please select a service first.'); return; }
+    if (!document.getElementById('walkin_booking_date').value) { e.preventDefault(); uiAlert('Please pick a booking date and time first.'); return; }
+    if (currentRateType === 'hotel' && currentPartnerId === 0) { e.preventDefault(); uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
 });
 document.getElementById('productForm').addEventListener('submit', function(e) {
-    if (!document.getElementById('product_item_id').value) { e.preventDefault(); alert('Please select a product first.'); }
+    if (!document.getElementById('product_item_id').value) { e.preventDefault(); uiAlert('Please select a product first.'); }
 });
 
 const now = new Date(); const pad = n => String(n).padStart(2,'0');
@@ -2041,14 +2041,14 @@ function openQrphFlow(formType) {
     var form = document.getElementById(formType === 'service' ? 'serviceForm' : 'productForm');
     if (!form) return;
     var itemId = form.querySelector('[name="item_id"]')?.value;
-    if (!itemId) { alert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
+    if (!itemId) { uiAlert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
     var name  = (form.querySelector('[name="customer_name"]')?.value || '').trim();
     var phone = (form.querySelector('[name="phone"]')?.value || '').trim();
-    if (!name || !phone) { alert('Please fill in customer name and phone number first.'); return; }
+    if (!name || !phone) { uiAlert('Please fill in customer name and phone number first.'); return; }
     if (formType === 'service') {
-        if (!form.querySelector('[name="booking_date"]')?.value) { alert('Please select a booking date first.'); return; }
-        if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { alert('Please select a hotel/partner for the Hotel rate.'); return; }
-        if (walkinAvailBlocked) { alert('⛔ Cannot book: no qualified therapist is available at the selected time.'); return; }
+        if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
+        if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
+        if (walkinAvailBlocked) { uiAlert('⛔ Cannot book: no qualified therapist is available at the selected time.'); return; }
     }
     qrphState.formType = formType;
     var prefix   = formType === 'service' ? 'svc' : 'prod';

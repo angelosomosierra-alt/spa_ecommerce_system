@@ -429,7 +429,7 @@ require_once 'admin_header.php';
                             </form>
                             <?php else: ?>
                             <a href="products.php?edit=<?php echo $product['id']; ?>" class="btn btn-info btn-sm">Edit</a>
-                            <form method="POST" style="display:inline;" onsubmit="return confirm('Archive this product?')">
+                            <form method="POST" style="display:inline;" onsubmit="event.preventDefault();uiConfirm('Archive this product?').then(ok=>{if(ok)this.submit()})">
                                 <?php echo csrf_field(); ?>
                                 <input type="hidden" name="action" value="delete_product">
                                 <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">

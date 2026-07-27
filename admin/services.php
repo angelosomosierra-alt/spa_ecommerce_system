@@ -471,7 +471,7 @@ require_once 'admin_header.php';
                             </form>
                             <?php else: ?>
                             <a href="services.php?edit=<?php echo $service['id']; ?>" class="btn btn-info btn-sm">Edit</a>
-                            <form method="POST" style="display:inline;" onsubmit="return confirm('Archive this service?')">
+                            <form method="POST" style="display:inline;" onsubmit="event.preventDefault();uiConfirm('Archive this service?').then(ok=>{if(ok)this.submit()})">
                                 <?php echo csrf_field(); ?>
                                 <input type="hidden" name="action" value="delete_service">
                                 <input type="hidden" name="id" value="<?php echo intval($service['id']); ?>">

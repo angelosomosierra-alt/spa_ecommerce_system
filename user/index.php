@@ -24,7 +24,6 @@ if (isset($_POST['add_to_cart'])) {
         } else {
             $_SESSION['cart'][$product_id] = ['type'=>'product','id'=>$product_id,'name'=>$product['name'],'image'=>$product['image'],'price'=>$product['price'],'quantity'=>$new_qty];
             sync_cart_to_db($conn, $user_id, $_SESSION['cart']);
-            $_SESSION['flash_success'] = "'{$product['name']}' added to cart!";
         }
     }
     header("Location: index.php#products"); exit();
@@ -766,16 +765,16 @@ function validateQty(id, maxStock) {
     const qtyInput=document.getElementById('qty'+id); const cartQty=document.getElementById('cartQty'+id);
     if(!qtyInput)return false;
     const val=parseInt(qtyInput.value)||1;
-    if(val<1){alert('Quantity must be at least 1.');qtyInput.value=1;syncQty(id,maxStock);return false;}
-    if(val>maxStock){alert('Only '+maxStock+' item(s) left in stock.');qtyInput.value=maxStock;syncQty(id,maxStock);return false;}
+    if(val<1){uiAlert('Quantity must be at least 1.');qtyInput.value=1;syncQty(id,maxStock);return false;}
+    if(val>maxStock){uiAlert('Only '+maxStock+' item(s) left in stock.');qtyInput.value=maxStock;syncQty(id,maxStock);return false;}
     if(cartQty)cartQty.value=val;
     return true;
 }
 function handleBuyNow(productId, maxStock) {
     const qtyInput=document.getElementById('qty'+productId);
     const qty=parseInt(qtyInput?qtyInput.value:1)||1;
-    if(qty<1){alert('Quantity must be at least 1.');if(qtyInput)qtyInput.value=1;return;}
-    if(qty>maxStock){alert('Only '+maxStock+' item(s) left in stock.');if(qtyInput)qtyInput.value=maxStock;syncQty(productId,maxStock);return;}
+    if(qty<1){uiAlert('Quantity must be at least 1.');if(qtyInput)qtyInput.value=1;return;}
+    if(qty>maxStock){uiAlert('Only '+maxStock+' item(s) left in stock.');if(qtyInput)qtyInput.value=maxStock;syncQty(productId,maxStock);return;}
     const form=document.createElement('form'); form.method='POST'; form.action='index.php';
     [['product_id',productId],['quantity',qty],['direct_checkout','1'],['csrf_token',CSRF_TOKEN]].forEach(([name,value])=>{
         const input=document.createElement('input'); input.type='hidden'; input.name=name; input.value=value; form.appendChild(input);
@@ -786,6 +785,26 @@ function handleBuyNow(productId, maxStock) {
 (function(){var keys=<?php echo json_encode(array_keys($services_by_cat)); ?>;keys.forEach(function(k){initSlider(k);});}());
 const toast=document.getElementById('flashToast');
 if(toast)setTimeout(()=>{toast.style.opacity='0';toast.style.transition='opacity 0.5s';setTimeout(()=>toast.remove(),500);},3500);
+
+// ── Open specific item from search result URL params ──────────────────────────
+(function() {
+    var params = new URLSearchParams(window.location.search);
+    var open   = params.get('open');
+    var id     = parseInt(params.get('id'), 10);
+    if (!open || !id) return;
+    function tryOpen() {
+        if (open === 'product') openPrdModal(id);
+        else if (open === 'service') openSvcModal(id);
+        if (window.history && window.history.replaceState) {
+            window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', tryOpen);
+    } else {
+        tryOpen();
+    }
+})();
 </script>
 </body>
 </html>

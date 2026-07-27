@@ -136,7 +136,7 @@ require_once 'admin_header.php';
                 <div class="category-actions">
                     <button class="btn btn-info btn-sm" onclick="openEdit(<?php echo $cat['id']; ?>,'<?php echo htmlspecialchars($cat['name']); ?>','service')">✏️</button>
                     <?php if ($cat['service_count']==0): ?>
-                    <a href="categories.php?delete=<?php echo $cat['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete?')">🗑️</a>
+                    <a href="categories.php?delete=<?php echo $cat['id']; ?>" class="btn btn-danger btn-sm" onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete?').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
                     <?php else: ?>
                     <span style="font-size:0.72rem;color:var(--gray);padding:0.2rem 0.4rem;">In use</span>
                     <?php endif; ?>
@@ -162,7 +162,7 @@ require_once 'admin_header.php';
                 <div class="category-actions">
                     <button class="btn btn-info btn-sm" onclick="openEdit(<?php echo $cat['id']; ?>,'<?php echo htmlspecialchars($cat['name']); ?>','product')">✏️</button>
                     <?php if ($cat['product_count']==0): ?>
-                    <a href="categories.php?delete=<?php echo $cat['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete?')">🗑️</a>
+                    <a href="categories.php?delete=<?php echo $cat['id']; ?>" class="btn btn-danger btn-sm" onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete?').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
                     <?php else: ?>
                     <span style="font-size:0.72rem;color:var(--gray);padding:0.2rem 0.4rem;">In use</span>
                     <?php endif; ?>

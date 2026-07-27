@@ -265,7 +265,7 @@ require_once 'admin_header.php';
                     <a href="partners.php?delete=<?php echo $p['id']; ?>"
                        class="btn btn-danger btn-sm"
                        style="font-size:0.72rem;padding:0.2rem 0.55rem;"
-                       onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($p['name'])); ?>?\nThis will also delete all their custom rates.')">
+                       onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($p['name'])); ?>?\nThis will also delete all their custom rates.').then(ok=>{if(ok)window.location.href=_h;})">
                         🗑️
                     </a>
                 </div>

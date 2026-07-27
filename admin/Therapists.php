@@ -681,7 +681,7 @@ require_once 'admin_header.php';
                         <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                         <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
                                 class="btn btn-danger btn-sm" style="font-size:0.72rem;padding:0.25rem 0.5rem;"
-                                <?php if (is_cashier()): ?>onclick="if(!confirm('Remove <?php echo htmlspecialchars(addslashes($r['full_name'])); ?> from today?'))return;openPinGate('Remove From Today',this.closest('form'))"<?php else: ?>onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($r['full_name'])); ?> from today?')"<?php endif; ?>>
+                                <?php if (is_cashier()): ?>onclick="uiConfirm('Remove <?php echo htmlspecialchars(addslashes($r['full_name'])); ?> from today?').then(ok=>{if(!ok)return;openPinGate('Remove From Today',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($r['full_name'])); ?> from today?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>
                             ✕
                         </button>
                     </form>
@@ -699,7 +699,7 @@ require_once 'admin_header.php';
                     <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                     <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
                             class="btn btn-secondary btn-sm" style="font-size:0.75rem;"
-                            <?php if (is_cashier()): ?>onclick="if(!confirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?'))return;openPinGate('Check Out Therapist',this.closest('form'))"<?php else: ?>onclick="return confirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?')"<?php endif; ?>>
+                            <?php if (is_cashier()): ?>onclick="uiConfirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?').then(ok=>{if(!ok)return;openPinGate('Check Out Therapist',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>
                         🏁 Out
                     </button>
                 </form>

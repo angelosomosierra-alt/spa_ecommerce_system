@@ -970,7 +970,7 @@ require_once 'admin_header.php';
                             <?php if ($s['id'] !== (int)$_SESSION['user_id']): ?>
                             <a href="staff.php?delete_cashier=<?php echo $s['id']; ?>&tab=cashiers"
                                class="btn btn-danger btn-sm" style="font-size:0.72rem;"
-                               onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?')">✕</a>
+                               onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -1020,7 +1020,7 @@ require_once 'admin_header.php';
                             <?php if ($s['id'] !== (int)$_SESSION['user_id']): ?>
                             <a href="staff.php?delete_cashier=<?php echo $s['id']; ?>&tab=cashiers"
                                class="btn btn-danger btn-sm" style="font-size:0.72rem;"
-                               onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?')">✕</a>
+                               onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -1070,7 +1070,7 @@ require_once 'admin_header.php';
                             <?php if ($s['id'] !== (int)$_SESSION['user_id']): ?>
                             <a href="staff.php?delete_cashier=<?php echo $s['id']; ?>&tab=cashiers"
                                class="btn btn-danger btn-sm" style="font-size:0.72rem;"
-                               onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?')">✕</a>
+                               onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -1147,7 +1147,7 @@ require_once 'admin_header.php';
                     </div>
                     <?php if ($r_active): ?>
                     <a href="staff.php?tab=cashiers&clear_r_session=<?php echo $r_acc['id']; ?>"
-                       onclick="return confirm('Force logout the receptionist?')"
+                       onclick="var _h=this.href;event.preventDefault();uiConfirm('Force logout the receptionist?').then(ok=>{if(ok)window.location.href=_h;})"
                        style="background:#fee2e2;color:#b91c1c;padding:0.35rem 0.7rem;border-radius:6px;font-size:0.75rem;font-weight:700;cursor:pointer;text-decoration:none;white-space:nowrap;">
                         🔴 Force Logout
                     </a>
@@ -1282,7 +1282,7 @@ require_once 'admin_header.php';
                     <td>
                         <a href="staff.php?delete_receptionist=<?php echo $rp['id']; ?>&tab=receptionists"
                            class="btn btn-danger btn-sm" style="font-size:0.72rem;"
-                           onclick="return confirm('Remove PIN for <?php echo htmlspecialchars(addslashes($rp['full_name'])); ?>?')">✕</a>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove PIN for <?php echo htmlspecialchars(addslashes($rp['full_name'])); ?>?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -1635,7 +1635,7 @@ document.addEventListener('DOMContentLoaded', () => {
                            class="btn btn-secondary btn-sm" style="font-size:0.72rem;">✏️ Edit</a>
                         <a href="staff.php?delete_therapist=<?php echo $tid; ?>"
                            class="btn btn-danger btn-sm" style="font-size:0.72rem;"
-                           onclick="return confirm('Delete <?php echo htmlspecialchars(addslashes($t['full_name'])); ?>? This cannot be undone.')">🗑️</a>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete <?php echo htmlspecialchars(addslashes($t['full_name'])); ?>? This cannot be undone.').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -2208,7 +2208,7 @@ function showCommission(therapistId) {
                     <td>
                         <a href="staff.php?del_ded=<?php echo $d['id']; ?>&tab=deductions&period_start=<?php echo urlencode($period_start); ?>&period_end=<?php echo urlencode($period_end); ?>"
                            class="btn btn-danger btn-sm" style="font-size:0.68rem;padding:0.2rem 0.45rem;"
-                           onclick="return confirm('Delete this deduction entry?')">✕</a>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this deduction entry?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
                     </td>
                 </tr>
                 <?php endforeach; ?>

@@ -24,6 +24,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo isset($page_title) ? htmlspecialchars($page_title) . ' - Spa Ecommerce' : 'Spa Ecommerce'; ?></title>
 <link rel="stylesheet" href="../assets/style.css?v=<?php echo filemtime('../assets/style.css'); ?>">
+<script src="../assets/ui-modal.js"></script>
     <style>
         /* ── Cart icon button ── */
         .cart-icon-btn {
@@ -853,7 +854,7 @@ function drawerBind() {
     if (cob) {
         cob.onclick = function() {
             if (![...c.querySelectorAll('.item-cb')].some(cb => cb.checked)) {
-                alert('Please select at least one item.');
+                uiAlert('Please select at least one item.');
                 return;
             }
             const hb = c.querySelector('#checkoutHiddenBtn');

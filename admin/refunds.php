@@ -374,7 +374,7 @@ require_once 'admin_header.php';
                                       font-size:0.83rem;box-sizing:border-box;">
                     </div>
                     <button type="submit" class="btn btn-success btn-sm"
-                            onclick="return confirm('Process refund of ₱<?php echo number_format($rr['amount'],2); ?> to <?php echo htmlspecialchars(addslashes($rr['customer_name'])); ?>?')">
+                            onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Process refund of ₱<?php echo number_format($rr['amount'],2); ?> to <?php echo htmlspecialchars(addslashes($rr['customer_name'])); ?>?').then(ok=>{if(ok)_f.submit()})">
                         <?php echo !empty($rr['paymongo_payment_id']) ? '💸 Process via PayMongo' : '✅ Mark as Manually Refunded'; ?>
                     </button>
                 </form>
@@ -391,7 +391,7 @@ require_once 'admin_header.php';
                                   border-radius:7px;background:var(--bg2);color:var(--brown);
                                   font-size:0.83rem;width:200px;">
                     <button type="submit" class="btn btn-secondary btn-sm"
-                            onclick="return confirm('Mark as manually refunded?')">
+                            onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Mark as manually refunded?').then(ok=>{if(ok)_f.submit()})">
                         🏦 Mark Manual Refund
                     </button>
                 </form>
@@ -408,7 +408,7 @@ require_once 'admin_header.php';
                                   border-radius:7px;background:var(--bg2);color:var(--brown);
                                   font-size:0.83rem;width:200px;">
                     <button type="submit" class="btn btn-danger btn-sm"
-                            onclick="return confirm('Reject this refund request?')">
+                            onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Reject this refund request?').then(ok=>{if(ok)_f.submit()})">
                         ❌ Reject Request
                     </button>
                 </form>

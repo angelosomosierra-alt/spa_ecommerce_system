@@ -249,12 +249,12 @@ $locked = !empty($rpt['is_locked']);
     <?php if (is_full_access()): ?>
     <a href="daily_report.php?date=<?php echo $report_date; ?>&tab=<?php echo $active_tab; ?>&lock=0"
        class="btn btn-secondary btn-sm"
-       onclick="return confirm('Unlock this report?')">🔓 Unlock</a>
+       onclick="var _h=this.href;event.preventDefault();uiConfirm('Unlock this report?').then(ok=>{if(ok)window.location.href=_h;})">🔓 Unlock</a>
     <?php endif; ?>
     <?php elseif ($rpt && is_full_access()): ?>
     <a href="daily_report.php?date=<?php echo $report_date; ?>&tab=<?php echo $active_tab; ?>&lock=1"
        class="btn btn-primary btn-sm"
-       onclick="return confirm('Lock this report? Receptionists will not be able to edit it.')">🔒 Close & Lock Report</a>
+       onclick="var _h=this.href;event.preventDefault();uiConfirm('Lock this report? Receptionists will not be able to edit it.').then(ok=>{if(ok)window.location.href=_h;})">🔒 Close & Lock Report</a>
     <?php endif; ?>
 
     <div style="display:flex;gap:0.5rem;margin-left:auto;">
@@ -870,7 +870,7 @@ $locked = !empty($rpt['is_locked']);
                     <?php if (!$locked): ?>
                     <td><a href="daily_report.php?date=<?php echo $report_date; ?>&tab=gc&del_gc=<?php echo $gc['id']; ?>"
                            class="btn btn-danger btn-sm" style="font-size:0.7rem;"
-                           onclick="return confirm('Remove this GC entry?')">✕</a></td>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove this GC entry?').then(ok=>{if(ok)window.location.href=_h;})">✕</a></td>
                     <?php endif; ?>
                 </tr>
                 <?php endforeach; endif; ?>
@@ -918,7 +918,7 @@ $locked = !empty($rpt['is_locked']);
                     <?php if (!$locked): ?>
                     <td><a href="daily_report.php?date=<?php echo $report_date; ?>&tab=gc&del_gc=<?php echo $gc['id']; ?>"
                            class="btn btn-danger btn-sm" style="font-size:0.7rem;"
-                           onclick="return confirm('Remove this entry?')">✕</a></td>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove this entry?').then(ok=>{if(ok)window.location.href=_h;})">✕</a></td>
                     <?php endif; ?>
                 </tr>
                 <?php endforeach; endif; ?>
@@ -972,7 +972,7 @@ $locked = !empty($rpt['is_locked']);
                     <?php if (!$locked): ?>
                     <td><a href="daily_report.php?date=<?php echo $report_date; ?>&tab=gc&del_unpaid=<?php echo $up['id']; ?>"
                            class="btn btn-danger btn-sm" style="font-size:0.7rem;"
-                           onclick="return confirm('Remove this unpaid entry?')">✕</a></td>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove this unpaid entry?').then(ok=>{if(ok)window.location.href=_h;})">✕</a></td>
                     <?php endif; ?>
                 </tr>
                 <?php endforeach; endif; ?>
@@ -1104,7 +1104,7 @@ $locked = !empty($rpt['is_locked']);
                         <?php if (!$locked): ?>
                         <a href="daily_report.php?date=<?php echo $report_date; ?>&tab=products&del_prodsale=<?php echo $ps['id']; ?>"
                            class="btn btn-danger btn-sm" style="font-size:0.7rem;"
-                           onclick="return confirm('Remove this entry?')">✕</a>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove this entry?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
                         <?php endif; ?>
                     </td>
                 </tr>

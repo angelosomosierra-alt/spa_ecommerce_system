@@ -188,7 +188,7 @@ require_once 'admin_header.php';
                     <a href="users.php?view=<?php echo $u['id']; ?>" class="btn btn-secondary btn-sm">👁 View</a>
                     <a href="users.php?delete=<?php echo $u['id']; ?>"
                        class="btn btn-danger btn-sm"
-                       onclick="return confirm('Deactivate this user? Their order history and revenue data will be preserved.')">
+                       onclick="var _h=this.href;event.preventDefault();uiConfirm('Deactivate this user? Their order history and revenue data will be preserved.').then(ok=>{if(ok)window.location.href=_h;})">
                        🚫 Deactivate
                     </a>
                 </td>
@@ -227,7 +227,7 @@ require_once 'admin_header.php';
                     <a href="users.php?view=<?php echo $u['id']; ?>" class="btn btn-secondary btn-sm">👁 View</a>
                     <a href="users.php?restore=<?php echo $u['id']; ?>"
                        class="btn btn-success btn-sm"
-                       onclick="return confirm('Restore this user account?')">
+                       onclick="var _h=this.href;event.preventDefault();uiConfirm('Restore this user account?').then(ok=>{if(ok)window.location.href=_h;})">
                        ♻️ Restore
                     </a>
                 </td>

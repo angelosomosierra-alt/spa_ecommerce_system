@@ -178,7 +178,7 @@ require_once 'admin_header.php';
                 </div>
                 <?php if ($is_active): ?>
                 <a href="receptionist_settings.php?clear_session=<?php echo $r['id']; ?>"
-                   onclick="return confirm('Force logout this receptionist?')"
+                   onclick="var _h=this.href;event.preventDefault();uiConfirm('Force logout this receptionist?').then(ok=>{if(ok)window.location.href=_h;})"
                    style="white-space:nowrap;background:#fee2e2;color:#b91c1c;border:none;padding:0.4rem 0.75rem;
                           border-radius:6px;font-size:0.78rem;font-weight:600;cursor:pointer;text-decoration:none;">
                     🔴 Force Logout

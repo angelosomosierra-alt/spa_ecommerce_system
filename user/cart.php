@@ -254,7 +254,7 @@ require_once 'header.php';
     </div>
     <div class="cc-right">
         <span class="cc-sub" id="sub_<?php echo $product_id; ?>">&#8369;<?php echo number_format($subtotal,2); ?></span>
-        <a href="cart.php?remove=<?php echo $product_id; ?>&csrf_token=<?php echo htmlspecialchars(generate_csrf_token(), ENT_QUOTES, 'UTF-8'); ?>" class="cc-del" onclick="return confirm('Remove this item?')">&#128465; Remove</a>
+        <a href="cart.php?remove=<?php echo $product_id; ?>&csrf_token=<?php echo htmlspecialchars(generate_csrf_token(), ENT_QUOTES, 'UTF-8'); ?>" class="cc-del" onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove this item?').then(ok=>{if(ok)window.location.href=_h;})">&#128465; Remove</a>
     </div>
     <div class="cc-ctrl">
         <div class="cc-qty">
@@ -381,7 +381,7 @@ function autoSave(){
 
 function doCheckout(){
     if(![...document.querySelectorAll('.item-cb')].some(c=>c.checked)){
-        alert('Please select at least one item.');
+        uiAlert('Please select at least one item.');
         return;
     }
     document.getElementById('checkoutHiddenBtn').click();

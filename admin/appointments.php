@@ -1658,7 +1658,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 </div>
                 <?php if (in_array($status,['pending','assigned'])): ?>
                 <a href="appointments.php?remove_assign=<?php echo $at['at_id']; ?>&filter=<?php echo $filter; ?>"
-                   onclick="return confirm('Remove <?php echo htmlspecialchars(addslashes($at['full_name'])); ?>?')"
+                   onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($at['full_name'])); ?>?').then(ok=>{if(ok)window.location.href=_h;})"
                    style="font-size:0.72rem;padding:0.22rem 0.55rem;background:rgba(220,53,69,0.15);color:#ff6b7a;border-radius:6px;text-decoration:none;border:1px solid rgba(220,53,69,0.25);flex-shrink:0;">✕</a>
                 <?php endif; ?>
             </div>
@@ -1914,7 +1914,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <span style="font-weight:700;color:var(--gold);font-size:0.9rem;">₱<?php echo number_format($es['charged_price'],2); ?></span>
                     <?php if (in_array($status,['approved','assigned'])): ?>
                     <a href="appointments.php?remove_extra=<?php echo $es['id']; ?>&filter=<?php echo $filter; ?>"
-                       onclick="return confirm('Remove this extra service?')"
+                       onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove this extra service?').then(ok=>{if(ok)window.location.href=_h;})"
                        style="font-size:0.68rem;padding:0.15rem 0.45rem;background:rgba(220,53,69,0.12);color:#ff6b7a;border-radius:5px;text-decoration:none;border:1px solid rgba(220,53,69,0.2);">✕</a>
                     <?php endif; ?>
                 </div>
@@ -2023,7 +2023,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="if(!confirm('Decline this appointment?'))return;openPinGate('Decline Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Decline this appointment?')"<?php endif; ?>>❌ Decline</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>❌ Decline</button>
             </form>
 
         <?php elseif ($status === 'assigned'): ?>
@@ -2043,7 +2043,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="if(!confirm('Decline this appointment?'))return;openPinGate('Decline Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Decline this appointment?')"<?php endif; ?>>❌ Decline</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>❌ Decline</button>
             </form>
 
         <?php elseif ($status === 'approved'): ?>
@@ -2090,7 +2090,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="if(!confirm('Decline this appointment?'))return;openPinGate('Decline Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Decline this appointment?')"<?php endif; ?>>❌ Decline</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>❌ Decline</button>
             </form>
         <?php endif; ?>
 
@@ -2135,7 +2135,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </div>
             <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
             <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary btn-sm"
-                    <?php if (is_cashier()): ?>onclick="if(!confirm('Reschedule this appointment?'))return;openPinGate('Reschedule Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Reschedule this appointment?')"<?php endif; ?>>💾 Confirm Reschedule</button>
+                    <?php if (is_cashier()): ?>onclick="uiConfirm('Reschedule this appointment?').then(ok=>{if(!ok)return;openPinGate('Reschedule Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Reschedule this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>💾 Confirm Reschedule</button>
             <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $appt_id; ?>)">Cancel</button>
         </form>
     </div>
@@ -2155,7 +2155,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
             <div style="display:flex;gap:0.6rem;">
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="if(!confirm('Mark this appointment as cancelled by customer?'))return;openPinGate('Cancel Appointment',this.closest('form'))"<?php else: ?>onclick="return confirm('Mark this appointment as cancelled by customer?')"<?php endif; ?>>🚫 Confirm Cancellation</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Mark this appointment as cancelled by customer?').then(ok=>{if(!ok)return;openPinGate('Cancel Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Mark this appointment as cancelled by customer?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>🚫 Confirm Cancellation</button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCancel(<?php echo $appt_id; ?>)">Back</button>
             </div>
         </form>
@@ -3610,7 +3610,7 @@ function submitCheckin() {
     if (ciState.discountType !== 'none') {
         var idChk = document.getElementById('ci-id-verified');
         if (idChk && !idChk.checked) {
-            alert('Please verify the customer\'s ID or voucher card before proceeding.');
+            uiAlert('Please verify the customer\'s ID or voucher card before proceeding.');
             return;
         }
     }
@@ -4001,7 +4001,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 var priceInput = form.querySelector('[name="extra_price"]');
                 var amount = parseFloat(priceInput ? priceInput.value : 0) || 0;
-                if (amount <= 0) { alert('Please enter a valid price.'); return; }
+                if (amount <= 0) { uiAlert('Please enter a valid price.'); return; }
                 openAddonQrphModal(form, amount);
                 return;
             }
@@ -4009,7 +4009,7 @@ document.addEventListener('DOMContentLoaded', function() {
             e.preventDefault();
             var priceInput = form.querySelector('[name="extra_price"]');
             var amount = parseFloat(priceInput ? priceInput.value : 0) || 0;
-            if (amount <= 0) { alert('Please enter a valid price.'); return; }
+            if (amount <= 0) { uiAlert('Please enter a valid price.'); return; }
             openAddonPaymentModal(form, method, amount);
         });
     });
