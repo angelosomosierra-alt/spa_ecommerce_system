@@ -183,57 +183,63 @@ $R = 5;  // right-zone cursor
 secRow($sh, $L, 'CASH BREAKDOWN', LEFT_C1, LEFT_C2, $S_SEC);
 hdrRow($sh, $L, ['QTY','Denomination','Total Collection'], LEFT_C1, $S_HDR);
 
+$first_denom_row = $L;
 foreach ($denom_list as $d) {
     $qty = intval($denoms_saved[$d]['quantity'] ?? 0);
-    $tot = floatval($denoms_saved[$d]['total']   ?? 0);
     $sh->setCellValue([1,$L], $qty > 0 ? $qty : '');
-    $sh->setCellValue([2,$L], '₱' . number_format($d, $d < 1 ? 2 : 0));
-    $sh->setCellValue([3,$L], $tot > 0 ? $tot : '');
-    if ($tot > 0) $sh->getStyle([3,$L])->getNumberFormat()->setFormatCode($MONEY);
+    $sh->setCellValue([2,$L], (float)$d);
+    $sh->getStyle([2,$L])->getNumberFormat()->setFormatCode($MONEY);
+    $sh->setCellValue([3,$L], "=A{$L}*B{$L}");
+    $sh->getStyle([3,$L])->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$L,1,3,$S_DAT);
     $L++;
 }
+$last_denom_row = $L - 1;
 $sh->setCellValue([2,$L], 'TOTAL');
-$sh->setCellValue([3,$L], $denom_total);
+$sh->setCellValue([3,$L], "=SUM(C{$first_denom_row}:C{$last_denom_row})");
 $sh->getStyle([3,$L])->getNumberFormat()->setFormatCode($MONEY);
 rowStyle($sh,$L,1,3,$S_TOT);
+$cell_denom_tot = 'C' . $L;
 $L++;
 $L++; // spacer between Cash Breakdown and Summary
 
 // ── LEFT B: SUMMARY REPORT ────────────────────────────────────────────────────
+// Labels + styles written now; formula values deferred until sub-ledger cell
+// addresses are known (written below before the Analysis section).
 secRow($sh, $L, 'SUMMARY REPORT', LEFT_C1, LEFT_C2, $S_SEC);
+$sum_data_start = $L;
 
-$sum_items = [
-    ['Gross Sales',           $gross_sales,          $GREEN, true],
-    ['Staff CF',              $staff_cf,             $RED,   false],
-    ['Sold GC',               $gc_sold_total,        '',     false],
-    ['POS Reading',           $pos_reading,          '',     false],
-    ['Discounts',             $total_discounts,      $RED,   false],
-    ['Celeb. Discounts 10%',  $celeb_discount,       $RED,   false],
-    ['Redeemed GC',           $gc_redeem_total,      $RED,   false],
-    ['Swiper',                $card_total,           '',     false],
-    ['GCash',                 $gcash_total,          '',     false],
-    ['Maya',                  $maya_total,           '',     false],
-    ['QRPH',                  $qrph_total,           '',     false],
-    ['Unpaids',               $unpaids_total,        $RED,   false],
-    ['Marketing Expense',     $mktg_expense,         $RED,   false],
-    ['Advance Payment',       $advance_payment_total,$RED,   false],
-    ['Maya (DP)',              $maya_dp_total,        $RED,   false],
-    ['Product Sold',          $prod_sold_total,      $GREEN, false],
-    ['Expenses',              $expenses_total,       $RED,   false],
-    ['Net Cash',              $net_cash,             $GREEN, true],
-    ['COH (Cash on Hand)',    $cash_on_hand,         $BLUE,  true],
-    ['(Short)/Over',          $short_over,           $short_over>=0?$GREEN:$RED, true],
+$sum_meta = [
+    // [label, color, bold]
+    ['Gross Sales',          $GREEN,                     true ],
+    ['Staff CF',             $RED,                       false],
+    ['Sold GC',              '',                         false],
+    ['POS Reading',          '',                         false],
+    ['Discounts',            $RED,                       false],
+    ['Celeb. Discounts 10%', $RED,                       false],
+    ['Redeemed GC',          $RED,                       false],
+    ['Swiper',               '',                         false],
+    ['GCash',                '',                         false],
+    ['Maya',                 '',                         false],
+    ['QRPH',                 '',                         false],
+    ['Unpaids',              $RED,                       false],
+    ['Marketing Expense',    $RED,                       false],
+    ['Advance Payment',      $RED,                       false],
+    ['Maya (DP)',             $RED,                       false],
+    ['Product Sold',         $GREEN,                     false],
+    ['Expenses',             $RED,                       false],
+    ['Net Cash',             $GREEN,                     true ],
+    ['COH (Cash on Hand)',   $BLUE,                      true ],
+    ['(Short)/Over',         $short_over>=0?$GREEN:$RED, true ],
 ];
-foreach ($sum_items as [$label,$val,$color,$bold]) {
+foreach ($sum_meta as [$label, $color, $bold]) {
     $sh->setCellValue([1,$L], $label);
-    $sh->setCellValue([3,$L], (float)$val);
-    $sh->getStyle([3,$L])->getNumberFormat()->setFormatCode($MONEY);
+    $isBoldRow = in_array($label, ['Gross Sales','Net Cash','COH (Cash on Hand)','(Short)/Over']);
+    rowStyle($sh,$L,1,3,$isBoldRow ? $S_TOT : $S_DAT);
     if ($color) $sh->getStyle([3,$L])->getFont()->getColor()->setRGB($color);
-    $isBoldRow = in_array($label,['Gross Sales','Net Cash','COH (Cash on Hand)','(Short)/Over']);
-    rowStyle($sh,$L,1,3,$isBoldRow?$S_TOT:$S_DAT);
-    if ($bold) $sh->getStyle(rng(1,$L,3,$L))->getFont()->setBold(true);
+    if ($bold)  $sh->getStyle(rng(1,$L,3,$L))->getFont()->setBold(true);
     $sh->getStyle([1,$L])->getFont()->setSize(8);
+    $sh->getStyle([3,$L])->getNumberFormat()->setFormatCode($MONEY);
     $L++;
 }
 $left_end = $L;
@@ -249,7 +255,8 @@ hdrRow($sh, $R, [
 ], SVC_C1, $S_HDR);
 $sh->getRowDimension($R-1)->setRowHeight(28);
 
-$_t = array_fill_keys(['reg','promo','celeb','dpwd','c30','c20','c15','d50','net'], 0.0);
+$first_svc_row = $R;  // first data row of the service log (for SUM ranges)
+$last_svc_row  = $R - 1;  // updated after each row; starts before first so SUM(x:x-1)=0 if empty
 
 foreach ($service_rows as $svcRow) {
     $ts_in    = strtotime($svcRow['appointment_date']);
@@ -257,13 +264,9 @@ foreach ($service_rows as $svcRow) {
     $time_out = date('h:i A', $ts_in + ((int)($svcRow['duration_minutes']??0))*60);
 
     $tier  = match($svcRow['rate_type']??'regular'){'home'=>20,'hotel'=>15,default=>30};
-    $c30   = ($tier===30)?(float)$svcRow['total_commission']:0.0;
-    $c20   = ($tier===20)?(float)$svcRow['total_commission']:0.0;
-    $c15   = ($tier===15)?(float)$svcRow['total_commission']:0.0;
     $dpwd  = in_array($svcRow['discount_type'],['senior','pwd'])?(float)$svcRow['discount_amount']:0.0;
     $d50   = ($svcRow['discount_type']==='employee')?(float)$svcRow['discount_amount']:0.0;
     $celeb = floatval($svcRow['celebration_discount']??0);
-    $net   = (float)$svcRow['charged_price']-(float)$svcRow['total_commission'];
     $pm    = !empty($svcRow['paymongo_method'])?strtoupper($svcRow['paymongo_method']):strtoupper($svcRow['payment_method']??'cash');
 
     $sh->setCellValue([5,$R],  $time_in);
@@ -276,61 +279,59 @@ foreach ($service_rows as $svcRow) {
     $sh->setCellValue([12,$R], (float)$svcRow['charged_price']);
     if ($celeb>0) $sh->setCellValue([13,$R], $celeb);
     if ($dpwd>0)  $sh->setCellValue([14,$R], $dpwd);
-    if ($c30>0)   $sh->setCellValue([15,$R], $c30);
-    if ($c20>0)   $sh->setCellValue([16,$R], $c20);
-    if ($c15>0)   $sh->setCellValue([17,$R], $c15);
-    if ($d50>0)   $sh->setCellValue([18,$R], $d50);
-    $sh->setCellValue([19,$R], $net);
+    // Commissions: stored value from appointment_therapists (per-therapist/service rate)
+    // Column O/P/Q is selected by rate_type; amount is what was actually paid.
+    $cf = (float)$svcRow['total_commission'];
+    if ($tier===30 && $cf>0) $sh->setCellValue([15,$R], $cf);
+    if ($tier===20 && $cf>0) $sh->setCellValue([16,$R], $cf);
+    if ($tier===15 && $cf>0) $sh->setCellValue([17,$R], $cf);
+    if ($d50>0)              $sh->setCellValue([18,$R], "=K{$R}*0.5");
+    // Net Sales = Promo Price − commissions (=L−O−P−Q, works for all tiers)
+    $sh->setCellValue([19,$R], "=L{$R}-O{$R}-P{$R}-Q{$R}");
     $sh->setCellValue([20,$R], $pm);
     $sh->setCellValue([21,$R], ucfirst($svcRow['appt_status']).' · '.strtoupper($svcRow['rate_type']));
 
     $sh->getStyle(rng(11,$R,19,$R))->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$R,5,21,$S_DAT);
-
-    $_t['reg']+=(float)$svcRow['regular_price'];  $_t['promo']+=(float)$svcRow['charged_price'];
-    $_t['celeb']+=$celeb; $_t['dpwd']+=$dpwd; $_t['c30']+=$c30; $_t['c20']+=$c20;
-    $_t['c15']+=$c15;   $_t['d50']+=$d50; $_t['net']+=$net;
+    $last_svc_row = $R;
     $R++;
 
     foreach ($addons_by_appt[$svcRow['appt_id']]??[] as $addon) {
         $at = match($addon['rate_type']??'regular'){'home'=>20,'hotel'=>15,default=>30};
-        $ac30=($at===30)?(float)$addon['commission']:0.0;
-        $ac20=($at===20)?(float)$addon['commission']:0.0;
-        $ac15=($at===15)?(float)$addon['commission']:0.0;
-        $an=(float)$addon['charged_price']-(float)$addon['commission'];
 
         $sh->setCellValue([8,$R],  '↳ add-on');
         $sh->setCellValue([9,$R],  $addon['service_name'].' ['.($addon['person_label']??'').']');
         $sh->setCellValue([10,$R], $addon['therapist_name']??'');
         $sh->setCellValue([12,$R], (float)$addon['charged_price']);
         // cols 13-14 (celeb, dpwd) intentionally blank for add-ons
-        if ($ac30>0) $sh->setCellValue([15,$R],$ac30);
-        if ($ac20>0) $sh->setCellValue([16,$R],$ac20);
-        if ($ac15>0) $sh->setCellValue([17,$R],$ac15);
-        $sh->setCellValue([19,$R], $an);
+        $addon_cf = (float)$addon['commission'];
+        if ($at===30 && $addon_cf>0) $sh->setCellValue([15,$R], $addon_cf);
+        if ($at===20 && $addon_cf>0) $sh->setCellValue([16,$R], $addon_cf);
+        if ($at===15 && $addon_cf>0) $sh->setCellValue([17,$R], $addon_cf);
+        $sh->setCellValue([19,$R], "=L{$R}-O{$R}-P{$R}-Q{$R}");
         $sh->setCellValue([20,$R], strtoupper($addon['payment_method']??'cash'));
         $sh->setCellValue([21,$R], 'ADD-ON');
         $sh->getStyle(rng(12,$R,19,$R))->getNumberFormat()->setFormatCode($MONEY);
         rowStyle($sh,$R,5,21,$S_DAT);
         $sh->getStyle(rng(5,$R,21,$R))->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('FAF6EF');
-
-        $_t['promo']+=(float)$addon['charged_price'];
-        $_t['c30']+=$ac30;$_t['c20']+=$ac20;$_t['c15']+=$ac15;$_t['net']+=$an;
+        $last_svc_row = $R;
         $R++;
     }
 }
-// Sales Services totals row
+// Sales Services totals row — SUM formulas for all numeric columns
 $sh->setCellValue([5,$R], 'TOTALS');
-$sh->setCellValue([11,$R],$_t['reg']);  $sh->setCellValue([12,$R],$_t['promo']);
-if ($_t['celeb']>0) $sh->setCellValue([13,$R],$_t['celeb']);
-if ($_t['dpwd']>0)  $sh->setCellValue([14,$R],$_t['dpwd']);
-if ($_t['c30']>0)   $sh->setCellValue([15,$R],$_t['c30']);
-if ($_t['c20']>0)   $sh->setCellValue([16,$R],$_t['c20']);
-if ($_t['c15']>0)   $sh->setCellValue([17,$R],$_t['c15']);
-if ($_t['d50']>0)   $sh->setCellValue([18,$R],$_t['d50']);
-$sh->setCellValue([19,$R],$_t['net']);
+$sh->setCellValue([11,$R], "=SUM(K{$first_svc_row}:K{$last_svc_row})");
+$sh->setCellValue([12,$R], "=SUM(L{$first_svc_row}:L{$last_svc_row})");
+$sh->setCellValue([13,$R], "=SUM(M{$first_svc_row}:M{$last_svc_row})");
+$sh->setCellValue([14,$R], "=SUM(N{$first_svc_row}:N{$last_svc_row})");
+$sh->setCellValue([15,$R], "=SUM(O{$first_svc_row}:O{$last_svc_row})");
+$sh->setCellValue([16,$R], "=SUM(P{$first_svc_row}:P{$last_svc_row})");
+$sh->setCellValue([17,$R], "=SUM(Q{$first_svc_row}:Q{$last_svc_row})");
+$sh->setCellValue([18,$R], "=SUM(R{$first_svc_row}:R{$last_svc_row})");
+$sh->setCellValue([19,$R], "=SUM(S{$first_svc_row}:S{$last_svc_row})");
 $sh->getStyle(rng(11,$R,19,$R))->getNumberFormat()->setFormatCode($MONEY);
 rowStyle($sh,$R,5,21,$S_TOT);
+$svc_totals_row = $R;
 $R++;
 
 // Advance main cursor past both zones
@@ -345,6 +346,8 @@ hdrRow($sh, $row, [
     'At Cost','Commission Fee','Total MKTG Exp.','Remarks',
 ], 1, $S_HDR);
 
+$first_inf_row = !empty($influencer_rows) ? $row : null;
+$last_inf_row  = null;
 foreach ($influencer_rows as $inf) {
     $ts  = strtotime($inf['appointment_date']);
     $ti  = date('h:i A', $ts);
@@ -357,16 +360,23 @@ foreach ($influencer_rows as $inf) {
     $sh->setCellValue([6,$row], $inf['therapists']??'');
     $sh->setCellValue([7,$row], floatval($inf['at_cost'] ?? 0));
     $sh->setCellValue([8,$row], (float)$inf['commission']);
-    $sh->setCellValue([9,$row], floatval($inf['at_cost'] ?? 0) + (float)$inf['commission']);
+    // Total MKTG Exp per row = at_cost + CF (live formula)
+    $sh->setCellValue([9,$row], "=G{$row}+H{$row}");
     $sh->setCellValue([10,$row], 'INFLUENCER');
     $sh->getStyle(rng(7,$row,9,$row))->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$row,1,10,$S_DAT);
+    $last_inf_row = $row;
     $row++;
 }
 $sh->setCellValue([1,$row], 'TOTAL MARKETING EXPENSE');
-$sh->setCellValue([9,$row], $mktg_expense);
+if ($first_inf_row !== null) {
+    $sh->setCellValue([9,$row], "=SUM(I{$first_inf_row}:I{$last_inf_row})");
+} else {
+    $sh->setCellValue([9,$row], 0.0);
+}
 $sh->getStyle([9,$row])->getNumberFormat()->setFormatCode($MONEY);
 rowStyle($sh,$row,1,10,$S_TOT);
+$cell_inf_mktg = 'I' . $row;  // total MKTG expense cell (at_cost + CF)
 $row++;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -380,33 +390,49 @@ $Rx = $row;  // unpaids row cursor
 // -- Expenses --
 secRow($sh, $Lx, 'EXPENSES', 1, 3, $S_SEC);
 hdrRow($sh, $Lx, ['Particular','Amount',''], 1, $S_HDR);
+$first_exp_row = !empty($expenses) ? $Lx : null;
+$last_exp_row  = null;
 foreach ($expenses as $e) {
     $sh->setCellValue([1,$Lx], $e['label']);
     $sh->setCellValue([2,$Lx], (float)$e['amount']);
     $sh->getStyle([2,$Lx])->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$Lx,1,3,$S_DAT);
+    $last_exp_row = $Lx;
     $Lx++;
 }
 $sh->setCellValue([1,$Lx], 'TOTAL');
-$sh->setCellValue([2,$Lx], $expenses_total);
+if ($first_exp_row !== null) {
+    $sh->setCellValue([2,$Lx], "=SUM(B{$first_exp_row}:B{$last_exp_row})");
+} else {
+    $sh->setCellValue([2,$Lx], 0.0);
+}
 $sh->getStyle([2,$Lx])->getNumberFormat()->setFormatCode($MONEY);
 rowStyle($sh,$Lx,1,3,$S_TOT);
+$cell_exp_tot = 'B' . $Lx;
 $Lx++;
 
 // -- Unpaids Corp --
 secRow($sh, $Rx, 'UNPAIDS CORP.', 5, 8, $S_SEC);
 hdrRow($sh, $Rx, ['Name','Amount','Total',''], 5, $S_HDR);
+$first_unp_row = !empty($unpaids) ? $Rx : null;
+$last_unp_row  = null;
 foreach ($unpaids as $up) {
     $sh->setCellValue([5,$Rx], $up['client_name']);
     $sh->setCellValue([6,$Rx], (float)$up['amount']);
     $sh->getStyle([6,$Rx])->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$Rx,5,8,$S_DAT);
+    $last_unp_row = $Rx;
     $Rx++;
 }
 $sh->setCellValue([5,$Rx], 'TOTAL');
-$sh->setCellValue([7,$Rx], $unpaids_total);
+if ($first_unp_row !== null) {
+    $sh->setCellValue([7,$Rx], "=SUM(F{$first_unp_row}:F{$last_unp_row})");
+} else {
+    $sh->setCellValue([7,$Rx], 0.0);
+}
 $sh->getStyle([7,$Rx])->getNumberFormat()->setFormatCode($MONEY);
 rowStyle($sh,$Rx,5,8,$S_TOT);
+$cell_unp_tot = 'G' . $Rx;
 $Rx++;
 
 $row = max($Lx,$Rx) + 1;
@@ -424,6 +450,8 @@ $gc_hdr = ['Series','Name','Voucher','Qty','Amount','Remarks','Total'];
 // -- Service GC (Sold) --
 secRow($sh, $Lg, 'SERVICE GC (SOLD)', 1, 7, $S_SEC);
 hdrRow($sh, $Lg, $gc_hdr, 1, $S_HDR);
+$first_gc_sold_row = !empty($gc_sold) ? $Lg : null;
+$last_gc_sold_row  = null;
 foreach ($gc_sold as $gc) {
     $sh->setCellValue([1,$Lg], $gc['series']??'');
     $sh->setCellValue([2,$Lg], $gc['client_name']);
@@ -433,12 +461,18 @@ foreach ($gc_sold as $gc) {
     $sh->setCellValue([6,$Lg], $gc['remarks']??'');
     $sh->getStyle([5,$Lg])->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$Lg,1,7,$S_DAT);
+    $last_gc_sold_row = $Lg;
     $Lg++;
 }
 $sh->setCellValue([1,$Lg], 'TOTAL');
-$sh->setCellValue([7,$Lg], $gc_sold_total);
+if ($first_gc_sold_row !== null) {
+    $sh->setCellValue([7,$Lg], "=SUM(E{$first_gc_sold_row}:E{$last_gc_sold_row})");
+} else {
+    $sh->setCellValue([7,$Lg], 0.0);
+}
 $sh->getStyle([7,$Lg])->getNumberFormat()->setFormatCode($MONEY);
 rowStyle($sh,$Lg,1,7,$S_TOT);
+$cell_gc_sold = 'G' . $Lg;
 $Lg++;
 
 // -- Paid GC (Redeemed) --
@@ -448,6 +482,8 @@ foreach ($gc_hdr as $h) { $sh->setCellValue([$col,$Rg],$h); $col++; }
 rowStyle($sh,$Rg,9,15,$S_HDR);
 $sh->getRowDimension($Rg)->setRowHeight(22);
 $Rg++;
+$first_gc_red_row = !empty($gc_redeemed) ? $Rg : null;
+$last_gc_red_row  = null;
 foreach ($gc_redeemed as $gc) {
     $sh->setCellValue([9,$Rg],  $gc['series']??'');
     $sh->setCellValue([10,$Rg], $gc['client_name']);
@@ -457,12 +493,18 @@ foreach ($gc_redeemed as $gc) {
     $sh->setCellValue([14,$Rg], $gc['remarks']??'');
     $sh->getStyle([13,$Rg])->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$Rg,9,15,$S_DAT);
+    $last_gc_red_row = $Rg;
     $Rg++;
 }
 $sh->setCellValue([9,$Rg],  'TOTAL');
-$sh->setCellValue([15,$Rg], $gc_redeem_total);
+if ($first_gc_red_row !== null) {
+    $sh->setCellValue([15,$Rg], "=SUM(M{$first_gc_red_row}:M{$last_gc_red_row})");
+} else {
+    $sh->setCellValue([15,$Rg], 0.0);
+}
 $sh->getStyle([15,$Rg])->getNumberFormat()->setFormatCode($MONEY);
 rowStyle($sh,$Rg,9,15,$S_TOT);
+$cell_gc_red = 'O' . $Rg;
 $Rg++;
 
 $row = max($Lg,$Rg) + 1;
@@ -474,20 +516,101 @@ $row++;
 secRow($sh, $row, 'PRODUCT SOLD', 1, 5, $S_SEC);
 hdrRow($sh, $row, ['Particular','Qty','Price','Amount','Total'], 1, $S_HDR);
 
-foreach (array_merge($product_sales,$system_product_sales) as $ps) {
+$all_products = array_merge($product_sales, $system_product_sales);
+$first_prod_row = !empty($all_products) ? $row : null;
+$last_prod_row  = null;
+foreach ($all_products as $ps) {
     $sh->setCellValue([1,$row], $ps['particular']);
     $sh->setCellValue([2,$row], (int)$ps['qty']);
     $sh->setCellValue([3,$row], (float)$ps['price']);
-    $sh->setCellValue([4,$row], (float)$ps['amount']);
+    // Amount = Qty × Price (live formula matching workbook V97=T97*U97)
+    $sh->setCellValue([4,$row], "=B{$row}*C{$row}");
     $sh->getStyle(rng(3,$row,4,$row))->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$row,1,5,$S_DAT);
+    $last_prod_row = $row;
     $row++;
 }
 $sh->setCellValue([1,$row], 'TOTAL');
-$sh->setCellValue([5,$row], $prod_sold_total);
+if ($first_prod_row !== null) {
+    $sh->setCellValue([5,$row], "=SUM(D{$first_prod_row}:D{$last_prod_row})");
+} else {
+    $sh->setCellValue([5,$row], 0.0);
+}
 $sh->getStyle([5,$row])->getNumberFormat()->setFormatCode($MONEY);
 rowStyle($sh,$row,1,5,$S_TOT);
+$cell_prod = 'E' . $row;
 $row++;
+
+// ════════════════════════════════════════════════════════════════════════════
+// DEFERRED SUMMARY FORMULAS
+// Now that all sub-ledger sections have been written, we know every cell
+// address needed for the Summary formula chain.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Update H3 (Cash on Hand in meta header) to reference the denom total live
+$sh->setCellValue([8,3], "={$cell_denom_tot}");
+
+// Service log totals (column letters for the totals row)
+$cell_svc_K = 'K' . $svc_totals_row;  // Regular Price total → POS Reading
+$cell_svc_O = 'O' . $svc_totals_row;  // 30% CF total → Staff CF
+$cell_svc_P = 'P' . $svc_totals_row;  // 20% CF total
+$cell_svc_Q = 'Q' . $svc_totals_row;  // 15% CF total
+
+// Staff CF = stored sum from appointment_therapists (per-therapist/service rates,
+// not formula-derived). Static so it matches what was actually paid.
+
+// Row offsets within Summary (0-based from $sum_data_start)
+$sr_gross    = $sum_data_start;      // Gross Sales
+$sr_staffcf  = $sum_data_start + 1;  // Staff CF
+$sr_soldgc   = $sum_data_start + 2;  // Sold GC
+$sr_pos      = $sum_data_start + 3;  // POS Reading
+$sr_disc     = $sum_data_start + 4;  // Discounts
+$sr_celeb    = $sum_data_start + 5;  // Celeb. Discounts 10%
+$sr_gcred    = $sum_data_start + 6;  // Redeemed GC
+$sr_swiper   = $sum_data_start + 7;  // Swiper
+$sr_gcash    = $sum_data_start + 8;  // GCash
+$sr_maya     = $sum_data_start + 9;  // Maya
+$sr_qrph     = $sum_data_start + 10; // QRPH
+$sr_unp      = $sum_data_start + 11; // Unpaids
+$sr_mktg     = $sum_data_start + 12; // Marketing Expense
+$sr_adv      = $sum_data_start + 13; // Advance Payment
+$sr_mayadp   = $sum_data_start + 14; // Maya (DP)
+$sr_prod     = $sum_data_start + 15; // Product Sold
+$sr_exp      = $sum_data_start + 16; // Expenses
+$sr_net      = $sum_data_start + 17; // Net Cash
+$sr_coh      = $sum_data_start + 18; // COH
+$sr_short    = $sum_data_start + 19; // (Short)/Over
+
+// Build summary formula values — references chain through the Summary col C
+$sum_formulas = [
+    $sr_gross   => "=C{$sr_pos}+C{$sr_soldgc}-C{$sr_mktg}",
+    $sr_staffcf => (float)$staff_cf,
+    $sr_soldgc  => "={$cell_gc_sold}",
+    // POS Reading references the manually-entered value in the header (H2).
+    // Using H2 keeps Excel consistent with PHP's $pos_reading (from daily_reports),
+    // so Net Cash and Gross Sales chain from the same anchor as the PHP formula.
+    $sr_pos     => "=H2",
+    $sr_disc    => "=SUM(N{$first_svc_row}:N{$last_svc_row})",
+    $sr_celeb   => "=SUM(M{$first_svc_row}:M{$last_svc_row})",
+    $sr_gcred   => "={$cell_gc_red}",
+    $sr_swiper  => (float)$card_total,
+    $sr_gcash   => (float)$gcash_total,
+    $sr_maya    => (float)$maya_total,
+    $sr_qrph    => (float)$qrph_total,
+    $sr_unp     => "={$cell_unp_tot}",
+    $sr_mktg    => "={$cell_inf_mktg}",
+    $sr_adv     => (float)$advance_payment_total,
+    $sr_mayadp  => (float)$maya_dp_total,
+    $sr_prod    => "={$cell_prod}",
+    $sr_exp     => "={$cell_exp_tot}",
+    // NET CASH mirrors workbook B52: POS − all 13 deductions (Staff CF excluded)
+    $sr_net     => "=C{$sr_pos}-C{$sr_gcred}-C{$sr_swiper}-C{$sr_gcash}-C{$sr_maya}-C{$sr_qrph}-C{$sr_mayadp}-C{$sr_unp}-C{$sr_adv}-C{$sr_disc}-C{$sr_celeb}-C{$sr_exp}-C{$sr_mktg}",
+    $sr_coh     => "={$cell_denom_tot}",
+    $sr_short   => "=C{$sr_coh}-C{$sr_net}",
+];
+foreach ($sum_formulas as $sr => $val) {
+    $sh->setCellValue([3,$sr], $val);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // ── ANALYSIS (INTERNAL) ── clearly separated, at the very bottom ──────────

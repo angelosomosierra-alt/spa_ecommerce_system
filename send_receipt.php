@@ -237,6 +237,10 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
     // ── 2. Fetch order (payment + discount info) ───────────────────────────────
     $stmt = $conn->prepare("
         SELECT o.total_amount, o.final_amount, o.discount_type, o.discount_amount,
+               IFNULL(o.completion_discount_type,   'none') AS completion_discount_type,
+               IFNULL(o.completion_discount_amount, 0.00)   AS completion_discount_amount,
+               IFNULL(o.completion_voucher_type,    'cash') AS completion_voucher_type,
+               IFNULL(o.completion_voucher_value,   0.00)   AS completion_voucher_value,
                o.payment_method, o.payment_status, o.paymongo_reference
         FROM   orders o
         WHERE  o.id = ?
@@ -266,8 +270,9 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
     // ── 4. Compute totals ─────────────────────────────────────────────────────
     $base_total     = floatval($order['total_amount'] ?? 0);
     $discount_amt   = floatval($order['discount_amount'] ?? 0);
+    $cd_total       = floatval($order['completion_discount_amount'] ?? 0);
     $final_base     = floatval($order['final_amount'] ?? $base_total);
-    if ($final_base <= 0) $final_base = max(0, $base_total - $discount_amt);
+    if ($final_base <= 0) $final_base = max(0, $base_total - $discount_amt - $cd_total);
     $extras_total   = array_sum(array_column($extras, 'charged_price'));
     $grand_total    = $final_base + $extras_total;
 
@@ -326,27 +331,49 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
     </tr>";
     }
 
-    // ── 7. Discount row ───────────────────────────────────────────────────────
+    // ── 7. Discount rows (booking + completion shown separately) ─────────────
+    $disc_labels = [
+        'senior'    => 'Senior Citizen (SC) 20%',
+        'pwd'       => 'PWD 20%',
+        'employee'  => 'Staff (50%)',
+        'voucher'   => 'Voucher',
+        'gift_card' => 'Gift Card',
+    ];
     $discount_html = '';
     if ($discount_amt > 0) {
-        $disc_labels = [
-            'senior'    => 'Senior Citizen (20%)',
-            'pwd'       => 'PWD (20%)',
-            'employee'  => 'Staff (50%)',
-            'voucher'   => 'Voucher',
-            'gift_card' => 'Gift Card',
-        ];
         $disc_label = $disc_labels[$order['discount_type'] ?? ''] ?? ucfirst($order['discount_type'] ?? 'Discount');
-        $discount_html = "
+        $discount_html .= "
     <tr>
         <td colspan='3' style='padding:8px 16px;color:#b45309;font-size:13px;border-bottom:1px solid #EAD8C0;'>
-            🎟️ Discount — {$disc_label}
+            🎟️ {$disc_label} <span style='font-size:11px;color:#888;'>(applied at booking)</span>
         </td>
         <td style='padding:8px 16px;text-align:right;color:#b45309;font-weight:bold;border-bottom:1px solid #EAD8C0;'>
             −₱" . number_format($discount_amt, 2) . "
         </td>
     </tr>";
     }
+    $cd_amt = floatval($order['completion_discount_amount'] ?? 0);
+    if ($cd_amt > 0) {
+        $cd_type  = $order['completion_discount_type'] ?? 'voucher';
+        $cd_vtype = $order['completion_voucher_type']  ?? 'cash';
+        $cd_vval  = floatval($order['completion_voucher_value'] ?? 0);
+        $cd_label = $disc_labels[$cd_type] ?? ucfirst($cd_type);
+        if ($cd_type === 'voucher') {
+            $cd_label .= ' (' . ($cd_vtype === 'percent' ? number_format($cd_vval, 0) . '% off' : '₱ off') . ')';
+        }
+        $discount_html .= "
+    <tr>
+        <td colspan='3' style='padding:8px 16px;color:#b45309;font-size:13px;border-bottom:1px solid #EAD8C0;'>
+            🎟️ {$cd_label} <span style='font-size:11px;color:#888;'>(applied at completion)</span>
+        </td>
+        <td style='padding:8px 16px;text-align:right;color:#b45309;font-weight:bold;border-bottom:1px solid #EAD8C0;'>
+            −₱" . number_format($cd_amt, 2) . "
+        </td>
+    </tr>";
+    }
+    // VAT exemption: senior/pwd discount applied at either booking OR completion
+    $is_vat_exempt = in_array($order['discount_type'] ?? '', ['senior','pwd'])
+                  || in_array($order['completion_discount_type'] ?? '', ['senior','pwd']);
 
     $ref_display = !empty($order['paymongo_reference'])
         ? htmlspecialchars($order['paymongo_reference'])
@@ -416,8 +443,13 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
             </tr>" : "") . "
             " . ($discount_amt > 0 ? "
             <tr>
-                <td style='color:#b45309;padding-bottom:6px;'>Discount</td>
+                <td style='color:#b45309;padding-bottom:6px;'>Booking Discount</td>
                 <td style='text-align:right;color:#b45309;font-weight:bold;padding-bottom:6px;'>−₱" . number_format($discount_amt, 2) . "</td>
+            </tr>" : "") . "
+            " . ($cd_total > 0 ? "
+            <tr>
+                <td style='color:#b45309;padding-bottom:6px;'>Completion Discount</td>
+                <td style='text-align:right;color:#b45309;font-weight:bold;padding-bottom:6px;'>−₱" . number_format($cd_total, 2) . "</td>
             </tr>" : "") . "
             <tr>
                 <td style='font-size:1rem;color:#3B2A1A;font-weight:bold;border-top:1px solid #EAD8C0;padding-top:8px;'>Grand Total</td>
@@ -444,7 +476,8 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
     $plain .= "Date: {$appt_date}\n";
     $plain .= "Payment: {$pay_method_lbl}\n";
     if ($extras_total > 0) $plain .= "Extra services: ₱" . number_format($extras_total, 2) . "\n";
-    if ($discount_amt > 0) $plain .= "Discount: −₱" . number_format($discount_amt, 2) . "\n";
+    if ($discount_amt > 0) $plain .= "Booking discount: −₱" . number_format($discount_amt, 2) . "\n";
+    if ($cd_total > 0)     $plain .= "Completion discount: −₱" . number_format($cd_total, 2) . "\n";
     $plain .= "Grand Total: ₱" . number_format($grand_total, 2) . "\n";
     $plain .= str_repeat('-', 42) . "\nThank you for visiting Recovery Spa!\n";
 

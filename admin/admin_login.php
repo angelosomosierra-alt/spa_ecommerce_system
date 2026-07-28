@@ -178,7 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
             <?php echo csrf_field(); ?>
             <div class="form-group">
                 <label>Email Address</label>
-                <input type="email" name="email" placeholder="staff@recoveryspa.com" required
+                <input type="email" name="email" placeholder="Enter Your Email" required
                        autocomplete="username"
                        value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>">
             </div>
@@ -203,6 +203,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
         <div style="margin-top:1.25rem;text-align:center;font-size:0.75rem;color:#bbb;">
             For account issues, contact the system owner.
         </div>
+        <div style="margin-top:0.85rem;text-align:center;">
+            <a href="../user/auth.php" style="font-size:0.78rem;color:#A07850;text-decoration:none;">← Back to customer login</a>
+        </div>
     </div>
 </div>
 </div>
@@ -215,6 +218,22 @@ function toggleAdminPwd() {
     btn.textContent = isHide ? '🙈' : '👁';
     btn.setAttribute('aria-label', isHide ? 'Hide password' : 'Show password');
 }
+// ── Password eye-toggle auto-attach (skips fields already handled above) ──────
+document.querySelectorAll('input[type="password"]').forEach(function(inp) {
+    if (inp.dataset.eyeDone) return;
+    if (inp.parentElement && inp.parentElement.querySelector('button[aria-label*="assword"]')) { inp.dataset.eyeDone = '1'; return; }
+    inp.dataset.eyeDone = '1';
+    var wrap = document.createElement('span');
+    wrap.style.cssText = 'position:relative;display:block;';
+    inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
+    inp.style.paddingRight = '2.6rem';
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.textContent = '👁';
+    btn.setAttribute('aria-label', 'Show password');
+    btn.style.cssText = 'position:absolute;right:.6rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;padding:0;color:#A07850;';
+    btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.textContent = s ? '🙈' : '👁'; };
+    wrap.appendChild(btn);
+});
 </script>
 </body>
 </html>

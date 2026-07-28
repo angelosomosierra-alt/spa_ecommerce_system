@@ -50,6 +50,7 @@ $_s = $conn->prepare("
         o.paymongo_method,
         o.discount_type,
         o.discount_amount,
+        IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
         o.final_amount,
         o.total_amount,
         o.created_at,
@@ -201,6 +202,22 @@ $_up = $conn->prepare("SELECT * FROM unpaids_corp WHERE report_date = ? ORDER BY
 $_up->bind_param("s", $report_date); $_up->execute();
 $unpaids = $_up->get_result()->fetch_all(MYSQLI_ASSOC); $_up->close();
 
+// ── Walk-in Pay Later (booked today, not yet completed = payment not collected) ─
+$_wl = $conn->prepare("
+    SELECT o.customer_name,
+           IFNULL(NULLIF(o.final_amount, 0), o.total_amount) AS amount
+    FROM orders o
+    JOIN order_items oi ON oi.order_id = o.id
+    JOIN appointments a  ON a.order_item_id = oi.id
+    WHERE DATE(a.appointment_date) = ?
+      AND o.payment_status = 'unpaid'
+      AND o.payment_method = 'onsite'
+      AND a.status NOT IN ('completed','cancelled','declined')
+");
+$_wl->bind_param("s", $report_date); $_wl->execute();
+$walkin_unpaids     = $_wl->get_result()->fetch_all(MYSQLI_ASSOC); $_wl->close();
+$walkin_unpaid_total = array_sum(array_column($walkin_unpaids, 'amount'));
+
 // ── Product Sales (manual) — (qty*price) computed as 'amount' ────────────────
 $_ps = $conn->prepare("SELECT *, (qty * price) AS amount FROM daily_product_sales WHERE report_date = ? ORDER BY id");
 $_ps->bind_param("s", $report_date); $_ps->execute();
@@ -238,12 +255,13 @@ $expenses = $_ex->get_result()->fetch_all(MYSQLI_ASSOC); $_ex->close();
 
 // ── Compute Summary ───────────────────────────────────────────────────────────
 $staff_cf              = array_sum(array_column($service_rows, 'total_commission'));
-$total_discounts       = array_sum(array_column($service_rows, 'discount_amount'));
+$total_discounts       = array_sum(array_column($service_rows, 'discount_amount'))
+                       + array_sum(array_column($service_rows, 'completion_discount_amount'));
 $celeb_discount        = array_sum(array_column($service_rows, 'celebration_discount'));
 $advance_payment_total = array_sum(array_column($service_rows, 'advance_payment'));
 $gc_sold_total         = array_sum(array_column($gc_sold,      'amount'));
 $gc_redeem_total       = array_sum(array_column($gc_redeemed,  'amount'));
-$unpaids_total         = array_sum(array_column($unpaids,      'amount'));
+$unpaids_total         = array_sum(array_column($unpaids, 'amount')) + $walkin_unpaid_total;
 $expenses_total        = array_sum(array_column($expenses,     'amount'));
 $prod_sold_total       = array_sum(array_column($product_sales,        'amount'))
                        + array_sum(array_column($system_product_sales, 'amount'));
