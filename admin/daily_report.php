@@ -74,6 +74,8 @@ if (is_cashier() && $report_date !== date('Y-m-d')) {
 }
 
 $active_tab = $_GET['tab'] ?? 'log';
+if (!empty($_GET['saved']))  { $msg = '✅ Manual entry saved.'; }
+if (!empty($_GET['voided'])) { $msg = '✅ Manual entry voided.'; }
 
 // ── Fetch daily report header ─────────────────────────────────────────────────
 $_rpt_s = $conn->prepare("SELECT * FROM daily_reports WHERE report_date = ? LIMIT 1");
@@ -215,6 +217,108 @@ if (isset($_GET['del_prodsale']) && is_full_access()) {
     header("Location: daily_report.php?date=$report_date&tab=products"); exit();
 }
 
+// ── SAVE MANUAL ENTRY ─────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_manual_entry'])) {
+    verify_csrf_token();
+    $from_tab = in_array($_POST['_from_tab'] ?? '', ['log','products','gc']) ? $_POST['_from_tab'] : 'log';
+    if (!$rpt || $rpt['is_locked']) {
+        $msg = $rpt ? '⚠️ Report is locked.' : '⚠️ Save the report header first.'; $msg_type = 'warning';
+    } else {
+        // PIN validation (required for cashier role)
+        $pin_input      = trim($_POST['pin'] ?? '');
+        $pin_actor_name = null;
+        $pin_valid      = true;
+        if (is_cashier()) {
+            if (empty($pin_input)) { $msg = '⚠️ PIN is required.'; $msg_type = 'warning'; $pin_valid = false; }
+            else {
+                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps->bind_param("s", $pin_input); $ps->execute();
+                $pr = $ps->get_result()->fetch_assoc(); $ps->close();
+                if (!$pr) { $msg = '⚠️ Invalid PIN.'; $msg_type = 'danger'; $pin_valid = false; }
+                else       { $pin_actor_name = $pr['full_name']; }
+            }
+        } else {
+            $pin_actor_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+        }
+        if ($pin_valid) {
+            $me_cat    = in_array($_POST['me_category'] ?? '', ['service','product','addon','gc_voucher','refund','other'])
+                         ? $_POST['me_category'] : 'other';
+            $me_desc   = sanitize_input($_POST['me_description'] ?? '');
+            $me_amount = floatval($_POST['me_amount'] ?? 0);
+            $me_pm     = sanitize_input($_POST['me_payment_method'] ?? '');
+            $me_type   = in_array($_POST['me_entry_type'] ?? '', ['addition','correction']) ? $_POST['me_entry_type'] : 'addition';
+            $uid       = (int)$_SESSION['user_id'];
+            if (empty($me_desc)) {
+                $msg = '⚠️ Description is required.'; $msg_type = 'danger';
+            } elseif ($me_amount == 0) {
+                $msg = '⚠️ Amount cannot be zero.'; $msg_type = 'danger';
+            } else {
+                $stmt = $conn->prepare("
+                    INSERT INTO daily_report_manual_entries
+                        (report_date, category, description, amount, payment_method, entry_type, created_by, created_by_name)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                $stmt->bind_param("sssdssis", $report_date, $me_cat, $me_desc, $me_amount, $me_pm, $me_type, $uid, $pin_actor_name);
+                $stmt->execute(); $stmt->close();
+                $actor = ['id' => $uid, 'name' => $pin_actor_name, 'role' => $_SESSION['admin_role'] ?? 'staff'];
+                log_activity($conn, 'manual_entry_add',
+                    "Added manual entry [{$me_cat}]: {$me_desc} ₱" . number_format($me_amount, 2),
+                    'daily_report', $rpt['id'], $actor);
+                header("Location: daily_report.php?date=$report_date&tab=$from_tab&saved=1"); exit();
+            }
+        }
+    }
+}
+
+// ── VOID MANUAL ENTRY ─────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['void_manual_entry'])) {
+    verify_csrf_token();
+    $me_id    = intval($_POST['me_id'] ?? 0);
+    $from_tab = in_array($_POST['_from_tab'] ?? '', ['log','products','gc']) ? $_POST['_from_tab'] : 'log';
+    if (!$rpt || $rpt['is_locked']) {
+        $msg = $rpt ? '⚠️ Report is locked.' : '⚠️ Save the report header first.'; $msg_type = 'warning';
+    } elseif ($me_id <= 0) {
+        $msg = '⚠️ Invalid entry.'; $msg_type = 'danger';
+    } else {
+        $pin_input      = trim($_POST['pin'] ?? '');
+        $pin_actor_name = null;
+        $pin_valid      = true;
+        if (is_cashier()) {
+            if (empty($pin_input)) { $msg = '⚠️ PIN is required.'; $msg_type = 'warning'; $pin_valid = false; }
+            else {
+                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+                $ps->bind_param("s", $pin_input); $ps->execute();
+                $pr = $ps->get_result()->fetch_assoc(); $ps->close();
+                if (!$pr) { $msg = '⚠️ Invalid PIN.'; $msg_type = 'danger'; $pin_valid = false; }
+                else       { $pin_actor_name = $pr['full_name']; }
+            }
+        } else {
+            $pin_actor_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+        }
+        if ($pin_valid) {
+            $void_reason = sanitize_input($_POST['void_reason'] ?? '');
+            $void_at     = date('Y-m-d H:i:s');
+            $uid         = (int)$_SESSION['user_id'];
+            $stmt = $conn->prepare("
+                UPDATE daily_report_manual_entries
+                SET is_voided=1, voided_by_name=?, voided_reason=?, voided_at=?
+                WHERE id=? AND report_date=? AND is_voided=0
+            ");
+            $stmt->bind_param("sssis", $pin_actor_name, $void_reason, $void_at, $me_id, $report_date);
+            $stmt->execute(); $affected = $stmt->affected_rows; $stmt->close();
+            if ($affected > 0) {
+                $actor = ['id' => $uid, 'name' => $pin_actor_name, 'role' => $_SESSION['admin_role'] ?? 'staff'];
+                log_activity($conn, 'manual_entry_void',
+                    "Voided manual entry #{$me_id}" . ($void_reason ? ": {$void_reason}" : ''),
+                    'daily_report', $rpt['id'], $actor);
+                header("Location: daily_report.php?date=$report_date&tab=$from_tab&voided=1"); exit();
+            } else {
+                $msg = '⚠️ Entry not found or already voided.'; $msg_type = 'warning';
+            }
+        }
+    }
+}
+
 require_once __DIR__ . '/_daily_report_data.php';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -226,6 +330,180 @@ $active_page = 'daily_report';
 require_once 'admin_header.php';
 
 $locked = !empty($rpt['is_locked']);
+
+// ── Manual entries render helper ──────────────────────────────────────────────
+$_me_cat_icons = [
+    'service'    => '💆', 'product' => '📦', 'addon' => '➕',
+    'gc_voucher' => '🎁', 'refund'  => '🔄', 'other' => '📝',
+];
+$render_manual_entries = function (string $from_tab) use ($manual_entries, $locked, $report_date, $_me_cat_icons) {
+    $non_voided_count = count(array_filter($manual_entries, fn($r) => !$r['is_voided']));
+    ?>
+<div class="panel" style="margin-top:1.5rem;">
+    <div class="panel-header" style="background:linear-gradient(90deg,#FAF3E8,#f3e9d8);">
+        <span class="panel-title">📝 Manual Entries / Adjustments</span>
+        <span style="font-size:0.75rem;color:var(--gray);"><?php echo $non_voided_count; ?> active</span>
+    </div>
+
+    <?php if ($locked): ?>
+    <div style="padding:0.75rem 1rem;color:#856404;background:#fff3cd;border-bottom:1px solid #ffc107;font-size:0.85rem;">
+        🔒 Report is locked — no new manual entries can be added or voided.
+        <?php if (is_full_access()): ?>
+        Unlock the report first via the 🔓 Unlock button at the top of the page.
+        <?php endif; ?>
+    </div>
+    <?php else: ?>
+    <!-- Add form -->
+    <div style="padding:0.85rem 1rem;border-bottom:1px solid var(--border2);background:var(--bg3);">
+        <form method="POST" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;align-items:end;">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="save_manual_entry" value="1">
+            <input type="hidden" name="_from_tab" value="<?php echo htmlspecialchars($from_tab); ?>">
+            <input type="hidden" name="pin" value="">
+            <div>
+                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Category *</label>
+                <select name="me_category"
+                        style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
+                    <option value="service">💆 Service</option>
+                    <option value="product">📦 Product</option>
+                    <option value="addon">➕ Add-on</option>
+                    <option value="gc_voucher">🎁 GC / Voucher</option>
+                    <option value="refund">🔄 Refund</option>
+                    <option value="other" selected>📝 Other</option>
+                </select>
+            </div>
+            <div style="grid-column:span 2;">
+                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Description *</label>
+                <input type="text" name="me_description" required maxlength="255"
+                       placeholder="e.g. Walk-in cash sale not logged in system"
+                       style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);box-sizing:border-box;">
+            </div>
+            <div>
+                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Amount (₱, signed) *</label>
+                <input type="number" name="me_amount" required step="0.01" placeholder="500.00 or -200.00"
+                       style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);box-sizing:border-box;">
+            </div>
+            <div>
+                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Payment Method</label>
+                <select name="me_payment_method"
+                        style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
+                    <option value="">— none / N/A —</option>
+                    <option value="cash">💵 Cash</option>
+                    <option value="gcash">📱 GCash</option>
+                    <option value="maya">💜 Maya</option>
+                    <option value="qrph">📷 QR PH</option>
+                    <option value="card">💳 Card</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Entry Type</label>
+                <select name="me_entry_type"
+                        style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
+                    <option value="addition">➕ Addition</option>
+                    <option value="correction">✏️ Correction</option>
+                </select>
+            </div>
+            <div style="grid-column:span 3;display:flex;align-items:center;gap:0.75rem;margin-top:0.25rem;">
+                <button type="button" class="btn btn-primary"
+                        onclick="openPinGate('Add Manual Entry', this.form)"
+                        style="font-size:0.82rem;padding:0.45rem 1.1rem;">
+                    🔐 Add Manual Entry
+                </button>
+                <span style="font-size:0.72rem;color:var(--gray);">
+                    Requires PIN confirmation. Use a negative amount for corrections/deductions.
+                </span>
+            </div>
+        </form>
+    </div>
+    <?php endif; ?>
+
+    <!-- Entries list -->
+    <?php if (empty($manual_entries)): ?>
+    <div style="padding:1.5rem;text-align:center;color:var(--gray);font-size:0.85rem;">No manual entries for this date.</div>
+    <?php else: ?>
+    <div class="table-wrap" style="border:none;border-radius:0;">
+        <table style="font-size:0.81rem;">
+            <thead>
+                <tr>
+                    <th style="width:80px;">Category</th>
+                    <th>Description</th>
+                    <th style="text-align:right;width:100px;">Amount</th>
+                    <th style="width:80px;">Type</th>
+                    <th style="width:70px;">Method</th>
+                    <th>Added By</th>
+                    <th style="width:70px;">Time</th>
+                    <th style="width:200px;">Action / Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($manual_entries as $_me_row): ?>
+            <?php
+            $_voided   = (bool)$_me_row['is_voided'];
+            $_amt      = (float)$_me_row['amount'];
+            $_cat_icon = $_me_cat_icons[$_me_row['category']] ?? '📝';
+            $_pm_icons = ['cash'=>'💵','gcash'=>'📱','maya'=>'💜','qrph'=>'📷','card'=>'💳'];
+            $_pm_icon  = !empty($_me_row['payment_method']) ? ($_pm_icons[$_me_row['payment_method']] ?? '') . ' ' . strtoupper($_me_row['payment_method']) : '—';
+            ?>
+            <tr style="<?php echo $_voided ? 'opacity:0.55;background:rgba(220,53,69,0.04);' : ''; ?>">
+                <td>
+                    <span title="<?php echo htmlspecialchars(ucfirst($_me_row['category'])); ?>">
+                        <?php echo $_cat_icon . ' ' . htmlspecialchars(ucfirst(str_replace('_',' ',$_me_row['category']))); ?>
+                    </span>
+                </td>
+                <td style="font-weight:600;<?php echo $_voided ? 'text-decoration:line-through;' : ''; ?>">
+                    <?php echo htmlspecialchars($_me_row['description']); ?>
+                </td>
+                <td style="text-align:right;font-family:monospace;font-weight:700;
+                            color:<?php echo $_voided ? 'var(--gray)' : ($_amt >= 0 ? '#198754' : '#dc3545'); ?>;">
+                    <?php echo $_amt < 0 ? '(' : ''; ?>₱<?php echo number_format(abs($_amt), 2); ?><?php echo $_amt < 0 ? ')' : ''; ?>
+                </td>
+                <td>
+                    <span style="font-size:0.72rem;padding:0.1rem 0.4rem;border-radius:20px;
+                                 background:<?php echo $_me_row['entry_type'] === 'addition' ? 'rgba(25,135,84,0.1)' : 'rgba(201,106,44,0.12)'; ?>;
+                                 color:<?php echo $_me_row['entry_type'] === 'addition' ? '#198754' : 'var(--rust)'; ?>;">
+                        <?php echo $_me_row['entry_type'] === 'addition' ? '➕ Addition' : '✏️ Correction'; ?>
+                    </span>
+                </td>
+                <td style="font-size:0.75rem;"><?php echo htmlspecialchars($_pm_icon); ?></td>
+                <td style="font-size:0.78rem;color:var(--gray);"><?php echo htmlspecialchars($_me_row['created_by_name']); ?></td>
+                <td style="font-size:0.73rem;color:var(--gray);white-space:nowrap;"><?php echo date('h:i A', strtotime($_me_row['created_at'])); ?></td>
+                <td>
+                    <?php if ($_voided): ?>
+                    <span style="font-size:0.72rem;color:#dc3545;">
+                        ✕ Voided by <?php echo htmlspecialchars($_me_row['voided_by_name'] ?? '?'); ?>
+                        <?php if (!empty($_me_row['voided_reason'])): ?>
+                        — <em><?php echo htmlspecialchars($_me_row['voided_reason']); ?></em>
+                        <?php endif; ?>
+                        <br><span style="color:var(--gray);"><?php echo $_me_row['voided_at'] ? date('M d g:i A', strtotime($_me_row['voided_at'])) : ''; ?></span>
+                    </span>
+                    <?php elseif (!$locked): ?>
+                    <form method="POST" style="display:inline-flex;gap:0.3rem;align-items:center;flex-wrap:wrap;">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="void_manual_entry" value="1">
+                        <input type="hidden" name="me_id" value="<?php echo (int)$_me_row['id']; ?>">
+                        <input type="hidden" name="_from_tab" value="<?php echo htmlspecialchars($from_tab); ?>">
+                        <input type="hidden" name="pin" value="">
+                        <input type="text" name="void_reason" maxlength="255" placeholder="Reason (optional)"
+                               style="padding:0.25rem 0.45rem;border:1px solid var(--border2);border-radius:5px;
+                                      font-size:0.71rem;color:var(--brown);background:var(--bg3);width:130px;">
+                        <button type="button" class="btn btn-danger btn-sm" style="font-size:0.7rem;padding:0.25rem 0.55rem;"
+                                onclick="var f=this.closest('form');uiConfirm('Void this entry? This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Void Manual Entry',f);})">
+                            ✕ Void
+                        </button>
+                    </form>
+                    <?php else: ?>
+                    <span style="font-size:0.72rem;color:var(--gray);">—</span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php endif; ?>
+</div>
+    <?php
+};
 ?>
 
 <?php if (!empty($msg)): ?>
@@ -536,6 +814,8 @@ $locked = !empty($rpt['is_locked']);
     </div>
 </div>
 
+<?php $render_manual_entries('log'); ?>
+
 <!-- ══════════════════════════════════════════════════════════════════════════
      TAB: INFLUENCER / MARKETING
 ══════════════════════════════════════════════════════════════════════════ -->
@@ -722,9 +1002,13 @@ $locked = !empty($rpt['is_locked']);
                 ['label' => 'MAYA (DP)',              'val' => $maya_dp_total,        'color' => 'var(--rust)'],
                 ['label' => 'PRODUCT SOLD',           'val' => $prod_sold_total,      'color' => '#198754'],
                 ['label' => 'EXPENSES',               'val' => $expenses_total,       'color' => 'var(--rust)'],
+                ['label' => 'MANUAL ADDITIONS',       'val' => $manual_add_total,     'color' => '#198754',
+                 'note' => 'Non-refund manual entries — added to Gross & Net Cash'],
+                ['label' => 'MANUAL REFUNDS',         'val' => $manual_refund_total,  'color' => 'var(--rust)',
+                 'note' => 'Refund category manual entries — deducted from Net Cash'],
                 ['label' => 'NET CASH',               'val' => $net_cash,             'color' => '#198754', 'bold' => true,
                  'bg' => 'rgba(25,135,84,0.07)',
-                 'note' => 'POS Reading − payments − discounts − unpaids − advance − expenses − mktg'],
+                 'note' => 'POS Reading − payments − discounts − unpaids − advance − expenses − mktg ± manual'],
                 ['label' => 'COH (Cash on Hand)',     'val' => $cash_on_hand,         'color' => '#0070f3', 'bold' => true,
                  'id' => 'live-coh'],
                 ['label' => '(SHORT) / OVER',         'val' => $short_over,
@@ -983,6 +1267,8 @@ $locked = !empty($rpt['is_locked']);
     </div>
 </div>
 
+<?php $render_manual_entries('gc'); ?>
+
 <!-- ══════════════════════════════════════════════════════════════════════════
      TAB: PRODUCTS SOLD
 ══════════════════════════════════════════════════════════════════════════ -->
@@ -1123,6 +1409,8 @@ $locked = !empty($rpt['is_locked']);
         </div>
     </div>
 </div>
+
+<?php $render_manual_entries('products'); ?>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
      TAB: ANALYSIS
