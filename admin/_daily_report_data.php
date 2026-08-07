@@ -30,22 +30,33 @@
     if (!in_array('maya_dp', $rpt_cols))
         $conn->query("ALTER TABLE daily_reports ADD COLUMN maya_dp DECIMAL(10,2) NOT NULL DEFAULT 0.00");
 
-    $conn->query("CREATE TABLE IF NOT EXISTS `daily_report_manual_entries` (
-        `id`              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `report_date`     DATE NOT NULL,
-        `category`        ENUM('service','product','addon','gc_voucher','refund','other') NOT NULL DEFAULT 'other',
-        `description`     VARCHAR(255) NOT NULL,
-        `amount`          DECIMAL(10,2) NOT NULL,
-        `payment_method`  VARCHAR(50) NULL,
-        `entry_type`      ENUM('addition','correction') NOT NULL DEFAULT 'addition',
-        `created_by`      INT NULL,
-        `created_by_name` VARCHAR(150) NOT NULL DEFAULT '',
-        `created_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        `is_voided`       TINYINT(1) NOT NULL DEFAULT 0,
-        `voided_by_name`  VARCHAR(150) NULL,
-        `voided_reason`   VARCHAR(255) NULL,
-        `voided_at`       DATETIME NULL,
-        INDEX `idx_rme_date` (`report_date`)
+    $conn->query("CREATE TABLE IF NOT EXISTS `daily_report_spreadsheet_rows` (
+        `id`               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        `report_date`      DATE NOT NULL,
+        `row_order`        INT NOT NULL DEFAULT 0,
+        `time_in`          VARCHAR(20) NULL,
+        `time_out`         VARCHAR(20) NULL,
+        `slip_no`          VARCHAR(50) NULL,
+        `client_name`      VARCHAR(150) NULL,
+        `service_name`     VARCHAR(150) NULL,
+        `stylist`          VARCHAR(150) NULL,
+        `regular_price`    DECIMAL(10,2) NULL DEFAULT 0,
+        `promo_price`      DECIMAL(10,2) NULL DEFAULT 0,
+        `celeb_10`         DECIMAL(10,2) NULL DEFAULT 0,
+        `disc_20_pwd`      DECIMAL(10,2) NULL DEFAULT 0,
+        `comm_30`          DECIMAL(10,2) NULL DEFAULT 0,
+        `comm_20`          DECIMAL(10,2) NULL DEFAULT 0,
+        `comm_15`          DECIMAL(10,2) NULL DEFAULT 0,
+        `disc_50_staff`    DECIMAL(10,2) NULL DEFAULT 0,
+        `net_sales`        DECIMAL(10,2) NOT NULL DEFAULT 0,
+        `mode_of_payment`  VARCHAR(50) NULL,
+        `remarks`          VARCHAR(500) NULL,
+        `is_refund`        TINYINT(1) NOT NULL DEFAULT 0,
+        `created_by_name`  VARCHAR(150) NOT NULL DEFAULT '',
+        `updated_by_name`  VARCHAR(150) NULL,
+        `created_at`       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        `updated_at`       DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+        INDEX `idx_drsr_date` (`report_date`)
     )");
 })();
 
@@ -271,10 +282,10 @@ $_ex = $conn->prepare("SELECT * FROM business_expenses WHERE expense_date = ? OR
 $_ex->bind_param("s", $report_date); $_ex->execute();
 $expenses = $_ex->get_result()->fetch_all(MYSQLI_ASSOC); $_ex->close();
 
-// ── Manual Entries / Adjustments ──────────────────────────────────────────────
-$_me = $conn->prepare("SELECT * FROM daily_report_manual_entries WHERE report_date = ? ORDER BY created_at ASC");
-$_me->bind_param("s", $report_date); $_me->execute();
-$manual_entries = $_me->get_result()->fetch_all(MYSQLI_ASSOC); $_me->close();
+// ── Spreadsheet rows ──────────────────────────────────────────────────────────
+$_ss = $conn->prepare("SELECT * FROM daily_report_spreadsheet_rows WHERE report_date = ? ORDER BY row_order ASC, id ASC");
+$_ss->bind_param("s", $report_date); $_ss->execute();
+$spreadsheet_rows = $_ss->get_result()->fetch_all(MYSQLI_ASSOC); $_ss->close();
 
 // ── Compute Summary ───────────────────────────────────────────────────────────
 $staff_cf              = array_sum(array_column($service_rows, 'total_commission'));
@@ -292,15 +303,14 @@ $addon_gross           = array_sum(array_column($addon_rows, 'charged_price'));
 $addon_cf              = array_sum(array_column($addon_rows, 'commission'));
 $staff_cf             += $addon_cf;
 
-// ── Manual entry totals (non-voided) ─────────────────────────────────────────
-$manual_add_total    = 0.0;
-$manual_refund_total = 0.0;
-foreach ($manual_entries as $_me_r) {
-    if ($_me_r['is_voided']) continue;
-    if ($_me_r['category'] === 'refund') {
-        $manual_refund_total += (float)$_me_r['amount'];
+// ── Spreadsheet totals ────────────────────────────────────────────────────────
+$spreadsheet_net_total    = 0.0;
+$spreadsheet_refund_total = 0.0;
+foreach ($spreadsheet_rows as $_ssr) {
+    if ($_ssr['is_refund']) {
+        $spreadsheet_refund_total += (float)$_ssr['net_sales'];
     } else {
-        $manual_add_total += (float)$_me_r['amount'];
+        $spreadsheet_net_total += (float)$_ssr['net_sales'];
     }
 }
 
@@ -321,8 +331,8 @@ $pos_reading_computed = array_sum(array_column($service_rows, 'charged_price'))
                       + $addon_gross + $mktg_expense + $prod_sold_total;
 $pos_variance         = $pos_reading - $pos_reading_computed;
 
-// GROSS SALES = POS_READING + SOLD_GC − MARKETING_EXPENSE + MANUAL_ADDITIONS
-$gross_sales   = $pos_reading + $gc_sold_total - $mktg_expense + $manual_add_total;
+// GROSS SALES = POS_READING + SOLD_GC − MARKETING_EXPENSE + SPREADSHEET_NET_SALES
+$gross_sales   = $pos_reading + $gc_sold_total - $mktg_expense + $spreadsheet_net_total;
 $net_sales     = $gross_sales - $staff_cf;
 $maya_dp_total = floatval($rpt['maya_dp'] ?? 0);
 
@@ -406,8 +416,8 @@ $net_cash = $pos_reading
           - $celeb_discount
           - $expenses_total
           - $mktg_expense
-          + $manual_add_total     // additional cash from manual entries
-          - $manual_refund_total; // refunds given reduce cash on hand
+          + $spreadsheet_net_total     // spreadsheet non-refund net sales
+          - $spreadsheet_refund_total; // spreadsheet refund rows reduce cash on hand
 
 // ── Cash received today (drawer / paid-date basis) ────────────────────────────
 $_cash_q = $conn->prepare("

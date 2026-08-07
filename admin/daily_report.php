@@ -74,8 +74,6 @@ if (is_cashier() && $report_date !== date('Y-m-d')) {
 }
 
 $active_tab = $_GET['tab'] ?? 'log';
-if (!empty($_GET['saved']))  { $msg = '✅ Manual entry saved.'; }
-if (!empty($_GET['voided'])) { $msg = '✅ Manual entry voided.'; }
 
 // ── Fetch daily report header ─────────────────────────────────────────────────
 $_rpt_s = $conn->prepare("SELECT * FROM daily_reports WHERE report_date = ? LIMIT 1");
@@ -217,106 +215,113 @@ if (isset($_GET['del_prodsale']) && is_full_access()) {
     header("Location: daily_report.php?date=$report_date&tab=products"); exit();
 }
 
-// ── SAVE MANUAL ENTRY ─────────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_manual_entry'])) {
-    verify_csrf_token();
-    $from_tab = in_array($_POST['_from_tab'] ?? '', ['log','products','gc']) ? $_POST['_from_tab'] : 'log';
-    if (!$rpt || $rpt['is_locked']) {
-        $msg = $rpt ? '⚠️ Report is locked.' : '⚠️ Save the report header first.'; $msg_type = 'warning';
+// ── AJAX: Unlock spreadsheet editing ─────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'unlock_ss_edit') {
+    header('Content-Type: application/json');
+    if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
+    if (!$rpt || $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    $pin_input = trim($_POST['pin'] ?? '');
+    if (empty($pin_input)) { echo json_encode(['ok'=>false,'msg'=>'PIN is required.']); exit; }
+    $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+    $ps->bind_param("s", $pin_input); $ps->execute();
+    $pr = $ps->get_result()->fetch_assoc(); $ps->close();
+    if (!$pr) { echo json_encode(['ok'=>false,'msg'=>'Incorrect PIN.']); exit; }
+    $editor_name = $pr['full_name'];
+    $_SESSION['ss_edit_unlocked'] = true;
+    $_SESSION['ss_edit_person']   = $editor_name;
+    $_SESSION['ss_edit_date']     = $report_date;
+    $_SESSION['ss_edit_expires']  = time() + 1800;
+    log_activity($conn, 'ss_edit_unlock',
+        "Spreadsheet edit unlocked for {$report_date} by {$editor_name}",
+        'daily_report', $rpt['id'] ?? null,
+        ['id' => null, 'name' => $editor_name, 'role' => 'cashier']);
+    echo json_encode(['ok'=>true,'person'=>$editor_name]); exit;
+}
+
+// ── AJAX: Save spreadsheet row ────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_ss_row') {
+    header('Content-Type: application/json');
+    if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
+    if (!$rpt || $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    $ss_unlocked_ajax = !empty($_SESSION['ss_edit_unlocked'])
+        && ($_SESSION['ss_edit_date'] ?? '') === $report_date
+        && ($_SESSION['ss_edit_expires'] ?? 0) > time();
+    if (is_cashier() && !$ss_unlocked_ajax) { echo json_encode(['ok'=>false,'msg'=>'Edit not unlocked. Please enter PIN first.']); exit; }
+    $ss_editor     = is_cashier()
+        ? ($_SESSION['ss_edit_person'] ?? '')
+        : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
+    $row_id        = intval($_POST['row_id'] ?? 0);
+    $row_order     = intval($_POST['row_order'] ?? 0);
+    $time_in       = sanitize_input($_POST['time_in']        ?? '');
+    $time_out      = sanitize_input($_POST['time_out']       ?? '');
+    $slip_no       = sanitize_input($_POST['slip_no']        ?? '');
+    $client_name   = sanitize_input($_POST['client_name']    ?? '');
+    $service_name  = sanitize_input($_POST['service_name']   ?? '');
+    $stylist       = sanitize_input($_POST['stylist']        ?? '');
+    $regular_price = floatval($_POST['regular_price'] ?? 0);
+    $promo_price   = floatval($_POST['promo_price']   ?? 0);
+    $celeb_10      = floatval($_POST['celeb_10']      ?? 0);
+    $disc_20_pwd   = floatval($_POST['disc_20_pwd']   ?? 0);
+    $comm_30       = floatval($_POST['comm_30']       ?? 0);
+    $comm_20       = floatval($_POST['comm_20']       ?? 0);
+    $comm_15       = floatval($_POST['comm_15']       ?? 0);
+    $disc_50_staff = floatval($_POST['disc_50_staff'] ?? 0);
+    $net_sales     = floatval($_POST['net_sales']     ?? 0);
+    $mode_of_pay   = sanitize_input($_POST['mode_of_payment'] ?? '');
+    $remarks       = sanitize_input($_POST['remarks']         ?? '');
+    $is_refund     = intval($_POST['is_refund'] ?? 0) ? 1 : 0;
+    if ($row_id > 0) {
+        $stmt = $conn->prepare("
+            UPDATE daily_report_spreadsheet_rows SET
+                row_order=?,time_in=?,time_out=?,slip_no=?,client_name=?,
+                service_name=?,stylist=?,regular_price=?,promo_price=?,celeb_10=?,
+                disc_20_pwd=?,comm_30=?,comm_20=?,comm_15=?,disc_50_staff=?,
+                net_sales=?,mode_of_payment=?,remarks=?,is_refund=?,updated_by_name=?
+            WHERE id=? AND report_date=?
+        ");
+        $stmt->bind_param("issssssdddddddddssisis",
+            $row_order,$time_in,$time_out,$slip_no,$client_name,
+            $service_name,$stylist,$regular_price,$promo_price,$celeb_10,
+            $disc_20_pwd,$comm_30,$comm_20,$comm_15,$disc_50_staff,
+            $net_sales,$mode_of_pay,$remarks,$is_refund,$ss_editor,
+            $row_id,$report_date);
+        $stmt->execute(); $stmt->close();
+        echo json_encode(['ok'=>true,'row_id'=>$row_id]); exit;
     } else {
-        // PIN validation (required for cashier role)
-        $pin_input      = trim($_POST['pin'] ?? '');
-        $pin_actor_name = null;
-        $pin_valid      = true;
-        if (is_cashier()) {
-            if (empty($pin_input)) { $msg = '⚠️ PIN is required.'; $msg_type = 'warning'; $pin_valid = false; }
-            else {
-                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
-                $ps->bind_param("s", $pin_input); $ps->execute();
-                $pr = $ps->get_result()->fetch_assoc(); $ps->close();
-                if (!$pr) { $msg = '⚠️ Invalid PIN.'; $msg_type = 'danger'; $pin_valid = false; }
-                else       { $pin_actor_name = $pr['full_name']; }
-            }
-        } else {
-            $pin_actor_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
-        }
-        if ($pin_valid) {
-            $me_cat    = in_array($_POST['me_category'] ?? '', ['service','product','addon','gc_voucher','refund','other'])
-                         ? $_POST['me_category'] : 'other';
-            $me_desc   = sanitize_input($_POST['me_description'] ?? '');
-            $me_amount = floatval($_POST['me_amount'] ?? 0);
-            $me_pm     = sanitize_input($_POST['me_payment_method'] ?? '');
-            $me_type   = in_array($_POST['me_entry_type'] ?? '', ['addition','correction']) ? $_POST['me_entry_type'] : 'addition';
-            $uid       = (int)$_SESSION['user_id'];
-            if (empty($me_desc)) {
-                $msg = '⚠️ Description is required.'; $msg_type = 'danger';
-            } elseif ($me_amount == 0) {
-                $msg = '⚠️ Amount cannot be zero.'; $msg_type = 'danger';
-            } else {
-                $stmt = $conn->prepare("
-                    INSERT INTO daily_report_manual_entries
-                        (report_date, category, description, amount, payment_method, entry_type, created_by, created_by_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->bind_param("sssdssis", $report_date, $me_cat, $me_desc, $me_amount, $me_pm, $me_type, $uid, $pin_actor_name);
-                $stmt->execute(); $stmt->close();
-                $actor = ['id' => $uid, 'name' => $pin_actor_name, 'role' => $_SESSION['admin_role'] ?? 'staff'];
-                log_activity($conn, 'manual_entry_add',
-                    "Added manual entry [{$me_cat}]: {$me_desc} ₱" . number_format($me_amount, 2),
-                    'daily_report', $rpt['id'], $actor);
-                header("Location: daily_report.php?date=$report_date&tab=$from_tab&saved=1"); exit();
-            }
-        }
+        $stmt = $conn->prepare("
+            INSERT INTO daily_report_spreadsheet_rows
+                (report_date,row_order,time_in,time_out,slip_no,client_name,
+                 service_name,stylist,regular_price,promo_price,celeb_10,
+                 disc_20_pwd,comm_30,comm_20,comm_15,disc_50_staff,
+                 net_sales,mode_of_payment,remarks,is_refund,created_by_name)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ");
+        $stmt->bind_param("sisssssdddddddddssisi",
+            $report_date,$row_order,$time_in,$time_out,$slip_no,$client_name,
+            $service_name,$stylist,$regular_price,$promo_price,$celeb_10,
+            $disc_20_pwd,$comm_30,$comm_20,$comm_15,$disc_50_staff,
+            $net_sales,$mode_of_pay,$remarks,$is_refund,$ss_editor);
+        $stmt->execute();
+        $new_id = $conn->insert_id;
+        $stmt->close();
+        echo json_encode(['ok'=>true,'row_id'=>$new_id]); exit;
     }
 }
 
-// ── VOID MANUAL ENTRY ─────────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['void_manual_entry'])) {
-    verify_csrf_token();
-    $me_id    = intval($_POST['me_id'] ?? 0);
-    $from_tab = in_array($_POST['_from_tab'] ?? '', ['log','products','gc']) ? $_POST['_from_tab'] : 'log';
-    if (!$rpt || $rpt['is_locked']) {
-        $msg = $rpt ? '⚠️ Report is locked.' : '⚠️ Save the report header first.'; $msg_type = 'warning';
-    } elseif ($me_id <= 0) {
-        $msg = '⚠️ Invalid entry.'; $msg_type = 'danger';
-    } else {
-        $pin_input      = trim($_POST['pin'] ?? '');
-        $pin_actor_name = null;
-        $pin_valid      = true;
-        if (is_cashier()) {
-            if (empty($pin_input)) { $msg = '⚠️ PIN is required.'; $msg_type = 'warning'; $pin_valid = false; }
-            else {
-                $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
-                $ps->bind_param("s", $pin_input); $ps->execute();
-                $pr = $ps->get_result()->fetch_assoc(); $ps->close();
-                if (!$pr) { $msg = '⚠️ Invalid PIN.'; $msg_type = 'danger'; $pin_valid = false; }
-                else       { $pin_actor_name = $pr['full_name']; }
-            }
-        } else {
-            $pin_actor_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
-        }
-        if ($pin_valid) {
-            $void_reason = sanitize_input($_POST['void_reason'] ?? '');
-            $void_at     = date('Y-m-d H:i:s');
-            $uid         = (int)$_SESSION['user_id'];
-            $stmt = $conn->prepare("
-                UPDATE daily_report_manual_entries
-                SET is_voided=1, voided_by_name=?, voided_reason=?, voided_at=?
-                WHERE id=? AND report_date=? AND is_voided=0
-            ");
-            $stmt->bind_param("sssis", $pin_actor_name, $void_reason, $void_at, $me_id, $report_date);
-            $stmt->execute(); $affected = $stmt->affected_rows; $stmt->close();
-            if ($affected > 0) {
-                $actor = ['id' => $uid, 'name' => $pin_actor_name, 'role' => $_SESSION['admin_role'] ?? 'staff'];
-                log_activity($conn, 'manual_entry_void',
-                    "Voided manual entry #{$me_id}" . ($void_reason ? ": {$void_reason}" : ''),
-                    'daily_report', $rpt['id'], $actor);
-                header("Location: daily_report.php?date=$report_date&tab=$from_tab&voided=1"); exit();
-            } else {
-                $msg = '⚠️ Entry not found or already voided.'; $msg_type = 'warning';
-            }
-        }
-    }
+// ── AJAX: Delete spreadsheet row ──────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_ss_row') {
+    header('Content-Type: application/json');
+    if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
+    if (!$rpt || $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    $ss_unlocked_ajax = !empty($_SESSION['ss_edit_unlocked'])
+        && ($_SESSION['ss_edit_date'] ?? '') === $report_date
+        && ($_SESSION['ss_edit_expires'] ?? 0) > time();
+    if (is_cashier() && !$ss_unlocked_ajax) { echo json_encode(['ok'=>false,'msg'=>'Edit not unlocked.']); exit; }
+    $row_id = intval($_POST['row_id'] ?? 0);
+    if ($row_id <= 0) { echo json_encode(['ok'=>false,'msg'=>'Invalid row.']); exit; }
+    $stmt = $conn->prepare("DELETE FROM daily_report_spreadsheet_rows WHERE id=? AND report_date=?");
+    $stmt->bind_param("is", $row_id, $report_date); $stmt->execute(); $stmt->close();
+    echo json_encode(['ok'=>true]); exit;
 }
 
 require_once __DIR__ . '/_daily_report_data.php';
@@ -330,182 +335,7 @@ $active_page = 'daily_report';
 require_once 'admin_header.php';
 
 $locked = !empty($rpt['is_locked']);
-
-// ── Manual entries render helper ──────────────────────────────────────────────
-$_me_cat_icons = [
-    'service'    => '💆', 'product' => '📦', 'addon' => '➕',
-    'gc_voucher' => '🎁', 'refund'  => '🔄', 'other' => '📝',
-];
-$render_manual_entries = function (string $from_tab) use ($manual_entries, $locked, $report_date, $_me_cat_icons) {
-    $non_voided_count = count(array_filter($manual_entries, fn($r) => !$r['is_voided']));
-    ?>
-<div class="panel" style="margin-top:1.5rem;">
-    <div class="panel-header" style="background:linear-gradient(90deg,#FAF3E8,#f3e9d8);">
-        <span class="panel-title">📝 Manual Entries / Adjustments</span>
-        <span style="font-size:0.75rem;color:var(--gray);"><?php echo $non_voided_count; ?> active</span>
-    </div>
-
-    <?php if ($locked): ?>
-    <div style="padding:0.75rem 1rem;color:#856404;background:#fff3cd;border-bottom:1px solid #ffc107;font-size:0.85rem;">
-        🔒 Report is locked — no new manual entries can be added or voided.
-        <?php if (is_full_access()): ?>
-        Unlock the report first via the 🔓 Unlock button at the top of the page.
-        <?php endif; ?>
-    </div>
-    <?php else: ?>
-    <!-- Add form -->
-    <div style="padding:0.85rem 1rem;border-bottom:1px solid var(--border2);background:var(--bg3);">
-        <form method="POST" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;align-items:end;">
-            <?php echo csrf_field(); ?>
-            <input type="hidden" name="save_manual_entry" value="1">
-            <input type="hidden" name="_from_tab" value="<?php echo htmlspecialchars($from_tab); ?>">
-            <input type="hidden" name="pin" value="">
-            <div>
-                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Category *</label>
-                <select name="me_category"
-                        style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
-                    <option value="service">💆 Service</option>
-                    <option value="product">📦 Product</option>
-                    <option value="addon">➕ Add-on</option>
-                    <option value="gc_voucher">🎁 GC / Voucher</option>
-                    <option value="refund">🔄 Refund</option>
-                    <option value="other" selected>📝 Other</option>
-                </select>
-            </div>
-            <div style="grid-column:span 2;">
-                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Description *</label>
-                <input type="text" name="me_description" required maxlength="255"
-                       placeholder="e.g. Walk-in cash sale not logged in system"
-                       style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);box-sizing:border-box;">
-            </div>
-            <div>
-                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Amount (₱, signed) *</label>
-                <input type="number" name="me_amount" required step="0.01" placeholder="500.00 or -200.00"
-                       style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);box-sizing:border-box;">
-            </div>
-            <div>
-                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Payment Method</label>
-                <select name="me_payment_method"
-                        style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
-                    <option value="">— none / N/A —</option>
-                    <option value="cash">💵 Cash</option>
-                    <option value="gcash">📱 GCash</option>
-                    <option value="maya">💜 Maya</option>
-                    <option value="qrph">📷 QR PH</option>
-                    <option value="card">💳 Card</option>
-                </select>
-            </div>
-            <div>
-                <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:2px;">Entry Type</label>
-                <select name="me_entry_type"
-                        style="width:100%;padding:0.4rem 0.55rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
-                    <option value="addition">➕ Addition</option>
-                    <option value="correction">✏️ Correction</option>
-                </select>
-            </div>
-            <div style="grid-column:span 3;display:flex;align-items:center;gap:0.75rem;margin-top:0.25rem;">
-                <button type="button" class="btn btn-primary"
-                        onclick="openPinGate('Add Manual Entry', this.form)"
-                        style="font-size:0.82rem;padding:0.45rem 1.1rem;">
-                    🔐 Add Manual Entry
-                </button>
-                <span style="font-size:0.72rem;color:var(--gray);">
-                    Requires PIN confirmation. Use a negative amount for corrections/deductions.
-                </span>
-            </div>
-        </form>
-    </div>
-    <?php endif; ?>
-
-    <!-- Entries list -->
-    <?php if (empty($manual_entries)): ?>
-    <div style="padding:1.5rem;text-align:center;color:var(--gray);font-size:0.85rem;">No manual entries for this date.</div>
-    <?php else: ?>
-    <div class="table-wrap" style="border:none;border-radius:0;">
-        <table style="font-size:0.81rem;">
-            <thead>
-                <tr>
-                    <th style="width:80px;">Category</th>
-                    <th>Description</th>
-                    <th style="text-align:right;width:100px;">Amount</th>
-                    <th style="width:80px;">Type</th>
-                    <th style="width:70px;">Method</th>
-                    <th>Added By</th>
-                    <th style="width:70px;">Time</th>
-                    <th style="width:200px;">Action / Status</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($manual_entries as $_me_row): ?>
-            <?php
-            $_voided   = (bool)$_me_row['is_voided'];
-            $_amt      = (float)$_me_row['amount'];
-            $_cat_icon = $_me_cat_icons[$_me_row['category']] ?? '📝';
-            $_pm_icons = ['cash'=>'💵','gcash'=>'📱','maya'=>'💜','qrph'=>'📷','card'=>'💳'];
-            $_pm_icon  = !empty($_me_row['payment_method']) ? ($_pm_icons[$_me_row['payment_method']] ?? '') . ' ' . strtoupper($_me_row['payment_method']) : '—';
-            ?>
-            <tr style="<?php echo $_voided ? 'opacity:0.55;background:rgba(220,53,69,0.04);' : ''; ?>">
-                <td>
-                    <span title="<?php echo htmlspecialchars(ucfirst($_me_row['category'])); ?>">
-                        <?php echo $_cat_icon . ' ' . htmlspecialchars(ucfirst(str_replace('_',' ',$_me_row['category']))); ?>
-                    </span>
-                </td>
-                <td style="font-weight:600;<?php echo $_voided ? 'text-decoration:line-through;' : ''; ?>">
-                    <?php echo htmlspecialchars($_me_row['description']); ?>
-                </td>
-                <td style="text-align:right;font-family:monospace;font-weight:700;
-                            color:<?php echo $_voided ? 'var(--gray)' : ($_amt >= 0 ? '#198754' : '#dc3545'); ?>;">
-                    <?php echo $_amt < 0 ? '(' : ''; ?>₱<?php echo number_format(abs($_amt), 2); ?><?php echo $_amt < 0 ? ')' : ''; ?>
-                </td>
-                <td>
-                    <span style="font-size:0.72rem;padding:0.1rem 0.4rem;border-radius:20px;
-                                 background:<?php echo $_me_row['entry_type'] === 'addition' ? 'rgba(25,135,84,0.1)' : 'rgba(201,106,44,0.12)'; ?>;
-                                 color:<?php echo $_me_row['entry_type'] === 'addition' ? '#198754' : 'var(--rust)'; ?>;">
-                        <?php echo $_me_row['entry_type'] === 'addition' ? '➕ Addition' : '✏️ Correction'; ?>
-                    </span>
-                </td>
-                <td style="font-size:0.75rem;"><?php echo htmlspecialchars($_pm_icon); ?></td>
-                <td style="font-size:0.78rem;color:var(--gray);"><?php echo htmlspecialchars($_me_row['created_by_name']); ?></td>
-                <td style="font-size:0.73rem;color:var(--gray);white-space:nowrap;"><?php echo date('h:i A', strtotime($_me_row['created_at'])); ?></td>
-                <td>
-                    <?php if ($_voided): ?>
-                    <span style="font-size:0.72rem;color:#dc3545;">
-                        ✕ Voided by <?php echo htmlspecialchars($_me_row['voided_by_name'] ?? '?'); ?>
-                        <?php if (!empty($_me_row['voided_reason'])): ?>
-                        — <em><?php echo htmlspecialchars($_me_row['voided_reason']); ?></em>
-                        <?php endif; ?>
-                        <br><span style="color:var(--gray);"><?php echo $_me_row['voided_at'] ? date('M d g:i A', strtotime($_me_row['voided_at'])) : ''; ?></span>
-                    </span>
-                    <?php elseif (!$locked): ?>
-                    <form method="POST" style="display:inline-flex;gap:0.3rem;align-items:center;flex-wrap:wrap;">
-                        <?php echo csrf_field(); ?>
-                        <input type="hidden" name="void_manual_entry" value="1">
-                        <input type="hidden" name="me_id" value="<?php echo (int)$_me_row['id']; ?>">
-                        <input type="hidden" name="_from_tab" value="<?php echo htmlspecialchars($from_tab); ?>">
-                        <input type="hidden" name="pin" value="">
-                        <input type="text" name="void_reason" maxlength="255" placeholder="Reason (optional)"
-                               style="padding:0.25rem 0.45rem;border:1px solid var(--border2);border-radius:5px;
-                                      font-size:0.71rem;color:var(--brown);background:var(--bg3);width:130px;">
-                        <button type="button" class="btn btn-danger btn-sm" style="font-size:0.7rem;padding:0.25rem 0.55rem;"
-                                onclick="var f=this.closest('form');uiConfirm('Void this entry? This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Void Manual Entry',f);})">
-                            ✕ Void
-                        </button>
-                    </form>
-                    <?php else: ?>
-                    <span style="font-size:0.72rem;color:var(--gray);">—</span>
-                    <?php endif; ?>
-                </td>
-            </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
-    <?php endif; ?>
-</div>
-    <?php
-};
 ?>
-
 <?php if (!empty($msg)): ?>
 <div class="alert alert-<?php echo $msg_type; ?>" style="margin-bottom:1rem;"><?php echo $msg; ?></div>
 <?php endif; ?>
@@ -548,13 +378,14 @@ $render_manual_entries = function (string $from_tab) use ($manual_entries, $lock
             padding-bottom:0;flex-wrap:wrap;">
     <?php
     $tabs = [
-        'log'       => '📋 Service Log',
-        'influencer'=> '🎯 Influencer',
-        'summary'   => '💰 Cash & Summary',
-        'expenses'  => '🧾 Expenses',
-        'gc'        => '🎁 GC & Unpaids',
-        'products'  => '🛍️ Products Sold',
-        'analysis'  => '📊 Analysis (Internal)',
+        'log'         => '📋 Service Log',
+        'influencer'  => '🎯 Influencer',
+        'summary'     => '💰 Cash & Summary',
+        'expenses'    => '🧾 Expenses',
+        'gc'          => '🎁 GC & Unpaids',
+        'products'    => '🛍️ Products Sold',
+        'spreadsheet' => '🧮 Spreadsheet',
+        'analysis'    => '📊 Analysis (Internal)',
     ];
     foreach ($tabs as $tk => $tl):
         $is_a = $active_tab === $tk;
@@ -814,8 +645,6 @@ $render_manual_entries = function (string $from_tab) use ($manual_entries, $lock
     </div>
 </div>
 
-<?php $render_manual_entries('log'); ?>
-
 <!-- ══════════════════════════════════════════════════════════════════════════
      TAB: INFLUENCER / MARKETING
 ══════════════════════════════════════════════════════════════════════════ -->
@@ -1002,13 +831,13 @@ $render_manual_entries = function (string $from_tab) use ($manual_entries, $lock
                 ['label' => 'MAYA (DP)',              'val' => $maya_dp_total,        'color' => 'var(--rust)'],
                 ['label' => 'PRODUCT SOLD',           'val' => $prod_sold_total,      'color' => '#198754'],
                 ['label' => 'EXPENSES',               'val' => $expenses_total,       'color' => 'var(--rust)'],
-                ['label' => 'MANUAL ADDITIONS',       'val' => $manual_add_total,     'color' => '#198754',
-                 'note' => 'Non-refund manual entries — added to Gross & Net Cash'],
-                ['label' => 'MANUAL REFUNDS',         'val' => $manual_refund_total,  'color' => 'var(--rust)',
-                 'note' => 'Refund category manual entries — deducted from Net Cash'],
+                ['label' => 'SPREADSHEET NET SALES',  'val' => $spreadsheet_net_total,    'color' => '#198754',
+                 'note' => 'Non-refund rows from Spreadsheet tab — added to Gross & Net Cash'],
+                ['label' => 'SPREADSHEET REFUNDS',   'val' => $spreadsheet_refund_total, 'color' => 'var(--rust)',
+                 'note' => 'Refund rows from Spreadsheet tab — deducted from Net Cash'],
                 ['label' => 'NET CASH',               'val' => $net_cash,             'color' => '#198754', 'bold' => true,
                  'bg' => 'rgba(25,135,84,0.07)',
-                 'note' => 'POS Reading − payments − discounts − unpaids − advance − expenses − mktg ± manual'],
+                 'note' => 'POS Reading − payments − discounts − unpaids − advance − expenses − mktg ± spreadsheet'],
                 ['label' => 'COH (Cash on Hand)',     'val' => $cash_on_hand,         'color' => '#0070f3', 'bold' => true,
                  'id' => 'live-coh'],
                 ['label' => '(SHORT) / OVER',         'val' => $short_over,
@@ -1267,8 +1096,6 @@ $render_manual_entries = function (string $from_tab) use ($manual_entries, $lock
     </div>
 </div>
 
-<?php $render_manual_entries('gc'); ?>
-
 <!-- ══════════════════════════════════════════════════════════════════════════
      TAB: PRODUCTS SOLD
 ══════════════════════════════════════════════════════════════════════════ -->
@@ -1410,7 +1237,289 @@ $render_manual_entries = function (string $from_tab) use ($manual_entries, $lock
     </div>
 </div>
 
-<?php $render_manual_entries('products'); ?>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB: SPREADSHEET
+══════════════════════════════════════════════════════════════════════════ -->
+<?php elseif ($active_tab === 'spreadsheet'):
+$ss_unlocked = !$locked
+    && !empty($_SESSION['ss_edit_unlocked'])
+    && ($_SESSION['ss_edit_date'] ?? '') === $report_date
+    && ($_SESSION['ss_edit_expires'] ?? 0) > time();
+$ss_editor = $ss_unlocked ? ($_SESSION['ss_edit_person'] ?? '') : '';
+$can_edit  = !$locked && (!is_cashier() || $ss_unlocked);
+?>
+
+<div class="panel">
+    <div class="panel-header" style="gap:0.75rem;flex-wrap:wrap;">
+        <span class="panel-title">🧮 Spreadsheet — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
+        <span style="font-size:0.75rem;color:var(--gray);"><?php echo count($spreadsheet_rows); ?> rows &nbsp;|&nbsp; Net Sales: ₱<?php echo number_format($spreadsheet_net_total,2); ?></span>
+        <?php if ($locked): ?>
+        <span style="font-size:0.75rem;color:#856404;background:#fff3cd;padding:0.2rem 0.6rem;border-radius:20px;">🔒 Locked</span>
+        <?php elseif (is_cashier() && !$ss_unlocked): ?>
+        <button id="ss-unlock-btn" class="btn btn-secondary btn-sm" style="font-size:0.78rem;">🔐 Unlock Edit</button>
+        <span id="ss-edit-status" style="font-size:0.75rem;color:var(--gray);">PIN required to edit</span>
+        <?php else: ?>
+        <span id="ss-edit-status" style="font-size:0.75rem;color:#198754;">✏️ Editing<?php echo $ss_editor ? ' as ' . htmlspecialchars($ss_editor) : ''; ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
+        <?php endif; ?>
+        <?php if (!$locked): ?>
+        <button id="ss-add-row" class="btn btn-primary btn-sm" style="font-size:0.78rem;margin-left:auto;<?php echo $can_edit ? '' : 'display:none;'; ?>">➕ Add Row</button>
+        <?php endif; ?>
+    </div>
+
+    <div style="overflow-x:auto;">
+        <table style="font-size:0.75rem;border-collapse:collapse;min-width:1640px;" id="ss-table">
+            <thead>
+                <tr style="background:var(--bg3);border-bottom:2px solid var(--border2);">
+                    <?php if (!$locked): ?><th style="width:36px;"></th><?php endif; ?>
+                    <th style="padding:0.4rem 0.5rem;text-align:center;width:70px;">Time In</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:center;width:70px;">Time Out</th>
+                    <th style="padding:0.4rem 0.5rem;width:80px;">Slip No.</th>
+                    <th style="padding:0.4rem 0.5rem;min-width:110px;">Client Name</th>
+                    <th style="padding:0.4rem 0.5rem;min-width:130px;">Service Name</th>
+                    <th style="padding:0.4rem 0.5rem;min-width:90px;">Stylist</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;">Reg. Price</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;">Promo Price</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:72px;">Celeb 10%</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc 20% PWD</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 30%</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 20%</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 15%</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc 50% Staff</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;background:rgba(25,135,84,0.12);">Net Sales</th>
+                    <th style="padding:0.4rem 0.5rem;width:95px;">Mode of Pay</th>
+                    <th style="padding:0.4rem 0.5rem;min-width:130px;">Remarks</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:center;width:58px;">Refund?</th>
+                </tr>
+            </thead>
+            <tbody id="ss-tbody">
+            <?php if (empty($spreadsheet_rows)): ?>
+            <tr id="ss-empty-row"><td colspan="<?php echo $locked ? 18 : 19; ?>" style="text-align:center;color:var(--gray);padding:2rem 1rem;font-size:0.85rem;">
+                No rows yet.<?php echo !$locked ? ' Click <strong>➕ Add Row</strong> to start.' : ''; ?>
+            </td></tr>
+            <?php else: foreach ($spreadsheet_rows as $_ssr):
+                $ce = $can_edit ? 'contenteditable="true"' : ''; ?>
+            <tr class="ss-row" data-row-id="<?php echo (int)$_ssr['id']; ?>" data-row-order="<?php echo (int)$_ssr['row_order']; ?>"
+                style="<?php echo $_ssr['is_refund'] ? 'background:rgba(220,53,69,0.04);' : ''; ?>border-bottom:1px solid var(--border2);">
+                <?php if (!$locked): ?>
+                <td style="padding:2px 4px;vertical-align:middle;"><button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;<?php echo $can_edit ? '' : 'display:none;'; ?>">✕</button></td>
+                <?php endif; ?>
+                <td style="padding:1px;"><div data-col="time_in" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;"><?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?></div></td>
+                <td style="padding:1px;"><div data-col="time_out" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;"><?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?></div></td>
+                <td style="padding:1px;"><div data-col="slip_no" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;font-family:monospace;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?></div></td>
+                <td style="padding:1px;"><div data-col="client_name" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:100px;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?></div></td>
+                <td style="padding:1px;"><div data-col="service_name" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:120px;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?></div></td>
+                <td style="padding:1px;"><div data-col="stylist" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:80px;"><?php echo htmlspecialchars($_ssr['stylist'] ?? ''); ?></div></td>
+                <td style="padding:1px;"><div data-col="regular_price" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['regular_price'] ? number_format((float)$_ssr['regular_price'],2) : ''; ?></div></td>
+                <td style="padding:1px;"><div data-col="promo_price" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['promo_price'] ? number_format((float)$_ssr['promo_price'],2) : ''; ?></div></td>
+                <td style="padding:1px;"><div data-col="celeb_10" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['celeb_10'] ? number_format((float)$_ssr['celeb_10'],2) : ''; ?></div></td>
+                <td style="padding:1px;"><div data-col="disc_20_pwd" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['disc_20_pwd'] ? number_format((float)$_ssr['disc_20_pwd'],2) : ''; ?></div></td>
+                <td style="padding:1px;"><div data-col="comm_30" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['comm_30'] ? number_format((float)$_ssr['comm_30'],2) : ''; ?></div></td>
+                <td style="padding:1px;"><div data-col="comm_20" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['comm_20'] ? number_format((float)$_ssr['comm_20'],2) : ''; ?></div></td>
+                <td style="padding:1px;"><div data-col="comm_15" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['comm_15'] ? number_format((float)$_ssr['comm_15'],2) : ''; ?></div></td>
+                <td style="padding:1px;"><div data-col="disc_50_staff" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['disc_50_staff'] ? number_format((float)$_ssr['disc_50_staff'],2) : ''; ?></div></td>
+                <td style="padding:1px;background:rgba(25,135,84,0.05);"><div data-col="net_sales" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-weight:700;color:<?php echo $_ssr['is_refund'] ? '#dc3545' : '#198754'; ?>;"><?php echo $_ssr['net_sales'] ? number_format((float)$_ssr['net_sales'],2) : ''; ?></div></td>
+                <td style="padding:1px;"><div data-col="mode_of_payment" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;"><?php echo htmlspecialchars($_ssr['mode_of_payment'] ?? ''); ?></div></td>
+                <td style="padding:1px;"><div data-col="remarks" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:120px;"><?php echo htmlspecialchars($_ssr['remarks'] ?? ''); ?></div></td>
+                <td style="padding:1px;text-align:center;vertical-align:middle;"><input type="checkbox" class="ss-refund-cb" <?php echo $_ssr['is_refund'] ? 'checked' : ''; ?> <?php echo $can_edit ? '' : 'disabled'; ?>></td>
+            </tr>
+            <?php endforeach; endif; ?>
+            </tbody>
+            <?php if (!empty($spreadsheet_rows)): ?>
+            <tfoot>
+                <tr style="background:var(--bg3);border-top:2px solid var(--border2);font-weight:700;">
+                    <?php if (!$locked): ?><td></td><?php endif; ?>
+                    <td colspan="14" style="padding:0.5rem 0.75rem;font-size:0.8rem;color:var(--brown);">Total Net Sales</td>
+                    <td style="padding:0.5rem 0.5rem;text-align:right;font-size:0.88rem;color:#198754;background:rgba(25,135,84,0.07);">₱<?php echo number_format($spreadsheet_net_total,2); ?></td>
+                    <td colspan="3"></td>
+                </tr>
+                <?php if ($spreadsheet_refund_total > 0): ?>
+                <tr style="background:rgba(220,53,69,0.04);border-top:1px solid var(--border2);">
+                    <?php if (!$locked): ?><td></td><?php endif; ?>
+                    <td colspan="14" style="padding:0.4rem 0.75rem;font-size:0.78rem;color:#dc3545;font-weight:600;">↩ Refund Rows (deducted from Net Cash)</td>
+                    <td style="padding:0.4rem 0.5rem;text-align:right;font-size:0.82rem;font-weight:700;color:#dc3545;">₱<?php echo number_format($spreadsheet_refund_total,2); ?></td>
+                    <td colspan="3"></td>
+                </tr>
+                <?php endif; ?>
+            </tfoot>
+            <?php endif; ?>
+        </table>
+    </div>
+</div>
+
+<style>
+.ss-cell { white-space:pre-wrap; word-break:break-word; }
+.ss-cell[contenteditable="true"] {
+    outline:none; border:1px solid transparent; border-radius:3px; cursor:text;
+    transition:border-color 0.12s, background 0.12s;
+}
+.ss-cell[contenteditable="true"]:hover { border-color:var(--border2); background:rgba(255,255,255,0.6); }
+.ss-cell[contenteditable="true"]:focus { border-color:var(--gold); background:#fff; }
+.ss-num { font-family:monospace; }
+</style>
+<script>
+(function(){
+    var CSRF    = <?php echo json_encode(generate_csrf_token()); ?>;
+    var RDATE   = <?php echo json_encode($report_date); ?>;
+    var IS_CASHIER   = <?php echo is_cashier() ? 'true' : 'false'; ?>;
+    var _rptLocked   = <?php echo json_encode((bool)$locked); ?>;
+    var _ssUnlocked  = <?php echo json_encode($ss_unlocked); ?>;
+    var _ssEditor    = <?php echo json_encode($ss_editor); ?>;
+    var _ssExpires   = <?php echo json_encode((int)($_SESSION['ss_edit_expires'] ?? 0)); ?>;
+    var _timers = {};
+
+    function canEdit() {
+        if (_rptLocked) return false;
+        if (!IS_CASHIER) return true;
+        return _ssUnlocked && (Math.floor(Date.now()/1000) < _ssExpires);
+    }
+
+    function getRowData(tr) {
+        var d = { row_id: tr.dataset.rowId||'0', row_order: tr.dataset.rowOrder||'0' };
+        tr.querySelectorAll('[data-col]').forEach(function(c){ d[c.dataset.col] = c.innerText.trim(); });
+        var cb = tr.querySelector('.ss-refund-cb');
+        d.is_refund = (cb && cb.checked) ? '1' : '0';
+        return d;
+    }
+
+    function saveRow(tr) {
+        var fd = new FormData();
+        fd.append('action','save_ss_row');
+        fd.append('_csrf',CSRF);
+        var d = getRowData(tr);
+        Object.keys(d).forEach(function(k){ fd.append(k, d[k]); });
+        fetch('daily_report.php?date='+RDATE, {method:'POST',body:fd})
+            .then(function(r){return r.json();})
+            .then(function(j){
+                if(j.ok && j.row_id && (!tr.dataset.rowId || tr.dataset.rowId==='0')){
+                    tr.dataset.rowId = j.row_id;
+                    var empty = document.getElementById('ss-empty-row');
+                    if(empty) empty.remove();
+                }
+                if(!j.ok) console.warn('SS save error:',j.msg);
+            }).catch(function(e){console.error('SS save',e);});
+    }
+
+    function scheduleSave(tr) {
+        var k = tr.dataset.tmpKey || (tr.dataset.tmpKey='k'+Math.random());
+        clearTimeout(_timers[k]);
+        _timers[k] = setTimeout(function(){saveRow(tr);}, 600);
+    }
+
+    function attachRow(tr) {
+        if(!canEdit()) return;
+        tr.querySelectorAll('[data-col]').forEach(function(c){
+            c.contentEditable = 'true';
+            c.addEventListener('blur', function(){scheduleSave(tr);});
+            c.addEventListener('keydown', function(e){
+                if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();c.blur();}
+            });
+        });
+        var cb = tr.querySelector('.ss-refund-cb');
+        if(cb){ cb.disabled=false; cb.addEventListener('change',function(){scheduleSave(tr);}); }
+        var del = tr.querySelector('.ss-del-btn');
+        if(del){
+            del.style.display='';
+            del.addEventListener('click',function(){
+                var rid = tr.dataset.rowId;
+                if(!rid||rid==='0'){tr.remove();return;}
+                uiConfirm('Delete this row?').then(function(ok){
+                    if(!ok) return;
+                    var fd=new FormData();
+                    fd.append('action','delete_ss_row');
+                    fd.append('_csrf',CSRF);
+                    fd.append('row_id',rid);
+                    fetch('daily_report.php?date='+RDATE,{method:'POST',body:fd})
+                        .then(function(r){return r.json();})
+                        .then(function(j){if(j.ok)tr.remove();});
+                });
+            });
+        }
+    }
+
+    document.querySelectorAll('#ss-tbody tr.ss-row').forEach(attachRow);
+
+    function buildRowHtml() {
+        var cols = [
+            ['time_in','padding:0.25rem 0.4rem;min-height:1.4em;'],
+            ['time_out','padding:0.25rem 0.4rem;min-height:1.4em;'],
+            ['slip_no','padding:0.25rem 0.4rem;min-height:1.4em;font-family:monospace;'],
+            ['client_name','padding:0.25rem 0.4rem;min-height:1.4em;min-width:100px;'],
+            ['service_name','padding:0.25rem 0.4rem;min-height:1.4em;min-width:120px;'],
+            ['stylist','padding:0.25rem 0.4rem;min-height:1.4em;min-width:80px;'],
+            ['regular_price','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
+            ['promo_price','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
+            ['celeb_10','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
+            ['disc_20_pwd','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
+            ['comm_30','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
+            ['comm_20','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
+            ['comm_15','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
+            ['disc_50_staff','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
+        ];
+        var h = '<td style="padding:2px 4px;vertical-align:middle;"><button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;">✕</button></td>';
+        cols.forEach(function(c){
+            h += '<td style="padding:1px;"><div data-col="'+c[0]+'" contenteditable="true" class="ss-cell" style="'+c[1]+'"></div></td>';
+        });
+        h += '<td style="padding:1px;background:rgba(25,135,84,0.05);"><div data-col="net_sales" contenteditable="true" class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-weight:700;color:#198754;"></div></td>';
+        h += '<td style="padding:1px;"><div data-col="mode_of_payment" contenteditable="true" class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;"></div></td>';
+        h += '<td style="padding:1px;"><div data-col="remarks" contenteditable="true" class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:120px;"></div></td>';
+        h += '<td style="padding:1px;text-align:center;vertical-align:middle;"><input type="checkbox" class="ss-refund-cb"></td>';
+        return h;
+    }
+
+    function addNewRow() {
+        if(!canEdit()) return;
+        var tbody = document.getElementById('ss-tbody');
+        var rows  = tbody.querySelectorAll('tr.ss-row');
+        var tr = document.createElement('tr');
+        tr.className = 'ss-row';
+        tr.style.borderBottom = '1px solid var(--border2)';
+        tr.dataset.rowId    = '0';
+        tr.dataset.rowOrder = rows.length;
+        tr.innerHTML = buildRowHtml();
+        tbody.appendChild(tr);
+        attachRow(tr);
+        var first = tr.querySelector('[data-col="time_in"]');
+        if(first) first.focus();
+    }
+
+    ['ss-add-row'].forEach(function(id){
+        var btn = document.getElementById(id);
+        if(btn) btn.addEventListener('click', addNewRow);
+    });
+
+    var unlockBtn = document.getElementById('ss-unlock-btn');
+    if(unlockBtn) unlockBtn.addEventListener('click', function(){
+        window._pgmCallback = function(pin){
+            var fd=new FormData();
+            fd.append('action','unlock_ss_edit');
+            fd.append('_csrf',CSRF);
+            fd.append('pin',pin);
+            fetch('daily_report.php?date='+RDATE,{method:'POST',body:fd})
+                .then(function(r){return r.json();})
+                .then(function(j){
+                    if(j.ok){
+                        _ssUnlocked=true;
+                        _ssExpires=Math.floor(Date.now()/1000)+1800;
+                        _ssEditor=j.person;
+                        var s=document.getElementById('ss-edit-status');
+                        if(s){s.textContent='✏️ Editing as '+j.person+' (expires in 30 min)';s.style.color='#198754';}
+                        unlockBtn.style.display='none';
+                        var ab=document.getElementById('ss-add-row');
+                        if(ab)ab.style.display='';
+                        document.querySelectorAll('#ss-tbody tr.ss-row').forEach(attachRow);
+                    } else {
+                        if(window.uiAlert) uiAlert('❌ '+(j.msg||'Invalid PIN'));
+                    }
+                });
+        };
+        document.getElementById('pgm-label').textContent='Unlock Spreadsheet Editing';
+        document.getElementById('pgm-pin').value='';
+        document.getElementById('pgm-error').textContent='';
+        document.getElementById('pinGateModal').style.display='flex';
+        setTimeout(function(){document.getElementById('pgm-pin').focus();},80);
+    });
+})();
+</script>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
      TAB: ANALYSIS
