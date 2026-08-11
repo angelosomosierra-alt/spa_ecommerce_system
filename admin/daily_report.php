@@ -10,6 +10,10 @@ redirect_if_not_admin();
 $msg      = '';
 $msg_type = 'success';
 
+// ── FEATURE FLAG ──────────────────────────────────────────────────────────────
+// Set to true to restore full locking behaviour; false disables all lock checks.
+$LOCK_FEATURE_ENABLED = false;
+
 // Receptionist PIN gate — session-based so only prompted once per session
 if (is_cashier() && empty($_SESSION['report_pin_ok'])) {
     $pin_error = '';
@@ -104,7 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_header'])) {
     $mdp   = floatval($_POST['maya_dp']      ?? 0);
     $notes = sanitize_input($_POST['notes'] ?? '');
     if ($rpt) {
-        if (!$rpt['is_locked']) {
+        if (!$LOCK_FEATURE_ENABLED || !$rpt['is_locked']) {
             $stmt = $conn->prepare("UPDATE daily_reports SET opening_cashier=?,closing_cashier=?,cash_on_hand=?,pos_reading=?,notes=?,maya_dp=? WHERE id=?");
             $stmt->bind_param("ssddsdi", $oc, $cc, $coh, $pos, $notes, $mdp, $rpt['id']); $stmt->execute(); $stmt->close();
             $msg = "✅ Report header saved.";
@@ -124,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_header'])) {
 // ── SAVE DENOMINATIONS ────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_denoms'])) {
     verify_csrf_token();
-    if ($rpt && !$rpt['is_locked']) {
+    if ($rpt && (!$LOCK_FEATURE_ENABLED || !$rpt['is_locked'])) {
         $denoms = [1000,500,200,100,50,20,10,5,1];
         $stmt = $conn->prepare("
             INSERT INTO daily_report_denominations (report_id, denomination, quantity)
@@ -138,14 +142,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_denoms'])) {
         }
         $stmt->close();
         $msg = "✅ Cash denominations saved.";
-    } elseif ($rpt && $rpt['is_locked']) { $msg = "⚠️ Report is locked."; $msg_type = 'warning'; }
+    } elseif ($rpt && $LOCK_FEATURE_ENABLED && $rpt['is_locked']) { $msg = "⚠️ Report is locked."; $msg_type = 'warning'; }
     else { $msg = "⚠️ Save the report header first."; $msg_type = 'warning'; }
 }
 
 // ── SAVE GC ───────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_gc'])) {
     verify_csrf_token();
-    if (!$rpt || $rpt['is_locked']) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
     else {
         $gc_type   = in_array($_POST['gc_type']??'', ['sold','redeemed']) ? $_POST['gc_type'] : 'sold';
         $gc_client = sanitize_input($_POST['gc_client'] ?? '');
@@ -172,7 +176,7 @@ if (isset($_GET['del_gc']) && is_full_access()) {
 // ── SAVE UNPAID CORP ──────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_unpaid'])) {
     verify_csrf_token();
-    if (!$rpt || $rpt['is_locked']) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
     else {
         $up_name   = sanitize_input($_POST['up_name']   ?? '');
         $up_amount = floatval($_POST['up_amount'] ?? 0);
@@ -195,7 +199,7 @@ if (isset($_GET['del_unpaid']) && is_full_access()) {
 // ── SAVE PRODUCT SALE ─────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_prodsale'])) {
     verify_csrf_token();
-    if (!$rpt || $rpt['is_locked']) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
     else {
         $ps_particular = sanitize_input($_POST['ps_particular'] ?? '');
         $ps_qty        = max(1, intval($_POST['ps_qty'] ?? 1));
@@ -219,7 +223,7 @@ if (isset($_GET['del_prodsale']) && is_full_access()) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'unlock_ss_edit') {
     header('Content-Type: application/json');
     if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
-    if (!$rpt || $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
     $pin_input = trim($_POST['pin'] ?? '');
     if (empty($pin_input)) { echo json_encode(['ok'=>false,'msg'=>'PIN is required.']); exit; }
     $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
@@ -242,7 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'unloc
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_ss_row') {
     header('Content-Type: application/json');
     if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
-    if (!$rpt || $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
     $ss_unlocked_ajax = !empty($_SESSION['ss_edit_unlocked'])
         && ($_SESSION['ss_edit_date'] ?? '') === $report_date
         && ($_SESSION['ss_edit_expires'] ?? 0) > time();
@@ -318,7 +322,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_ss_row') {
     header('Content-Type: application/json');
     if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
-    if (!$rpt || $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
     $ss_unlocked_ajax = !empty($_SESSION['ss_edit_unlocked'])
         && ($_SESSION['ss_edit_date'] ?? '') === $report_date
         && ($_SESSION['ss_edit_expires'] ?? 0) > time();
@@ -341,6 +345,7 @@ $active_page = 'daily_report';
 require_once 'admin_header.php';
 
 $locked = !empty($rpt['is_locked']);
+if (!$LOCK_FEATURE_ENABLED) $locked = false;
 ?>
 <?php if (!empty($msg)): ?>
 <div class="alert alert-<?php echo $msg_type; ?>" style="margin-bottom:1rem;"><?php echo $msg; ?></div>
