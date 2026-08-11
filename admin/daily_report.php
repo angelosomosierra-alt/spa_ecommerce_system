@@ -1469,6 +1469,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
 .ss-fi-sel { cursor:pointer; }
 .ss-fi-ro { opacity:0.72; cursor:not-allowed; }
 .ss-fi-ro:focus { border-color:var(--border2); box-shadow:none; background:var(--bg3); }
+#ss-table thead th { color:#fff; font-weight:700; }
 </style>
 <script>
 (function(){
@@ -1669,7 +1670,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 if (!ok) return;
                 var fd = new FormData();
                 fd.append('action',  'delete_ss_row');
-                fd.append('_csrf',   CSRF);
+                fd.append('csrf_token',   CSRF);
                 fd.append('row_id',  rid);
                 fetch('daily_report.php?date='+RDATE, {method:'POST',body:fd})
                     .then(function(r){return r.json();})
@@ -1708,7 +1709,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
 
             var fd = new FormData();
             fd.append('action',         'save_ss_row');
-            fd.append('_csrf',          CSRF);
+            fd.append('csrf_token',          CSRF);
             fd.append('row_id',         '0');
             fd.append('row_order',      String(rowCount + 1));
             fd.append('time_in',        gv('sf-time_in'));
@@ -1805,7 +1806,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             window._pgmCallback = function(pin){
                 var fd=new FormData();
                 fd.append('action','unlock_ss_edit');
-                fd.append('_csrf',CSRF);
+                fd.append('csrf_token',CSRF);
                 fd.append('pin',pin);
                 fetch('daily_report.php?date='+RDATE,{method:'POST',body:fd})
                     .then(function(r){return r.json();})
