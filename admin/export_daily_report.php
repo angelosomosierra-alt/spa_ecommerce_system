@@ -180,8 +180,8 @@ $L = 5;  // left-zone cursor
 $R = 5;  // right-zone cursor
 
 // ── LEFT A: CASH BREAKDOWN ────────────────────────────────────────────────────
-secRow($sh, $L, 'CASH BREAKDOWN', LEFT_C1, LEFT_C2, $S_SEC);
-hdrRow($sh, $L, ['QTY','Denomination','Total Collection'], LEFT_C1, $S_HDR);
+secRow($sh, $L, 'Cash Breakdown', LEFT_C1, LEFT_C2, $S_SEC);
+hdrRow($sh, $L, ['QTY','DENOMINATION','TOTAL COLLECTION'], LEFT_C1, $S_HDR);
 
 $first_denom_row = $L;
 foreach ($denom_list as $d) {
@@ -206,35 +206,35 @@ $L++; // spacer between Cash Breakdown and Summary
 // ── LEFT B: SUMMARY REPORT ────────────────────────────────────────────────────
 // Labels + styles written now; formula values deferred until sub-ledger cell
 // addresses are known (written below before the Analysis section).
-secRow($sh, $L, 'SUMMARY REPORT', LEFT_C1, LEFT_C2, $S_SEC);
+secRow($sh, $L, 'SUMMARY REPORT :', LEFT_C1, LEFT_C2, $S_SEC);
 $sum_data_start = $L;
 
 $sum_meta = [
     // [label, color, bold]
-    ['Gross Sales',          $GREEN,                     true ],
-    ['Staff CF',             $RED,                       false],
-    ['Sold GC',              '',                         false],
-    ['POS Reading',          '',                         false],
-    ['Discounts',            $RED,                       false],
-    ['Celeb. Discounts 10%', $RED,                       false],
-    ['Redeemed GC',          $RED,                       false],
-    ['Swiper',               '',                         false],
-    ['GCash',                '',                         false],
-    ['Maya',                 '',                         false],
+    ['GROSS SALES',          $GREEN,                     true ],
+    ['STAFF CF',             $RED,                       false],
+    ['SOLD GC',              '',                         false],
+    ['POS READING',          '',                         false],
+    ['DISCOUNTS',            $RED,                       false],
+    ['CELEB. DISCOUNTS 10%', $RED,                       false],
+    ['REEDEMED GC',          $RED,                       false],
+    ['SWIPER',               '',                         false],
+    ['GCASH (SALES)',         '',                         false],
+    ['MAYA (SALES)',          '',                         false],
     ['QRPH',                 '',                         false],
-    ['Unpaids',              $RED,                       false],
-    ['Marketing Expense',    $RED,                       false],
-    ['Advance Payment',      $RED,                       false],
-    ['Maya (DP)',             $RED,                       false],
-    ['Product Sold',         $GREEN,                     false],
-    ['Expenses',             $RED,                       false],
+    ['UNPAIDS',              $RED,                       false],
+    ['MARKETING EXPENSE',    $RED,                       false],
+    ['ADVANCE PAYMENT',      $RED,                       false],
+    ['MAYA (DP)',             $RED,                       false],
+    ['PRODUCT SOLD',         $GREEN,                     false],
+    ['EXPENSES',             $RED,                       false],
     ['Net Cash',             $GREEN,                     true ],
     ['COH (Cash on Hand)',   $BLUE,                      true ],
-    ['(Short)/Over',         $short_over>=0?$GREEN:$RED, true ],
+    ['(Short )Over',         $short_over>=0?$GREEN:$RED, true ],
 ];
 foreach ($sum_meta as [$label, $color, $bold]) {
     $sh->setCellValue([1,$L], $label);
-    $isBoldRow = in_array($label, ['Gross Sales','Net Cash','COH (Cash on Hand)','(Short)/Over']);
+    $isBoldRow = in_array($label, ['GROSS SALES','Net Cash','COH (Cash on Hand)','(Short )Over']);
     rowStyle($sh,$L,1,3,$isBoldRow ? $S_TOT : $S_DAT);
     if ($color) $sh->getStyle([3,$L])->getFont()->getColor()->setRGB($color);
     if ($bold)  $sh->getStyle(rng(1,$L,3,$L))->getFont()->setBold(true);
@@ -245,13 +245,13 @@ foreach ($sum_meta as [$label, $color, $bold]) {
 $left_end = $L;
 
 // ── RIGHT: SALES SERVICES LOG (cols 5-20) ────────────────────────────────────
-secRow($sh, $R, 'SALES SERVICES — ' . $fn_date, SVC_C1, SVC_C2, $S_SEC);
+secRow($sh, $R, 'Sales Services ' . $fn_date, SVC_C1, SVC_C2, $S_SEC);
 
 hdrRow($sh, $R, [
-    'Time In','Time Out','Service Slip No.','Client Name','Services','Stylist',
-    'Regular Price','Promo Price','Celeb 10%','Disc 20% (PWD/SNR)',
-    '30% Commission Fee','20% Commission Fee','15% Commission Fee',
-    '50% Disc. for Staff','Net Sales','Mode of Payment','Remarks',
+    'TIME IN ','TIME OUT ','Service Slip No.','Client Name','Services','Stylist',
+    'Regular  Price','Promo price','CELEBRATION PROMO 10%',"Disc 20% \n(PWD/SNR)",
+    "30% \nCommission fee","20% \nCommission fee","15% \nCommission fee",
+    ' 50%  DISC. FOR STAFF','Net Sales','Mode of Payment','Remarks',
 ], SVC_C1, $S_HDR);
 $sh->getRowDimension($R-1)->setRowHeight(28);
 
@@ -340,10 +340,10 @@ $row = max($left_end,$R) + 2;
 // ════════════════════════════════════════════════════════════════════════════
 // INFLUENCER / MARKETING  (cols 1–10)
 // ════════════════════════════════════════════════════════════════════════════
-secRow($sh, $row, 'SALES SERVICES — INFLUENCER / MARKETING', 1, 10, $S_SEC);
+secRow($sh, $row, 'Sales Services (INFLUENCER/MARKETING)', 1, 10, $S_SEC);
 hdrRow($sh, $row, [
     'Time Start','Time End','Service Slip No.','Client Name','Services','Stylist',
-    'At Cost','Commission Fee','Total MKTG Exp.','Remarks',
+    'AT COST',"\nCommission fee (Fix)",'TOTAL MKTG EXP.','Remarks',
 ], 1, $S_HDR);
 
 $first_inf_row = !empty($influencer_rows) ? $row : null;
@@ -368,7 +368,7 @@ foreach ($influencer_rows as $inf) {
     $last_inf_row = $row;
     $row++;
 }
-$sh->setCellValue([1,$row], 'TOTAL MARKETING EXPENSE');
+$sh->setCellValue([1,$row], 'TOTAL');
 if ($first_inf_row !== null) {
     $sh->setCellValue([9,$row], "=SUM(I{$first_inf_row}:I{$last_inf_row})");
 } else {
@@ -445,7 +445,7 @@ $Lg = $row;   // GC-sold row cursor
 $Rg = $row;   // GC-paid row cursor
 
 // GC column headers per spec: Series | Name | Voucher | Qty | Amount | Remarks | Total
-$gc_hdr = ['Series','Name','Voucher','Qty','Amount','Remarks','Total'];
+$gc_hdr = ['SERIES','NAME ','VOUCHER','QTY','Amount','REMARKS','Total'];
 
 // -- Service GC (Sold) --
 secRow($sh, $Lg, 'SERVICE GC (SOLD)', 1, 7, $S_SEC);
@@ -514,7 +514,7 @@ $row = max($Lg,$Rg) + 1;
 // ════════════════════════════════════════════════════════════════════════════
 $row++;
 secRow($sh, $row, 'PRODUCT SOLD', 1, 5, $S_SEC);
-hdrRow($sh, $row, ['Particular','Qty','Price','Amount','Total'], 1, $S_HDR);
+hdrRow($sh, $row, ['Particular','QTY','PRICE','Amount','Total'], 1, $S_HDR);
 
 $all_products = array_merge($product_sales, $system_product_sales);
 $first_prod_row = !empty($all_products) ? $row : null;

@@ -257,7 +257,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     $slip_no       = sanitize_input($_POST['slip_no']        ?? '');
     $client_name   = sanitize_input($_POST['client_name']    ?? '');
     $service_name  = sanitize_input($_POST['service_name']   ?? '');
+    $service_id    = intval($_POST['service_id']   ?? 0);
     $stylist       = sanitize_input($_POST['stylist']        ?? '');
+    $therapist_id  = intval($_POST['therapist_id'] ?? 0);
     $regular_price = floatval($_POST['regular_price'] ?? 0);
     $promo_price   = floatval($_POST['promo_price']   ?? 0);
     $celeb_10      = floatval($_POST['celeb_10']      ?? 0);
@@ -274,14 +276,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         $stmt = $conn->prepare("
             UPDATE daily_report_spreadsheet_rows SET
                 row_order=?,time_in=?,time_out=?,slip_no=?,client_name=?,
-                service_name=?,stylist=?,regular_price=?,promo_price=?,celeb_10=?,
+                service_name=?,service_id=?,stylist=?,therapist_id=?,
+                regular_price=?,promo_price=?,celeb_10=?,
                 disc_20_pwd=?,comm_30=?,comm_20=?,comm_15=?,disc_50_staff=?,
                 net_sales=?,mode_of_payment=?,remarks=?,is_refund=?,updated_by_name=?
             WHERE id=? AND report_date=?
         ");
-        $stmt->bind_param("issssssdddddddddssisis",
+        $stmt->bind_param("isssssisidddddddddssisis",
             $row_order,$time_in,$time_out,$slip_no,$client_name,
-            $service_name,$stylist,$regular_price,$promo_price,$celeb_10,
+            $service_name,$service_id,$stylist,$therapist_id,
+            $regular_price,$promo_price,$celeb_10,
             $disc_20_pwd,$comm_30,$comm_20,$comm_15,$disc_50_staff,
             $net_sales,$mode_of_pay,$remarks,$is_refund,$ss_editor,
             $row_id,$report_date);
@@ -291,14 +295,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         $stmt = $conn->prepare("
             INSERT INTO daily_report_spreadsheet_rows
                 (report_date,row_order,time_in,time_out,slip_no,client_name,
-                 service_name,stylist,regular_price,promo_price,celeb_10,
+                 service_name,service_id,stylist,therapist_id,
+                 regular_price,promo_price,celeb_10,
                  disc_20_pwd,comm_30,comm_20,comm_15,disc_50_staff,
                  net_sales,mode_of_payment,remarks,is_refund,created_by_name)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ");
-        $stmt->bind_param("sisssssdddddddddssisi",
+        $stmt->bind_param("sisssssisidddddddddssis",
             $report_date,$row_order,$time_in,$time_out,$slip_no,$client_name,
-            $service_name,$stylist,$regular_price,$promo_price,$celeb_10,
+            $service_name,$service_id,$stylist,$therapist_id,
+            $regular_price,$promo_price,$celeb_10,
             $disc_20_pwd,$comm_30,$comm_20,$comm_15,$disc_50_staff,
             $net_sales,$mode_of_pay,$remarks,$is_refund,$ss_editor);
         $stmt->execute();
@@ -1247,30 +1253,128 @@ $ss_unlocked = !$locked
     && ($_SESSION['ss_edit_expires'] ?? 0) > time();
 $ss_editor = $ss_unlocked ? ($_SESSION['ss_edit_person'] ?? '') : '';
 $can_edit  = !$locked && (!is_cashier() || $ss_unlocked);
+$_ss_svc_q = $conn->query("SELECT id, name, price FROM services ORDER BY name ASC");
+$ss_services_list = $_ss_svc_q ? $_ss_svc_q->fetch_all(MYSQLI_ASSOC) : [];
+$_ss_th_q = $conn->query("SELECT id, full_name FROM therapists ORDER BY full_name ASC");
+$ss_therapists_list = $_ss_th_q ? $_ss_th_q->fetch_all(MYSQLI_ASSOC) : [];
+$ss_mop_list = ['Cash','GCash','Maya','Card','QR PH','Unpaid'];
+$_ss_comm_q = $conn->query("SELECT therapist_id, service_id, commission_percent FROM therapist_commission");
+$ss_commissions = [];
+if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
+    $ss_commissions[(int)$_c['therapist_id'].'_'.(int)$_c['service_id']] = (float)$_c['commission_percent'];
+} }
 ?>
+<?php /* ── ENTRY FORM CARD ── */ ?>
+<?php if (!$locked && $can_edit): ?>
+<div class="panel" style="margin-bottom:1.25rem;">
+    <div class="panel-header" style="flex-wrap:wrap;gap:0.5rem;">
+        <span class="panel-title">➕ New Entry</span>
+        <span id="ss-edit-status" style="font-size:0.75rem;color:#198754;">✏️ Editing<?php echo $ss_editor ? ' as '.htmlspecialchars($ss_editor) : ''; ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
+    </div>
+    <div class="panel-body" style="padding:1rem;">
+        <div id="ss-form-err" style="display:none;color:#dc3545;font-size:0.8rem;margin-bottom:0.5rem;font-weight:600;"></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:0.55rem 0.75rem;align-items:end;">
+            <div><label class="ss-lbl">Time In</label><input type="text" id="sf-time_in" class="ss-fi" placeholder="e.g. 9:00 AM"></div>
+            <div><label class="ss-lbl">Time Out</label><input type="text" id="sf-time_out" class="ss-fi" placeholder="e.g. 10:00 AM"></div>
+            <div><label class="ss-lbl">Slip No.</label><input type="text" id="sf-slip_no" class="ss-fi" style="font-family:monospace;"></div>
+            <div style="grid-column:span 2;"><label class="ss-lbl">Client Name</label><input type="text" id="sf-client_name" class="ss-fi"></div>
+            <div style="grid-column:span 2;">
+                <label class="ss-lbl">Service <span style="color:#dc3545;">*</span></label>
+                <select id="sf-service" class="ss-fi ss-fi-sel">
+                    <option value="">— select —</option>
+                    <?php foreach ($ss_services_list as $_sv): ?>
+                    <option value="<?php echo (int)$_sv['id']; ?>"
+                            data-price="<?php echo (float)$_sv['price']; ?>"
+                            data-name="<?php echo htmlspecialchars($_sv['name']); ?>">
+                        <?php echo htmlspecialchars($_sv['name']); ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div style="grid-column:span 2;">
+                <label class="ss-lbl">Stylist</label>
+                <select id="sf-stylist" class="ss-fi ss-fi-sel">
+                    <option value="">— select —</option>
+                    <?php foreach ($ss_therapists_list as $_th): ?>
+                    <option value="<?php echo (int)$_th['id']; ?>"
+                            data-name="<?php echo htmlspecialchars($_th['full_name']); ?>">
+                        <?php echo htmlspecialchars($_th['full_name']); ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div><label class="ss-lbl">Regular Price</label><input type="number" id="sf-regular_price" class="ss-fi ss-fi-num" step="0.01" min="0" placeholder="0.00"></div>
+            <div><label class="ss-lbl">Promo Price</label><input type="number" id="sf-promo_price" class="ss-fi ss-fi-num" step="0.01" min="0" placeholder="0.00"></div>
+            <div><label class="ss-lbl">Celeb 10%</label><input type="number" id="sf-celeb_10" class="ss-fi ss-fi-num" step="0.01" min="0" placeholder="0.00"></div>
+            <div>
+                <label class="ss-lbl">Disc 20% PWD</label>
+                <select id="sf-disc_20_pwd_sel" class="ss-fi ss-fi-sel">
+                    <option value="none">None</option>
+                    <option value="valid">Valid (20%)</option>
+                </select>
+                <input type="hidden" id="sf-disc_20_pwd" value="0">
+            </div>
+            <div><label class="ss-lbl">Comm 30%</label><input type="number" id="sf-comm_30" class="ss-fi ss-fi-num ss-fi-ro" step="0.01" readonly placeholder="0.00"></div>
+            <div><label class="ss-lbl">Comm 20%</label><input type="number" id="sf-comm_20" class="ss-fi ss-fi-num ss-fi-ro" step="0.01" readonly placeholder="0.00"></div>
+            <div><label class="ss-lbl">Comm 15%</label><input type="number" id="sf-comm_15" class="ss-fi ss-fi-num ss-fi-ro" step="0.01" readonly placeholder="0.00"></div>
+            <div>
+                <label class="ss-lbl">Disc 50% Staff</label>
+                <select id="sf-disc_50_staff_sel" class="ss-fi ss-fi-sel">
+                    <option value="none">None</option>
+                    <option value="valid">Valid (50%)</option>
+                </select>
+                <input type="hidden" id="sf-disc_50_staff" value="0">
+            </div>
+            <div><label class="ss-lbl">Net Sales</label><input type="number" id="sf-net_sales" class="ss-fi ss-fi-num ss-fi-ro" step="0.01" readonly placeholder="0.00"></div>
+            <div>
+                <label class="ss-lbl">Mode of Payment</label>
+                <select id="sf-mop" class="ss-fi ss-fi-sel">
+                    <option value="">— select —</option>
+                    <?php foreach ($ss_mop_list as $_mop): ?>
+                    <option value="<?php echo htmlspecialchars($_mop); ?>"><?php echo htmlspecialchars($_mop); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div style="grid-column:span 2;"><label class="ss-lbl">Remarks</label><input type="text" id="sf-remarks" class="ss-fi"></div>
+            <div style="display:flex;align-items:center;gap:0.4rem;padding-bottom:0.15rem;">
+                <input type="checkbox" id="sf-is_refund" style="width:16px;height:16px;cursor:pointer;flex-shrink:0;">
+                <label for="sf-is_refund" class="ss-lbl" style="margin:0;cursor:pointer;">Is Refund?</label>
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+                <button id="ss-add-btn" class="btn btn-primary" style="width:100%;font-size:0.85rem;font-weight:700;padding:0.45rem 0.75rem;">➕ Add to Report</button>
+            </div>
+        </div>
+        <div id="ss-comm-note" style="font-size:0.72rem;color:var(--gray);font-style:italic;margin-top:0.3rem;min-height:1em;"></div>
+    </div>
+</div>
+<?php elseif (!$locked): ?>
+<div class="panel" style="margin-bottom:1.25rem;">
+    <div class="panel-header" style="flex-wrap:wrap;gap:0.5rem;">
+        <span class="panel-title">➕ New Entry</span>
+        <button id="ss-unlock-btn" class="btn btn-secondary btn-sm" style="font-size:0.78rem;">🔐 Unlock Edit</button>
+        <span id="ss-edit-status" style="font-size:0.75rem;color:var(--gray);">PIN required to edit</span>
+    </div>
+    <div class="panel-body" style="padding:0.85rem 1rem;color:var(--gray);font-size:0.83rem;">
+        Spreadsheet editing is locked behind a PIN for receptionists. Click <strong>Unlock Edit</strong> to enter your PIN.
+    </div>
+</div>
+<?php else: ?>
+<div style="margin-bottom:0.75rem;">
+    <span style="font-size:0.78rem;color:#856404;background:#fff3cd;padding:0.3rem 0.75rem;border-radius:20px;">🔒 Report is locked — no entries can be added or deleted.</span>
+</div>
+<?php endif; ?>
 
+<?php /* ── READ-ONLY PREVIEW TABLE ── */ ?>
 <div class="panel">
     <div class="panel-header" style="gap:0.75rem;flex-wrap:wrap;">
         <span class="panel-title">🧮 Spreadsheet — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
-        <span style="font-size:0.75rem;color:var(--gray);"><?php echo count($spreadsheet_rows); ?> rows &nbsp;|&nbsp; Net Sales: ₱<?php echo number_format($spreadsheet_net_total,2); ?></span>
-        <?php if ($locked): ?>
-        <span style="font-size:0.75rem;color:#856404;background:#fff3cd;padding:0.2rem 0.6rem;border-radius:20px;">🔒 Locked</span>
-        <?php elseif (is_cashier() && !$ss_unlocked): ?>
-        <button id="ss-unlock-btn" class="btn btn-secondary btn-sm" style="font-size:0.78rem;">🔐 Unlock Edit</button>
-        <span id="ss-edit-status" style="font-size:0.75rem;color:var(--gray);">PIN required to edit</span>
-        <?php else: ?>
-        <span id="ss-edit-status" style="font-size:0.75rem;color:#198754;">✏️ Editing<?php echo $ss_editor ? ' as ' . htmlspecialchars($ss_editor) : ''; ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
-        <?php endif; ?>
-        <?php if (!$locked): ?>
-        <button id="ss-add-row" class="btn btn-primary btn-sm" style="font-size:0.78rem;margin-left:auto;<?php echo $can_edit ? '' : 'display:none;'; ?>">➕ Add Row</button>
-        <?php endif; ?>
+        <span id="ss-row-count" style="font-size:0.75rem;color:var(--gray);"><?php echo count($spreadsheet_rows); ?> rows &nbsp;|&nbsp; Net Sales: ₱<span id="ss-net-total"><?php echo number_format($spreadsheet_net_total,2); ?></span></span>
     </div>
-
     <div style="overflow-x:auto;">
         <table style="font-size:0.75rem;border-collapse:collapse;min-width:1640px;" id="ss-table">
             <thead>
-                <tr style="background:var(--bg3);border-bottom:2px solid var(--border2);">
-                    <?php if (!$locked): ?><th style="width:36px;"></th><?php endif; ?>
+                <tr style="background:#5c3a1e;color:#fff;">
+                    <?php if (!$locked): ?><th style="width:36px;padding:0.4rem 0.3rem;"></th><?php endif; ?>
                     <th style="padding:0.4rem 0.5rem;text-align:center;width:70px;">Time In</th>
                     <th style="padding:0.4rem 0.5rem;text-align:center;width:70px;">Time Out</th>
                     <th style="padding:0.4rem 0.5rem;width:80px;">Slip No.</th>
@@ -1285,87 +1389,99 @@ $can_edit  = !$locked && (!is_cashier() || $ss_unlocked);
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 20%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 15%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc 50% Staff</th>
-                    <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;background:rgba(25,135,84,0.12);">Net Sales</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;background:rgba(255,255,255,0.15);">Net Sales</th>
                     <th style="padding:0.4rem 0.5rem;width:95px;">Mode of Pay</th>
                     <th style="padding:0.4rem 0.5rem;min-width:130px;">Remarks</th>
-                    <th style="padding:0.4rem 0.5rem;text-align:center;width:58px;">Refund?</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:center;width:52px;">Refund?</th>
                 </tr>
             </thead>
             <tbody id="ss-tbody">
             <?php if (empty($spreadsheet_rows)): ?>
             <tr id="ss-empty-row"><td colspan="<?php echo $locked ? 18 : 19; ?>" style="text-align:center;color:var(--gray);padding:2rem 1rem;font-size:0.85rem;">
-                No rows yet.<?php echo !$locked ? ' Click <strong>➕ Add Row</strong> to start.' : ''; ?>
+                No rows yet.<?php echo !$locked ? ' Fill the form above and click <strong>➕ Add to Report</strong>.' : ''; ?>
             </td></tr>
-            <?php else: foreach ($spreadsheet_rows as $_ssr):
-                $ce = $can_edit ? 'contenteditable="true"' : ''; ?>
-            <tr class="ss-row" data-row-id="<?php echo (int)$_ssr['id']; ?>" data-row-order="<?php echo (int)$_ssr['row_order']; ?>"
+            <?php else: foreach ($spreadsheet_rows as $_ssr): ?>
+            <tr class="ss-row" data-row-id="<?php echo (int)$_ssr['id']; ?>"
+                data-net-sales="<?php echo (float)($_ssr['net_sales'] ?? 0); ?>"
+                data-is-refund="<?php echo (int)$_ssr['is_refund']; ?>"
                 style="<?php echo $_ssr['is_refund'] ? 'background:rgba(220,53,69,0.04);' : ''; ?>border-bottom:1px solid var(--border2);">
                 <?php if (!$locked): ?>
-                <td style="padding:2px 4px;vertical-align:middle;"><button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;<?php echo $can_edit ? '' : 'display:none;'; ?>">✕</button></td>
+                <td style="padding:2px 4px;vertical-align:middle;">
+                    <button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;<?php echo $can_edit ? '' : 'display:none;'; ?>">✕</button>
+                </td>
                 <?php endif; ?>
-                <td style="padding:1px;"><div data-col="time_in" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;"><?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?></div></td>
-                <td style="padding:1px;"><div data-col="time_out" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;"><?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?></div></td>
-                <td style="padding:1px;"><div data-col="slip_no" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;font-family:monospace;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?></div></td>
-                <td style="padding:1px;"><div data-col="client_name" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:100px;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?></div></td>
-                <td style="padding:1px;"><div data-col="service_name" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:120px;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?></div></td>
-                <td style="padding:1px;"><div data-col="stylist" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:80px;"><?php echo htmlspecialchars($_ssr['stylist'] ?? ''); ?></div></td>
-                <td style="padding:1px;"><div data-col="regular_price" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['regular_price'] ? number_format((float)$_ssr['regular_price'],2) : ''; ?></div></td>
-                <td style="padding:1px;"><div data-col="promo_price" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['promo_price'] ? number_format((float)$_ssr['promo_price'],2) : ''; ?></div></td>
-                <td style="padding:1px;"><div data-col="celeb_10" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['celeb_10'] ? number_format((float)$_ssr['celeb_10'],2) : ''; ?></div></td>
-                <td style="padding:1px;"><div data-col="disc_20_pwd" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['disc_20_pwd'] ? number_format((float)$_ssr['disc_20_pwd'],2) : ''; ?></div></td>
-                <td style="padding:1px;"><div data-col="comm_30" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['comm_30'] ? number_format((float)$_ssr['comm_30'],2) : ''; ?></div></td>
-                <td style="padding:1px;"><div data-col="comm_20" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['comm_20'] ? number_format((float)$_ssr['comm_20'],2) : ''; ?></div></td>
-                <td style="padding:1px;"><div data-col="comm_15" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['comm_15'] ? number_format((float)$_ssr['comm_15'],2) : ''; ?></div></td>
-                <td style="padding:1px;"><div data-col="disc_50_staff" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;"><?php echo $_ssr['disc_50_staff'] ? number_format((float)$_ssr['disc_50_staff'],2) : ''; ?></div></td>
-                <td style="padding:1px;background:rgba(25,135,84,0.05);"><div data-col="net_sales" <?php echo $ce; ?> class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-weight:700;color:<?php echo $_ssr['is_refund'] ? '#dc3545' : '#198754'; ?>;"><?php echo $_ssr['net_sales'] ? number_format((float)$_ssr['net_sales'],2) : ''; ?></div></td>
-                <td style="padding:1px;"><div data-col="mode_of_payment" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;"><?php echo htmlspecialchars($_ssr['mode_of_payment'] ?? ''); ?></div></td>
-                <td style="padding:1px;"><div data-col="remarks" <?php echo $ce; ?> class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:120px;"><?php echo htmlspecialchars($_ssr['remarks'] ?? ''); ?></div></td>
-                <td style="padding:1px;text-align:center;vertical-align:middle;"><input type="checkbox" class="ss-refund-cb" <?php echo $_ssr['is_refund'] ? 'checked' : ''; ?> <?php echo $can_edit ? '' : 'disabled'; ?>></td>
+                <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;font-family:monospace;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;color:var(--gray);"><?php echo htmlspecialchars($_ssr['stylist'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);"><?php echo $_ssr['regular_price'] ? '₱'.number_format((float)$_ssr['regular_price'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;color:var(--brown);"><?php echo $_ssr['promo_price'] ? '₱'.number_format((float)$_ssr['promo_price'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['celeb_10'] ? '₱'.number_format((float)$_ssr['celeb_10'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['disc_20_pwd'] ? '₱'.number_format((float)$_ssr['disc_20_pwd'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['comm_30'] ? '₱'.number_format((float)$_ssr['comm_30'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['comm_20'] ? '₱'.number_format((float)$_ssr['comm_20'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['comm_15'] ? '₱'.number_format((float)$_ssr['comm_15'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['disc_50_staff'] ? '₱'.number_format((float)$_ssr['disc_50_staff'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;background:rgba(25,135,84,0.05);color:<?php echo $_ssr['is_refund'] ? '#dc3545' : '#198754'; ?>;">
+                    <?php echo $_ssr['net_sales'] ? '₱'.number_format((float)$_ssr['net_sales'],2) : ''; ?>
+                </td>
+                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['mode_of_payment'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;color:var(--gray);"><?php echo htmlspecialchars($_ssr['remarks'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:center;"><?php echo $_ssr['is_refund'] ? '✓' : ''; ?></td>
             </tr>
             <?php endforeach; endif; ?>
             </tbody>
-            <?php if (!empty($spreadsheet_rows)): ?>
-            <tfoot>
-                <tr style="background:var(--bg3);border-top:2px solid var(--border2);font-weight:700;">
+            <tfoot id="ss-tfoot">
+                <tr style="background:#5c3a1e;color:#fff;font-weight:700;">
                     <?php if (!$locked): ?><td></td><?php endif; ?>
-                    <td colspan="14" style="padding:0.5rem 0.75rem;font-size:0.8rem;color:var(--brown);">Total Net Sales</td>
-                    <td style="padding:0.5rem 0.5rem;text-align:right;font-size:0.88rem;color:#198754;background:rgba(25,135,84,0.07);">₱<?php echo number_format($spreadsheet_net_total,2); ?></td>
+                    <td colspan="14" style="padding:0.5rem 0.75rem;font-size:0.8rem;">TOTALS</td>
+                    <td id="ss-totals-net" style="padding:0.5rem 0.5rem;text-align:right;font-size:0.88rem;background:rgba(255,255,255,0.12);">
+                        ₱<?php echo number_format($spreadsheet_net_total,2); ?>
+                    </td>
                     <td colspan="3"></td>
                 </tr>
                 <?php if ($spreadsheet_refund_total > 0): ?>
-                <tr style="background:rgba(220,53,69,0.04);border-top:1px solid var(--border2);">
+                <tr id="ss-refund-row" style="background:rgba(220,53,69,0.08);border-top:1px solid var(--border2);">
                     <?php if (!$locked): ?><td></td><?php endif; ?>
                     <td colspan="14" style="padding:0.4rem 0.75rem;font-size:0.78rem;color:#dc3545;font-weight:600;">↩ Refund Rows (deducted from Net Cash)</td>
-                    <td style="padding:0.4rem 0.5rem;text-align:right;font-size:0.82rem;font-weight:700;color:#dc3545;">₱<?php echo number_format($spreadsheet_refund_total,2); ?></td>
+                    <td id="ss-refund-total" style="padding:0.4rem 0.5rem;text-align:right;font-size:0.82rem;font-weight:700;color:#dc3545;">
+                        ₱<?php echo number_format($spreadsheet_refund_total,2); ?>
+                    </td>
                     <td colspan="3"></td>
                 </tr>
                 <?php endif; ?>
             </tfoot>
-            <?php endif; ?>
         </table>
     </div>
 </div>
 
 <style>
-.ss-cell { white-space:pre-wrap; word-break:break-word; }
-.ss-cell[contenteditable="true"] {
-    outline:none; border:1px solid transparent; border-radius:3px; cursor:text;
-    transition:border-color 0.12s, background 0.12s;
+.ss-lbl { display:block; font-size:0.72rem; font-weight:600; color:var(--brown); margin-bottom:3px; }
+.ss-fi {
+    width:100%; padding:0.42rem 0.6rem; border:1px solid var(--border2); border-radius:6px;
+    background:var(--bg3); color:var(--brown); font-size:0.82rem; box-sizing:border-box;
+    transition:border-color 0.12s, box-shadow 0.12s;
 }
-.ss-cell[contenteditable="true"]:hover { border-color:var(--border2); background:rgba(255,255,255,0.6); }
-.ss-cell[contenteditable="true"]:focus { border-color:var(--gold); background:#fff; }
-.ss-num { font-family:monospace; }
+.ss-fi:focus { border-color:var(--gold); outline:none; box-shadow:0 0 0 2px rgba(200,164,107,0.22); background:#fff; }
+.ss-fi-num { text-align:right; font-family:monospace; }
+.ss-fi-sel { cursor:pointer; }
+.ss-fi-ro { opacity:0.72; cursor:not-allowed; }
+.ss-fi-ro:focus { border-color:var(--border2); box-shadow:none; background:var(--bg3); }
 </style>
 <script>
 (function(){
-    var CSRF    = <?php echo json_encode(generate_csrf_token()); ?>;
-    var RDATE   = <?php echo json_encode($report_date); ?>;
-    var IS_CASHIER   = <?php echo is_cashier() ? 'true' : 'false'; ?>;
-    var _rptLocked   = <?php echo json_encode((bool)$locked); ?>;
-    var _ssUnlocked  = <?php echo json_encode($ss_unlocked); ?>;
-    var _ssEditor    = <?php echo json_encode($ss_editor); ?>;
-    var _ssExpires   = <?php echo json_encode((int)($_SESSION['ss_edit_expires'] ?? 0)); ?>;
-    var _timers = {};
+    var CSRF       = <?php echo json_encode(generate_csrf_token()); ?>;
+    var RDATE      = <?php echo json_encode($report_date); ?>;
+    var IS_CASHIER = <?php echo is_cashier() ? 'true' : 'false'; ?>;
+    var _rptLocked = <?php echo json_encode((bool)$locked); ?>;
+    var _ssUnlocked= <?php echo json_encode($ss_unlocked); ?>;
+    var _ssExpires = <?php echo json_encode((int)($_SESSION['ss_edit_expires'] ?? 0)); ?>;
+    var SS_SERVICES    = <?php echo json_encode($ss_services_list,   JSON_HEX_TAG|JSON_HEX_APOS); ?>;
+    var SS_THERAPISTS  = <?php echo json_encode($ss_therapists_list, JSON_HEX_TAG|JSON_HEX_APOS); ?>;
+    var SS_MOP         = <?php echo json_encode($ss_mop_list,        JSON_HEX_TAG|JSON_HEX_APOS); ?>;
+    var SS_COMMISSIONS = <?php echo json_encode($ss_commissions,     JSON_HEX_TAG|JSON_HEX_APOS); ?>;
 
     function canEdit() {
         if (_rptLocked) return false;
@@ -1373,151 +1489,341 @@ $can_edit  = !$locked && (!is_cashier() || $ss_unlocked);
         return _ssUnlocked && (Math.floor(Date.now()/1000) < _ssExpires);
     }
 
-    function getRowData(tr) {
-        var d = { row_id: tr.dataset.rowId||'0', row_order: tr.dataset.rowOrder||'0' };
-        tr.querySelectorAll('[data-col]').forEach(function(c){ d[c.dataset.col] = c.innerText.trim(); });
-        var cb = tr.querySelector('.ss-refund-cb');
-        d.is_refund = (cb && cb.checked) ? '1' : '0';
-        return d;
+    // ── Form element refs ────────────────────────────────────────────────────
+    var sfSvc    = document.getElementById('sf-service');
+    var sfStylist= document.getElementById('sf-stylist');
+    var sfRp     = document.getElementById('sf-regular_price');
+    var sfPromo  = document.getElementById('sf-promo_price');
+    var sfPwdSel = document.getElementById('sf-disc_20_pwd_sel');
+    var sfStfSel = document.getElementById('sf-disc_50_staff_sel');
+    var sfPwdHid = document.getElementById('sf-disc_20_pwd');
+    var sfStfHid = document.getElementById('sf-disc_50_staff');
+    var sfC30    = document.getElementById('sf-comm_30');
+    var sfC20    = document.getElementById('sf-comm_20');
+    var sfC15    = document.getElementById('sf-comm_15');
+    var sfNet    = document.getElementById('sf-net_sales');
+    var commNote = document.getElementById('ss-comm-note');
+    var _promoUserEdited = false;
+
+    // ── Auto-compute ─────────────────────────────────────────────────────────
+    function recompute() {
+        if (!sfRp) return;
+        var rp     = parseFloat(sfRp.value) || 0;
+        var pwdAmt = (sfPwdSel && sfPwdSel.value === 'valid') ? rp * 0.20 : 0;
+        var stfAmt = (sfStfSel && sfStfSel.value === 'valid') ? rp * 0.50 : 0;
+        if (sfPwdHid) sfPwdHid.value = pwdAmt.toFixed(2);
+        if (sfStfHid) sfStfHid.value = stfAmt.toFixed(2);
+
+        // Promo Price
+        var hasDist = pwdAmt > 0 || stfAmt > 0;
+        if (sfPromo) {
+            if (hasDist) {
+                sfPromo.value    = (rp - pwdAmt - stfAmt).toFixed(2);
+                sfPromo.readOnly = true;
+                sfPromo.classList.add('ss-fi-ro');
+            } else {
+                sfPromo.readOnly = false;
+                sfPromo.classList.remove('ss-fi-ro');
+                if (!_promoUserEdited) sfPromo.value = rp > 0 ? rp.toFixed(2) : '';
+            }
+        }
+        var promo = sfPromo ? (parseFloat(sfPromo.value) || 0) : 0;
+
+        // Commission lookup
+        var svcId  = sfSvc     ? (parseInt(sfSvc.value)     || 0) : 0;
+        var stylId = sfStylist  ? (parseInt(sfStylist.value)  || 0) : 0;
+        var c30 = 0, c20 = 0, c15 = 0, noteText = '';
+        if (svcId && stylId) {
+            var key = stylId + '_' + svcId;
+            if (Object.prototype.hasOwnProperty.call(SS_COMMISSIONS, key)) {
+                var pct = SS_COMMISSIONS[key];
+                var amt = promo * pct / 100;
+                if      (pct === 30) { c30 = amt; }
+                else if (pct === 20) { c20 = amt; }
+                else if (pct === 15) { c15 = amt; }
+                else                 { c30 = amt; noteText = 'rate ' + pct + '%'; }
+            } else { noteText = 'no commission set'; }
+        }
+        if (sfC30) sfC30.value = c30.toFixed(2);
+        if (sfC20) sfC20.value = c20.toFixed(2);
+        if (sfC15) sfC15.value = c15.toFixed(2);
+        if (commNote) commNote.textContent = noteText;
+
+        // Net Sales = Promo − commission
+        var net = promo - (c30 + c20 + c15);
+        if (sfNet) sfNet.value = net.toFixed(2);
     }
 
-    function saveRow(tr) {
-        var fd = new FormData();
-        fd.append('action','save_ss_row');
-        fd.append('_csrf',CSRF);
-        var d = getRowData(tr);
-        Object.keys(d).forEach(function(k){ fd.append(k, d[k]); });
-        fetch('daily_report.php?date='+RDATE, {method:'POST',body:fd})
-            .then(function(r){return r.json();})
-            .then(function(j){
-                if(j.ok && j.row_id && (!tr.dataset.rowId || tr.dataset.rowId==='0')){
-                    tr.dataset.rowId = j.row_id;
-                    var empty = document.getElementById('ss-empty-row');
-                    if(empty) empty.remove();
-                }
-                if(!j.ok) console.warn('SS save error:',j.msg);
-            }).catch(function(e){console.error('SS save',e);});
+    // ── Event wiring ─────────────────────────────────────────────────────────
+    if (sfSvc) sfSvc.addEventListener('change', function() {
+        _promoUserEdited = false;
+        if (sfRp) {
+            var opt = sfSvc.options[sfSvc.selectedIndex];
+            var price = opt ? (parseFloat(opt.dataset.price) || 0) : 0;
+            if (price > 0) sfRp.value = price.toFixed(2);
+        }
+        recompute();
+    });
+    if (sfStylist) sfStylist.addEventListener('change', recompute);
+    if (sfRp) sfRp.addEventListener('input', function() {
+        _promoUserEdited = false; recompute();
+    });
+    if (sfPromo) sfPromo.addEventListener('input', function() {
+        _promoUserEdited = true; recompute();
+    });
+    if (sfPwdSel) sfPwdSel.addEventListener('change', function() {
+        _promoUserEdited = false; recompute();
+    });
+    if (sfStfSel) sfStfSel.addEventListener('change', function() {
+        _promoUserEdited = false; recompute();
+    });
+
+    // ── Comma-format helper ──────────────────────────────────────────────────
+    function fmtNum(n) {
+        return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     }
 
-    function scheduleSave(tr) {
-        var k = tr.dataset.tmpKey || (tr.dataset.tmpKey='k'+Math.random());
-        clearTimeout(_timers[k]);
-        _timers[k] = setTimeout(function(){saveRow(tr);}, 600);
-    }
-
-    function attachRow(tr) {
-        if(!canEdit()) return;
-        tr.querySelectorAll('[data-col]').forEach(function(c){
-            c.contentEditable = 'true';
-            c.addEventListener('blur', function(){scheduleSave(tr);});
-            c.addEventListener('keydown', function(e){
-                if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();c.blur();}
-            });
+    // ── Recalculate totals row + header count ────────────────────────────────
+    function recalcTotals() {
+        var rows = document.querySelectorAll('#ss-tbody tr.ss-row');
+        var net = 0, refund = 0;
+        rows.forEach(function(tr) {
+            var nv = parseFloat(tr.dataset.netSales || '0') || 0;
+            net += nv;
+            if (tr.dataset.isRefund === '1') refund += nv;
         });
-        var cb = tr.querySelector('.ss-refund-cb');
-        if(cb){ cb.disabled=false; cb.addEventListener('change',function(){scheduleSave(tr);}); }
-        var del = tr.querySelector('.ss-del-btn');
-        if(del){
-            del.style.display='';
-            del.addEventListener('click',function(){
-                var rid = tr.dataset.rowId;
-                if(!rid||rid==='0'){tr.remove();return;}
-                uiConfirm('Delete this row?').then(function(ok){
-                    if(!ok) return;
-                    var fd=new FormData();
-                    fd.append('action','delete_ss_row');
-                    fd.append('_csrf',CSRF);
-                    fd.append('row_id',rid);
-                    fetch('daily_report.php?date='+RDATE,{method:'POST',body:fd})
-                        .then(function(r){return r.json();})
-                        .then(function(j){if(j.ok)tr.remove();});
-                });
-            });
+        var ntEl = document.getElementById('ss-totals-net');
+        if (ntEl) ntEl.textContent = '₱' + fmtNum(net);
+        var ntH = document.getElementById('ss-net-total');
+        if (ntH) ntH.textContent = fmtNum(net);
+        var cntEl = document.getElementById('ss-row-count');
+        if (cntEl) cntEl.innerHTML = rows.length + ' rows &nbsp;|&nbsp; Net Sales: ₱<span id="ss-net-total">' + fmtNum(net) + '</span>';
+        var refRow = document.getElementById('ss-refund-row');
+        if (refund > 0) {
+            if (!refRow) {
+                refRow = document.createElement('tr');
+                refRow.id = 'ss-refund-row';
+                refRow.style.cssText = 'background:rgba(220,53,69,0.08);border-top:1px solid var(--border2);';
+                var blank = _rptLocked ? '' : '<td></td>';
+                refRow.innerHTML = blank +
+                    '<td colspan="14" style="padding:0.4rem 0.75rem;font-size:0.78rem;color:#dc3545;font-weight:600;">↩ Refund Rows (deducted from Net Cash)</td>' +
+                    '<td id="ss-refund-total" style="padding:0.4rem 0.5rem;text-align:right;font-size:0.82rem;font-weight:700;color:#dc3545;"></td>' +
+                    '<td colspan="3"></td>';
+                document.getElementById('ss-tfoot').appendChild(refRow);
+            }
+            refRow.style.display = '';
+            var rtEl = document.getElementById('ss-refund-total');
+            if (rtEl) rtEl.textContent = '₱' + fmtNum(refund);
+        } else if (refRow) {
+            refRow.style.display = 'none';
         }
     }
 
-    document.querySelectorAll('#ss-tbody tr.ss-row').forEach(attachRow);
+    // ── Build a new read-only preview <tr> ───────────────────────────────────
+    function eH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function peso(v) { var n=parseFloat(v)||0; return n ? '₱'+fmtNum(n) : ''; }
 
-    function buildRowHtml() {
-        var cols = [
-            ['time_in','padding:0.25rem 0.4rem;min-height:1.4em;'],
-            ['time_out','padding:0.25rem 0.4rem;min-height:1.4em;'],
-            ['slip_no','padding:0.25rem 0.4rem;min-height:1.4em;font-family:monospace;'],
-            ['client_name','padding:0.25rem 0.4rem;min-height:1.4em;min-width:100px;'],
-            ['service_name','padding:0.25rem 0.4rem;min-height:1.4em;min-width:120px;'],
-            ['stylist','padding:0.25rem 0.4rem;min-height:1.4em;min-width:80px;'],
-            ['regular_price','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
-            ['promo_price','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
-            ['celeb_10','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
-            ['disc_20_pwd','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
-            ['comm_30','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
-            ['comm_20','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
-            ['comm_15','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
-            ['disc_50_staff','padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-family:monospace;'],
-        ];
-        var h = '<td style="padding:2px 4px;vertical-align:middle;"><button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;">✕</button></td>';
-        cols.forEach(function(c){
-            h += '<td style="padding:1px;"><div data-col="'+c[0]+'" contenteditable="true" class="ss-cell" style="'+c[1]+'"></div></td>';
-        });
-        h += '<td style="padding:1px;background:rgba(25,135,84,0.05);"><div data-col="net_sales" contenteditable="true" class="ss-cell ss-num" style="padding:0.25rem 0.4rem;min-height:1.4em;text-align:right;font-weight:700;color:#198754;"></div></td>';
-        h += '<td style="padding:1px;"><div data-col="mode_of_payment" contenteditable="true" class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;"></div></td>';
-        h += '<td style="padding:1px;"><div data-col="remarks" contenteditable="true" class="ss-cell" style="padding:0.25rem 0.4rem;min-height:1.4em;min-width:120px;"></div></td>';
-        h += '<td style="padding:1px;text-align:center;vertical-align:middle;"><input type="checkbox" class="ss-refund-cb"></td>';
-        return h;
-    }
-
-    function addNewRow() {
-        if(!canEdit()) return;
-        var tbody = document.getElementById('ss-tbody');
-        var rows  = tbody.querySelectorAll('tr.ss-row');
+    function buildPreviewRow(d, rowId) {
+        var isRef = d.is_refund === '1' || d.is_refund === 1;
         var tr = document.createElement('tr');
         tr.className = 'ss-row';
-        tr.style.borderBottom = '1px solid var(--border2)';
-        tr.dataset.rowId    = '0';
-        tr.dataset.rowOrder = rows.length;
-        tr.innerHTML = buildRowHtml();
-        tbody.appendChild(tr);
-        attachRow(tr);
-        var first = tr.querySelector('[data-col="time_in"]');
-        if(first) first.focus();
+        tr.dataset.rowId    = rowId;
+        tr.dataset.netSales = parseFloat(d.net_sales) || 0;
+        tr.dataset.isRefund = isRef ? '1' : '0';
+        tr.style.cssText    = (isRef ? 'background:rgba(220,53,69,0.04);' : '') + 'border-bottom:1px solid var(--border2);';
+        var delCell = _rptLocked ? '' :
+            '<td style="padding:2px 4px;vertical-align:middle;">' +
+            '<button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;">✕</button></td>';
+        tr.innerHTML = delCell +
+            '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_in)       + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_out)      + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;font-family:monospace;">'+ eH(d.slip_no)       + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.client_name)   + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.service_name)  + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.stylist)       + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);">'         + peso(d.regular_price)  + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;color:var(--brown);">' + peso(d.promo_price) + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.celeb_10)       + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.disc_20_pwd)    + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.comm_30)        + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.comm_20)        + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.comm_15)        + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.disc_50_staff)  + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;background:rgba(25,135,84,0.05);color:' +
+                (isRef ? '#dc3545' : '#198754') + ';">'                                       + peso(d.net_sales)      + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.mode_of_payment) + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.remarks)       + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:center;">'   + (isRef ? '✓' : '') + '</td>';
+        if (!_rptLocked) attachDel(tr);
+        return tr;
     }
 
-    ['ss-add-row'].forEach(function(id){
-        var btn = document.getElementById(id);
-        if(btn) btn.addEventListener('click', addNewRow);
-    });
+    // ── Delete handler ───────────────────────────────────────────────────────
+    function attachDel(tr) {
+        var btn = tr.querySelector('.ss-del-btn');
+        if (!btn) return;
+        if (!canEdit()) { btn.style.display = 'none'; return; }
+        btn.addEventListener('click', function() {
+            var rid = tr.dataset.rowId;
+            uiConfirm('Delete this row?').then(function(ok) {
+                if (!ok) return;
+                var fd = new FormData();
+                fd.append('action',  'delete_ss_row');
+                fd.append('_csrf',   CSRF);
+                fd.append('row_id',  rid);
+                fetch('daily_report.php?date='+RDATE, {method:'POST',body:fd})
+                    .then(function(r){return r.json();})
+                    .then(function(j){
+                        if (j.ok) { tr.remove(); recalcTotals(); }
+                        else if (window.uiAlert) uiAlert('❌ '+(j.msg||'Delete failed'));
+                    });
+            });
+        });
+    }
+    document.querySelectorAll('#ss-tbody tr.ss-row').forEach(attachDel);
 
-    var unlockBtn = document.getElementById('ss-unlock-btn');
-    if(unlockBtn) unlockBtn.addEventListener('click', function(){
-        window._pgmCallback = function(pin){
-            var fd=new FormData();
-            fd.append('action','unlock_ss_edit');
-            fd.append('_csrf',CSRF);
-            fd.append('pin',pin);
-            fetch('daily_report.php?date='+RDATE,{method:'POST',body:fd})
+    // ── "Add to Report" ──────────────────────────────────────────────────────
+    var addBtn = document.getElementById('ss-add-btn');
+    if (addBtn) {
+        addBtn.addEventListener('click', function() {
+            if (!canEdit()) return;
+            var errEl = document.getElementById('ss-form-err');
+            errEl.style.display = 'none';
+
+            var svcSel = document.getElementById('sf-service');
+            if (!svcSel || !svcSel.value) {
+                errEl.textContent = '⚠️ Please select a Service before adding.';
+                errEl.style.display = 'block';
+                if (svcSel) svcSel.focus();
+                return;
+            }
+
+            var svcOpt  = svcSel.options[svcSel.selectedIndex];
+            var stylSel = document.getElementById('sf-stylist');
+            var stylOpt = stylSel && stylSel.value ? stylSel.options[stylSel.selectedIndex] : null;
+            var mopSel  = document.getElementById('sf-mop');
+            var rowCount= document.querySelectorAll('#ss-tbody tr.ss-row').length;
+
+            function gv(id) { var el=document.getElementById(id); return el ? el.value.trim() : ''; }
+
+            var fd = new FormData();
+            fd.append('action',         'save_ss_row');
+            fd.append('_csrf',          CSRF);
+            fd.append('row_id',         '0');
+            fd.append('row_order',      String(rowCount + 1));
+            fd.append('time_in',        gv('sf-time_in'));
+            fd.append('time_out',       gv('sf-time_out'));
+            fd.append('slip_no',        gv('sf-slip_no'));
+            fd.append('client_name',    gv('sf-client_name'));
+            fd.append('service_name',   svcOpt.dataset.name || svcOpt.text);
+            fd.append('service_id',     svcSel.value);
+            fd.append('stylist',        stylOpt ? (stylOpt.dataset.name || stylOpt.text) : '');
+            fd.append('therapist_id',   stylSel ? (stylSel.value || '0') : '0');
+            fd.append('regular_price',  gv('sf-regular_price')  || '0');
+            fd.append('promo_price',    gv('sf-promo_price')    || '0');
+            fd.append('celeb_10',       gv('sf-celeb_10')       || '0');
+            fd.append('disc_20_pwd',    gv('sf-disc_20_pwd')    || '0');
+            fd.append('comm_30',        gv('sf-comm_30')        || '0');
+            fd.append('comm_20',        gv('sf-comm_20')        || '0');
+            fd.append('comm_15',        gv('sf-comm_15')        || '0');
+            fd.append('disc_50_staff',  gv('sf-disc_50_staff')  || '0');
+            fd.append('net_sales',      gv('sf-net_sales')      || '0');
+            fd.append('mode_of_payment',mopSel ? mopSel.value : '');
+            fd.append('remarks',        gv('sf-remarks'));
+            fd.append('is_refund',      document.getElementById('sf-is_refund').checked ? '1' : '0');
+
+            addBtn.disabled    = true;
+            addBtn.textContent = 'Saving…';
+
+            fetch('daily_report.php?date='+RDATE, {method:'POST',body:fd})
                 .then(function(r){return r.json();})
                 .then(function(j){
-                    if(j.ok){
-                        _ssUnlocked=true;
-                        _ssExpires=Math.floor(Date.now()/1000)+1800;
-                        _ssEditor=j.person;
-                        var s=document.getElementById('ss-edit-status');
-                        if(s){s.textContent='✏️ Editing as '+j.person+' (expires in 30 min)';s.style.color='#198754';}
-                        unlockBtn.style.display='none';
-                        var ab=document.getElementById('ss-add-row');
-                        if(ab)ab.style.display='';
-                        document.querySelectorAll('#ss-tbody tr.ss-row').forEach(attachRow);
-                    } else {
-                        if(window.uiAlert) uiAlert('❌ '+(j.msg||'Invalid PIN'));
+                    addBtn.disabled    = false;
+                    addBtn.textContent = '➕ Add to Report';
+                    if (!j.ok) {
+                        errEl.textContent  = '❌ '+(j.msg||'Save failed.');
+                        errEl.style.display= 'block';
+                        return;
                     }
+                    var d = {
+                        time_in:        gv('sf-time_in'),
+                        time_out:       gv('sf-time_out'),
+                        slip_no:        gv('sf-slip_no'),
+                        client_name:    gv('sf-client_name'),
+                        service_name:   svcOpt.dataset.name || svcOpt.text,
+                        stylist:        stylOpt ? (stylOpt.dataset.name || stylOpt.text) : '',
+                        regular_price:  gv('sf-regular_price'),
+                        promo_price:    gv('sf-promo_price'),
+                        celeb_10:       gv('sf-celeb_10'),
+                        disc_20_pwd:    gv('sf-disc_20_pwd'),
+                        comm_30:        gv('sf-comm_30'),
+                        comm_20:        gv('sf-comm_20'),
+                        comm_15:        gv('sf-comm_15'),
+                        disc_50_staff:  gv('sf-disc_50_staff'),
+                        net_sales:      gv('sf-net_sales'),
+                        mode_of_payment:mopSel ? mopSel.value : '',
+                        remarks:        gv('sf-remarks'),
+                        is_refund:      document.getElementById('sf-is_refund').checked ? '1' : '0'
+                    };
+                    var emptyRow = document.getElementById('ss-empty-row');
+                    if (emptyRow) emptyRow.remove();
+                    document.getElementById('ss-tbody').appendChild(buildPreviewRow(d, j.row_id));
+                    recalcTotals();
+                    ['sf-time_in','sf-time_out','sf-slip_no','sf-client_name',
+                     'sf-regular_price','sf-celeb_10','sf-remarks'].forEach(function(id){
+                        var el = document.getElementById(id); if(el) el.value='';
+                    });
+                    svcSel.selectedIndex = 0;
+                    if (stylSel) stylSel.selectedIndex = 0;
+                    if (mopSel)  mopSel.selectedIndex  = 0;
+                    if (sfPwdSel) sfPwdSel.selectedIndex = 0;
+                    if (sfStfSel) sfStfSel.selectedIndex = 0;
+                    if (sfPwdHid) sfPwdHid.value = '0';
+                    if (sfStfHid) sfStfHid.value = '0';
+                    if (sfPromo) { sfPromo.value=''; sfPromo.readOnly=false; sfPromo.classList.remove('ss-fi-ro'); }
+                    if (sfC30) sfC30.value=''; if (sfC20) sfC20.value=''; if (sfC15) sfC15.value='';
+                    if (sfNet) sfNet.value='';
+                    if (commNote) commNote.textContent='';
+                    _promoUserEdited = false;
+                    document.getElementById('sf-is_refund').checked = false;
+                    document.getElementById('sf-time_in').focus();
+                })
+                .catch(function(e){
+                    addBtn.disabled    = false;
+                    addBtn.textContent = '➕ Add to Report';
+                    errEl.textContent  = '❌ Network error.';
+                    errEl.style.display= 'block';
+                    console.error('SS add', e);
                 });
-        };
-        document.getElementById('pgm-label').textContent='Unlock Spreadsheet Editing';
-        document.getElementById('pgm-pin').value='';
-        document.getElementById('pgm-error').textContent='';
-        document.getElementById('pinGateModal').style.display='flex';
-        setTimeout(function(){document.getElementById('pgm-pin').focus();},80);
-    });
+        });
+    }
+
+    // ── PIN unlock (cashier path) ────────────────────────────────────────────
+    var unlockBtn = document.getElementById('ss-unlock-btn');
+    if (unlockBtn) {
+        unlockBtn.addEventListener('click', function(){
+            window._pgmCallback = function(pin){
+                var fd=new FormData();
+                fd.append('action','unlock_ss_edit');
+                fd.append('_csrf',CSRF);
+                fd.append('pin',pin);
+                fetch('daily_report.php?date='+RDATE,{method:'POST',body:fd})
+                    .then(function(r){return r.json();})
+                    .then(function(j){
+                        if (j.ok) {
+                            window.location.href='daily_report.php?date='+RDATE+'&tab=spreadsheet';
+                        } else {
+                            if(window.uiAlert) uiAlert('❌ '+(j.msg||'Invalid PIN'));
+                        }
+                    });
+            };
+            document.getElementById('pgm-label').textContent='Unlock Spreadsheet Editing';
+            document.getElementById('pgm-pin').value='';
+            document.getElementById('pgm-error').textContent='';
+            document.getElementById('pinGateModal').style.display='flex';
+            setTimeout(function(){document.getElementById('pgm-pin').focus();},80);
+        });
+    }
 })();
 </script>
 

@@ -282,7 +282,7 @@ require_once 'header.php';
             <strong id="selCount"><?php echo count($cart_items); ?> item<?php echo count($cart_items)!==1?'s':''; ?></strong>
         </div>
         <div class="cs-row"><span>Subtotal</span><span id="cs-subtotal">&#8369;<?php echo number_format($cart_total,2); ?></span></div>
-        <div class="cs-row cs-free"><span>Shipping</span><span>Free</span></div>
+        <div class="cs-row cs-free"><span>Pick up</span></div>
         <div class="cs-div"></div>
         <div class="cs-total">
             <span class="cs-total-lbl">Total</span>
