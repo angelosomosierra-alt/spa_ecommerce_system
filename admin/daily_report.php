@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * daily_report.php — Daily Sales Report
  * Mirrors the client's Google Sheets format.
@@ -1269,110 +1269,37 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     $ss_commissions[(int)$_c['therapist_id'].'_'.(int)$_c['service_id']] = (float)$_c['commission_percent'];
 } }
 ?>
-<?php /* ── ENTRY FORM CARD ── */ ?>
-<?php if (!$locked && $can_edit): ?>
-<div class="panel" style="margin-bottom:1.25rem;">
+<?php /* ── SPREADSHEET GRID ── */ ?>
+
+<?php if (!$locked && !$can_edit): /* cashier — PIN required */ ?>
+<div class="panel" style="margin-bottom:1rem;">
     <div class="panel-header" style="flex-wrap:wrap;gap:0.5rem;">
-        <span class="panel-title">➕ New Entry</span>
-        <span id="ss-edit-status" style="font-size:0.75rem;color:#198754;">✏️ Editing<?php echo $ss_editor ? ' as '.htmlspecialchars($ss_editor) : ''; ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
-    </div>
-    <div class="panel-body" style="padding:1rem;">
-        <div id="ss-form-err" style="display:none;color:#dc3545;font-size:0.8rem;margin-bottom:0.5rem;font-weight:600;"></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:0.55rem 0.75rem;align-items:end;">
-            <div><label class="ss-lbl">Time In</label><input type="text" id="sf-time_in" class="ss-fi" placeholder="e.g. 9:00 AM"></div>
-            <div><label class="ss-lbl">Time Out</label><input type="text" id="sf-time_out" class="ss-fi" placeholder="e.g. 10:00 AM"></div>
-            <div><label class="ss-lbl">Slip No.</label><input type="text" id="sf-slip_no" class="ss-fi" style="font-family:monospace;"></div>
-            <div style="grid-column:span 2;"><label class="ss-lbl">Client Name</label><input type="text" id="sf-client_name" class="ss-fi"></div>
-            <div style="grid-column:span 2;">
-                <label class="ss-lbl">Service <span style="color:#dc3545;">*</span></label>
-                <select id="sf-service" class="ss-fi ss-fi-sel">
-                    <option value="">— select —</option>
-                    <?php foreach ($ss_services_list as $_sv): ?>
-                    <option value="<?php echo (int)$_sv['id']; ?>"
-                            data-price="<?php echo (float)$_sv['price']; ?>"
-                            data-name="<?php echo htmlspecialchars($_sv['name']); ?>">
-                        <?php echo htmlspecialchars($_sv['name']); ?>
-                    </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div style="grid-column:span 2;">
-                <label class="ss-lbl">Stylist</label>
-                <select id="sf-stylist" class="ss-fi ss-fi-sel">
-                    <option value="">— select —</option>
-                    <?php foreach ($ss_therapists_list as $_th): ?>
-                    <option value="<?php echo (int)$_th['id']; ?>"
-                            data-name="<?php echo htmlspecialchars($_th['full_name']); ?>">
-                        <?php echo htmlspecialchars($_th['full_name']); ?>
-                    </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div><label class="ss-lbl">Regular Price</label><input type="number" id="sf-regular_price" class="ss-fi ss-fi-num" step="0.01" min="0" placeholder="0.00"></div>
-            <div><label class="ss-lbl">Promo Price</label><input type="number" id="sf-promo_price" class="ss-fi ss-fi-num" step="0.01" min="0" placeholder="0.00"></div>
-            <div><label class="ss-lbl">Celeb 10%</label><input type="number" id="sf-celeb_10" class="ss-fi ss-fi-num" step="0.01" min="0" placeholder="0.00"></div>
-            <div>
-                <label class="ss-lbl">Disc 20% PWD</label>
-                <select id="sf-disc_20_pwd_sel" class="ss-fi ss-fi-sel">
-                    <option value="none">None</option>
-                    <option value="valid">Valid (20%)</option>
-                </select>
-                <input type="hidden" id="sf-disc_20_pwd" value="0">
-            </div>
-            <div><label class="ss-lbl">Comm 30%</label><input type="number" id="sf-comm_30" class="ss-fi ss-fi-num ss-fi-ro" step="0.01" readonly placeholder="0.00"></div>
-            <div><label class="ss-lbl">Comm 20%</label><input type="number" id="sf-comm_20" class="ss-fi ss-fi-num ss-fi-ro" step="0.01" readonly placeholder="0.00"></div>
-            <div><label class="ss-lbl">Comm 15%</label><input type="number" id="sf-comm_15" class="ss-fi ss-fi-num ss-fi-ro" step="0.01" readonly placeholder="0.00"></div>
-            <div>
-                <label class="ss-lbl">Disc 50% Staff</label>
-                <select id="sf-disc_50_staff_sel" class="ss-fi ss-fi-sel">
-                    <option value="none">None</option>
-                    <option value="valid">Valid (50%)</option>
-                </select>
-                <input type="hidden" id="sf-disc_50_staff" value="0">
-            </div>
-            <div><label class="ss-lbl">Net Sales</label><input type="number" id="sf-net_sales" class="ss-fi ss-fi-num ss-fi-ro" step="0.01" readonly placeholder="0.00"></div>
-            <div>
-                <label class="ss-lbl">Mode of Payment</label>
-                <select id="sf-mop" class="ss-fi ss-fi-sel">
-                    <option value="">— select —</option>
-                    <?php foreach ($ss_mop_list as $_mop): ?>
-                    <option value="<?php echo htmlspecialchars($_mop); ?>"><?php echo htmlspecialchars($_mop); ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div style="grid-column:span 2;"><label class="ss-lbl">Remarks</label><input type="text" id="sf-remarks" class="ss-fi"></div>
-            <div style="display:flex;align-items:center;gap:0.4rem;padding-bottom:0.15rem;">
-                <input type="checkbox" id="sf-is_refund" style="width:16px;height:16px;cursor:pointer;flex-shrink:0;">
-                <label for="sf-is_refund" class="ss-lbl" style="margin:0;cursor:pointer;">Is Refund?</label>
-            </div>
-            <div style="display:flex;align-items:flex-end;">
-                <button id="ss-add-btn" class="btn btn-primary" style="width:100%;font-size:0.85rem;font-weight:700;padding:0.45rem 0.75rem;">➕ Add to Report</button>
-            </div>
-        </div>
-        <div id="ss-comm-note" style="font-size:0.72rem;color:var(--gray);font-style:italic;margin-top:0.3rem;min-height:1em;"></div>
-    </div>
-</div>
-<?php elseif (!$locked): ?>
-<div class="panel" style="margin-bottom:1.25rem;">
-    <div class="panel-header" style="flex-wrap:wrap;gap:0.5rem;">
-        <span class="panel-title">➕ New Entry</span>
+        <span class="panel-title">🔐 Edit Locked</span>
         <button id="ss-unlock-btn" class="btn btn-secondary btn-sm" style="font-size:0.78rem;">🔐 Unlock Edit</button>
         <span id="ss-edit-status" style="font-size:0.75rem;color:var(--gray);">PIN required to edit</span>
     </div>
-    <div class="panel-body" style="padding:0.85rem 1rem;color:var(--gray);font-size:0.83rem;">
-        Spreadsheet editing is locked behind a PIN for receptionists. Click <strong>Unlock Edit</strong> to enter your PIN.
+    <div class="panel-body" style="padding:0.65rem 1rem;font-size:0.83rem;color:var(--gray);">
+        Spreadsheet editing requires a PIN. Click <strong>Unlock Edit</strong> to continue.
     </div>
 </div>
-<?php else: ?>
+<?php elseif ($locked): ?>
 <div style="margin-bottom:0.75rem;">
     <span style="font-size:0.78rem;color:#856404;background:#fff3cd;padding:0.3rem 0.75rem;border-radius:20px;">🔒 Report is locked — no entries can be added or deleted.</span>
 </div>
 <?php endif; ?>
 
-<?php /* ── READ-ONLY PREVIEW TABLE ── */ ?>
+<?php /* hidden inputs for disc amounts — outside table */ ?>
+<div style="display:none;">
+    <input type="hidden" id="er-disc_20_pwd"   value="0">
+    <input type="hidden" id="er-disc_50_staff"  value="0">
+</div>
+
 <div class="panel">
     <div class="panel-header" style="gap:0.75rem;flex-wrap:wrap;">
         <span class="panel-title">🧮 Spreadsheet — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
+        <?php if ($can_edit && $ss_editor): ?>
+        <span style="font-size:0.75rem;color:#198754;">✏️ Editing as <?php echo htmlspecialchars($ss_editor); ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
+        <?php endif; ?>
         <span id="ss-row-count" style="font-size:0.75rem;color:var(--gray);"><?php echo count($spreadsheet_rows); ?> rows &nbsp;|&nbsp; Net Sales: ₱<span id="ss-net-total"><?php echo number_format($spreadsheet_net_total,2); ?></span></span>
     </div>
     <div style="overflow-x:auto;">
@@ -1403,7 +1330,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             <tbody id="ss-tbody">
             <?php if (empty($spreadsheet_rows)): ?>
             <tr id="ss-empty-row"><td colspan="<?php echo $locked ? 18 : 19; ?>" style="text-align:center;color:var(--gray);padding:2rem 1rem;font-size:0.85rem;">
-                No rows yet.<?php echo !$locked ? ' Fill the form above and click <strong>➕ Add to Report</strong>.' : ''; ?>
+                No rows yet.<?php echo $can_edit ? ' Use the entry row below and click <strong>➕ Add Row</strong>.' : ''; ?>
             </td></tr>
             <?php else: foreach ($spreadsheet_rows as $_ssr): ?>
             <tr class="ss-row" data-row-id="<?php echo (int)$_ssr['id']; ?>"
@@ -1438,6 +1365,80 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             </tr>
             <?php endforeach; endif; ?>
             </tbody>
+            <?php if ($can_edit): ?>
+            <tbody id="ss-entry-body">
+                <tr id="ss-entry-row" style="background:#fdf8f0;border-top:2px solid var(--gold);">
+                    <td style="padding:2px 4px;"></td>
+                    <td style="padding:2px 3px;"><input type="text"   id="er-time_in"        class="ss-ec"               placeholder="Time In"></td>
+                    <td style="padding:2px 3px;"><input type="text"   id="er-time_out"       class="ss-ec"               placeholder="Time Out"></td>
+                    <td style="padding:2px 3px;"><input type="text"   id="er-slip_no"        class="ss-ec"               placeholder="Slip" style="font-family:monospace;"></td>
+                    <td style="padding:2px 3px;"><input type="text"   id="er-client_name"    class="ss-ec"               placeholder="Client"></td>
+                    <td style="padding:2px 3px;">
+                        <select id="er-service" class="ss-ec ss-ec-sel">
+                            <option value="">— Service * —</option>
+                            <?php foreach ($ss_services_list as $_sv): ?>
+                            <option value="<?php echo (int)$_sv['id']; ?>"
+                                    data-price="<?php echo (float)$_sv['price']; ?>"
+                                    data-name="<?php echo htmlspecialchars($_sv['name']); ?>">
+                                <?php echo htmlspecialchars($_sv['name']); ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                    <td style="padding:2px 3px;">
+                        <select id="er-stylist" class="ss-ec ss-ec-sel">
+                            <option value="">— Stylist —</option>
+                            <?php foreach ($ss_therapists_list as $_th): ?>
+                            <option value="<?php echo (int)$_th['id']; ?>"
+                                    data-name="<?php echo htmlspecialchars($_th['full_name']); ?>">
+                                <?php echo htmlspecialchars($_th['full_name']); ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-regular_price"  class="ss-ec ss-ec-num"     step="0.01" min="0" placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-promo_price"    class="ss-ec ss-ec-num"     step="0.01" min="0" placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-celeb_10"       class="ss-ec ss-ec-num"     step="0.01" min="0" placeholder="0.00"></td>
+                    <td style="padding:2px 3px;">
+                        <select id="er-disc_20_pwd_sel" class="ss-ec ss-ec-sel">
+                            <option value="none">None</option>
+                            <option value="valid">Valid 20%</option>
+                        </select>
+                    </td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_30"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_20"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_15"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
+                    <td style="padding:2px 3px;">
+                        <select id="er-disc_50_staff_sel" class="ss-ec ss-ec-sel">
+                            <option value="none">None</option>
+                            <option value="valid">Valid 50%</option>
+                        </select>
+                    </td>
+                    <td style="padding:2px 3px;background:rgba(25,135,84,0.05);"><input type="number" id="er-net_sales" class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
+                    <td style="padding:2px 3px;">
+                        <select id="er-mop" class="ss-ec ss-ec-sel">
+                            <option value="">— MOP —</option>
+                            <?php foreach ($ss_mop_list as $_mop): ?>
+                            <option value="<?php echo htmlspecialchars($_mop); ?>"><?php echo htmlspecialchars($_mop); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                    <td style="padding:2px 3px;"><input type="text"   id="er-remarks"        class="ss-ec"               placeholder="Remarks"></td>
+                    <td style="padding:2px 3px;text-align:center;vertical-align:middle;">
+                        <input type="checkbox" id="er-is_refund" style="width:14px;height:14px;cursor:pointer;">
+                    </td>
+                </tr>
+                <tr style="background:#fdf8f0;border-bottom:2px solid var(--gold);">
+                    <td colspan="19" style="padding:0.35rem 0.5rem;">
+                        <div style="display:flex;align-items:center;gap:0.75rem;">
+                            <button id="ss-add-btn" class="btn btn-primary btn-sm" style="font-weight:700;padding:0.35rem 1.1rem;">➕ Add Row</button>
+                            <span id="ss-comm-note" style="font-size:0.72rem;color:var(--gray);font-style:italic;"></span>
+                            <span id="ss-form-err"  style="display:none;color:#dc3545;font-size:0.78rem;font-weight:600;"></span>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+            <?php endif; ?>
             <tfoot id="ss-tfoot">
                 <tr style="background:#5c3a1e;color:#fff;font-weight:700;">
                     <?php if (!$locked): ?><td></td><?php endif; ?>
@@ -1463,17 +1464,16 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
 </div>
 
 <style>
-.ss-lbl { display:block; font-size:0.72rem; font-weight:600; color:var(--brown); margin-bottom:3px; }
-.ss-fi {
-    width:100%; padding:0.42rem 0.6rem; border:1px solid var(--border2); border-radius:6px;
-    background:var(--bg3); color:var(--brown); font-size:0.82rem; box-sizing:border-box;
-    transition:border-color 0.12s, box-shadow 0.12s;
+.ss-ec {
+    width:100%; padding:0.22rem 0.3rem; border:1px solid transparent; border-radius:3px;
+    background:transparent; color:var(--brown); font-size:0.74rem; box-sizing:border-box;
+    transition:border-color 0.1s, background 0.1s;
 }
-.ss-fi:focus { border-color:var(--gold); outline:none; box-shadow:0 0 0 2px rgba(200,164,107,0.22); background:#fff; }
-.ss-fi-num { text-align:right; font-family:monospace; }
-.ss-fi-sel { cursor:pointer; }
-.ss-fi-ro { opacity:0.72; cursor:not-allowed; }
-.ss-fi-ro:focus { border-color:var(--border2); box-shadow:none; background:var(--bg3); }
+.ss-ec:focus { border-color:var(--gold); outline:none; background:#fff; box-shadow:0 0 0 2px rgba(200,164,107,0.22); }
+.ss-ec-num { text-align:right; font-family:monospace; }
+.ss-ec-sel { cursor:pointer; }
+.ss-ec-ro { opacity:0.65; cursor:not-allowed; background:rgba(0,0,0,0.03); }
+.ss-ec-ro:focus { border-color:transparent; box-shadow:none; background:rgba(0,0,0,0.03); }
 #ss-table thead th { color:#fff; font-weight:700; }
 </style>
 <script>
@@ -1495,19 +1495,19 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         return _ssUnlocked && (Math.floor(Date.now()/1000) < _ssExpires);
     }
 
-    // ── Form element refs ────────────────────────────────────────────────────
-    var sfSvc    = document.getElementById('sf-service');
-    var sfStylist= document.getElementById('sf-stylist');
-    var sfRp     = document.getElementById('sf-regular_price');
-    var sfPromo  = document.getElementById('sf-promo_price');
-    var sfPwdSel = document.getElementById('sf-disc_20_pwd_sel');
-    var sfStfSel = document.getElementById('sf-disc_50_staff_sel');
-    var sfPwdHid = document.getElementById('sf-disc_20_pwd');
-    var sfStfHid = document.getElementById('sf-disc_50_staff');
-    var sfC30    = document.getElementById('sf-comm_30');
-    var sfC20    = document.getElementById('sf-comm_20');
-    var sfC15    = document.getElementById('sf-comm_15');
-    var sfNet    = document.getElementById('sf-net_sales');
+    // ── Entry row element refs ───────────────────────────────────────────────
+    var sfSvc    = document.getElementById('er-service');
+    var sfStylist= document.getElementById('er-stylist');
+    var sfRp     = document.getElementById('er-regular_price');
+    var sfPromo  = document.getElementById('er-promo_price');
+    var sfPwdSel = document.getElementById('er-disc_20_pwd_sel');
+    var sfStfSel = document.getElementById('er-disc_50_staff_sel');
+    var sfPwdHid = document.getElementById('er-disc_20_pwd');
+    var sfStfHid = document.getElementById('er-disc_50_staff');
+    var sfC30    = document.getElementById('er-comm_30');
+    var sfC20    = document.getElementById('er-comm_20');
+    var sfC15    = document.getElementById('er-comm_15');
+    var sfNet    = document.getElementById('er-net_sales');
     var commNote = document.getElementById('ss-comm-note');
     var _promoUserEdited = false;
 
@@ -1520,24 +1520,24 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         if (sfPwdHid) sfPwdHid.value = pwdAmt.toFixed(2);
         if (sfStfHid) sfStfHid.value = stfAmt.toFixed(2);
 
-        // Promo Price
+        // Promo Price = Regular − pwd_amount − staff_amount (or = Regular if no discounts)
         var hasDist = pwdAmt > 0 || stfAmt > 0;
         if (sfPromo) {
             if (hasDist) {
                 sfPromo.value    = (rp - pwdAmt - stfAmt).toFixed(2);
                 sfPromo.readOnly = true;
-                sfPromo.classList.add('ss-fi-ro');
+                sfPromo.classList.add('ss-ec-ro');
             } else {
                 sfPromo.readOnly = false;
-                sfPromo.classList.remove('ss-fi-ro');
+                sfPromo.classList.remove('ss-ec-ro');
                 if (!_promoUserEdited) sfPromo.value = rp > 0 ? rp.toFixed(2) : '';
             }
         }
         var promo = sfPromo ? (parseFloat(sfPromo.value) || 0) : 0;
 
-        // Commission lookup
-        var svcId  = sfSvc     ? (parseInt(sfSvc.value)     || 0) : 0;
-        var stylId = sfStylist  ? (parseInt(sfStylist.value)  || 0) : 0;
+        // Commission = Promo × rate% for this stylist+service
+        var svcId  = sfSvc     ? (parseInt(sfSvc.value)    || 0) : 0;
+        var stylId = sfStylist ? (parseInt(sfStylist.value) || 0) : 0;
         var c30 = 0, c20 = 0, c15 = 0, noteText = '';
         if (svcId && stylId) {
             var key = stylId + '_' + svcId;
@@ -1571,23 +1571,16 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         recompute();
     });
     if (sfStylist) sfStylist.addEventListener('change', recompute);
-    if (sfRp) sfRp.addEventListener('input', function() {
-        _promoUserEdited = false; recompute();
-    });
-    if (sfPromo) sfPromo.addEventListener('input', function() {
-        _promoUserEdited = true; recompute();
-    });
-    if (sfPwdSel) sfPwdSel.addEventListener('change', function() {
-        _promoUserEdited = false; recompute();
-    });
-    if (sfStfSel) sfStfSel.addEventListener('change', function() {
-        _promoUserEdited = false; recompute();
-    });
+    if (sfRp) sfRp.addEventListener('input', function() { _promoUserEdited = false; recompute(); });
+    if (sfPromo) sfPromo.addEventListener('input', function() { _promoUserEdited = true; recompute(); });
+    if (sfPwdSel) sfPwdSel.addEventListener('change', function() { _promoUserEdited = false; recompute(); });
+    if (sfStfSel) sfStfSel.addEventListener('change', function() { _promoUserEdited = false; recompute(); });
 
-    // ── Comma-format helper ──────────────────────────────────────────────────
-    function fmtNum(n) {
-        return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    }
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function fmtNum(n) { return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+    function gv(id) { var el=document.getElementById(id); return el ? el.value.trim() : ''; }
+    function eH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function peso(v) { var n=parseFloat(v)||0; return n ? '₱'+fmtNum(n) : ''; }
 
     // ── Recalculate totals row + header count ────────────────────────────────
     function recalcTotals() {
@@ -1625,10 +1618,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         }
     }
 
-    // ── Build a new read-only preview <tr> ───────────────────────────────────
-    function eH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-    function peso(v) { var n=parseFloat(v)||0; return n ? '₱'+fmtNum(n) : ''; }
-
+    // ── Build read-only preview <tr> after successful save ───────────────────
     function buildPreviewRow(d, rowId) {
         var isRef = d.is_refund === '1' || d.is_refund === 1;
         var tr = document.createElement('tr');
@@ -1641,25 +1631,25 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             '<td style="padding:2px 4px;vertical-align:middle;">' +
             '<button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;">✕</button></td>';
         tr.innerHTML = delCell +
-            '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_in)       + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_out)      + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;font-family:monospace;">'+ eH(d.slip_no)       + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.client_name)   + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.service_name)  + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.stylist)       + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);">'         + peso(d.regular_price)  + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_in)         + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_out)        + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;font-family:monospace;">'+ eH(d.slip_no)         + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.client_name)     + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.service_name)    + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.stylist)         + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);">'           + peso(d.regular_price)  + '</td>' +
             '<td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;color:var(--brown);">' + peso(d.promo_price) + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.celeb_10)       + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.disc_20_pwd)    + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.comm_30)        + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.comm_20)        + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.comm_15)        + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'         + peso(d.disc_50_staff)  + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.celeb_10)       + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.disc_20_pwd)    + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.comm_30)        + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.comm_20)        + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.comm_15)        + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.disc_50_staff)  + '</td>' +
             '<td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;background:rgba(25,135,84,0.05);color:' +
-                (isRef ? '#dc3545' : '#198754') + ';">'                                       + peso(d.net_sales)      + '</td>' +
+                (isRef ? '#dc3545' : '#198754') + ';">'                                         + peso(d.net_sales)      + '</td>' +
             '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.mode_of_payment) + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.remarks)       + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;text-align:center;">'   + (isRef ? '✓' : '') + '</td>';
+            '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.remarks)         + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:center;">'   + (isRef ? '✓' : '')   + '</td>';
         if (!_rptLocked) attachDel(tr);
         return tr;
     }
@@ -1674,9 +1664,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             uiConfirm('Delete this row?').then(function(ok) {
                 if (!ok) return;
                 var fd = new FormData();
-                fd.append('action',  'delete_ss_row');
-                fd.append('csrf_token',   CSRF);
-                fd.append('row_id',  rid);
+                fd.append('action',     'delete_ss_row');
+                fd.append('csrf_token', CSRF);
+                fd.append('row_id',     rid);
                 fetch('daily_report.php?date='+RDATE, {method:'POST',body:fd})
                     .then(function(r){return r.json();})
                     .then(function(j){
@@ -1688,7 +1678,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     }
     document.querySelectorAll('#ss-tbody tr.ss-row').forEach(attachDel);
 
-    // ── "Add to Report" ──────────────────────────────────────────────────────
+    // ── "Add Row" ────────────────────────────────────────────────────────────
     var addBtn = document.getElementById('ss-add-btn');
     if (addBtn) {
         addBtn.addEventListener('click', function() {
@@ -1696,47 +1686,43 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             var errEl = document.getElementById('ss-form-err');
             errEl.style.display = 'none';
 
-            var svcSel = document.getElementById('sf-service');
-            if (!svcSel || !svcSel.value) {
-                errEl.textContent = '⚠️ Please select a Service before adding.';
+            if (!sfSvc || !sfSvc.value) {
+                errEl.textContent   = '⚠️ Please select a Service.';
                 errEl.style.display = 'block';
-                if (svcSel) svcSel.focus();
+                if (sfSvc) sfSvc.focus();
                 return;
             }
 
-            var svcOpt  = svcSel.options[svcSel.selectedIndex];
-            var stylSel = document.getElementById('sf-stylist');
-            var stylOpt = stylSel && stylSel.value ? stylSel.options[stylSel.selectedIndex] : null;
-            var mopSel  = document.getElementById('sf-mop');
+            var svcOpt  = sfSvc.options[sfSvc.selectedIndex];
+            var stylOpt = sfStylist && sfStylist.value ? sfStylist.options[sfStylist.selectedIndex] : null;
+            var mopSel  = document.getElementById('er-mop');
             var rowCount= document.querySelectorAll('#ss-tbody tr.ss-row').length;
 
-            function gv(id) { var el=document.getElementById(id); return el ? el.value.trim() : ''; }
-
             var fd = new FormData();
-            fd.append('action',         'save_ss_row');
-            fd.append('csrf_token',          CSRF);
-            fd.append('row_id',         '0');
-            fd.append('row_order',      String(rowCount + 1));
-            fd.append('time_in',        gv('sf-time_in'));
-            fd.append('time_out',       gv('sf-time_out'));
-            fd.append('slip_no',        gv('sf-slip_no'));
-            fd.append('client_name',    gv('sf-client_name'));
-            fd.append('service_name',   svcOpt.dataset.name || svcOpt.text);
-            fd.append('service_id',     svcSel.value);
-            fd.append('stylist',        stylOpt ? (stylOpt.dataset.name || stylOpt.text) : '');
-            fd.append('therapist_id',   stylSel ? (stylSel.value || '0') : '0');
-            fd.append('regular_price',  gv('sf-regular_price')  || '0');
-            fd.append('promo_price',    gv('sf-promo_price')    || '0');
-            fd.append('celeb_10',       gv('sf-celeb_10')       || '0');
-            fd.append('disc_20_pwd',    gv('sf-disc_20_pwd')    || '0');
-            fd.append('comm_30',        gv('sf-comm_30')        || '0');
-            fd.append('comm_20',        gv('sf-comm_20')        || '0');
-            fd.append('comm_15',        gv('sf-comm_15')        || '0');
-            fd.append('disc_50_staff',  gv('sf-disc_50_staff')  || '0');
-            fd.append('net_sales',      gv('sf-net_sales')      || '0');
-            fd.append('mode_of_payment',mopSel ? mopSel.value : '');
-            fd.append('remarks',        gv('sf-remarks'));
-            fd.append('is_refund',      document.getElementById('sf-is_refund').checked ? '1' : '0');
+            fd.append('action',          'save_ss_row');
+            fd.append('csrf_token',      CSRF);
+            fd.append('row_id',          '0');
+            fd.append('row_order',       String(rowCount + 1));
+            fd.append('time_in',         gv('er-time_in'));
+            fd.append('time_out',        gv('er-time_out'));
+            fd.append('slip_no',         gv('er-slip_no'));
+            fd.append('client_name',     gv('er-client_name'));
+            fd.append('service_name',    svcOpt.dataset.name || svcOpt.text);
+            fd.append('service_id',      sfSvc.value);
+            fd.append('stylist',         stylOpt ? (stylOpt.dataset.name || stylOpt.text) : '');
+            fd.append('therapist_id',    sfStylist ? (sfStylist.value || '0') : '0');
+            fd.append('regular_price',   gv('er-regular_price')  || '0');
+            fd.append('promo_price',     gv('er-promo_price')    || '0');
+            fd.append('celeb_10',        gv('er-celeb_10')       || '0');
+            fd.append('disc_20_pwd',     gv('er-disc_20_pwd')    || '0');
+            fd.append('comm_30',         gv('er-comm_30')        || '0');
+            fd.append('comm_20',         gv('er-comm_20')        || '0');
+            fd.append('comm_15',         gv('er-comm_15')        || '0');
+            fd.append('disc_50_staff',   gv('er-disc_50_staff')  || '0');
+            fd.append('net_sales',       gv('er-net_sales')      || '0');
+            fd.append('mode_of_payment', mopSel ? mopSel.value : '');
+            fd.append('remarks',         gv('er-remarks'));
+            fd.append('is_refund',       document.getElementById('er-is_refund').checked ? '1' : '0');
 
             addBtn.disabled    = true;
             addBtn.textContent = 'Saving…';
@@ -1745,60 +1731,62 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 .then(function(r){return r.json();})
                 .then(function(j){
                     addBtn.disabled    = false;
-                    addBtn.textContent = '➕ Add to Report';
+                    addBtn.textContent = '➕ Add Row';
                     if (!j.ok) {
-                        errEl.textContent  = '❌ '+(j.msg||'Save failed.');
-                        errEl.style.display= 'block';
+                        errEl.textContent   = '❌ '+(j.msg||'Save failed.');
+                        errEl.style.display = 'block';
                         return;
                     }
                     var d = {
-                        time_in:        gv('sf-time_in'),
-                        time_out:       gv('sf-time_out'),
-                        slip_no:        gv('sf-slip_no'),
-                        client_name:    gv('sf-client_name'),
-                        service_name:   svcOpt.dataset.name || svcOpt.text,
-                        stylist:        stylOpt ? (stylOpt.dataset.name || stylOpt.text) : '',
-                        regular_price:  gv('sf-regular_price'),
-                        promo_price:    gv('sf-promo_price'),
-                        celeb_10:       gv('sf-celeb_10'),
-                        disc_20_pwd:    gv('sf-disc_20_pwd'),
-                        comm_30:        gv('sf-comm_30'),
-                        comm_20:        gv('sf-comm_20'),
-                        comm_15:        gv('sf-comm_15'),
-                        disc_50_staff:  gv('sf-disc_50_staff'),
-                        net_sales:      gv('sf-net_sales'),
-                        mode_of_payment:mopSel ? mopSel.value : '',
-                        remarks:        gv('sf-remarks'),
-                        is_refund:      document.getElementById('sf-is_refund').checked ? '1' : '0'
+                        time_in:         gv('er-time_in'),
+                        time_out:        gv('er-time_out'),
+                        slip_no:         gv('er-slip_no'),
+                        client_name:     gv('er-client_name'),
+                        service_name:    svcOpt.dataset.name || svcOpt.text,
+                        stylist:         stylOpt ? (stylOpt.dataset.name || stylOpt.text) : '',
+                        regular_price:   gv('er-regular_price'),
+                        promo_price:     gv('er-promo_price'),
+                        celeb_10:        gv('er-celeb_10'),
+                        disc_20_pwd:     gv('er-disc_20_pwd'),
+                        comm_30:         gv('er-comm_30'),
+                        comm_20:         gv('er-comm_20'),
+                        comm_15:         gv('er-comm_15'),
+                        disc_50_staff:   gv('er-disc_50_staff'),
+                        net_sales:       gv('er-net_sales'),
+                        mode_of_payment: mopSel ? mopSel.value : '',
+                        remarks:         gv('er-remarks'),
+                        is_refund:       document.getElementById('er-is_refund').checked ? '1' : '0'
                     };
                     var emptyRow = document.getElementById('ss-empty-row');
                     if (emptyRow) emptyRow.remove();
                     document.getElementById('ss-tbody').appendChild(buildPreviewRow(d, j.row_id));
                     recalcTotals();
-                    ['sf-time_in','sf-time_out','sf-slip_no','sf-client_name',
-                     'sf-regular_price','sf-celeb_10','sf-remarks'].forEach(function(id){
-                        var el = document.getElementById(id); if(el) el.value='';
+                    // Clear entry row for next entry
+                    ['er-time_in','er-time_out','er-slip_no','er-client_name',
+                     'er-regular_price','er-celeb_10','er-remarks'].forEach(function(id){
+                        var el=document.getElementById(id); if(el) el.value='';
                     });
-                    svcSel.selectedIndex = 0;
-                    if (stylSel) stylSel.selectedIndex = 0;
-                    if (mopSel)  mopSel.selectedIndex  = 0;
-                    if (sfPwdSel) sfPwdSel.selectedIndex = 0;
-                    if (sfStfSel) sfStfSel.selectedIndex = 0;
+                    if (sfSvc)    sfSvc.selectedIndex    = 0;
+                    if (sfStylist)sfStylist.selectedIndex = 0;
+                    if (mopSel)   mopSel.selectedIndex    = 0;
+                    if (sfPwdSel) sfPwdSel.selectedIndex  = 0;
+                    if (sfStfSel) sfStfSel.selectedIndex  = 0;
                     if (sfPwdHid) sfPwdHid.value = '0';
                     if (sfStfHid) sfStfHid.value = '0';
-                    if (sfPromo) { sfPromo.value=''; sfPromo.readOnly=false; sfPromo.classList.remove('ss-fi-ro'); }
+                    if (sfPromo)  { sfPromo.value=''; sfPromo.readOnly=false; sfPromo.classList.remove('ss-ec-ro'); }
                     if (sfC30) sfC30.value=''; if (sfC20) sfC20.value=''; if (sfC15) sfC15.value='';
-                    if (sfNet) sfNet.value='';
+                    if (sfNet)    sfNet.value='';
                     if (commNote) commNote.textContent='';
                     _promoUserEdited = false;
-                    document.getElementById('sf-is_refund').checked = false;
-                    document.getElementById('sf-time_in').focus();
+                    var refEl = document.getElementById('er-is_refund');
+                    if (refEl) refEl.checked = false;
+                    if (sfSvc) sfSvc.focus();
                 })
                 .catch(function(e){
                     addBtn.disabled    = false;
-                    addBtn.textContent = '➕ Add to Report';
-                    errEl.textContent  = '❌ Network error.';
-                    errEl.style.display= 'block';
+                    addBtn.textContent = '➕ Add Row';
+                    errEl.textContent   = '❌ Network error.';
+                    errEl.style.display = 'block';
                     console.error('SS add', e);
                 });
         });
@@ -1810,9 +1798,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         unlockBtn.addEventListener('click', function(){
             window._pgmCallback = function(pin){
                 var fd=new FormData();
-                fd.append('action','unlock_ss_edit');
-                fd.append('csrf_token',CSRF);
-                fd.append('pin',pin);
+                fd.append('action',     'unlock_ss_edit');
+                fd.append('csrf_token', CSRF);
+                fd.append('pin',        pin);
                 fetch('daily_report.php?date='+RDATE,{method:'POST',body:fd})
                     .then(function(r){return r.json();})
                     .then(function(j){
