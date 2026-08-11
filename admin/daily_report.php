@@ -223,7 +223,7 @@ if (isset($_GET['del_prodsale']) && is_full_access()) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'unlock_ss_edit') {
     header('Content-Type: application/json');
     if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
-    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    if ($LOCK_FEATURE_ENABLED && $rpt && $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
     $pin_input = trim($_POST['pin'] ?? '');
     if (empty($pin_input)) { echo json_encode(['ok'=>false,'msg'=>'PIN is required.']); exit; }
     $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
@@ -246,7 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'unloc
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_ss_row') {
     header('Content-Type: application/json');
     if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
-    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    if ($LOCK_FEATURE_ENABLED && $rpt && $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
     $ss_unlocked_ajax = !empty($_SESSION['ss_edit_unlocked'])
         && ($_SESSION['ss_edit_date'] ?? '') === $report_date
         && ($_SESSION['ss_edit_expires'] ?? 0) > time();
@@ -322,7 +322,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_ss_row') {
     header('Content-Type: application/json');
     if (!verify_csrf_token_ajax()) { echo json_encode(['ok'=>false,'msg'=>'CSRF error']); exit; }
-    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
+    if ($LOCK_FEATURE_ENABLED && $rpt && $rpt['is_locked']) { echo json_encode(['ok'=>false,'msg'=>'Report is locked.']); exit; }
     $ss_unlocked_ajax = !empty($_SESSION['ss_edit_unlocked'])
         && ($_SESSION['ss_edit_date'] ?? '') === $report_date
         && ($_SESSION['ss_edit_expires'] ?? 0) > time();
