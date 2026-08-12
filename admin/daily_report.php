@@ -12,7 +12,7 @@ $msg_type = 'success';
 
 // ── FEATURE FLAG ──────────────────────────────────────────────────────────────
 // Set to true to restore full locking behaviour; false disables all lock checks.
-$LOCK_FEATURE_ENABLED = false;
+$LOCK_FEATURE_ENABLED = true;
 
 // Receptionist PIN gate — session-based so only prompted once per session
 if (is_cashier() && empty($_SESSION['report_pin_ok'])) {
@@ -95,6 +95,82 @@ if (isset($_GET['lock']) && is_full_access()) {
         $stmt = $conn->prepare("UPDATE daily_reports SET is_locked=?, locked_at=?, locked_by=? WHERE id=?");
         $stmt->bind_param("isii", $lock, $at, $by, $rpt['id']); $stmt->execute(); $stmt->close();
         header("Location: daily_report.php?date=$report_date&tab=$active_tab"); exit();
+    }
+}
+
+// ── SUBMIT REPORT ─────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submit_report') {
+    verify_csrf_token();
+    require_once __DIR__ . '/../notify.php';
+
+    $fails = [];
+
+    if (!$rpt) {
+        $fails[] = 'Save the report header first.';
+    } else {
+        if ((float)($rpt['cash_on_hand'] ?? 0) <= 0)
+            $fails[] = 'Cash on Hand must be entered and greater than zero.';
+        if (empty(trim($rpt['opening_cashier'] ?? '')))
+            $fails[] = 'Opening cashier name is missing.';
+        if (empty(trim($rpt['closing_cashier'] ?? '')))
+            $fails[] = 'Closing cashier name is missing.';
+        $dq = $conn->prepare("SELECT COUNT(*) AS c FROM daily_report_denominations WHERE report_id=? AND quantity>0");
+        $dq->bind_param("i", $rpt['id']); $dq->execute();
+        if ((int)$dq->get_result()->fetch_assoc()['c'] === 0) $fails[] = 'Cash denominations are empty — enter at least one.';
+        $dq->close();
+    }
+
+    $sq = $conn->prepare("SELECT COUNT(*) AS c FROM daily_report_spreadsheet_rows WHERE report_date=?");
+    $sq->bind_param("s", $report_date); $sq->execute();
+    if ((int)$sq->get_result()->fetch_assoc()['c'] === 0) $fails[] = 'No service entries in the Spreadsheet tab — add at least one row.';
+    $sq->close();
+
+    if ($fails) {
+        $msg_type = 'warning';
+        $msg = '<strong>Cannot submit — please fix the following:</strong><ul style="margin:0.4rem 0 0 1.2rem;">'
+             . implode('', array_map(fn($f) => '<li>' . htmlspecialchars($f) . '</li>', $fails)) . '</ul>';
+    } else {
+        $uid = (int)$_SESSION['user_id'];
+        $now = date('Y-m-d H:i:s');
+        $st  = $conn->prepare("UPDATE daily_reports SET is_locked=1, locked_at=?, locked_by=? WHERE id=?");
+        $st->bind_param("sii", $now, $uid, $rpt['id']); $st->execute(); $st->close();
+
+        $submitter = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Unknown';
+        $nice_date = date('F j, Y', strtotime($report_date));
+        $notif_link = "daily_report.php?date=$report_date";
+        $notif_msg  = "Daily report for $nice_date submitted by $submitter.";
+        add_notification($conn, null, 'report_submitted', '📋 Daily Report Submitted', $notif_msg, $notif_link);
+
+        // Best-effort email to owners — failure does not block submission
+        try {
+            require_once __DIR__ . '/../_mailer.php';
+            $mail = make_mailer();
+            $mail->isHTML(false);
+            $mail->Subject = "Daily Report Submitted – $nice_date";
+            $mail->Body    = "The daily report for $nice_date has been submitted by $submitter.\n\n"
+                           . "Log in to the admin panel to view or unlock it.";
+            $sent_to = 0;
+            $ownerQ = $conn->query("SELECT email, full_name FROM users WHERE admin_role='owner' AND role='admin' AND deleted_at IS NULL AND email IS NOT NULL AND email != ''");
+            if ($ownerQ) {
+                foreach ($ownerQ->fetch_all(MYSQLI_ASSOC) as $ow) {
+                    $mail->addAddress($ow['email'], $ow['full_name']);
+                    $sent_to++;
+                }
+            }
+            if ($sent_to > 0) $mail->send();
+        } catch (\Throwable $e) {
+            // intentionally silent — email is best-effort
+        }
+
+        log_activity($conn, 'submit_report', "Submitted daily report for $report_date", 'daily_report', $rpt['id'], null);
+
+        // Re-fetch so the page renders as locked
+        $r2 = $conn->prepare("SELECT * FROM daily_reports WHERE report_date=?");
+        $r2->bind_param("s", $report_date); $r2->execute();
+        $rpt = $r2->get_result()->fetch_assoc(); $r2->close();
+
+        $msg_type = 'success';
+        $msg = "✅ Daily report for <strong>$nice_date</strong> submitted and locked successfully.";
     }
 }
 
@@ -277,6 +353,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     $remarks       = sanitize_input($_POST['remarks']         ?? '');
     $is_refund     = intval($_POST['is_refund'] ?? 0) ? 1 : 0;
     if ($row_id > 0) {
+        // Reject editing an imported appointment row unless the user is full-access
+        $src_chk = $conn->prepare("SELECT source_appointment_id FROM daily_report_spreadsheet_rows WHERE id=? AND report_date=? LIMIT 1");
+        $src_chk->bind_param("is", $row_id, $report_date); $src_chk->execute();
+        $src_row = $src_chk->get_result()->fetch_assoc(); $src_chk->close();
+        if ($src_row && !is_null($src_row['source_appointment_id']) && !is_full_access()) {
+            echo json_encode(['ok'=>false,'msg'=>'Imported appointment rows can only be edited by full-access users.']); exit;
+        }
         $stmt = $conn->prepare("
             UPDATE daily_report_spreadsheet_rows SET
                 row_order=?,time_in=?,time_out=?,slip_no=?,client_name=?,
@@ -329,10 +412,133 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
     if (is_cashier() && !$ss_unlocked_ajax) { echo json_encode(['ok'=>false,'msg'=>'Edit not unlocked.']); exit; }
     $row_id = intval($_POST['row_id'] ?? 0);
     if ($row_id <= 0) { echo json_encode(['ok'=>false,'msg'=>'Invalid row.']); exit; }
+    // Reject deleting an imported appointment row unless the user is full-access
+    $src_chk2 = $conn->prepare("SELECT source_appointment_id FROM daily_report_spreadsheet_rows WHERE id=? AND report_date=? LIMIT 1");
+    $src_chk2->bind_param("is", $row_id, $report_date); $src_chk2->execute();
+    $src_row2 = $src_chk2->get_result()->fetch_assoc(); $src_chk2->close();
+    if ($src_row2 && !is_null($src_row2['source_appointment_id']) && !is_full_access()) {
+        echo json_encode(['ok'=>false,'msg'=>'Imported appointment rows can only be deleted by full-access users.']); exit;
+    }
     $stmt = $conn->prepare("DELETE FROM daily_report_spreadsheet_rows WHERE id=? AND report_date=?");
     $stmt->bind_param("is", $row_id, $report_date); $stmt->execute(); $stmt->close();
     echo json_encode(['ok'=>true]); exit;
 }
+
+// ── AUTO-IMPORT: Completed appointments → spreadsheet rows ────────────────────
+// Idempotent — safe on every page load. Skips any appointment already present
+// via source_appointment_id. Never modifies live appointment records.
+(function() use ($conn, $report_date) {
+    // Pre-load commission percents (therapist_id_service_id → percent) for column routing
+    $imp_cm = [];
+    $cq = $conn->query("SELECT therapist_id, service_id, commission_percent FROM therapist_commission");
+    if ($cq) foreach ($cq->fetch_all(MYSQLI_ASSOC) as $_c)
+        $imp_cm[(int)$_c['therapist_id'] . '_' . (int)$_c['service_id']] = (float)$_c['commission_percent'];
+
+    // Fetch completed non-influencer appointments for this date
+    $aq = $conn->prepare("
+        SELECT
+            a.id                      AS appt_id,
+            a.appointment_date,
+            a.duration_minutes,
+            a.charged_price,
+            a.celebration_discount,
+            a.therapist_id            AS appt_therapist_id,
+            o.customer_name,
+            o.slip_number,
+            o.payment_method,
+            oi.service_id,
+            COALESCE(s.name, '[Deleted Service]') AS service_name,
+            s.price                   AS regular_price,
+            GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
+            IFNULL(SUM(at2.commission), 0)        AS total_commission
+        FROM orders o
+        JOIN order_items oi  ON oi.order_id      = o.id
+        JOIN services    s   ON s.id             = oi.service_id
+        JOIN appointments a  ON a.order_item_id  = oi.id
+        LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
+        LEFT JOIN therapists t ON t.id = at2.therapist_id
+        WHERE DATE(a.appointment_date) = ?
+          AND a.status     = 'completed'
+          AND a.rate_type != 'influencer'
+        GROUP BY a.id
+        ORDER BY a.appointment_date ASC
+    ");
+    $aq->bind_param("s", $report_date); $aq->execute();
+    $imp_appts = $aq->get_result()->fetch_all(MYSQLI_ASSOC); $aq->close();
+    if (empty($imp_appts)) return;
+
+    // Collect already-imported appointment IDs for this date (O(1) lookup)
+    $eq = $conn->prepare("SELECT source_appointment_id FROM daily_report_spreadsheet_rows WHERE report_date=? AND source_appointment_id IS NOT NULL");
+    $eq->bind_param("s", $report_date); $eq->execute();
+    $already = array_flip(array_column($eq->get_result()->fetch_all(MYSQLI_ASSOC), 'source_appointment_id'));
+    $eq->close();
+
+    $mop_map = [
+        'cash'   => 'Cash',  'gcash'  => 'GCash', 'maya'   => 'Maya',
+        'card'   => 'Card',  'swiper' => 'Card',   'qr_ph'  => 'QR PH',
+        'qrph'   => 'QR PH', 'online' => 'GCash',
+    ];
+
+    $ins = $conn->prepare("
+        INSERT INTO daily_report_spreadsheet_rows
+            (report_date, row_order, time_in, time_out, slip_no, client_name,
+             service_name, service_id, stylist, therapist_id,
+             regular_price, promo_price, celeb_10,
+             disc_20_pwd, comm_30, comm_20, comm_15, disc_50_staff,
+             net_sales, mode_of_payment, remarks, is_refund, created_by_name,
+             source_appointment_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ");
+
+    foreach ($imp_appts as $ap) {
+        $appt_id = (int)$ap['appt_id'];
+        if (isset($already[$appt_id])) continue; // already imported — skip
+
+        $time_in  = date('h:i A', strtotime($ap['appointment_date']));
+        $time_out = (int)$ap['duration_minutes'] > 0
+            ? date('h:i A', strtotime($ap['appointment_date']) + (int)$ap['duration_minutes'] * 60)
+            : '';
+
+        $service_id    = (int)$ap['service_id'];
+        $therapist_id  = (int)($ap['appt_therapist_id'] ?? 0);
+        $regular_price = (float)($ap['regular_price'] ?? 0);
+        $promo_price   = (float)($ap['charged_price']  ?? 0);
+        $celeb_10      = (float)($ap['celebration_discount'] ?? 0);
+        $disc_20_pwd   = 0.0; $disc_50_staff = 0.0;
+        $total_comm    = (float)($ap['total_commission'] ?? 0);
+
+        // Route commission to the column matching the therapist+service percent
+        $pct_key = $therapist_id . '_' . $service_id;
+        $pct     = $imp_cm[$pct_key] ?? 0;
+        $comm_30 = $comm_20 = $comm_15 = 0.0;
+        if     ($pct >= 28 && $pct <= 32) $comm_30 = $total_comm;
+        elseif ($pct >= 18 && $pct <= 22) $comm_20 = $total_comm;
+        elseif ($pct >= 13 && $pct <= 17) $comm_15 = $total_comm;
+        else                               $comm_30 = $total_comm; // fallback
+
+        $net_sales   = $promo_price - $total_comm;
+        $raw_mop     = strtolower(trim($ap['payment_method'] ?? ''));
+        $mode_of_pay = $mop_map[$raw_mop] ?? 'Cash';
+        $row_order   = 0;
+        $slip_no     = $ap['slip_number']   ?? '';
+        $client_name = $ap['customer_name'] ?? '';
+        $svc_name    = $ap['service_name']  ?? '';
+        $stylist     = $ap['therapists']    ?? '';
+        $remarks     = '';
+        $is_refund   = 0;
+        $created_by  = 'import';
+
+        $ins->bind_param("sisssssisidddddddddssisi",
+            $report_date, $row_order, $time_in, $time_out, $slip_no, $client_name,
+            $svc_name, $service_id, $stylist, $therapist_id,
+            $regular_price, $promo_price, $celeb_10,
+            $disc_20_pwd, $comm_30, $comm_20, $comm_15, $disc_50_staff,
+            $net_sales, $mode_of_pay, $remarks, $is_refund, $created_by,
+            $appt_id);
+        $ins->execute();
+    }
+    $ins->close();
+})();
 
 require_once __DIR__ . '/_daily_report_data.php';
 
@@ -370,10 +576,13 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
        class="btn btn-secondary btn-sm"
        onclick="var _h=this.href;event.preventDefault();uiConfirm('Unlock this report?').then(ok=>{if(ok)window.location.href=_h;})">🔓 Unlock</a>
     <?php endif; ?>
-    <?php elseif ($rpt && is_full_access()): ?>
-    <a href="daily_report.php?date=<?php echo $report_date; ?>&tab=<?php echo $active_tab; ?>&lock=1"
-       class="btn btn-primary btn-sm"
-       onclick="var _h=this.href;event.preventDefault();uiConfirm('Lock this report? Receptionists will not be able to edit it.').then(ok=>{if(ok)window.location.href=_h;})">🔒 Close & Lock Report</a>
+    <?php elseif ($rpt): ?>
+    <form method="POST" id="submit-report-form" style="display:inline;">
+        <?php echo csrf_field(); ?>
+        <input type="hidden" name="action" value="submit_report">
+        <button type="button" class="btn btn-primary btn-sm"
+                onclick="uiConfirm('Submit and lock this report? It will become read-only.').then(ok=>{if(ok)document.getElementById('submit-report-form').submit();})">📤 Submit Daily Report</button>
+    </form>
     <?php endif; ?>
 
     <div style="display:flex;gap:0.5rem;margin-left:auto;">
@@ -1333,19 +1542,25 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 No rows yet.<?php echo $can_edit ? ' Use the entry row below and click <strong>➕ Add Row</strong>.' : ''; ?>
             </td></tr>
             <?php else: foreach ($spreadsheet_rows as $_ssr): ?>
+            <?php $_is_imported = !empty($_ssr['source_appointment_id']); ?>
             <tr class="ss-row" data-row-id="<?php echo (int)$_ssr['id']; ?>"
                 data-net-sales="<?php echo (float)($_ssr['net_sales'] ?? 0); ?>"
                 data-is-refund="<?php echo (int)$_ssr['is_refund']; ?>"
+                data-imported="<?php echo $_is_imported ? '1' : '0'; ?>"
                 style="<?php echo $_ssr['is_refund'] ? 'background:rgba(220,53,69,0.04);' : ''; ?>border-bottom:1px solid var(--border2);">
                 <?php if (!$locked): ?>
                 <td style="padding:2px 4px;vertical-align:middle;">
+                    <?php if (!$_is_imported || is_full_access()): ?>
                     <button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;<?php echo $can_edit ? '' : 'display:none;'; ?>">✕</button>
+                    <?php endif; ?>
                 </td>
                 <?php endif; ?>
                 <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;font-family:monospace;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?></td>
-                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>
+                    <?php if ($_is_imported): ?><span style="font-size:0.62rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;" title="Auto-imported from appointment #<?php echo (int)$_ssr['source_appointment_id']; ?>">📥 appt</span><?php endif; ?>
+                </td>
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;color:var(--gray);"><?php echo htmlspecialchars($_ssr['stylist'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);"><?php echo $_ssr['regular_price'] ? '₱'.number_format((float)$_ssr['regular_price'],2) : ''; ?></td>
@@ -1659,6 +1874,8 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         var btn = tr.querySelector('.ss-del-btn');
         if (!btn) return;
         if (!canEdit()) { btn.style.display = 'none'; return; }
+        // Imported rows: hide delete button for cashier/receptionist users
+        if (tr.dataset.imported === '1' && IS_CASHIER) { btn.style.display = 'none'; return; }
         btn.addEventListener('click', function() {
             var rid = tr.dataset.rowId;
             uiConfirm('Delete this row?').then(function(ok) {

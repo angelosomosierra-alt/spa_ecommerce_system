@@ -182,38 +182,36 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
         <th style="width:4%;">Pymt</th>
         <th style="width:4%;">Rmks</th>
     </tr>
-<?php if (empty($service_rows)): ?>
-    <tr><td colspan="17" class="c" style="color:#888;padding:6px;">No service transactions for this date.</td></tr>
+<?php if (empty($spreadsheet_rows)): ?>
+    <tr><td colspan="17" class="c" style="color:#888;padding:6px;">No service entries for this date.</td></tr>
 <?php else:
-    $prev_order=null;
     $_pt=array_fill_keys(['reg','promo','celeb','dpwd','c30','c20','c15','d50','net'],0.0);
-    foreach ($service_rows as $i=>$row):
-        $is_same=($prev_order===$row['order_id']);
-        $ts=strtotime($row['appointment_date']);
-        $ti=date('h:i A',$ts); $to=date('h:i A',$ts+((int)($row['duration_minutes']??0))*60);
-        $tier=match($row['rate_type']??'regular'){'home'=>20,'hotel'=>15,default=>30};
-        $c30=($tier===30)?(float)$row['total_commission']:0;
-        $c20=($tier===20)?(float)$row['total_commission']:0;
-        $c15=($tier===15)?(float)$row['total_commission']:0;
-        $dpwd=in_array($row['discount_type'],['senior','pwd'])?(float)$row['discount_amount']:0;
-        $d50=($row['discount_type']==='employee')?(float)$row['discount_amount']:0;
-        $celeb_d=floatval($row['celebration_discount']??0);
-        $net=(float)$row['charged_price']-(float)$row['total_commission'];
-        $pm=!empty($row['paymongo_method'])?$row['paymongo_method']:($row['payment_method']??'cash');
-        $rc=($i%2===0)?'':'class="zebra"';
-        $prev_order=$row['order_id'];
-        $_pt['reg']+=(float)$row['regular_price'];$_pt['promo']+=(float)$row['charged_price'];$_pt['celeb']+=$celeb_d;
+    foreach ($spreadsheet_rows as $i=>$row):
+        $ti    = htmlspecialchars($row['time_in']     ?? '');
+        $to    = htmlspecialchars($row['time_out']    ?? '');
+        $reg   = (float)($row['regular_price'] ?? 0);
+        $promo = (float)($row['promo_price']   ?? 0);
+        $celeb_d=(float)($row['celeb_10']      ?? 0);
+        $dpwd  = (float)($row['disc_20_pwd']   ?? 0);
+        $c30   = (float)($row['comm_30']       ?? 0);
+        $c20   = (float)($row['comm_20']       ?? 0);
+        $c15   = (float)($row['comm_15']       ?? 0);
+        $d50   = (float)($row['disc_50_staff'] ?? 0);
+        $net   = (float)($row['net_sales']     ?? 0);
+        $pm    = $row['mode_of_payment'] ?? '';
+        $rc    = ($i%2===0)?'':'class="zebra"';
+        $_pt['reg']+=$reg;$_pt['promo']+=$promo;$_pt['celeb']+=$celeb_d;
         $_pt['dpwd']+=$dpwd;$_pt['c30']+=$c30;$_pt['c20']+=$c20;$_pt['c15']+=$c15;$_pt['d50']+=$d50;$_pt['net']+=$net;
 ?>
     <tr <?php echo $rc; ?>>
         <td><?php echo $ti; ?></td>
         <td><?php echo $to; ?></td>
-        <td style="font-family:monospace;color:#b07d2b;"><?php echo $is_same?'':htmlspecialchars($row['slip_number']??'—'); ?></td>
-        <td style="font-weight:<?php echo $is_same?400:600; ?>;"><?php echo $is_same?'↳':htmlspecialchars($row['customer_name']); ?></td>
-        <td><?php echo htmlspecialchars($row['service_name']); ?></td>
-        <td style="color:#888;"><?php echo htmlspecialchars($row['therapists']??'—'); ?></td>
-        <td class="r" style="font-family:monospace;color:#888;"><?php echo pdf_money($row['regular_price']); ?></td>
-        <td class="r" style="font-family:monospace;font-weight:700;"><?php echo pdf_money($row['charged_price']); ?></td>
+        <td style="font-family:monospace;color:#b07d2b;"><?php echo htmlspecialchars($row['slip_no']??''); ?></td>
+        <td><?php echo htmlspecialchars($row['client_name']??''); ?></td>
+        <td><?php echo htmlspecialchars($row['service_name']??''); ?></td>
+        <td style="color:#888;"><?php echo htmlspecialchars($row['stylist']??''); ?></td>
+        <td class="r" style="font-family:monospace;color:#888;"><?php echo pdf_money($reg); ?></td>
+        <td class="r" style="font-family:monospace;font-weight:700;"><?php echo pdf_money($promo); ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $celeb_d>0?pdf_money($celeb_d):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $dpwd>0?pdf_money($dpwd):'—'; ?></td>
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $c30>0?pdf_money($c30):'—'; ?></td>
@@ -222,30 +220,8 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
         <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $d50>0?pdf_money($d50):'—'; ?></td>
         <td class="r" style="font-family:monospace;font-weight:700;color:#198754;"><?php echo pdf_money($net); ?></td>
         <td style="font-size:6pt;"><?php echo strtoupper($pm); ?></td>
-        <td style="font-size:6pt;color:#888;"><?php echo strtoupper($row['rate_type']); ?></td>
+        <td style="font-size:6pt;color:#888;"><?php echo htmlspecialchars($row['remarks']??''); ?></td>
     </tr>
-<?php if (!empty($addons_by_appt[$row['appt_id']])): foreach ($addons_by_appt[$row['appt_id']] as $addon):
-    $at=match($addon['rate_type']??'regular'){'home'=>20,'hotel'=>15,default=>30};
-    $ac30=($at===30)?(float)$addon['commission']:0;$ac20=($at===20)?(float)$addon['commission']:0;$ac15=($at===15)?(float)$addon['commission']:0;
-    $an=(float)$addon['charged_price']-(float)$addon['commission'];
-    $_pt['promo']+=(float)$addon['charged_price'];$_pt['c30']+=$ac30;$_pt['c20']+=$ac20;$_pt['c15']+=$ac15;$_pt['net']+=$an;
-?>
-    <tr class="addon-row">
-        <td colspan="2" style="text-align:center;color:#c8a46b;">+ add-on</td>
-        <td></td><td colspan="2"><?php echo htmlspecialchars($addon['service_name']); ?> [<?php echo htmlspecialchars($addon['person_label']??''); ?>]</td>
-        <td style="color:#888;"><?php echo htmlspecialchars($addon['therapist_name']??'—'); ?></td>
-        <td></td>
-        <td class="r" style="font-family:monospace;"><?php echo pdf_money($addon['charged_price']); ?></td>
-        <td></td><td></td>
-        <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $ac30>0?pdf_money($ac30):'—'; ?></td>
-        <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $ac20>0?pdf_money($ac20):'—'; ?></td>
-        <td class="r" style="font-family:monospace;color:#c9280c;"><?php echo $ac15>0?pdf_money($ac15):'—'; ?></td>
-        <td></td>
-        <td class="r" style="font-family:monospace;"><?php echo pdf_money($an); ?></td>
-        <td style="font-size:6pt;"><?php echo strtoupper($addon['payment_method']??'cash'); ?></td>
-        <td style="font-size:6pt;color:#888;">ADD-ON</td>
-    </tr>
-<?php endforeach; endif; ?>
 <?php endforeach; endif; ?>
     <tr class="total-row">
         <td colspan="6">TOTALS</td>

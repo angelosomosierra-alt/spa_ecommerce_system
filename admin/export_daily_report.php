@@ -258,65 +258,29 @@ $sh->getRowDimension($R-1)->setRowHeight(28);
 $first_svc_row = $R;  // first data row of the service log (for SUM ranges)
 $last_svc_row  = $R - 1;  // updated after each row; starts before first so SUM(x:x-1)=0 if empty
 
-foreach ($service_rows as $svcRow) {
-    $ts_in    = strtotime($svcRow['appointment_date']);
-    $time_in  = date('h:i A', $ts_in);
-    $time_out = date('h:i A', $ts_in + ((int)($svcRow['duration_minutes']??0))*60);
-
-    $tier  = match($svcRow['rate_type']??'regular'){'home'=>20,'hotel'=>15,default=>30};
-    $dpwd  = in_array($svcRow['discount_type'],['senior','pwd'])?(float)$svcRow['discount_amount']:0.0;
-    $d50   = ($svcRow['discount_type']==='employee')?(float)$svcRow['discount_amount']:0.0;
-    $celeb = floatval($svcRow['celebration_discount']??0);
-    $pm    = !empty($svcRow['paymongo_method'])?strtoupper($svcRow['paymongo_method']):strtoupper($svcRow['payment_method']??'cash');
-
-    $sh->setCellValue([5,$R],  $time_in);
-    $sh->setCellValue([6,$R],  $time_out);
-    $sh->setCellValue([7,$R],  $svcRow['slip_number']??'');
-    $sh->setCellValue([8,$R],  $svcRow['customer_name']);
-    $sh->setCellValue([9,$R],  $svcRow['service_name']);
-    $sh->setCellValue([10,$R], $svcRow['therapists']??'');
-    $sh->setCellValue([11,$R], (float)$svcRow['regular_price']);
-    $sh->setCellValue([12,$R], (float)$svcRow['charged_price']);
-    if ($celeb>0) $sh->setCellValue([13,$R], $celeb);
-    if ($dpwd>0)  $sh->setCellValue([14,$R], $dpwd);
-    // Commissions: stored value from appointment_therapists (per-therapist/service rate)
-    // Column O/P/Q is selected by rate_type; amount is what was actually paid.
-    $cf = (float)$svcRow['total_commission'];
-    if ($tier===30 && $cf>0) $sh->setCellValue([15,$R], $cf);
-    if ($tier===20 && $cf>0) $sh->setCellValue([16,$R], $cf);
-    if ($tier===15 && $cf>0) $sh->setCellValue([17,$R], $cf);
-    if ($d50>0)              $sh->setCellValue([18,$R], "=K{$R}*0.5");
-    // Net Sales = Promo Price − commissions (=L−O−P−Q, works for all tiers)
-    $sh->setCellValue([19,$R], "=L{$R}-O{$R}-P{$R}-Q{$R}");
-    $sh->setCellValue([20,$R], $pm);
-    $sh->setCellValue([21,$R], ucfirst($svcRow['appt_status']).' · '.strtoupper($svcRow['rate_type']));
+foreach ($spreadsheet_rows as $svcRow) {
+    $sh->setCellValue([5,$R],  $svcRow['time_in']          ?? '');
+    $sh->setCellValue([6,$R],  $svcRow['time_out']         ?? '');
+    $sh->setCellValue([7,$R],  $svcRow['slip_no']          ?? '');
+    $sh->setCellValue([8,$R],  $svcRow['client_name']      ?? '');
+    $sh->setCellValue([9,$R],  $svcRow['service_name']     ?? '');
+    $sh->setCellValue([10,$R], $svcRow['stylist']          ?? '');
+    $sh->setCellValue([11,$R], (float)($svcRow['regular_price'] ?? 0));
+    $sh->setCellValue([12,$R], (float)($svcRow['promo_price']   ?? 0));
+    if ((float)($svcRow['celeb_10']      ?? 0) > 0) $sh->setCellValue([13,$R], (float)$svcRow['celeb_10']);
+    if ((float)($svcRow['disc_20_pwd']   ?? 0) > 0) $sh->setCellValue([14,$R], (float)$svcRow['disc_20_pwd']);
+    if ((float)($svcRow['comm_30']       ?? 0) > 0) $sh->setCellValue([15,$R], (float)$svcRow['comm_30']);
+    if ((float)($svcRow['comm_20']       ?? 0) > 0) $sh->setCellValue([16,$R], (float)$svcRow['comm_20']);
+    if ((float)($svcRow['comm_15']       ?? 0) > 0) $sh->setCellValue([17,$R], (float)$svcRow['comm_15']);
+    if ((float)($svcRow['disc_50_staff'] ?? 0) > 0) $sh->setCellValue([18,$R], (float)$svcRow['disc_50_staff']);
+    $sh->setCellValue([19,$R], (float)($svcRow['net_sales']     ?? 0));
+    $sh->setCellValue([20,$R], $svcRow['mode_of_payment']  ?? '');
+    $sh->setCellValue([21,$R], $svcRow['remarks']          ?? '');
 
     $sh->getStyle(rng(11,$R,19,$R))->getNumberFormat()->setFormatCode($MONEY);
     rowStyle($sh,$R,5,21,$S_DAT);
     $last_svc_row = $R;
     $R++;
-
-    foreach ($addons_by_appt[$svcRow['appt_id']]??[] as $addon) {
-        $at = match($addon['rate_type']??'regular'){'home'=>20,'hotel'=>15,default=>30};
-
-        $sh->setCellValue([8,$R],  '↳ add-on');
-        $sh->setCellValue([9,$R],  $addon['service_name'].' ['.($addon['person_label']??'').']');
-        $sh->setCellValue([10,$R], $addon['therapist_name']??'');
-        $sh->setCellValue([12,$R], (float)$addon['charged_price']);
-        // cols 13-14 (celeb, dpwd) intentionally blank for add-ons
-        $addon_cf = (float)$addon['commission'];
-        if ($at===30 && $addon_cf>0) $sh->setCellValue([15,$R], $addon_cf);
-        if ($at===20 && $addon_cf>0) $sh->setCellValue([16,$R], $addon_cf);
-        if ($at===15 && $addon_cf>0) $sh->setCellValue([17,$R], $addon_cf);
-        $sh->setCellValue([19,$R], "=L{$R}-O{$R}-P{$R}-Q{$R}");
-        $sh->setCellValue([20,$R], strtoupper($addon['payment_method']??'cash'));
-        $sh->setCellValue([21,$R], 'ADD-ON');
-        $sh->getStyle(rng(12,$R,19,$R))->getNumberFormat()->setFormatCode($MONEY);
-        rowStyle($sh,$R,5,21,$S_DAT);
-        $sh->getStyle(rng(5,$R,21,$R))->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('FAF6EF');
-        $last_svc_row = $R;
-        $R++;
-    }
 }
 // Sales Services totals row — SUM formulas for all numeric columns
 $sh->setCellValue([5,$R], 'TOTALS');
@@ -559,6 +523,19 @@ $cell_svc_Q = 'Q' . $svc_totals_row;  // 15% CF total
 // Staff CF = stored sum from appointment_therapists (per-therapist/service rates,
 // not formula-derived). Static so it matches what was actually paid.
 
+// PAYMENT MAPPING — PENDING CLIENT CONFIRMATION
+// Tally net_sales from $spreadsheet_rows by mode_of_payment.
+// Cash rows are excluded — they are accounted for via denominations / Cash on Hand.
+$ss_gcash_total = 0.0; $ss_maya_total = 0.0; $ss_card_total = 0.0; $ss_qrph_total = 0.0;
+foreach ($spreadsheet_rows as $ss_r) {
+    $ss_mop = $ss_r['mode_of_payment'] ?? '';
+    $ss_ns  = (float)($ss_r['net_sales'] ?? 0);
+    if     ($ss_mop === 'GCash')                             $ss_gcash_total += $ss_ns;
+    elseif ($ss_mop === 'Maya')                              $ss_maya_total  += $ss_ns;
+    elseif ($ss_mop === 'Card')                              $ss_card_total  += $ss_ns;
+    elseif ($ss_mop === 'QR PH' || $ss_mop === 'QR Ph')     $ss_qrph_total  += $ss_ns;
+}
+
 // Row offsets within Summary (0-based from $sum_data_start)
 $sr_gross    = $sum_data_start;      // Gross Sales
 $sr_staffcf  = $sum_data_start + 1;  // Staff CF
@@ -584,19 +561,21 @@ $sr_short    = $sum_data_start + 19; // (Short)/Over
 // Build summary formula values — references chain through the Summary col C
 $sum_formulas = [
     $sr_gross   => "=C{$sr_pos}+C{$sr_soldgc}-C{$sr_mktg}",
-    $sr_staffcf => (float)$staff_cf,
+    $sr_staffcf => "={$cell_svc_O}+{$cell_svc_P}+{$cell_svc_Q}",
     $sr_soldgc  => "={$cell_gc_sold}",
     // POS Reading references the manually-entered value in the header (H2).
     // Using H2 keeps Excel consistent with PHP's $pos_reading (from daily_reports),
     // so Net Cash and Gross Sales chain from the same anchor as the PHP formula.
     $sr_pos     => "=H2",
+    // DISCOUNTS and CELEB span all manual service rows (first_svc_row..last_svc_row)
     $sr_disc    => "=SUM(N{$first_svc_row}:N{$last_svc_row})",
     $sr_celeb   => "=SUM(M{$first_svc_row}:M{$last_svc_row})",
     $sr_gcred   => "={$cell_gc_red}",
-    $sr_swiper  => (float)$card_total,
-    $sr_gcash   => (float)$gcash_total,
-    $sr_maya    => (float)$maya_total,
-    $sr_qrph    => (float)$qrph_total,
+    // Payment totals tallied from $spreadsheet_rows by mode_of_payment (above)
+    $sr_swiper  => (float)$ss_card_total,
+    $sr_gcash   => (float)$ss_gcash_total,
+    $sr_maya    => (float)$ss_maya_total,
+    $sr_qrph    => (float)$ss_qrph_total,
     $sr_unp     => "={$cell_unp_tot}",
     $sr_mktg    => "={$cell_inf_mktg}",
     $sr_adv     => (float)$advance_payment_total,
@@ -605,8 +584,10 @@ $sum_formulas = [
     $sr_exp     => "={$cell_exp_tot}",
     // NET CASH mirrors workbook B52: POS − all 13 deductions (Staff CF excluded)
     $sr_net     => "=C{$sr_pos}-C{$sr_gcred}-C{$sr_swiper}-C{$sr_gcash}-C{$sr_maya}-C{$sr_qrph}-C{$sr_mayadp}-C{$sr_unp}-C{$sr_adv}-C{$sr_disc}-C{$sr_celeb}-C{$sr_exp}-C{$sr_mktg}",
-    $sr_coh     => "={$cell_denom_tot}",
-    $sr_short   => "=C{$sr_coh}-C{$sr_net}",
+    // IFERROR guards: denom rows written as '' for zero qty produce =A*B → #VALUE!;
+    // wrapping here ensures COH and (Short)Over always display a number, never an error.
+    $sr_coh     => "=IFERROR({$cell_denom_tot},0)",
+    $sr_short   => "=IFERROR(C{$sr_coh}-C{$sr_net},0)",
 ];
 foreach ($sum_formulas as $sr => $val) {
     $sh->setCellValue([3,$sr], $val);
