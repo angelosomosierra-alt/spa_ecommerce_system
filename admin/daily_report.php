@@ -588,8 +588,6 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <div style="display:flex;gap:0.5rem;margin-left:auto;">
         <a href="export_daily_report.php?date=<?php echo $report_date; ?>"
            class="btn btn-secondary btn-sm">📊 Export Excel</a>
-        <a href="export_daily_report_pdf.php?date=<?php echo $report_date; ?>"
-           class="btn btn-secondary btn-sm">📄 Export PDF</a>
     </div>
 </div>
 
