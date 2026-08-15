@@ -147,20 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $customer_note          = sanitize_input($_POST['customer_note'] ?? '');
     $preferred_therapist_id = intval($_POST['preferred_therapist_id'] ?? 0);
 
-    // ── Discount fields ───────────────────────────────────────────────────────
-    // Customers declare their discount type only. The actual amount is confirmed
-    // onsite by the receptionist when they show their ID or voucher.
-    $discount_type = in_array($_POST['discount_type'] ?? '', ['none','voucher','senior','pwd','employee'])
-                     ? $_POST['discount_type'] : 'none';
-
-    // Discounts are not compatible with online payment — block server-side.
-    // The JS already hides the online option when a discount is selected,
-    // so this only fires if someone bypasses the UI.
-    if ($discount_type !== 'none' && $payment_method === 'online') {
-        $_SESSION['checkout_error'] = 'Discounts cannot be used with online payment. Please select Pay Onsite.';
-        header('Location: ' . BASE_URL . 'user/checkout.php');
-        exit;
-    }
+    $discount_type = 'none';
 
     $payment_status  = $payment_method === 'online' ? 'pending_payment' : 'unpaid';
 
@@ -302,21 +289,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         }
 
         if (empty($message)) {
-            // ── Compute discount ──────────────────────────────────────────────
-            // Senior/PWD: 20% calculated automatically.
-            // Voucher: discount_amount stays 0 — the receptionist confirms and
-            // applies the real amount onsite when approving the appointment.
             $discount_amount_calc = 0.00;
-
-            if ($discount_type === 'senior' || $discount_type === 'pwd') {
-                $discount_amount_calc = round($total_amount * 0.20, 2);
-            } elseif ($discount_type === 'employee') {
-                $discount_amount_calc = round($total_amount * 0.50, 2);
-            }
-            // voucher: $discount_amount_calc stays 0.00 — applied onsite
-
-            $final_amount = max(0, $total_amount - $discount_amount_calc);
-            $saved_total  = $discount_type !== 'none' ? $final_amount : $total_amount;
+            $final_amount = $total_amount;
 
             // ── Lock and verify stock before writing (prevents race conditions) ──
             if ($checkout_type === 'product' || $checkout_type === 'cart') {
@@ -1488,68 +1462,6 @@ require_once 'header.php';
 
         <?php endif; ?>
 
-        <!-- Discount / Voucher -->
-        <div class="co-card" style="margin-bottom:1.25rem;" id="discountCard">
-            <div class="co-card-head">
-                <div class="co-card-head-icon">🎟️</div>
-                <div class="co-card-head-title">Discount / Voucher</div>
-            </div>
-            <div class="co-card-body">
-                <p style="font-size:0.85rem;color:#6b7280;margin-bottom:1rem;">
-                    Do you have a voucher, Senior Citizen, or PWD discount?
-                </p>
-
-                <!-- Discount type buttons -->
-                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.5rem;margin-bottom:1rem;">
-                    <div class="disc-btn active" id="discbtn-none" onclick="selectDiscount('none')"
-                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
-                                text-align:center;cursor:pointer;transition:all .15s;">
-                        <div style="font-size:1.1rem;">🚫</div>
-                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">None</div>
-                    </div>
-                    <div class="disc-btn" id="discbtn-voucher" onclick="selectDiscount('voucher')"
-                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
-                                text-align:center;cursor:pointer;transition:all .15s;">
-                        <div style="font-size:1.1rem;">🎟️</div>
-                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">Voucher</div>
-                    </div>
-                    <div class="disc-btn" id="discbtn-senior" onclick="selectDiscount('senior')"
-                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
-                                text-align:center;cursor:pointer;transition:all .15s;">
-                        <div style="font-size:1.1rem;">👴</div>
-                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">Senior</div>
-                        <div style="font-size:0.68rem;color:#6b7280;">20% off</div>
-                    </div>
-                    <div class="disc-btn" id="discbtn-pwd" onclick="selectDiscount('pwd')"
-                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
-                                text-align:center;cursor:pointer;transition:all .15s;">
-                        <div style="font-size:1.1rem;">♿</div>
-                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">PWD</div>
-                        <div style="font-size:0.68rem;color:#6b7280;">20% off</div>
-                    </div>
-                    <div class="disc-btn" id="discbtn-employee" onclick="selectDiscount('employee')"
-                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
-                                text-align:center;cursor:pointer;transition:all .15s;">
-                        <div style="font-size:1.1rem;">🪪</div>
-                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">Staff</div>
-                        <div style="font-size:0.68rem;color:#6b7280;">50% off</div>
-                    </div>
-                </div>
-
-                <!-- Onsite confirmation notice (shown when any discount selected) -->
-                <div id="discountOnsiteNotice" style="display:none;
-                     background:#fff3cd;border:1px solid #f59e0b;border-radius:8px;
-                     padding:0.75rem 1rem;font-size:0.82rem;color:#92400e;margin-bottom:0.75rem;">
-                    ⚠️ <strong>Onsite payment required.</strong>
-                    Bookings with discounts/vouchers must be paid at the spa.
-                    Please bring your <span id="discountProofLabel">voucher / ID</span> when you arrive —
-                    the receptionist will verify it and apply the discount before approving your appointment.
-                </div>
-
-                <input type="hidden" name="discount_type" id="discount_type_input" value="none">
-            </div>
-        </div>
-
         <!-- Payment Method -->
         <div class="co-card" style="margin-bottom:1.25rem;">
             <div class="co-card-head">
@@ -1627,10 +1539,6 @@ require_once 'header.php';
                         <div class="co-total-row" id="homeFeeRow" style="display:none;">
                             <span>🏠 Home Service Fee</span>
                             <span id="homeFeeAmt">+₱<?php echo number_format($checkout_items[0]['home_service_fee'] ?? 0, 2); ?></span>
-                        </div>
-                        <div class="co-total-row" id="discountRow" style="display:none;color:#16a34a;">
-                            <span id="discountLabel">🎟️ Discount</span>
-                            <span id="discountAmt">−₱0.00</span>
                         </div>
                         <div class="co-total-row">
                             <span>Service Charge</span>
@@ -2113,101 +2021,25 @@ function confirmBM() {
     closeBM();
 }
 
-// ── Discount / Voucher ────────────────────────────────────────────────────────
+// ── Total update (people count / home fee) ────────────────────────────────────
 const BASE_TOTAL_AMOUNT = <?php echo $total_amount; ?>;
-let currentDiscount = 'none';
-
-function updatePaymentOptionsForDiscount(type) {
-    const onlineBtn = document.getElementById('paybtn-online');
-    if (type !== 'none') {
-        selectPayment('onsite');
-        if (onlineBtn) onlineBtn.style.display = 'none';
-    } else {
-        if (onlineBtn) onlineBtn.style.display = '';
-    }
-}
-
-function selectDiscount(type) {
-    currentDiscount = type;
-    document.getElementById('discount_type_input').value = type;
-
-    // Update button styles
-    ['none','voucher','senior','pwd','employee'].forEach(t => {
-        const btn = document.getElementById('discbtn-' + t);
-        if (!btn) return;
-        btn.style.borderColor = t === type ? '#C96A2C' : 'var(--border)';
-        btn.style.background  = t === type ? '#fff8f2' : '';
-    });
-
-    // Show/hide onsite notice + set proof label
-    const notice     = document.getElementById('discountOnsiteNotice');
-    const proofLabel = document.getElementById('discountProofLabel');
-    if (type !== 'none') {
-        notice.style.display = 'block';
-        if (type === 'senior')         proofLabel.textContent = 'Senior Citizen ID';
-        else if (type === 'pwd')       proofLabel.textContent = 'PWD ID';
-        else if (type === 'employee')  proofLabel.textContent = 'Employee ID';
-        else                           proofLabel.textContent = 'voucher';
-    } else {
-        notice.style.display = 'none';
-    }
-
-    updatePaymentOptionsForDiscount(type);
-    updateDiscountPreview();
-}
 
 function updateDiscountPreview() {
-    const type    = currentDiscount;
-    const discRow = document.getElementById('discountRow');
-    const discLbl = document.getElementById('discountLabel');
-    const discAmt = document.getElementById('discountAmt');
     const grandEl = document.getElementById('grandTotal');
-    if (!discRow || !grandEl) return;
-
+    if (!grandEl) return;
     const people = parseInt(document.getElementById('people_count')?.value || 1) || 1;
     const homeFeeRow = document.getElementById('homeFeeRow');
     const homeFeePerPerson = (homeFeeRow && homeFeeRow.style.display !== 'none')
         ? parseFloat(document.getElementById('homeFeeAmt')?.textContent?.replace(/[^0-9.]/g,'') || 0) : 0;
-    let subtotal = (BASE_TOTAL_AMOUNT + homeFeePerPerson) * people;
+    const subtotal = (BASE_TOTAL_AMOUNT + homeFeePerPerson) * people;
     const subtotalEl = document.getElementById('subtotalDisplay');
     if (subtotalEl) subtotalEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
-
-    let discountAmt = 0;
-
-    if (type === 'senior') {
-        discountAmt = subtotal * 0.20;
-        discLbl.textContent = '👴 Senior Citizen (20%)';
-    } else if (type === 'pwd') {
-        discountAmt = subtotal * 0.20;
-        discLbl.textContent = '♿ PWD (20%)';
-    } else if (type === 'employee') {
-        discountAmt = subtotal * 0.50;
-        discLbl.textContent = '🪪 Employee (50%)';
-    } else if (type === 'voucher') {
-        // Voucher amount is confirmed onsite — show placeholder row only
-        discLbl.textContent = '🎟️ Voucher (confirmed onsite)';
-        discAmt.textContent = '−₱TBD';
-        discRow.style.display = '';
-        // Don't recalculate grand total for voucher — stays at full price until onsite confirmation
-        grandEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
-        return;
-    }
-
-    if (discountAmt > 0) {
-        discRow.style.display = '';
-        discAmt.textContent   = '−₱' + discountAmt.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
-    } else {
-        discRow.style.display = type !== 'none' ? '' : 'none';
-        discAmt.textContent   = '−₱0.00';
-    }
-
-    const finalTotal = Math.max(0, subtotal - discountAmt);
-    grandEl.textContent = '₱' + finalTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    grandEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 
 // Init
 selectPayment('onsite');
-selectDiscount('none');
+updateDiscountPreview();
 
 <?php if ($checkout_type === 'service'): ?>
 // Prevent form submission when no time slot has been selected.
