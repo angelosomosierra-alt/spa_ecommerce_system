@@ -51,6 +51,8 @@ function openPinGate(label, form) {
     document.getElementById('pgm-label').textContent = label;
     document.getElementById('pgm-pin').value = '';
     document.getElementById('pgm-error').textContent = '';
+    var confirmBtn = document.querySelector('#pinGateModal button[onclick="confirmPinGate()"]');
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Confirm'; }
     document.getElementById('pinGateModal').style.display = 'flex';
     setTimeout(function(){ document.getElementById('pgm-pin').focus(); }, 80);
 }
@@ -64,9 +66,22 @@ function confirmPinGate() {
         document.getElementById('pgm-error').textContent = 'Enter your 4-digit PIN.';
         return;
     }
+    var confirmBtn = document.querySelector('#pinGateModal button[onclick="confirmPinGate()"]');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Verifying…'; }
     closePinGate();
     if (_pgmCallback) _pgmCallback(pin);
 }
+
+// ── Generic form-submit guard (prevents double-submit on all native forms) ────
+document.addEventListener('submit', function(e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    var btn = form.querySelector('button[type="submit"], input[type="submit"]');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    var label = btn.textContent || btn.value || '';
+    btn.textContent = label + ' Processing…';
+});
 
 // ── Password eye-toggle auto-attach ──────────────────────────────────────────
 document.querySelectorAll('input[type="password"]').forEach(function(inp) {

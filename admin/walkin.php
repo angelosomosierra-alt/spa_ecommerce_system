@@ -112,6 +112,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     if (empty($customer_name) || empty($phone) || empty($item_id)) {
         $walkin_message = "Please fill in all required fields and select an item.";
         $walkin_type    = "danger";
+    } elseif ($discount_type === 'voucher' && $voucher_value <= 0) {
+        $walkin_message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
+        $walkin_type    = "danger";
     } else {
         if ($order_type === 'product') {
             $stmt = $conn->prepare("SELECT * FROM products WHERE id = ? AND deleted_at IS NULL");
@@ -1280,6 +1283,9 @@ function openPaymongoPopup(formType, method) {
         if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
         if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
     }
+    const bookBtn = document.getElementById(formType === 'service' ? 'svc-book-now' : 'prod-book-now');
+    const bookBtnLabel = bookBtn ? bookBtn.textContent : '';
+    if (bookBtn) { bookBtn.disabled = true; bookBtn.textContent = '⏳ Processing…'; }
     const prefix = formType === 'service' ? 'svc' : 'prod';
     const statusEl = document.getElementById(prefix + '-online-status');
     if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(234,179,8,0.1)'; statusEl.style.border='1px solid rgba(234,179,8,0.4)'; statusEl.style.color='#92400e'; statusEl.textContent='⏳ Creating order…'; }
@@ -1290,13 +1296,13 @@ function openPaymongoPopup(formType, method) {
     fetch(payUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
         .then(r => r.text().then(t => ({ status: r.status, text: t })))
         .then(({ status, text }) => {
-            let data; try { data = JSON.parse(text); } catch(e) { if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.innerHTML='❌ Server error (HTTP '+status+'):<br><small style="font-family:monospace;word-break:break-all;">'+text.replace(/</g,'&lt;').substring(0,400)+'</small>'; } return; }
-            if (!data.success) { if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent='❌ '+(data.error||'Payment setup failed.'); } return; }
+            let data; try { data = JSON.parse(text); } catch(e) { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.innerHTML='❌ Server error (HTTP '+status+'):<br><small style="font-family:monospace;word-break:break-all;">'+text.replace(/</g,'&lt;').substring(0,400)+'</small>'; } return; }
+            if (!data.success) { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent='❌ '+(data.error||'Payment setup failed.'); } return; }
             if (statusEl) statusEl.style.display = 'none';
             // Open OTP/intent modal instead of a popup window
             openPaymentModal(data.order_id, method, data.final_amount || 0, phone, name);
         })
-        .catch(err => { if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent='❌ '+err.message; } });
+        .catch(err => { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent='❌ '+err.message; } });
 }
 
 window.addEventListener('message', function(event) {

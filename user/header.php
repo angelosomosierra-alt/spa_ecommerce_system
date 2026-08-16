@@ -1151,4 +1151,15 @@ document.addEventListener('DOMContentLoaded', function() {
         wrap.appendChild(btn);
     });
 });
+
+// ── Generic form-submit guard (prevents double-submit on all native forms) ────
+document.addEventListener('submit', function(e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    var btn = form.querySelector('button[type="submit"], input[type="submit"]');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    var label = btn.textContent || btn.value || '';
+    btn.textContent = label + ' Processing…';
+});
 </script>

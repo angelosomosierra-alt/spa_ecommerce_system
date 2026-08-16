@@ -712,6 +712,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $disc_voucher_type = $_POST['appt_voucher_type']   ?? 'cash';
                 $disc_value        = floatval($_POST['appt_discount_value'] ?? 0);
 
+                if (($disc_type === 'voucher' || $disc_type === 'gift_card') && $disc_value <= 0) {
+                    $message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
+                    $message_type = "danger";
+                    goto end_action;
+                }
+
                 // ── Payment method chosen at approval ─────────────────────────
                 $appt_pay_method = in_array($_POST['appt_payment_method'] ?? '', ['cash','qrph','gcash','maya','bpi_debit','bpi_credit'])
                                    ? $_POST['appt_payment_method'] : 'cash';
@@ -934,6 +940,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $cd_vtype  = sanitize_input($_POST['complete_voucher_type'] ?? 'cash');
             if (!in_array($cd_vtype, ['cash','percent'])) $cd_vtype = 'cash';
             $cd_vvalue = max(0.0, floatval($_POST['complete_voucher_value'] ?? 0));
+
+            if ($cd_type === 'voucher' && $cd_vvalue <= 0) {
+                $message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
+                $message_type = "danger";
+                goto end_action;
+            }
 
             // Fetch unpaid extras for server-side math
             $sv_es_stmt = $conn->prepare("SELECT charged_price, payment_status FROM appointment_extra_services WHERE appointment_id=?");
@@ -2677,6 +2689,8 @@ function cmSelectPayment(method) {
 }
 
 function submitComplete() {
+    var confirmBtn = document.getElementById('cm-confirm-btn');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Processing…'; }
     var pinInp = document.getElementById('cm-pin-input');
     var pinErr = document.getElementById('cm-pin-error');
     if (pinErr) pinErr.textContent = '';
@@ -3622,6 +3636,8 @@ function ciUpdateVoucher() {
 }
 
 function submitCheckin() {
+    var checkinBtn = document.querySelector('[onclick="submitCheckin()"]');
+    if (checkinBtn) { checkinBtn.disabled = true; checkinBtn.textContent = '⏳ Processing…'; }
     // Validate ID/voucher verification when discount is applied
     if (ciState.discountType !== 'none') {
         var idChk = document.getElementById('ci-id-verified');

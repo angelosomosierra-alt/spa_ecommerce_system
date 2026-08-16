@@ -581,7 +581,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
         <?php echo csrf_field(); ?>
         <input type="hidden" name="action" value="submit_report">
         <button type="button" class="btn btn-primary btn-sm"
-                onclick="uiConfirm('Submit and lock this report? It will become read-only.').then(ok=>{if(ok)document.getElementById('submit-report-form').submit();})">📤 Submit Daily Report</button>
+                onclick="var _sb=this;uiConfirm('Submit and lock this report? It will become read-only.').then(ok=>{if(ok){_sb.disabled=true;_sb.textContent='⏳ Submitting…';document.getElementById('submit-report-form').submit();}})">📤 Submit Daily Report</button>
     </form>
     <?php endif; ?>
 
@@ -1878,6 +1878,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             var rid = tr.dataset.rowId;
             uiConfirm('Delete this row?').then(function(ok) {
                 if (!ok) return;
+                btn.disabled = true; btn.textContent = '…';
                 var fd = new FormData();
                 fd.append('action',     'delete_ss_row');
                 fd.append('csrf_token', CSRF);
@@ -1886,8 +1887,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     .then(function(r){return r.json();})
                     .then(function(j){
                         if (j.ok) { tr.remove(); recalcTotals(); }
-                        else if (window.uiAlert) uiAlert('❌ '+(j.msg||'Delete failed'));
-                    });
+                        else { btn.disabled = false; btn.textContent = '✕'; if (window.uiAlert) uiAlert('❌ '+(j.msg||'Delete failed')); }
+                    })
+                    .catch(function() { btn.disabled = false; btn.textContent = '✕'; });
             });
         });
     }
