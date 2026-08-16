@@ -1230,13 +1230,16 @@ $where_sql = 'WHERE ' . implode(' AND ', $where_parts);
 $appt_sql = "
     SELECT a.*, s.name AS service_name, s.price AS service_price, s.session_time,
            u.full_name, u.email, u.phone,
+           o.customer_name AS order_customer_name, o.phone AS order_phone,
            a.approved_by_name, a.completed_by_name, a.declined_by_name,
            a.cancelled_by_name, a.rescheduled_by_name, a.rescheduled_at,
            (SELECT COALESCE(SUM(IFNULL(at3.people_handled,1)),0) FROM appointment_therapists at3 WHERE at3.appointment_id=a.id) AS therapist_count,
            (SELECT oi.order_id FROM order_items oi WHERE oi.id = a.order_item_id LIMIT 1) AS order_id
     FROM appointments a
-    JOIN services s ON a.service_id = s.id
-    JOIN users u    ON a.user_id    = u.id
+    JOIN services s  ON a.service_id  = s.id
+    JOIN users u     ON a.user_id     = u.id
+    LEFT JOIN order_items oi2 ON oi2.id  = a.order_item_id
+    LEFT JOIN orders o        ON o.id    = oi2.order_id
     $where_sql
     ORDER BY
         CASE a.status WHEN 'pending' THEN 0 WHEN 'assigned' THEN 1 ELSE 2 END ASC,
@@ -1528,13 +1531,17 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:0.8rem 1.5rem;padding:1rem;background:var(--bg3);border-radius:10px;margin-bottom:1rem;border:1px solid var(--border2);">
         <div>
             <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">👤 Customer</div>
-            <div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo htmlspecialchars($a['full_name']); ?></div>
+            <?php
+            $display_name  = !empty($a['order_customer_name']) ? $a['order_customer_name'] : $a['full_name'];
+            $display_phone = !empty($a['order_phone'])         ? $a['order_phone']         : $a['phone'];
+            ?>
+            <div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo htmlspecialchars($display_name); ?></div>
             <div style="font-size:0.74rem;color:var(--gray);"><?php echo htmlspecialchars($a['email']); ?></div>
-            <?php if (!empty($a['phone'])): ?>
+            <?php if (!empty($display_phone)): ?>
             <div style="font-size:0.74rem;color:var(--brown);margin-top:0.1rem;">
-                <a href="tel:<?php echo htmlspecialchars($a['phone']); ?>"
+                <a href="tel:<?php echo htmlspecialchars($display_phone); ?>"
                    style="color:var(--brown);text-decoration:none;font-weight:600;">
-                    📞 <?php echo htmlspecialchars($a['phone']); ?>
+                    📞 <?php echo htmlspecialchars($display_phone); ?>
                 </a>
             </div>
             <?php endif; ?>

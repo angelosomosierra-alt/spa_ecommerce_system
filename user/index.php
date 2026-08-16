@@ -541,7 +541,7 @@ $css_version = (file_exists($css_file)) ? filemtime($css_file) : '1';
                     <div class="hours-row"><span>Holidays</span><span>10:00 AM – 10:00 PM</span></div>
                 </div>
             </div>
-            <div class="contact-form-card">
+           <!-- <div class="contact-form-card">
                 <?php if ($contact_sent): ?>
                 <div class="contact-success">
                     <span>✅</span>
@@ -563,7 +563,7 @@ $css_version = (file_exists($css_file)) ? filemtime($css_file) : '1';
                     <button type="submit" name="send_message" class="btn-send">✉️ Send Message</button>
                 </form>
                 <?php endif; ?>
-            </div>
+            </div>-->
         </div>
     </div></div>
 </section>

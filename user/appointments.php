@@ -282,6 +282,7 @@ $stmt = $conn->prepare("
     SELECT o.id AS order_id, o.created_at AS order_date, o.total_amount,
            o.payment_method, o.payment_status, o.approval_status,
            o.discount_type, o.discount_amount, o.final_amount, o.paymongo_method,
+           o.customer_name, o.phone,
            oi.quantity, oi.price, oi.subtotal,
            p.name AS product_name, p.image AS product_image
     FROM orders o
@@ -310,6 +311,8 @@ foreach ($product_orders as $row) {
             'discount_amount' => floatval($row['discount_amount'] ?? 0),
             'final_amount' => floatval($row['final_amount'] ?? 0),
             'paymongo_method' => $row['paymongo_method'] ?? null,
+            'customer_name' => $row['customer_name'] ?? '',
+            'phone' => $row['phone'] ?? '',
             'items' => [],
         ];
     }
@@ -570,12 +573,14 @@ details.card-section summary::-webkit-details-marker { display:none; }
             'approval_status' => '', 'paymongo_method' => null,
             'total_amount' => 0, 'discount_type' => 'none',
             'discount_amount' => 0, 'final_amount' => 0,
+            'customer_name' => '', 'phone' => '',
         ];
         if (!$order_item_id) return $default;
         $pm = $GLOBALS['conn']->prepare("
             SELECT o.id, o.payment_method, o.payment_status, o.approval_status,
                    o.paymongo_method,
-                   o.total_amount, o.discount_type, o.discount_amount, o.final_amount
+                   o.total_amount, o.discount_type, o.discount_amount, o.final_amount,
+                   o.customer_name, o.phone
             FROM orders o
             JOIN order_items oi ON oi.order_id = o.id
             WHERE oi.id = ? LIMIT 1
@@ -648,9 +653,13 @@ details.card-section summary::-webkit-details-marker { display:none; }
                 <details class="card-section">
                     <summary>👤 Your Information</summary>
                     <div class="info-grid">
-                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
+                        <?php
+                        $display_name  = !empty($orow['customer_name']) ? $orow['customer_name'] : ($user_info['full_name'] ?? '');
+                        $display_phone = !empty($orow['phone'])         ? $orow['phone']         : ($user_info['phone']     ?? '');
+                        ?>
+                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($display_name ?: '—'); ?></span>
                         <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
-                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
+                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($display_phone) ? htmlspecialchars($display_phone) : '—'; ?></span>
                         <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
                     </div>
                 </details>
@@ -801,9 +810,13 @@ details.card-section summary::-webkit-details-marker { display:none; }
                 <details class="card-section">
                     <summary>👤 Your Information</summary>
                     <div class="info-grid">
-                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
+                        <?php
+                        $display_name  = !empty($orow['customer_name']) ? $orow['customer_name'] : ($user_info['full_name'] ?? '');
+                        $display_phone = !empty($orow['phone'])         ? $orow['phone']         : ($user_info['phone']     ?? '');
+                        ?>
+                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($display_name ?: '—'); ?></span>
                         <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
-                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
+                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($display_phone) ? htmlspecialchars($display_phone) : '—'; ?></span>
                         <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
                     </div>
                 </details>
@@ -1009,9 +1022,13 @@ details.card-section summary::-webkit-details-marker { display:none; }
                 <details class="card-section">
                     <summary>👤 Your Information</summary>
                     <div class="info-grid">
-                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
+                        <?php
+                        $display_name  = !empty($order['customer_name']) ? $order['customer_name'] : ($user_info['full_name'] ?? '');
+                        $display_phone = !empty($order['phone'])         ? $order['phone']         : ($user_info['phone']     ?? '');
+                        ?>
+                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($display_name ?: '—'); ?></span>
                         <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
-                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
+                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($display_phone) ? htmlspecialchars($display_phone) : '—'; ?></span>
                         <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
                     </div>
                 </details>
