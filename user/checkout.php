@@ -141,18 +141,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $booking_date           = $_POST['booking_date'] ?? null;
     $people_count           = intval($_POST['people_count'] ?? 1);
     $payment_method         = $_POST['payment_method'] ?? 'onsite';
-    if ($payment_method === 'online' && !ONLINE_PAYMENT_ENABLED) {
-        $message = "Online payment is not available at this time. Please select Pay at Spa.";
-        $message_type = "danger";
-        $payment_method = 'onsite';
-    }
     $service_type           = $_POST['service_type']   ?? 'onsite';
     $home_address           = sanitize_input($_POST['home_address'] ?? '');
     $home_notes             = sanitize_input($_POST['home_notes']   ?? '');
     $customer_note          = sanitize_input($_POST['customer_note'] ?? '');
     $preferred_therapist_id = intval($_POST['preferred_therapist_id'] ?? 0);
 
-    $discount_type = 'none';
+    // ── Discount fields ───────────────────────────────────────────────────────
+    // Customers declare their discount type only. The actual amount is confirmed
+    // onsite by the receptionist when they show their ID or voucher.
+    $discount_type = in_array($_POST['discount_type'] ?? '', ['none','voucher','senior','pwd','employee'])
+                     ? $_POST['discount_type'] : 'none';
+
+    // Discounts are not compatible with online payment — block server-side.
+    // The JS already hides the online option when a discount is selected,
+    // so this only fires if someone bypasses the UI.
+    if ($discount_type !== 'none' && $payment_method === 'online') {
+        $_SESSION['checkout_error'] = 'Discounts cannot be used with online payment. Please select Pay Onsite.';
+        header('Location: ' . BASE_URL . 'user/checkout.php');
+        exit;
+    }
 
     $payment_status  = $payment_method === 'online' ? 'pending_payment' : 'unpaid';
 
@@ -294,8 +302,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         }
 
         if (empty($message)) {
+            // ── Compute discount ──────────────────────────────────────────────
+            // Senior/PWD: 20% calculated automatically.
+            // Voucher: discount_amount stays 0 — the receptionist confirms and
+            // applies the real amount onsite when approving the appointment.
             $discount_amount_calc = 0.00;
-            $final_amount = $total_amount;
+
+            if ($discount_type === 'senior' || $discount_type === 'pwd') {
+                $discount_amount_calc = round($total_amount * 0.20, 2);
+            } elseif ($discount_type === 'employee') {
+                $discount_amount_calc = round($total_amount * 0.50, 2);
+            }
+            // voucher: $discount_amount_calc stays 0.00 — applied onsite
+
+            $final_amount = max(0, $total_amount - $discount_amount_calc);
+            $saved_total  = $discount_type !== 'none' ? $final_amount : $total_amount;
 
             // ── Lock and verify stock before writing (prevents race conditions) ──
             if ($checkout_type === 'product' || $checkout_type === 'cart') {
@@ -1467,6 +1488,68 @@ require_once 'header.php';
 
         <?php endif; ?>
 
+        <!-- Discount / Voucher -->
+        <div class="co-card" style="margin-bottom:1.25rem;" id="discountCard">
+            <div class="co-card-head">
+                <div class="co-card-head-icon">🎟️</div>
+                <div class="co-card-head-title">Discount / Voucher</div>
+            </div>
+            <div class="co-card-body">
+                <p style="font-size:0.85rem;color:#6b7280;margin-bottom:1rem;">
+                    Do you have a voucher, Senior Citizen, or PWD discount?
+                </p>
+
+                <!-- Discount type buttons -->
+                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.5rem;margin-bottom:1rem;">
+                    <div class="disc-btn active" id="discbtn-none" onclick="selectDiscount('none')"
+                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
+                                text-align:center;cursor:pointer;transition:all .15s;">
+                        <div style="font-size:1.1rem;">🚫</div>
+                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">None</div>
+                    </div>
+                    <div class="disc-btn" id="discbtn-voucher" onclick="selectDiscount('voucher')"
+                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
+                                text-align:center;cursor:pointer;transition:all .15s;">
+                        <div style="font-size:1.1rem;">🎟️</div>
+                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">Voucher</div>
+                    </div>
+                    <div class="disc-btn" id="discbtn-senior" onclick="selectDiscount('senior')"
+                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
+                                text-align:center;cursor:pointer;transition:all .15s;">
+                        <div style="font-size:1.1rem;">👴</div>
+                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">Senior</div>
+                        <div style="font-size:0.68rem;color:#6b7280;">20% off</div>
+                    </div>
+                    <div class="disc-btn" id="discbtn-pwd" onclick="selectDiscount('pwd')"
+                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
+                                text-align:center;cursor:pointer;transition:all .15s;">
+                        <div style="font-size:1.1rem;">♿</div>
+                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">PWD</div>
+                        <div style="font-size:0.68rem;color:#6b7280;">20% off</div>
+                    </div>
+                    <div class="disc-btn" id="discbtn-employee" onclick="selectDiscount('employee')"
+                         style="padding:0.65rem 0.5rem;border:2px solid var(--border);border-radius:10px;
+                                text-align:center;cursor:pointer;transition:all .15s;">
+                        <div style="font-size:1.1rem;">🪪</div>
+                        <div style="font-size:0.75rem;font-weight:600;margin-top:0.2rem;">Staff</div>
+                        <div style="font-size:0.68rem;color:#6b7280;">50% off</div>
+                    </div>
+                </div>
+
+                <!-- Onsite confirmation notice (shown when any discount selected) -->
+                <div id="discountOnsiteNotice" style="display:none;
+                     background:#fff3cd;border:1px solid #f59e0b;border-radius:8px;
+                     padding:0.75rem 1rem;font-size:0.82rem;color:#92400e;margin-bottom:0.75rem;">
+                    ⚠️ <strong>Onsite payment required.</strong>
+                    Bookings with discounts/vouchers must be paid at the spa.
+                    Please bring your <span id="discountProofLabel">voucher / ID</span> when you arrive —
+                    the receptionist will verify it and apply the discount before approving your appointment.
+                </div>
+
+                <input type="hidden" name="discount_type" id="discount_type_input" value="none">
+            </div>
+        </div>
+
         <!-- Payment Method -->
         <div class="co-card" style="margin-bottom:1.25rem;">
             <div class="co-card-head">
@@ -1480,20 +1563,13 @@ require_once 'header.php';
                         <span class="pay-btn-label">Pay at Spa</span>
                         <span class="pay-btn-sub">Cash when you arrive</span>
                     </div>
-                    <?php if (ONLINE_PAYMENT_ENABLED): ?>
                     <div class="pay-btn" id="paybtn-online" onclick="selectPayment('online')">
                         <span class="pay-btn-icon">💳</span>
                         <span class="pay-btn-label">Pay Online</span>
                         <span class="pay-btn-sub">GCash · Maya · Cards</span>
                         <span class="pay-badge">Secure via PayMongo</span>
                     </div>
-                    <?php endif; ?>
                 </div>
-                <?php if (!ONLINE_PAYMENT_ENABLED): ?>
-                <div style="margin-top:0.6rem;padding:0.6rem 0.85rem;background:#fff8f2;border-left:3px solid #C96A2C;border-radius:6px;font-size:0.82rem;color:#92400e;">
-                    💳 Online payment is coming soon — please complete payment onsite for now.
-                </div>
-                <?php endif; ?>
                 <div class="pay-note" id="pay-note">
                     🏪 <strong>Pay at Spa:</strong> Your booking will be set to
                     <strong>Pending</strong> — pay when you arrive and staff will confirm.
@@ -1551,6 +1627,10 @@ require_once 'header.php';
                         <div class="co-total-row" id="homeFeeRow" style="display:none;">
                             <span>🏠 Home Service Fee</span>
                             <span id="homeFeeAmt">+₱<?php echo number_format($checkout_items[0]['home_service_fee'] ?? 0, 2); ?></span>
+                        </div>
+                        <div class="co-total-row" id="discountRow" style="display:none;color:#16a34a;">
+                            <span id="discountLabel">🎟️ Discount</span>
+                            <span id="discountAmt">−₱0.00</span>
                         </div>
                         <div class="co-total-row">
                             <span>Service Charge</span>

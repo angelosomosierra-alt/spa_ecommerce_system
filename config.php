@@ -179,19 +179,23 @@ define('UPLOAD_DIR_PRODUCTS', __DIR__ . '/uploads/products/');
 
 // ─── SESSION ──────────────────────────────────────────────────────────────────
 // SameSite=None + Secure keeps the cookie alive after PayMongo cross-site redirect.
-// On non-HTTPS (local dev), SameSite falls back to Lax so the cookie is not dropped.
+// On non-HTTPS (local dev / HTTP), SameSite falls back to Lax so the cookie is not dropped.
+// Detected from the actual connection, not APP_ENV, so localhost always works regardless
+// of the environment setting.
 if (session_status() === PHP_SESSION_NONE) {
-    $is_prod = (APP_ENV === 'production');
+    $is_https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+             || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+             || (($_SERVER['SERVER_PORT'] ?? '') == 443);
     session_set_cookie_params([
         'lifetime' => 86400,
         'path'     => '/',
         'domain'   => '',
-        'secure'   => $is_prod,
+        'secure'   => $is_https,
         'httponly' => true,
-        'samesite' => $is_prod ? 'None' : 'Lax',
+        'samesite' => $is_https ? 'None' : 'Lax',
     ]);
     session_start();
-    unset($is_prod);
+    unset($is_https);
 }
 
 // ─── CSRF ─────────────────────────────────────────────────────────────────────
