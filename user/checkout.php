@@ -141,6 +141,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $booking_date           = $_POST['booking_date'] ?? null;
     $people_count           = intval($_POST['people_count'] ?? 1);
     $payment_method         = $_POST['payment_method'] ?? 'onsite';
+    if ($payment_method === 'online' && !ONLINE_PAYMENT_ENABLED) {
+        $message = "Online payment is not available at this time. Please select Pay at Spa.";
+        $message_type = "danger";
+        $payment_method = 'onsite';
+    }
     $service_type           = $_POST['service_type']   ?? 'onsite';
     $home_address           = sanitize_input($_POST['home_address'] ?? '');
     $home_notes             = sanitize_input($_POST['home_notes']   ?? '');
@@ -1475,13 +1480,20 @@ require_once 'header.php';
                         <span class="pay-btn-label">Pay at Spa</span>
                         <span class="pay-btn-sub">Cash when you arrive</span>
                     </div>
+                    <?php if (ONLINE_PAYMENT_ENABLED): ?>
                     <div class="pay-btn" id="paybtn-online" onclick="selectPayment('online')">
                         <span class="pay-btn-icon">💳</span>
                         <span class="pay-btn-label">Pay Online</span>
                         <span class="pay-btn-sub">GCash · Maya · Cards</span>
                         <span class="pay-badge">Secure via PayMongo</span>
                     </div>
+                    <?php endif; ?>
                 </div>
+                <?php if (!ONLINE_PAYMENT_ENABLED): ?>
+                <div style="margin-top:0.6rem;padding:0.6rem 0.85rem;background:#fff8f2;border-left:3px solid #C96A2C;border-radius:6px;font-size:0.82rem;color:#92400e;">
+                    💳 Online payment is coming soon — please complete payment onsite for now.
+                </div>
+                <?php endif; ?>
                 <div class="pay-note" id="pay-note">
                     🏪 <strong>Pay at Spa:</strong> Your booking will be set to
                     <strong>Pending</strong> — pay when you arrive and staff will confirm.
