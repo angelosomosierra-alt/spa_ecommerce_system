@@ -141,6 +141,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $booking_date           = $_POST['booking_date'] ?? null;
     $people_count           = intval($_POST['people_count'] ?? 1);
     $payment_method         = $_POST['payment_method'] ?? 'onsite';
+    if ($payment_method === 'online' && !ONLINE_PAYMENT_ENABLED) {
+        $message = "Online payment is not available at this time. Please select Pay at Spa.";
+        $message_type = "danger";
+        $payment_method = 'onsite';
+    }
     $service_type           = $_POST['service_type']   ?? 'onsite';
     $home_address           = sanitize_input($_POST['home_address'] ?? '');
     $home_notes             = sanitize_input($_POST['home_notes']   ?? '');
@@ -1475,13 +1480,20 @@ require_once 'header.php';
                         <span class="pay-btn-label">Pay at Spa</span>
                         <span class="pay-btn-sub">Cash when you arrive</span>
                     </div>
+                    <?php if (ONLINE_PAYMENT_ENABLED): ?>
                     <div class="pay-btn" id="paybtn-online" onclick="selectPayment('online')">
                         <span class="pay-btn-icon">💳</span>
                         <span class="pay-btn-label">Pay Online</span>
                         <span class="pay-btn-sub">GCash · Maya · Cards</span>
                         <span class="pay-badge">Secure via PayMongo</span>
                     </div>
+                    <?php endif; ?>
                 </div>
+                <?php if (!ONLINE_PAYMENT_ENABLED): ?>
+                <div style="margin-top:0.6rem;padding:0.6rem 0.85rem;background:#fff8f2;border-left:3px solid #C96A2C;border-radius:6px;font-size:0.82rem;color:#92400e;">
+                    💳 Online payment is coming soon — please complete payment onsite for now.
+                </div>
+                <?php endif; ?>
                 <div class="pay-note" id="pay-note">
                     🏪 <strong>Pay at Spa:</strong> Your booking will be set to
                     <strong>Pending</strong> — pay when you arrive and staff will confirm.
@@ -2021,25 +2033,101 @@ function confirmBM() {
     closeBM();
 }
 
-// ── Total update (people count / home fee) ────────────────────────────────────
+// ── Discount / Voucher ────────────────────────────────────────────────────────
 const BASE_TOTAL_AMOUNT = <?php echo $total_amount; ?>;
+let currentDiscount = 'none';
+
+function updatePaymentOptionsForDiscount(type) {
+    const onlineBtn = document.getElementById('paybtn-online');
+    if (type !== 'none') {
+        selectPayment('onsite');
+        if (onlineBtn) onlineBtn.style.display = 'none';
+    } else {
+        if (onlineBtn) onlineBtn.style.display = '';
+    }
+}
+
+function selectDiscount(type) {
+    currentDiscount = type;
+    document.getElementById('discount_type_input').value = type;
+
+    // Update button styles
+    ['none','voucher','senior','pwd','employee'].forEach(t => {
+        const btn = document.getElementById('discbtn-' + t);
+        if (!btn) return;
+        btn.style.borderColor = t === type ? '#C96A2C' : 'var(--border)';
+        btn.style.background  = t === type ? '#fff8f2' : '';
+    });
+
+    // Show/hide onsite notice + set proof label
+    const notice     = document.getElementById('discountOnsiteNotice');
+    const proofLabel = document.getElementById('discountProofLabel');
+    if (type !== 'none') {
+        notice.style.display = 'block';
+        if (type === 'senior')         proofLabel.textContent = 'Senior Citizen ID';
+        else if (type === 'pwd')       proofLabel.textContent = 'PWD ID';
+        else if (type === 'employee')  proofLabel.textContent = 'Employee ID';
+        else                           proofLabel.textContent = 'voucher';
+    } else {
+        notice.style.display = 'none';
+    }
+
+    updatePaymentOptionsForDiscount(type);
+    updateDiscountPreview();
+}
 
 function updateDiscountPreview() {
+    const type    = currentDiscount;
+    const discRow = document.getElementById('discountRow');
+    const discLbl = document.getElementById('discountLabel');
+    const discAmt = document.getElementById('discountAmt');
     const grandEl = document.getElementById('grandTotal');
-    if (!grandEl) return;
+    if (!discRow || !grandEl) return;
+
     const people = parseInt(document.getElementById('people_count')?.value || 1) || 1;
     const homeFeeRow = document.getElementById('homeFeeRow');
     const homeFeePerPerson = (homeFeeRow && homeFeeRow.style.display !== 'none')
         ? parseFloat(document.getElementById('homeFeeAmt')?.textContent?.replace(/[^0-9.]/g,'') || 0) : 0;
-    const subtotal = (BASE_TOTAL_AMOUNT + homeFeePerPerson) * people;
+    let subtotal = (BASE_TOTAL_AMOUNT + homeFeePerPerson) * people;
     const subtotalEl = document.getElementById('subtotalDisplay');
     if (subtotalEl) subtotalEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
-    grandEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    let discountAmt = 0;
+
+    if (type === 'senior') {
+        discountAmt = subtotal * 0.20;
+        discLbl.textContent = '👴 Senior Citizen (20%)';
+    } else if (type === 'pwd') {
+        discountAmt = subtotal * 0.20;
+        discLbl.textContent = '♿ PWD (20%)';
+    } else if (type === 'employee') {
+        discountAmt = subtotal * 0.50;
+        discLbl.textContent = '🪪 Employee (50%)';
+    } else if (type === 'voucher') {
+        // Voucher amount is confirmed onsite — show placeholder row only
+        discLbl.textContent = '🎟️ Voucher (confirmed onsite)';
+        discAmt.textContent = '−₱TBD';
+        discRow.style.display = '';
+        // Don't recalculate grand total for voucher — stays at full price until onsite confirmation
+        grandEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+        return;
+    }
+
+    if (discountAmt > 0) {
+        discRow.style.display = '';
+        discAmt.textContent   = '−₱' + discountAmt.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    } else {
+        discRow.style.display = type !== 'none' ? '' : 'none';
+        discAmt.textContent   = '−₱0.00';
+    }
+
+    const finalTotal = Math.max(0, subtotal - discountAmt);
+    grandEl.textContent = '₱' + finalTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 
 // Init
 selectPayment('onsite');
-updateDiscountPreview();
+selectDiscount('none');
 
 <?php if ($checkout_type === 'service'): ?>
 // Prevent form submission when no time slot has been selected.

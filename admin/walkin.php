@@ -109,8 +109,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     $voucher_type_i = $_POST['voucher_type']   ?? 'cash';
     $voucher_value  = floatval($_POST['voucher_amount'] ?? 0);
 
+    $online_methods = ['gcash', 'maya', 'card', 'qrph'];
     if (empty($customer_name) || empty($phone) || empty($item_id)) {
         $walkin_message = "Please fill in all required fields and select an item.";
+        $walkin_type    = "danger";
+    } elseif (!ONLINE_PAYMENT_ENABLED && in_array($payment_method, $online_methods)) {
+        $walkin_message = "Online payment is not available at this time. Please select Cash.";
         $walkin_type    = "danger";
     } elseif ($discount_type === 'voucher' && $voucher_value <= 0) {
         $walkin_message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
@@ -689,8 +693,10 @@ require_once 'admin_header.php';
                                 'card'  => ['💳', 'Card'],
                                 'bank'  => ['🏦', 'Bank'],
                             ];
+                            $online_pm = ['gcash','maya','card','qrph'];
                             foreach ($pm_wk as $pmv => $pmi):
-                                if (in_array($pmv, ['gcash','maya']) && !SHOW_GCASH_MAYA) continue;
+                                if (!ONLINE_PAYMENT_ENABLED && in_array($pmv, $online_pm)) continue;
+                                if (ONLINE_PAYMENT_ENABLED && in_array($pmv, ['gcash','maya']) && !SHOW_GCASH_MAYA) continue;
                             ?>
                             <label style="display:flex;align-items:center;gap:0.4rem;
                                           padding:0.45rem 0.6rem;border:1.5px solid var(--border2);
@@ -706,6 +712,11 @@ require_once 'admin_header.php';
                             </label>
                             <?php endforeach; ?>
                         </div>
+                        <?php if (!ONLINE_PAYMENT_ENABLED): ?>
+                        <div style="margin-bottom:0.5rem;padding:0.5rem 0.75rem;background:#fff8f2;border-left:3px solid #C96A2C;border-radius:6px;font-size:0.78rem;color:#92400e;">
+                            💳 Online payment is coming soon — please complete payment onsite for now.
+                        </div>
+                        <?php endif; ?>
                         <div id="svc-online-status" style="display:none;margin-bottom:0.5rem;padding:0.55rem 0.75rem;border-radius:8px;font-size:0.8rem;font-weight:600;"></div>
                         <button type="button" id="svc-book-now" onclick="proceedBooking('service')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">✅ Book Now</button>
                         <button type="button" class="pay-btn pay-btn-later" onclick="payLaterService()" style="width:100%;margin-top:0.4rem;font-size:0.9rem;">
@@ -799,7 +810,8 @@ require_once 'admin_header.php';
                     <div class="form-section-body">
                         <div id="prod-pm-container" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));gap:0.4rem;margin-bottom:0.75rem;">
                             <?php foreach ($pm_wk as $pmv => $pmi):
-                                if (in_array($pmv, ['gcash','maya']) && !SHOW_GCASH_MAYA) continue; ?>
+                                if (!ONLINE_PAYMENT_ENABLED && in_array($pmv, $online_pm)) continue;
+                                if (ONLINE_PAYMENT_ENABLED && in_array($pmv, ['gcash','maya']) && !SHOW_GCASH_MAYA) continue; ?>
                             <label style="display:flex;align-items:center;gap:0.4rem;
                                           padding:0.45rem 0.6rem;border:1.5px solid var(--border2);
                                           border-radius:8px;cursor:pointer;font-size:0.82rem;
@@ -814,6 +826,11 @@ require_once 'admin_header.php';
                             </label>
                             <?php endforeach; ?>
                         </div>
+                        <?php if (!ONLINE_PAYMENT_ENABLED): ?>
+                        <div style="margin-bottom:0.5rem;padding:0.5rem 0.75rem;background:#fff8f2;border-left:3px solid #C96A2C;border-radius:6px;font-size:0.78rem;color:#92400e;">
+                            💳 Online payment is coming soon — please complete payment onsite for now.
+                        </div>
+                        <?php endif; ?>
                         <div id="prod-online-status" style="display:none;margin-bottom:0.5rem;padding:0.55rem 0.75rem;border-radius:8px;font-size:0.8rem;font-weight:600;"></div>
                         <button type="button" id="prod-book-now" onclick="proceedBooking('product')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">✅ Confirm Order</button>
                     </div>

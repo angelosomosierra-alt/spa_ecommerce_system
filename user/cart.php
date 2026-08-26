@@ -293,7 +293,9 @@ require_once 'header.php';
         <p class="cs-note">Only selected items will be checked out</p>
         <div class="cs-trust">
             <div class="cs-badge"><span>&#128274;</span><span>Secure</span></div>
+            <?php if (ONLINE_PAYMENT_ENABLED): ?>
             <div class="cs-badge"><span>&#128179;</span><span>GCash/Maya</span></div>
+            <?php endif; ?>
         </div>
     </div>
 </div>

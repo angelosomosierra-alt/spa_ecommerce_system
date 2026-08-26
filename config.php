@@ -124,6 +124,12 @@ if (PAYMONGO_SECRET_KEY === '') {
 }
 
 // ─── FEATURE FLAGS ────────────────────────────────────────────────────────────
+// Master switch: set to true once PayMongo account is verified for live payments.
+// When false: all online payment options (GCash, Maya, Card, QR Ph) are hidden
+// from the UI and rejected server-side. Cash/Onsite remains available.
+// Flipping this to true restores full PayMongo functionality with no other changes.
+define('ONLINE_PAYMENT_ENABLED', false);
+
 // GCash/Maya direct integration requires separate PayMongo Business approvals
 // (not yet active). QR Ph already covers GCash/Maya/all bank apps via a single
 // universal QR code. Set to true once GCash/Maya Business accounts are approved

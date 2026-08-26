@@ -23,5 +23,5 @@ class car{
 
     
 echo $car1->showcar();
-echo $car2->showcar();
+echo $car2->showcar();`
 ?>

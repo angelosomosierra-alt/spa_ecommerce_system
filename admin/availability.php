@@ -22,7 +22,7 @@
 
 class AvailabilityEngine {
 
-    private $conn;
+    private $co111nn;
     private $tz;
 
     // Operating hours
