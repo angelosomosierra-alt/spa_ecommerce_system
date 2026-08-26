@@ -1151,4 +1151,19 @@ document.addEventListener('DOMContentLoaded', function() {
         wrap.appendChild(btn);
     });
 });
+
+// ── Generic form-submit guard (prevents double-submit on all native forms) ────
+// setTimeout defers the disable so the browser serialises form data (including
+// named submit buttons) before the button is disabled and excluded from POST.
+document.addEventListener('submit', function(e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    var btn = e.submitter || form.querySelector('button[type="submit"], input[type="submit"]');
+    if (!btn || btn.disabled) return;
+    setTimeout(function() {
+        btn.disabled = true;
+        btn.dataset.origLabel = btn.textContent || btn.value || '';
+        btn.textContent = btn.dataset.origLabel + ' Processing…';
+    }, 10);
+});
 </script>
