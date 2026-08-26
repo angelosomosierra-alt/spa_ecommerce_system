@@ -447,10 +447,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
     $notes        = sanitize_input($_POST['notes'] ?? '');
 
     if ($appt_id && $booking_date) {
-        // Fetch current appointment to get service_id
-        $cur = $conn->prepare("SELECT service_id FROM appointments WHERE id=?");
+        // Fetch current appointment to get service_id and session_time for overlap check
+        $cur = $conn->prepare("SELECT a.service_id, s.session_time FROM appointments a JOIN services s ON s.id = a.service_id WHERE a.id=?");
         $cur->bind_param("i", $appt_id); $cur->execute();
         $cur_row = $cur->get_result()->fetch_assoc(); $cur->close();
+
+        // Moved up so the overlap check below can use it before the UPDATE runs
+        $reassign_id = intval($_POST['reassign_therapist_id'] ?? 0);
 
         // Validate availability using engine
         if ($cur_row) {
@@ -465,6 +468,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
                 $message_type = 'danger';
                 goto skip_edit;
             }
+
+            // Per-therapist overlap check — prevents double-booking the reassigned therapist
+            if ($reassign_id > 0) {
+                $ra_buffer   = ($service_type === 'home') ? 30 : 0;
+                $ra_session  = intval($cur_row['session_time'] ?? 60);
+                $ra_end_mins = ($ra_session * max(1, $people_count)) + $ra_buffer;
+
+                $conf = $conn->prepare("
+                    SELECT COUNT(*) AS cnt
+                    FROM appointment_therapists at2
+                    JOIN appointments a2 ON at2.appointment_id = a2.id
+                    JOIN services     s2 ON a2.service_id = s2.id
+                    WHERE at2.therapist_id = ?
+                      AND a2.id     != ?
+                      AND a2.status IN ('approved','assigned','pending')
+                      AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE)
+                            < (? + INTERVAL ? MINUTE)
+                      AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + IF(a2.service_type='home',30,0)) MINUTE)
+                            > (? - INTERVAL ? MINUTE)
+                ");
+                $conf->bind_param("iisisi",
+                    $reassign_id, $appt_id,
+                    $booking_date, $ra_end_mins,
+                    $booking_date, $ra_buffer
+                );
+                $conf->execute();
+                $conf_count = (int)$conf->get_result()->fetch_assoc()['cnt']; $conf->close();
+
+                if ($conf_count > 0) {
+                    $ra_t_end   = date('h:i A', strtotime($booking_date . ' +' . $ra_end_mins . ' minutes'));
+                    $ra_t_start = date('h:i A', strtotime($booking_date . ' -' . $ra_buffer . ' minutes'));
+                    $message = "⚠️ Therapist is already booked during {$ra_t_start}–{$ra_t_end}" . ($ra_buffer ? " (incl. travel buffer)" : "") . ".";
+                    $message_type = "danger";
+                    goto skip_edit;
+                }
+            }
         }
 
         $editor_name = (is_cashier() && !empty($pr_edit['full_name']))
@@ -476,7 +515,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
         $upd->execute(); $upd->close();
 
         // Therapist reassignment (optional)
-        $reassign_id = intval($_POST['reassign_therapist_id'] ?? 0);
         if ($reassign_id > 0) {
             $del_at = $conn->prepare("DELETE FROM appointment_therapists WHERE appointment_id=?");
             $del_at->bind_param("i", $appt_id); $del_at->execute(); $del_at->close();
