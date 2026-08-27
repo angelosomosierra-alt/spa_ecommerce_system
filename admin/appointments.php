@@ -887,7 +887,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             }
 
             $ci_pay_method = sanitize_input($_POST['pay_method'] ?? 'cash');
-            $ci_allowed_pm = ['cash','qrph','gcash','maya','bank','bpi_debit','bpi_credit'];
+            $ci_allowed_pm = ['cash','qrph','gcash','maya','bank','bpi_debit','bpi_credit','pay_later'];
             if (!in_array($ci_pay_method, $ci_allowed_pm)) $ci_pay_method = 'cash';
             $ci_pm_ref  = sanitize_input($_POST['paymongo_reference'] ?? '');
             $ci_pm_meth = sanitize_input($_POST['paymongo_method']    ?? '');
@@ -898,7 +898,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             if (!in_array($ci_disc_type, $ci_disc_allow)) $ci_disc_type = 'none';
             $ci_disc_amt_raw = floatval($_POST['ci_discount_amount'] ?? 0);
 
-            if (!empty($appt['order_item_id'])) {
+            // pay_later: skip payment/discount update — collect at session completion
+            if ($ci_pay_method !== 'pay_later' && !empty($appt['order_item_id'])) {
                 $po_chk = $conn->prepare("SELECT o.id, o.total_amount, o.payment_status FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
                 $po_chk->bind_param("i", $appt['order_item_id']); $po_chk->execute();
                 $po_row = $po_chk->get_result()->fetch_assoc(); $po_chk->close();
@@ -974,10 +975,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $cp_name = (is_cashier() && !empty($pr['full_name']))
                 ? $pr['full_name']
                 : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
-            $cp_pay_method   = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
+            $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
             if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','bank'])) $cp_pay_method = 'cash';
-            $celeb_disc_val  = max(0.0, floatval($_POST['celebration_discount'] ?? 0));
-            $advance_pay_val = max(0.0, floatval($_POST['advance_payment']      ?? 0));
 
             // ── Completion discount — server-side recompute (never trust client totals) ──
             $cd_type  = sanitize_input($_POST['complete_disc_type'] ?? 'none');
@@ -986,25 +985,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             if (!in_array($cd_vtype, ['cash','percent'])) $cd_vtype = 'cash';
             $cd_vvalue = max(0.0, floatval($_POST['complete_voucher_value'] ?? 0));
 
-            if ($cd_type === 'voucher' && $cd_vvalue <= 0) {
-                $message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
-                $message_type = "danger";
-                goto end_action;
-            }
-
-            // Fetch unpaid extras for server-side math
-            $sv_es_stmt = $conn->prepare("SELECT charged_price, payment_status FROM appointment_extra_services WHERE appointment_id=?");
-            $sv_es_stmt->bind_param("i", $appt_id); $sv_es_stmt->execute();
-            $sv_es_rows = $sv_es_stmt->get_result()->fetch_all(MYSQLI_ASSOC); $sv_es_stmt->close();
-            $sv_extras = array_sum(array_map(
-                fn($r) => ($r['payment_status'] !== 'paid') ? floatval($r['charged_price']) : 0.0,
-                $sv_es_rows
-            ));
-
+            // Check if order was already paid at check-in
+            $order_already_paid = false;
+            $oi_r2 = null;
             if (!empty($appt['order_item_id'])) {
-                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status, o.total_amount, o.discount_amount, o.final_amount FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
+                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status, o.total_amount, o.discount_amount FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
                 $oi_s2->bind_param("i", $appt['order_item_id']); $oi_s2->execute();
                 $oi_r2 = $oi_s2->get_result()->fetch_assoc(); $oi_s2->close();
+                $order_already_paid = ($oi_r2 && $oi_r2['payment_status'] === 'paid');
+            }
+
+            if (!$order_already_paid) {
+                if ($cd_type === 'voucher' && $cd_vvalue <= 0) {
+                    $message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
+                    $message_type = "danger";
+                    goto end_action;
+                }
+
+                // Fetch unpaid extras for server-side math
+                $sv_es_stmt = $conn->prepare("SELECT charged_price, payment_status FROM appointment_extra_services WHERE appointment_id=?");
+                $sv_es_stmt->bind_param("i", $appt_id); $sv_es_stmt->execute();
+                $sv_es_rows = $sv_es_stmt->get_result()->fetch_all(MYSQLI_ASSOC); $sv_es_stmt->close();
+                $sv_extras = array_sum(array_map(
+                    fn($r) => ($r['payment_status'] !== 'paid') ? floatval($r['charged_price']) : 0.0,
+                    $sv_es_rows
+                ));
+
                 if ($oi_r2) {
                     $sv_orig  = floatval($oi_r2['total_amount']);
                     $sv_bdisc = floatval($oi_r2['discount_amount']);
@@ -1023,25 +1029,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     }
                     // Clamp: completion discount cannot make combined discount exceed gross
                     $cd_amount = max(0.0, min($cd_amount, max(0.0, $sv_gross - $sv_bdisc)));
+                    $new_final = max(0.0, $sv_orig - $sv_bdisc - $cd_amount);
 
-                    $new_final = max(0.0, $sv_orig - $sv_bdisc - $cd_amount - $celeb_disc_val - $advance_pay_val);
-
-                    if ($oi_r2['payment_status'] !== 'paid') {
-                        $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
-                        $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
-                    } else {
-                        $upd_ord = $conn->prepare("UPDATE orders SET final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
-                        $upd_ord->bind_param("dsdsdi", $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
-                    }
+                    $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
+                    $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
                     $upd_ord->execute(); $upd_ord->close();
                 }
+
+                // Mark unpaid extra services as paid with the collected method
+                $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
+                $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
             }
 
-            // Mark unpaid extra services as paid with the collected method
-            $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
-            $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
-            $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=?, celebration_discount=?, advance_payment=? WHERE id=?");
-            $upd->bind_param("isddi", $cp_by, $cp_name, $celeb_disc_val, $advance_pay_val, $appt_id);
+            $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=?, celebration_discount=0, advance_payment=0 WHERE id=?");
+            $upd->bind_param("isi", $cp_by, $cp_name, $appt_id);
             $upd->execute(); $upd->close();
 
             if (!empty($appt['order_item_id'])) {
@@ -2157,7 +2158,8 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 bookingDisc:    <?php echo $_cm_bdisc; ?>,
                 bookingDiscType:'<?php echo htmlspecialchars(addslashes($_cm_bdtype)); ?>',
                 extrasTotal:    <?php echo $_cm_extras; ?>,
-                alreadyPaid:    <?php echo $_cm_paid; ?>
+                alreadyPaid:    <?php echo $_cm_paid; ?>,
+                paymentStatus:  '<?php echo htmlspecialchars($pm_row['payment_status'] ?? 'unpaid'); ?>'
             };
             </script>
             <button type="button" class="btn btn-primary btn-sm"
@@ -2668,10 +2670,24 @@ function cmRecompute() {
     var bDisc   = cmState.bookingDisc    || 0;
     var extras  = cmState.extrasTotal    || 0;
     var already = cmState.alreadyPaid    || 0;
-    var celeb   = parseFloat(document.getElementById('cm-celeb-disc')?.value)  || 0;
-    var advance = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
     var vtype   = document.getElementById('cm-voucher-type')?.value  || 'cash';
     var vvalue  = parseFloat(document.getElementById('cm-voucher-value')?.value) || 0;
+
+    // If payment was already collected at check-in, show simple summary
+    if (cmState.isPaid) {
+        var rs   = 'display:flex;justify-content:space-between;margin-bottom:0.28rem;';
+        var gray = 'color:var(--gray);';
+        var amber= 'color:#b45309;';
+        var html = '';
+        html += '<div style="' + rs + '"><span style="' + gray + '">Original session</span><span>₱' + cmFmt(orig) + '</span></div>';
+        if (extras > 0) html += '<div style="' + rs + '"><span style="' + gray + '">Extra services</span><span>₱' + cmFmt(extras) + '</span></div>';
+        if (bDisc > 0) html += '<div style="' + rs + '"><span style="' + amber + '">' + cmDiscLabel(cmState.bookingDiscType) + ' (booking)</span><span style="' + amber + '">−₱' + cmFmt(bDisc) + '</span></div>';
+        html += '<div style="' + rs + 'border-top:1px solid var(--border2);padding-top:0.4rem;margin-top:0.1rem;font-weight:700;font-size:0.9rem;color:#198754;"><span>✅ Already paid</span><span>₱' + cmFmt(already) + '</span></div>';
+        document.getElementById('cm-breakdown').innerHTML = html;
+        document.getElementById('cm-no-payment').style.display  = 'block';
+        document.getElementById('cm-payment-section').style.display = 'none';
+        return;
+    }
 
     var gross = orig + extras;
 
@@ -2690,7 +2706,7 @@ function cmRecompute() {
     }
     cdAmt = Math.max(0, Math.min(cdAmt, Math.max(0, gross - bDisc)));
 
-    var totalDue = Math.max(0, gross - bDisc - cdAmt - celeb - advance - already);
+    var totalDue = Math.max(0, gross - bDisc - cdAmt - already);
 
     // Build breakdown
     var rs = 'display:flex;justify-content:space-between;margin-bottom:0.28rem;';
@@ -2706,8 +2722,6 @@ function cmRecompute() {
         if (dtype === 'voucher') cdLabel += ' (' + (vtype === 'percent' ? vvalue + '% off' : '₱ off') + ')';
         html += '<div style="' + rs + '"><span style="' + amber + '">' + cdLabel + '</span><span style="' + amber + '">−₱' + cmFmt(cdAmt) + '</span></div>';
     }
-    if (celeb > 0)   html += '<div style="' + rs + '"><span style="' + amber + '">Celeb. Discount</span><span style="' + amber + '">−₱' + cmFmt(celeb) + '</span></div>';
-    if (advance > 0) html += '<div style="' + rs + '"><span style="' + amber + '">Advance payment</span><span style="' + amber + '">−₱' + cmFmt(advance) + '</span></div>';
     if (already > 0) html += '<div style="' + rs + '"><span style="' + gray + '">Already paid</span><span style="' + gray + '">−₱' + cmFmt(already) + '</span></div>';
     var tcolor = totalDue > 0 ? 'var(--brown)' : '#198754';
     html += '<div style="' + rs + 'border-top:1px solid var(--border2);padding-top:0.4rem;margin-top:0.15rem;font-weight:700;font-size:0.9rem;"><span>TOTAL DUE</span><span style="color:' + tcolor + ';">₱' + cmFmt(totalDue) + '</span></div>';
@@ -2736,6 +2750,7 @@ function openCompleteModal(apptId) {
     cmState.bookingDiscType= data.bookingDiscType;
     cmState.extrasTotal    = data.extrasTotal;
     cmState.alreadyPaid    = data.alreadyPaid;
+    cmState.isPaid         = (data.paymentStatus === 'paid');
 
     document.getElementById('cm-customer-name').textContent = data.name;
 
@@ -2752,14 +2767,16 @@ function openCompleteModal(apptId) {
     var vvalue = document.getElementById('cm-voucher-value');
     if (vtype)  vtype.value  = 'cash';
     if (vvalue) vvalue.value = '0';
-    var celebEl   = document.getElementById('cm-celeb-disc');
-    var advanceEl = document.getElementById('cm-advance-pay');
-    if (celebEl)   celebEl.value   = '0';
-    if (advanceEl) advanceEl.value = '0';
     var pinErr = document.getElementById('cm-pin-error');
     var pinInp = document.getElementById('cm-pin-input');
     if (pinErr) pinErr.textContent = '';
     if (pinInp) pinInp.value = '';
+
+    // Show/hide discount section based on whether payment was already collected
+    var discSec = document.getElementById('cm-disc-section');
+    var voucherInputs = document.getElementById('cm-voucher-inputs');
+    if (discSec)      discSec.style.display      = cmState.isPaid ? 'none' : 'block';
+    if (voucherInputs) voucherInputs.style.display = 'none';
 
     cmSetDiscount('none'); // resets buttons + calls cmRecompute
     document.getElementById('completeModal').style.display = 'flex';
@@ -2796,14 +2813,10 @@ function submitComplete() {
         if (hiddenPin) hiddenPin.value = pin;
     }
     var hiddenMethod  = document.getElementById('cp-method-'  + cmState.apptId);
-    var hiddenCeleb   = document.getElementById('cp-celeb-'   + cmState.apptId);
-    var hiddenAdvance = document.getElementById('cp-advance-' + cmState.apptId);
     var hiddenCdType  = document.getElementById('cp-cdtype-'  + cmState.apptId);
     var hiddenCvType  = document.getElementById('cp-cvtype-'  + cmState.apptId);
     var hiddenCvVal   = document.getElementById('cp-cvvalue-' + cmState.apptId);
     if (hiddenMethod)  hiddenMethod.value  = cmState.payMethod;
-    if (hiddenCeleb)   hiddenCeleb.value   = parseFloat(document.getElementById('cm-celeb-disc')?.value)  || 0;
-    if (hiddenAdvance) hiddenAdvance.value = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
     if (hiddenCdType)  hiddenCdType.value  = cmState.discType;
     if (hiddenCvType)  hiddenCvType.value  = document.getElementById('cm-voucher-type')?.value  || 'cash';
     if (hiddenCvVal)   hiddenCvVal.value   = document.getElementById('cm-voucher-value')?.value || '0';
@@ -3000,7 +3013,7 @@ function submitComplete() {
         </div>
 
         <!-- Discount selector -->
-        <div style="margin-bottom:1rem;">
+        <div id="ci-discount-area" style="margin-bottom:1rem;">
             <p style="font-size:0.8rem;font-weight:700;color:var(--brown);margin:0 0 0.5rem;">
                 Does the customer have a discount?
             </p>
@@ -3069,7 +3082,7 @@ function submitComplete() {
         </div>
 
         <!-- Price breakdown -->
-        <div style="background:var(--bg3);border-radius:10px;padding:0.85rem 1rem;margin-bottom:1rem;font-size:0.85rem;">
+        <div id="ci-price-breakdown-wrap" style="background:var(--bg3);border-radius:10px;padding:0.85rem 1rem;margin-bottom:1rem;font-size:0.85rem;">
             <div style="display:flex;justify-content:space-between;margin-bottom:0.35rem;">
                 <span style="color:var(--gray);">Original</span>
                 <span>₱<span id="ci-orig-amount">0.00</span></span>
@@ -3087,7 +3100,7 @@ function submitComplete() {
         <!-- Payment method -->
         <div style="margin-bottom:1rem;">
             <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Collect Payment</div>
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;">
                 <div id="ci-pay-btn-cash" onclick="ciSelectPayment('cash')"
                      style="padding:0.7rem 0.4rem;border:2px solid #C96A2C;background:#fff8f2;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
                     <div style="font-size:1rem;">💵</div>
@@ -3103,6 +3116,15 @@ function submitComplete() {
                     <div style="font-size:1rem;">🏦</div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
                 </div>
+                <div id="ci-pay-btn-pay_later" onclick="ciSelectPayment('pay_later')"
+                     style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
+                    <div style="font-size:1rem;">⏳</div>
+                    <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Pay Later</div>
+                </div>
+            </div>
+            <!-- Shown only when Pay Later is selected -->
+            <div id="ci-deferred-notice" style="display:none;margin-top:0.65rem;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;padding:0.75rem 0.9rem;font-size:0.82rem;color:#92400e;">
+                ⏳ Payment deferred — will be collected when the session is completed.
             </div>
         </div>
 
@@ -3115,6 +3137,8 @@ function submitComplete() {
             <input type="hidden" name="ci_discount_type"  id="ci-discount-type"    value="none">
             <input type="hidden" name="ci_discount_amount" id="ci-discount-amount" value="0">
             <input type="hidden" name="ci_final_amount"   id="ci-final-amount-input" value="">
+            <input type="hidden" name="paymongo_reference" id="ci-ref-hidden"      value="">
+            <input type="hidden" name="paymongo_method"   id="ci-method-hidden"    value="">
             <?php if (is_cashier()): ?><input type="hidden" name="pin" id="ci-pin-hidden" value=""><?php endif; ?>
         </form>
 
@@ -3154,7 +3178,7 @@ function submitComplete() {
         </div>
 
         <!-- Completion discount selector -->
-        <div style="margin-bottom:0.65rem;">
+        <div id="cm-disc-section" style="margin-bottom:0.65rem;">
             <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">🎟️ Completion Discount</div>
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.35rem;">
                 <button type="button" id="cm-discbtn-none"     onclick="cmSetDiscount('none')"
@@ -3216,26 +3240,6 @@ function submitComplete() {
                      style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
                     <div style="font-size:1rem;">🏦</div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
-                </div>
-            </div>
-        </div>
-
-        <div style="margin-bottom:1rem;border-top:1px solid var(--border2);padding-top:0.85rem;">
-            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem;">Discounts &amp; Adjustments</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
-                <div>
-                    <label style="font-size:0.73rem;color:var(--gray);display:block;margin-bottom:2px;">Celeb. Discount 10% (₱)</label>
-                    <input type="number" id="cm-celeb-disc" step="0.01" min="0" value="0" placeholder="0.00"
-                           oninput="cmRecompute()"
-                           style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:8px;
-                                  background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
-                </div>
-                <div>
-                    <label style="font-size:0.73rem;color:var(--gray);display:block;margin-bottom:2px;">Advance Payment (₱)</label>
-                    <input type="number" id="cm-advance-pay" step="0.01" min="0" value="0" placeholder="0.00"
-                           oninput="cmRecompute()"
-                           style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:8px;
-                                  background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
                 </div>
             </div>
         </div>
@@ -3619,12 +3623,32 @@ function closeCheckinModal() {
 function ciSelectPayment(method) {
     ciState.payMethod = method;
     document.getElementById('ci-pay-method').value = method;
-    ['cash','qrph','bank'].forEach(function(m) {
+    ['cash','qrph','bank','pay_later'].forEach(function(m) {
         var btn = document.getElementById('ci-pay-btn-' + m);
         if (!btn) return;
         btn.style.borderColor = m === method ? '#C96A2C' : '#e5e7eb';
         btn.style.background  = m === method ? '#fff8f2' : '';
     });
+
+    var discArea   = document.getElementById('ci-discount-area');
+    var breakdown  = document.getElementById('ci-price-breakdown-wrap');
+    var deferred   = document.getElementById('ci-deferred-notice');
+    var voucherArea= document.getElementById('ci-voucher-area');
+    var verifyArea = document.getElementById('ci-verify-section');
+
+    if (method === 'pay_later') {
+        if (discArea)    discArea.style.display    = 'none';
+        if (voucherArea) voucherArea.style.display = 'none';
+        if (verifyArea)  verifyArea.style.display  = 'none';
+        if (breakdown)   breakdown.style.display   = 'none';
+        if (deferred)    deferred.style.display    = 'block';
+        // Reset discount state so submitCheckin skips ID verification
+        ciSelectDiscount('none');
+    } else {
+        if (discArea)   discArea.style.display    = 'block';
+        if (breakdown)  breakdown.style.display   = 'block';
+        if (deferred)   deferred.style.display    = 'none';
+    }
 }
 
 function ciSelectDiscount(type) {
