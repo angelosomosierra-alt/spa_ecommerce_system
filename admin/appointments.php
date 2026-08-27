@@ -1526,18 +1526,20 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     } else {
         $available = array_filter($get_qualified((int)$a['service_id']), fn($t) => !in_array($t['id'], $assigned_ids));
     }
+    $display_name  = !empty($a['order_customer_name']) ? $a['order_customer_name'] : $a['full_name'];
+    $display_phone = !empty($a['order_phone'])         ? $a['order_phone']         : $a['phone'];
 ?>
 
 <div class="appt-card"
      data-appt-id="<?php echo $appt_id; ?>"
-     data-search="<?php echo htmlspecialchars(strtolower($a['full_name'].' '.$a['service_name'].' '.date('M j Y g:i a', strtotime($a['appointment_date'])))); ?>"
+     data-search="<?php echo htmlspecialchars(strtolower($display_name.' '.$a['service_name'].' '.date('M j Y g:i a', strtotime($a['appointment_date'])))); ?>"
      style="border-left:3.5px solid <?php echo $bdr; ?>;">
 
     <!-- ── CARD HEADER (always visible, click to expand) ─────────────────── -->
     <div class="appt-card-header" onclick="toggleApptCard(this)">
         <div style="min-width:0;flex:1;">
             <p class="appt-name">
-                <?php echo htmlspecialchars($a['full_name']); ?>
+                <?php echo htmlspecialchars($display_name); ?>
                 <span style="background:<?php echo $bbg;?>;color:<?php echo $bfg;?>;padding:0.15rem 0.5rem;border-radius:20px;font-size:0.67rem;font-weight:700;vertical-align:middle;margin-left:0.35rem;"><?php echo $blabel; ?></span>
                 <?php if ($_has_discount_h): ?><span style="background:#fffbeb;color:#b45309;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fcd34d;margin-left:0.2rem;" title="Customer requested <?php echo htmlspecialchars($_dlbl_h); ?> discount — verify ID/voucher at check-in"><?php echo $_dico_h . ' ' . htmlspecialchars($_dlbl_h); ?></span><?php endif; ?>
                 <?php if (isset($conflict_appt_ids[$appt_id])): ?><span style="background:#fef3c7;color:#92400e;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fbbf24;margin-left:0.2rem;animation:pulse 2s infinite;">⚠️ Conflict</span><?php endif; ?>
@@ -1581,10 +1583,6 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:0.8rem 1.5rem;padding:1rem;background:var(--bg3);border-radius:10px;margin-bottom:1rem;border:1px solid var(--border2);">
         <div>
             <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">👤 Customer</div>
-            <?php
-            $display_name  = !empty($a['order_customer_name']) ? $a['order_customer_name'] : $a['full_name'];
-            $display_phone = !empty($a['order_phone'])         ? $a['order_phone']         : $a['phone'];
-            ?>
             <div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo htmlspecialchars($display_name); ?></div>
             <div style="font-size:0.74rem;color:var(--gray);"><?php echo htmlspecialchars($a['email']); ?></div>
             <?php if (!empty($display_phone)): ?>
