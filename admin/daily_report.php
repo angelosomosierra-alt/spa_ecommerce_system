@@ -1618,9 +1618,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                             <option value="valid">Valid 20%</option>
                         </select>
                     </td>
-                    <td style="padding:2px 3px;"><input type="number" id="er-comm_30"        class="ss-ec ss-ec-num" step="0.01" placeholder="0.00"></td>
-                    <td style="padding:2px 3px;"><input type="number" id="er-comm_20"        class="ss-ec ss-ec-num" step="0.01" placeholder="0.00"></td>
-                    <td style="padding:2px 3px;"><input type="number" id="er-comm_15"        class="ss-ec ss-ec-num" step="0.01" placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_30"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_20"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_15"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
                     <td style="padding:2px 3px;">
                         <select id="er-disc_50_staff_sel" class="ss-ec ss-ec-sel">
                             <option value="none">None</option>
@@ -1752,11 +1752,12 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         // Commission = Promo × rate% for this stylist+service
         var svcId  = sfSvc     ? (parseInt(sfSvc.value)    || 0) : 0;
         var stylId = sfStylist ? (parseInt(sfStylist.value) || 0) : 0;
+        var pct = 0;
         var c30 = 0, c20 = 0, c15 = 0, noteText = '';
         if (svcId && stylId) {
             var key = stylId + '_' + svcId;
             if (Object.prototype.hasOwnProperty.call(SS_COMMISSIONS, key)) {
-                var pct = SS_COMMISSIONS[key];
+                pct = SS_COMMISSIONS[key];
                 var amt = promo * pct / 100;
                 if      (pct === 30) { c30 = amt; }
                 else if (pct === 20) { c20 = amt; }
@@ -1764,6 +1765,32 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 else                 { c30 = amt; noteText = 'rate ' + pct + '%'; }
             } else { noteText = 'no commission set'; }
         }
+
+        // Lock/unlock: only the field matching this therapist's rate is editable
+        var activeField = null;
+        if (pct >= 28 && pct <= 32)      activeField = sfC30;
+        else if (pct >= 18 && pct <= 22) activeField = sfC20;
+        else if (pct >= 13 && pct <= 17) activeField = sfC15;
+        else if (pct > 0)                activeField = sfC30; // fallback for non-standard rates
+
+        [sfC30, sfC20, sfC15].forEach(function(f) {
+            if (!f) return;
+            if (f === activeField) {
+                f.readOnly = false;
+                f.classList.remove('ss-ec-ro');
+            } else {
+                f.readOnly = true;
+                f.classList.add('ss-ec-ro');
+            }
+        });
+
+        // If no stylist/service selected yet, lock all three
+        if (!svcId || !stylId || !pct) {
+            [sfC30, sfC20, sfC15].forEach(function(f) {
+                if (f) { f.readOnly = true; f.classList.add('ss-ec-ro'); }
+            });
+        }
+
         if (!_commUserEdited) {
             if (sfC30) sfC30.value = c30.toFixed(2);
             if (sfC20) sfC20.value = c20.toFixed(2);
@@ -1794,9 +1821,15 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     if (sfPromo) sfPromo.addEventListener('input', function() { _promoUserEdited = true; recompute(); });
     if (sfPwdSel) sfPwdSel.addEventListener('change', function() { _promoUserEdited = false; _commUserEdited = false; recompute(); });
     if (sfStfSel) sfStfSel.addEventListener('change', function() { _promoUserEdited = false; _commUserEdited = false; recompute(); });
-    if (sfC30) sfC30.addEventListener('input', function() { _commUserEdited = true; recompute(); });
-    if (sfC20) sfC20.addEventListener('input', function() { _commUserEdited = true; recompute(); });
-    if (sfC15) sfC15.addEventListener('input', function() { _commUserEdited = true; recompute(); });
+    if (sfC30) sfC30.addEventListener('input', function() {
+        if (!this.readOnly) { _commUserEdited = true; recompute(); }
+    });
+    if (sfC20) sfC20.addEventListener('input', function() {
+        if (!this.readOnly) { _commUserEdited = true; recompute(); }
+    });
+    if (sfC15) sfC15.addEventListener('input', function() {
+        if (!this.readOnly) { _commUserEdited = true; recompute(); }
+    });
 
     // ── Helpers ──────────────────────────────────────────────────────────────
     function fmtNum(n) { return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
@@ -2001,6 +2034,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     if (sfStfHid) sfStfHid.value = '0';
                     if (sfPromo)  { sfPromo.value=''; sfPromo.readOnly=false; sfPromo.classList.remove('ss-ec-ro'); }
                     if (sfC30) sfC30.value=''; if (sfC20) sfC20.value=''; if (sfC15) sfC15.value='';
+                    if (sfC30) { sfC30.readOnly = true; sfC30.classList.add('ss-ec-ro'); }
+                    if (sfC20) { sfC20.readOnly = true; sfC20.classList.add('ss-ec-ro'); }
+                    if (sfC15) { sfC15.readOnly = true; sfC15.classList.add('ss-ec-ro'); }
                     if (sfNet)    sfNet.value='';
                     if (commNote) commNote.textContent='';
                     _promoUserEdited = false;
