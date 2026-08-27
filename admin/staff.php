@@ -162,6 +162,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pin'])) {
     }
 }
 
+// ── RESET STAFF PASSWORD ──────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_password'])) {
+    verify_csrf_token();
+    $reset_user_id        = intval($_POST['reset_user_id']        ?? 0);
+    $new_password         = $_POST['new_password']                ?? '';
+    $confirm_new_password = $_POST['confirm_new_password']        ?? '';
+    $rp_errors = [];
+
+    if ($reset_user_id <= 0) {
+        $rp_errors[] = 'Invalid account.';
+    } elseif ($reset_user_id === (int)$_SESSION['user_id']) {
+        $rp_errors[] = 'Use your own account settings to change your own password.';
+    }
+    if ($new_password !== $confirm_new_password)
+        $rp_errors[] = 'Passwords do not match.';
+    if (strlen($new_password) < 8)
+        $rp_errors[] = 'Password must be at least 8 characters.';
+    if (!preg_match('/[A-Z]/', $new_password))
+        $rp_errors[] = 'Password must contain at least one uppercase letter.';
+    if (!preg_match('/[0-9]/', $new_password))
+        $rp_errors[] = 'Password must contain at least one number.';
+    if (!preg_match('/[^A-Za-z0-9]/', $new_password))
+        $rp_errors[] = 'Password must contain at least one special character.';
+
+    if (empty($rp_errors)) {
+        $chk_rp = $conn->prepare("SELECT id, full_name, admin_role FROM users WHERE id=? AND role='admin'");
+        $chk_rp->bind_param("i", $reset_user_id); $chk_rp->execute();
+        $rp_target = $chk_rp->get_result()->fetch_assoc(); $chk_rp->close();
+        if (!$rp_target) $rp_errors[] = 'Staff account not found.';
+    }
+
+    if (empty($rp_errors)) {
+        $hashed_rp = password_hash($new_password, PASSWORD_DEFAULT);
+        $upd_rp = $conn->prepare("UPDATE users SET password=?, session_token=NULL, session_started=NULL WHERE id=?");
+        $upd_rp->bind_param("si", $hashed_rp, $reset_user_id); $upd_rp->execute(); $upd_rp->close();
+        $msg = "✅ Password for <strong>" . htmlspecialchars($rp_target['full_name']) . "</strong> has been reset. The new password will not be shown again.";
+        $msg_type = 'success';
+    } else {
+        $msg = implode(' ', $rp_errors); $msg_type = 'danger';
+    }
+}
+
 // ── DELETE STAFF ACCOUNT ──────────────────────────────────────────────────────
 if (isset($_GET['delete_cashier'])) {
     $del_id      = intval($_GET['delete_cashier']);
@@ -966,8 +1008,10 @@ require_once 'admin_header.php';
                         <td style="font-family:monospace;font-size:0.85rem;"><?php echo htmlspecialchars($s['username']); ?></td>
                         <td style="font-size:0.82rem;color:var(--gray);"><?php echo htmlspecialchars($s['email']); ?></td>
                         <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($s['created_at'])); ?></td>
-                        <td>
+                        <td style="white-space:nowrap;">
                             <?php if ($s['id'] !== (int)$_SESSION['user_id']): ?>
+                            <button type="button" class="btn btn-secondary btn-sm" style="font-size:0.72rem;"
+                                    onclick="openResetPwdModal(<?php echo $s['id']; ?>, '<?php echo htmlspecialchars(addslashes($s['full_name'])); ?>')">🔑 Reset Password</button>
                             <a href="staff.php?delete_cashier=<?php echo $s['id']; ?>&tab=cashiers"
                                class="btn btn-danger btn-sm" style="font-size:0.72rem;"
                                onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
@@ -2222,6 +2266,72 @@ function showCommission(therapistId) {
 
 <?php endif; ?>
 
+<!-- ── Reset Password Modal ───────────────────────────────────────────────── -->
+<div id="resetPwdOverlay" style="display:none;position:fixed;inset:0;z-index:10001;
+     background:rgba(30,20,10,0.55);backdrop-filter:blur(4px);
+     align-items:center;justify-content:center;"
+     onclick="if(event.target===this)closeResetPwdModal()">
+    <div style="background:#FAF3E8;border-radius:14px;padding:1.75rem 1.6rem;max-width:400px;width:90vw;
+                box-shadow:0 20px 60px rgba(0,0,0,0.22);">
+        <div style="text-align:center;margin-bottom:1.2rem;">
+            <div style="font-size:1.5rem;margin-bottom:0.3rem;">🔑</div>
+            <div style="font-weight:700;font-size:1rem;color:#3B2A1A;">Reset Password</div>
+            <div style="font-size:0.8rem;color:#6b5c4c;margin-top:0.25rem;">
+                Setting new password for: <strong id="resetPwdName"></strong>
+            </div>
+        </div>
+        <form method="POST">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="reset_password" value="1">
+            <input type="hidden" name="reset_user_id" id="resetPwdUserId" value="">
+
+            <div style="margin-bottom:0.9rem;">
+                <label style="display:block;font-size:0.8rem;font-weight:600;color:#3B2A1A;margin-bottom:0.3rem;">New Password</label>
+                <div style="position:relative;">
+                    <input type="password" name="new_password" id="resetPwdInput" required
+                           style="width:100%;padding:0.6rem 2.4rem 0.6rem 0.75rem;border:1px solid #c8b89a;
+                                  border-radius:8px;font-size:0.88rem;color:#3B2A1A;background:#fff;
+                                  box-sizing:border-box;"
+                           oninput="checkResetPwd(this.value)">
+                    <button type="button" onclick="togglePwd('resetPwdInput')"
+                            style="position:absolute;right:0.5rem;top:50%;transform:translateY(-50%);
+                                   background:none;border:none;cursor:pointer;font-size:0.95rem;
+                                   padding:0;color:#A07850;">👁</button>
+                </div>
+            </div>
+
+            <div style="margin-bottom:0.9rem;">
+                <label style="display:block;font-size:0.8rem;font-weight:600;color:#3B2A1A;margin-bottom:0.3rem;">Confirm New Password</label>
+                <input type="password" name="confirm_new_password" id="resetPwdConfirm" required
+                       style="width:100%;padding:0.6rem 0.75rem;border:1px solid #c8b89a;
+                              border-radius:8px;font-size:0.88rem;color:#3B2A1A;background:#fff;
+                              box-sizing:border-box;">
+            </div>
+
+            <div style="font-size:0.76rem;color:#6b5c4c;margin-bottom:1rem;background:#fff7ee;
+                        border-radius:8px;padding:0.65rem 0.9rem;border:1px solid #e8d5b8;">
+                <div id="rchk-len"   style="color:var(--gray);">✗ At least 8 characters</div>
+                <div id="rchk-upper" style="color:var(--gray);">✗ One uppercase letter</div>
+                <div id="rchk-num"   style="color:var(--gray);">✗ One number</div>
+                <div id="rchk-spec"  style="color:var(--gray);">✗ One special character</div>
+            </div>
+
+            <div style="display:flex;gap:0.6rem;">
+                <button type="button" onclick="closeResetPwdModal()"
+                        style="flex:1;padding:0.6rem;border:1px solid #c8b89a;border-radius:8px;
+                               background:#fff;color:#3B2A1A;cursor:pointer;font-size:0.88rem;font-weight:600;">
+                    Cancel
+                </button>
+                <button type="submit"
+                        style="flex:2;padding:0.6rem;border:none;border-radius:8px;
+                               background:#C96A2C;color:#fff;font-weight:700;cursor:pointer;font-size:0.88rem;">
+                    🔑 Reset Password
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 function selectRole(role) {
     document.getElementById('role_type_input').value = role;
@@ -2267,6 +2377,30 @@ function checkPwd(val) {
 function togglePwd(id) {
     const el = document.getElementById(id);
     if (el) el.type = el.type === 'password' ? 'text' : 'password';
+}
+function openResetPwdModal(userId, fullName) {
+    document.getElementById('resetPwdUserId').value   = userId;
+    document.getElementById('resetPwdName').textContent = fullName;
+    document.getElementById('resetPwdInput').value    = '';
+    document.getElementById('resetPwdConfirm').value  = '';
+    checkResetPwd('');
+    document.getElementById('resetPwdOverlay').style.display = 'flex';
+    setTimeout(function() { document.getElementById('resetPwdInput').focus(); }, 80);
+}
+function closeResetPwdModal() {
+    document.getElementById('resetPwdOverlay').style.display = 'none';
+}
+function checkResetPwd(val) {
+    const set = (id, ok) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.color = ok ? 'var(--green)' : 'var(--gray)';
+        el.textContent = (ok ? '✓ ' : '✗ ') + el.textContent.slice(2);
+    };
+    set('rchk-len',   val.length >= 8);
+    set('rchk-upper', /[A-Z]/.test(val));
+    set('rchk-num',   /[0-9]/.test(val));
+    set('rchk-spec',  /[^A-Za-z0-9]/.test(val));
 }
 </script>
 
