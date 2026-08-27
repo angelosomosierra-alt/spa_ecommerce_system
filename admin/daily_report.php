@@ -1618,9 +1618,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                             <option value="valid">Valid 20%</option>
                         </select>
                     </td>
-                    <td style="padding:2px 3px;"><input type="number" id="er-comm_30"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
-                    <td style="padding:2px 3px;"><input type="number" id="er-comm_20"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
-                    <td style="padding:2px 3px;"><input type="number" id="er-comm_15"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_30"        class="ss-ec ss-ec-num" step="0.01" placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_20"        class="ss-ec ss-ec-num" step="0.01" placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_15"        class="ss-ec ss-ec-num" step="0.01" placeholder="0.00"></td>
                     <td style="padding:2px 3px;">
                         <select id="er-disc_50_staff_sel" class="ss-ec ss-ec-sel">
                             <option value="none">None</option>
@@ -1723,6 +1723,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     var sfNet    = document.getElementById('er-net_sales');
     var commNote = document.getElementById('ss-comm-note');
     var _promoUserEdited = false;
+    var _commUserEdited  = false;
 
     // ── Auto-compute ─────────────────────────────────────────────────────────
     function recompute() {
@@ -1763,19 +1764,24 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 else                 { c30 = amt; noteText = 'rate ' + pct + '%'; }
             } else { noteText = 'no commission set'; }
         }
-        if (sfC30) sfC30.value = c30.toFixed(2);
-        if (sfC20) sfC20.value = c20.toFixed(2);
-        if (sfC15) sfC15.value = c15.toFixed(2);
+        if (!_commUserEdited) {
+            if (sfC30) sfC30.value = c30.toFixed(2);
+            if (sfC20) sfC20.value = c20.toFixed(2);
+            if (sfC15) sfC15.value = c15.toFixed(2);
+        }
         if (commNote) commNote.textContent = noteText;
 
-        // Net Sales = Promo − commission
-        var net = promo - (c30 + c20 + c15);
+        // Net Sales = Promo − commission (read actual field values to honour manual overrides)
+        var actualC30 = parseFloat(sfC30 ? sfC30.value : 0) || 0;
+        var actualC20 = parseFloat(sfC20 ? sfC20.value : 0) || 0;
+        var actualC15 = parseFloat(sfC15 ? sfC15.value : 0) || 0;
+        var net = promo - (actualC30 + actualC20 + actualC15);
         if (sfNet) sfNet.value = net.toFixed(2);
     }
 
     // ── Event wiring ─────────────────────────────────────────────────────────
     if (sfSvc) sfSvc.addEventListener('change', function() {
-        _promoUserEdited = false;
+        _promoUserEdited = false; _commUserEdited = false;
         if (sfRp) {
             var opt = sfSvc.options[sfSvc.selectedIndex];
             var price = opt ? (parseFloat(opt.dataset.price) || 0) : 0;
@@ -1783,11 +1789,14 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         }
         recompute();
     });
-    if (sfStylist) sfStylist.addEventListener('change', recompute);
-    if (sfRp) sfRp.addEventListener('input', function() { _promoUserEdited = false; recompute(); });
+    if (sfStylist) sfStylist.addEventListener('change', function() { _commUserEdited = false; recompute(); });
+    if (sfRp) sfRp.addEventListener('input', function() { _promoUserEdited = false; _commUserEdited = false; recompute(); });
     if (sfPromo) sfPromo.addEventListener('input', function() { _promoUserEdited = true; recompute(); });
-    if (sfPwdSel) sfPwdSel.addEventListener('change', function() { _promoUserEdited = false; recompute(); });
-    if (sfStfSel) sfStfSel.addEventListener('change', function() { _promoUserEdited = false; recompute(); });
+    if (sfPwdSel) sfPwdSel.addEventListener('change', function() { _promoUserEdited = false; _commUserEdited = false; recompute(); });
+    if (sfStfSel) sfStfSel.addEventListener('change', function() { _promoUserEdited = false; _commUserEdited = false; recompute(); });
+    if (sfC30) sfC30.addEventListener('input', function() { _commUserEdited = true; recompute(); });
+    if (sfC20) sfC20.addEventListener('input', function() { _commUserEdited = true; recompute(); });
+    if (sfC15) sfC15.addEventListener('input', function() { _commUserEdited = true; recompute(); });
 
     // ── Helpers ──────────────────────────────────────────────────────────────
     function fmtNum(n) { return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
@@ -1995,6 +2004,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     if (sfNet)    sfNet.value='';
                     if (commNote) commNote.textContent='';
                     _promoUserEdited = false;
+                    _commUserEdited  = false;
                     var refEl = document.getElementById('er-is_refund');
                     if (refEl) refEl.checked = false;
                     if (sfSvc) sfSvc.focus();
