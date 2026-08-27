@@ -315,7 +315,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 // charged_price stored as total (per-person × people_count)
                 // so Complete action can safely do charged_price / people_count
                 $appt_charged_total = $charged_price * $people_count;
-                $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?)");
+                $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)");
                 $svc_type_val = ($rate_type === 'home') ? 'home' : 'onsite';
                 $appt_stmt->bind_param("iiisissids", $walkin_user_id, $item_id, $order_item_id, $booking_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $appt_charged_total, $customer_note);
                 $appt_stmt->execute();
@@ -344,16 +344,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     $svc_buffer  = ($rate_type === 'home') ? 30 : 0;
                     // FIXED: Bug 3 — new slot duration = session_time × people_handled (back-to-back model)
                     // Also scale existing appointments' end by their people_handled to avoid double-booking
-                    $cf = $conn->prepare("SELECT COUNT(*) AS cnt FROM appointment_therapists at2 JOIN appointments a2 ON at2.appointment_id = a2.id JOIN services s2 ON a2.service_id = s2.id WHERE at2.therapist_id = ? AND a2.status IN ('approved','assigned','pending') AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE) < (? + INTERVAL ? MINUTE) AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + IF(a2.service_type='home',30,0)) MINUTE) > (? - INTERVAL ? MINUTE)");
+                    $cf = $conn->prepare("SELECT a2.id AS appt_id, a2.appointment_date, a2.status,
+                            s2.name AS service_name,
+                            COALESCE(o2.customer_name, u2.full_name, 'Walk-in') AS customer_name
+                        FROM appointment_therapists at2
+                        JOIN appointments a2 ON at2.appointment_id = a2.id
+                        JOIN services s2 ON a2.service_id = s2.id
+                        LEFT JOIN order_items oi2 ON a2.order_item_id = oi2.id
+                        LEFT JOIN orders o2 ON oi2.order_id = o2.id
+                        LEFT JOIN users u2 ON a2.user_id = u2.id
+                        WHERE at2.therapist_id = ?
+                          AND a2.status IN ('approved','assigned','pending')
+                          AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE)
+                                < (? + INTERVAL ? MINUTE)
+                          AND (a2.appointment_date + INTERVAL (s2.session_time * IFNULL(at2.people_handled,1) + IF(a2.service_type='home',30,0)) MINUTE)
+                                > (? - INTERVAL ? MINUTE)
+                        LIMIT 3");
                     $end_mins = ($svc_session * $people_handled_svc) + $svc_buffer;
                     $cf->bind_param("isisi", $therapist_id, $booking_date, $end_mins, $booking_date, $svc_buffer);
                     $cf->execute();
-                    $cf_count = (int)$cf->get_result()->fetch_assoc()['cnt']; $cf->close();
+                    $cf_rows = $cf->get_result()->fetch_all(MYSQLI_ASSOC); $cf->close();
+                    $cf_count = count($cf_rows);
 
                     if ($cf_count > 0) {
-                        $upd_status = $conn->prepare("UPDATE appointments SET status='pending' WHERE id=?");
-                        $upd_status->bind_param("i", $appointment_id); $upd_status->execute(); $upd_status->close();
-                        $walkin_message .= " ⚠️ Note: Selected therapist has a conflicting appointment — saved without therapist assignment.";
+                        // appointment already inserted as 'pending'; no status update needed
+
+                        // Build conflict details for the warning tooltip
+                        $cf_details = [];
+                        foreach ($cf_rows as $_cf) {
+                            $cf_time = date('M j, g:i A', strtotime($_cf['appointment_date']));
+                            $cf_name = htmlspecialchars($_cf['customer_name']);
+                            $cf_svc  = htmlspecialchars($_cf['service_name']);
+                            $cf_stat = ucfirst($_cf['status']);
+                            $cf_details[] = "<div style='margin:2px 0;'><strong>{$cf_name}</strong> — {$cf_svc}<br><span style='font-size:0.75rem;color:#6b7280;'>{$cf_time} · {$cf_stat}</span></div>";
+                        }
+                        $cf_tooltip = implode('', $cf_details);
+                        $cf_plural  = $cf_count > 1 ? "s ({$cf_count})" : "";
+
+                        $walkin_message .= " ⚠️ Note: Selected therapist has a conflicting appointment — saved without therapist assignment. "
+                            . "<span style='position:relative;display:inline-block;cursor:help;border-bottom:1px dashed #b45309;color:#b45309;font-weight:600;' "
+                            . "onmouseenter=\"this.querySelector('.cf-tip').style.display='block'\" "
+                            . "onmouseleave=\"this.querySelector('.cf-tip').style.display='none'\" "
+                            . "onclick=\"var t=this.querySelector('.cf-tip');t.style.display=t.style.display==='block'?'none':'block'\">"
+                            . "View conflict{$cf_plural}"
+                            . "<div class='cf-tip' style='display:none;position:absolute;bottom:120%;left:0;min-width:260px;"
+                            . "background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:0.65rem 0.85rem;"
+                            . "box-shadow:0 8px 24px rgba(0,0,0,0.15);z-index:999;font-size:0.8rem;font-weight:400;"
+                            . "color:#3B2A1A;text-align:left;white-space:normal;'>"
+                            . "<div style='font-weight:700;margin-bottom:4px;font-size:0.72rem;color:#92400e;"
+                            . "text-transform:uppercase;letter-spacing:0.03em;'>Conflicting Appointment{$cf_plural}</div>"
+                            . $cf_tooltip
+                            . "</div></span>";
                     } else {
                         $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
                         $cm->bind_param("ii", $therapist_id, $item_id); $cm->execute();
@@ -374,6 +415,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         }
                         $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
                         $at->bind_param("iidi", $appointment_id, $therapist_id, $commission, $people_handled_svc); $at->execute(); $at->close();
+
+                        // Therapist confirmed — move pending → assigned
+                        $upd_assigned = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=? AND status='pending'");
+                        $upd_assigned->bind_param("i", $appointment_id); $upd_assigned->execute(); $upd_assigned->close();
 
                         $is_future = strtotime($booking_date) > (time() + 1800);
                         if (!$is_future) {
