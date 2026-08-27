@@ -1764,7 +1764,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         </div>
         <?php endif; ?>
 
-        <?php if ($status === 'pending'): ?>
+        <?php if (in_array($status, ['pending', 'assigned'])): ?>
         <div style="margin-top:0.85rem;padding:1rem;background:rgba(201,106,44,0.06);
                     border:1px solid rgba(201,106,44,0.2);border-radius:10px;">
             <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.75rem;
@@ -1772,7 +1772,13 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <span>💆 Therapist Assignment — <?php echo $t_count; ?>/<?php echo $people; ?> covered</span>
                 <?php if ($t_count < $people): ?>
                 <span style="font-size:0.7rem;background:#fff3cd;color:#664d03;padding:0.15rem 0.5rem;
-                             border-radius:20px;font-weight:700;">Required before approving</span>
+                             border-radius:20px;font-weight:700;">
+                    <?php echo $status === 'assigned' ? 'Edit assignment' : 'Required before approving'; ?>
+                </span>
+                <?php endif; ?>
+                <?php if ($t_count >= $people && $status === 'assigned'): ?>
+                <span style="font-size:0.7rem;background:#d1fae5;color:#065f46;padding:0.15rem 0.5rem;
+                             border-radius:20px;font-weight:700;">✓ All covered — edit below</span>
                 <?php endif; ?>
             </div>
 
@@ -1843,7 +1849,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary btn-sm"
                         style="margin-top:0.25rem;font-size:0.8rem;padding:0.4rem 0.9rem;width:100%;"
                         <?php if (is_cashier()): ?>onclick="openPinGate('Save Therapist Assignment',this.closest('form'))"<?php endif; ?>>
-                    💾 Save Therapist Assignment
+                    <?php echo $status === 'assigned' ? '💾 Update Therapist Assignment' : '💾 Save Therapist Assignment'; ?>
                 </button>
             </form>
 
