@@ -2584,6 +2584,48 @@ function clearApptSearch() {
     filterAdminAppointments('');
 }
 
+// ── New-appointment live banner ───────────────────────────────────────────────
+(function() {
+    var lastSeenId = 0;
+    document.querySelectorAll('.appt-card[data-appt-id]').forEach(function(el) {
+        var id = parseInt(el.getAttribute('data-appt-id'), 10);
+        if (id > lastSeenId) lastSeenId = id;
+    });
+
+    var params     = new URLSearchParams(window.location.search);
+    var filterDate = params.get('filter_date') || params.get('appt_date') || '';
+    var range      = params.get('range') || '';
+
+    var banner = null;
+
+    function showBanner(count) {
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.style.cssText = 'position:fixed;top:1rem;left:50%;transform:translateX(-50%);'
+                + 'background:#C96A2C;color:#fff;font-size:0.85rem;font-weight:700;'
+                + 'padding:0.5rem 1.25rem;border-radius:999px;cursor:pointer;z-index:99999;'
+                + 'box-shadow:0 4px 16px rgba(0,0,0,0.22);white-space:nowrap;';
+            banner.onclick = function() { window.location.reload(); };
+            document.body.appendChild(banner);
+        }
+        banner.textContent = '🆕 ' + count + ' new appointment' + (count === 1 ? '' : 's') + ' — Click to view';
+    }
+
+    function pollNewAppts() {
+        var url = 'appt_poll.php?since_id=' + lastSeenId
+            + '&filter_date=' + encodeURIComponent(filterDate)
+            + '&range=' + encodeURIComponent(range);
+        fetch(url, { credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(data) {
+                if (data && data.new_count > 0) showBanner(data.new_count);
+            })
+            .catch(function() { /* silent — network hiccup, keep last known state */ });
+    }
+
+    setInterval(pollNewAppts, 3000);
+})();
+
 // ── COMPLETE PAYMENT MODAL ────────────────────────────────────────────────────
 var cmData  = window.cmData || {};
 var cmState = { apptId: 0, payMethod: 'cash', discType: 'none' };
