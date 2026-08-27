@@ -160,13 +160,13 @@ $today_roster = $conn->query("
            AND ap.status NOT IN ('declined','completed')
         ) AS today_appts,
 
-        -- is_assigned: currently handling an approved/assigned appointment
+        -- is_assigned: currently handling an approved appointment
         (SELECT COUNT(*)
          FROM appointment_therapists at2
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status IN ('approved','assigned')
+           AND ap.status = 'approved'
         ) AS is_assigned,
 
         -- Current appointment: service name
@@ -176,7 +176,7 @@ $today_roster = $conn->query("
          JOIN services s ON ap.service_id = s.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status IN ('approved','assigned')
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_service,
@@ -187,7 +187,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status IN ('approved','assigned')
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_appt_time,
@@ -199,7 +199,7 @@ $today_roster = $conn->query("
          JOIN users u ON ap.user_id = u.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status IN ('approved','assigned')
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_customer,
@@ -210,7 +210,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status IN ('approved','assigned')
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_people,
@@ -221,7 +221,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status IN ('approved','assigned')
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_appt_id,
