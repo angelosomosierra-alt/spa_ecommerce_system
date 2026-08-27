@@ -1818,14 +1818,18 @@ document.addEventListener('DOMContentLoaded', () => {
                         margin-bottom:1rem;padding-bottom:0.75rem;border-bottom:2px solid var(--border2);">
             </div>
 
-            <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:0.5rem;
+            <div style="display:grid;grid-template-columns:2fr 0.7fr 0.8fr 1fr;gap:0.5rem;
                         padding:0.5rem 0.75rem;background:var(--bg3);border-radius:8px;
                         margin-bottom:0.5rem;font-size:0.73rem;font-weight:700;
                         color:var(--gray);border:1px solid var(--border2);">
                 <div>Service (Regular Price)</div>
                 <div style="text-align:center;">
-                    Commission %<br>
-                    <span style="font-weight:400;font-size:0.68rem;">Regular / Home / Hotel</span>
+                    %<br>
+                    <span style="font-weight:400;font-size:0.68rem;">Select rate</span>
+                </div>
+                <div style="text-align:center;">
+                    Commission ₱<br>
+                    <span style="font-weight:400;font-size:0.68rem;">Preview</span>
                 </div>
                 <div style="text-align:center;">
                     Influencer ₱<br>
@@ -1929,14 +1933,20 @@ function showCommission(therapistId) {
             totalShown++;
 
             const row = document.createElement('div');
-            row.style.cssText = 'display:grid;grid-template-columns:2fr 1fr 1fr;gap:0.5rem;align-items:center;padding:0.45rem 0.75rem;border-radius:8px;margin-bottom:0.3rem;'
+            row.style.cssText = 'display:grid;grid-template-columns:2fr 0.7fr 0.8fr 1fr;gap:0.5rem;align-items:center;padding:0.45rem 0.75rem;border-radius:8px;margin-bottom:0.3rem;'
                 + (missingComm
                     ? 'background:rgba(234,179,8,0.1);border:1.5px solid rgba(234,179,8,0.5);'
                     : 'background:var(--bg3);border:1px solid var(--border2);');
             const price = parseFloat(svc.price).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+            var pctNum   = parseFloat(s.pct) || 0;
+            var selPct   = pctNum >= 28 ? 30 : pctNum >= 18 ? 20 : pctNum >= 13 ? 15 : 0;
+            var pctVal   = parseFloat(s.pct) || 0;
+            var svcPrice = parseFloat(svc.price) || 0;
+            var previewAmt = pctVal > 0 ? '₱' + (svcPrice * pctVal / 100).toFixed(2) : '';
             row.innerHTML = `
                 <div>
                     <input type="hidden" name="svc_id[]" value="${svc.id}">
+                    <span data-svc-price="${svc.price}" style="display:none;"></span>
                     <div style="font-size:0.83rem;font-weight:600;color:var(--brown);">
                         ${svc.name}
                         ${missingComm ? '<span style="background:rgba(234,179,8,0.15);color:#92400e;font-size:0.62rem;padding:0.1rem 0.4rem;border-radius:20px;margin-left:0.3rem;font-weight:700;">⚠️ NO COMMISSION</span>' : ''}
@@ -1944,9 +1954,18 @@ function showCommission(therapistId) {
                     <div style="font-size:0.7rem;color:var(--gray);">Regular: ₱${price}</div>
                 </div>
                 <div>
-                    <input type="number" name="svc_percent[]" value="${s.pct !== '' ? s.pct : ''}"
-                           min="0" max="100" step="0.01" placeholder="e.g. 35" style="${iStyle}${missingComm ? 'border-color:rgba(234,179,8,0.6);' : ''}">
-                    <div style="font-size:0.66rem;color:var(--gray);text-align:center;margin-top:2px;">%</div>
+                    <select name="svc_percent[]" onchange="updateCommPreview(this)"
+                            style="${iStyle}${missingComm ? 'border-color:rgba(234,179,8,0.6);' : ''}">
+                        <option value="0"${selPct === 0 ? ' selected' : ''}>— %</option>
+                        <option value="15"${selPct === 15 ? ' selected' : ''}>15%</option>
+                        <option value="20"${selPct === 20 ? ' selected' : ''}>20%</option>
+                        <option value="30"${selPct === 30 ? ' selected' : ''}>30%</option>
+                    </select>
+                </div>
+                <div>
+                    <input type="text" readonly value="${previewAmt}"
+                           style="${iStyle}opacity:0.7;cursor:default;"
+                           data-preview="1">
                 </div>
                 <div>
                     <input type="number" name="svc_flat[]" value="${s.flat !== '' ? s.flat : ''}"
@@ -1975,6 +1994,18 @@ function showCommission(therapistId) {
         warn.innerHTML = `⚠️ <strong>${missingCount} service(s)</strong> have no commission rate set yet. They are highlighted below.`;
         document.getElementById('commission-therapist-name').after(warn);
     }
+}
+function updateCommPreview(sel) {
+    var row = sel.closest('div[style*="grid"]');
+    if (!row) return;
+    var preview = row.querySelector('[data-preview]');
+    var priceEl = row.querySelector('[data-svc-price]');
+    if (!preview || !priceEl) return;
+    var price = parseFloat(priceEl.dataset.svcPrice) || 0;
+    var pct   = parseFloat(sel.value) || 0;
+    preview.value = pct > 0
+        ? '₱' + (price * pct / 100).toFixed(2)
+        : '';
 }
 </script>
 

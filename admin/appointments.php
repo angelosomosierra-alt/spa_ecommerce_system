@@ -373,9 +373,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
             $es_cm->bind_param("ii", $es_therapist_id, $es_service_id); $es_cm->execute();
             $es_cm_row = $es_cm->get_result()->fetch_assoc(); $es_cm->close();
             if ($es_cm_row) {
-                $es_commission = $es_rate_type === 'influencer'
-                    ? floatval($es_cm_row['influencer_flat_rate'])
-                    : round($es_charged * floatval($es_cm_row['commission_percent']) / 100, 2);
+                if ($es_rate_type === 'influencer') {
+                    $es_commission = floatval($es_cm_row['influencer_flat_rate']);
+                } elseif ($es_rate_type === 'hotel') {
+                    $es_reg_q = $conn->prepare("SELECT price FROM services WHERE id=? LIMIT 1");
+                    $es_reg_q->bind_param("i", $es_service_id); $es_reg_q->execute();
+                    $es_reg_price = floatval($es_reg_q->get_result()->fetch_assoc()['price'] ?? 0); $es_reg_q->close();
+                    $es_commission = round($es_reg_price * floatval($es_cm_row['commission_percent']) / 100, 2);
+                } else {
+                    $es_commission = round($es_charged * floatval($es_cm_row['commission_percent']) / 100, 2);
+                }
             }
         }
 
@@ -1082,11 +1089,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $rate_type_appt = $appt['rate_type'] ?? 'regular';
                         // FIXED: Bug 2 — charged_for_commission is now the TOTAL for all people;
                         // divide by people_count to get per-person price, then multiply by people_handled
-                        $people_total    = max(1, intval($appt['people_count'] ?? 1));
+                        $people_total     = max(1, intval($appt['people_count'] ?? 1));
                         $per_person_price = $charged_for_commission / $people_total;
-                        $commission_amt = ($rate_type_appt === 'influencer')
-                            ? floatval($cm_row['influencer_flat_rate']) * $ph
-                            : round($per_person_price * $ph * floatval($cm_row['commission_percent']) / 100, 2);
+                        if ($rate_type_appt === 'influencer') {
+                            $commission_amt = floatval($cm_row['influencer_flat_rate']) * $ph;
+                        } elseif ($rate_type_appt === 'hotel') {
+                            $reg_q = $conn->prepare("SELECT price FROM services WHERE id=? LIMIT 1");
+                            $reg_q->bind_param("i", $svc_id); $reg_q->execute();
+                            $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
+                            $commission_amt = round($reg_price * $ph * floatval($cm_row['commission_percent']) / 100, 2);
+                        } else {
+                            $commission_amt = round($per_person_price * $ph * floatval($cm_row['commission_percent']) / 100, 2);
+                        }
                     }
                 }
 

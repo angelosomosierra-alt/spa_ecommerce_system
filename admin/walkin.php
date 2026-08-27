@@ -361,9 +361,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $commission = 0.00;
                         if ($cm_row) {
                             // commission = per-person price × people_handled × rate
-                            $commission = $rate_type === 'influencer'
-                                ? floatval($cm_row['influencer_flat_rate']) * $people_handled_svc
-                                : round($charged_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                            if ($rate_type === 'influencer') {
+                                $commission = floatval($cm_row['influencer_flat_rate']) * $people_handled_svc;
+                            } elseif ($rate_type === 'hotel') {
+                                $reg_q = $conn->prepare("SELECT price FROM services WHERE id=? LIMIT 1");
+                                $reg_q->bind_param("i", $item_id); $reg_q->execute();
+                                $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
+                                $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                            } else {
+                                $commission = round($charged_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                            }
                         }
                         $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
                         $at->bind_param("iidi", $appointment_id, $therapist_id, $commission, $people_handled_svc); $at->execute(); $at->close();
