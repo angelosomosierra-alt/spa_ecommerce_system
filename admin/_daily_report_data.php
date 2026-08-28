@@ -17,6 +17,8 @@
         $conn->query("ALTER TABLE appointments ADD COLUMN celebration_discount DECIMAL(10,2) NOT NULL DEFAULT 0.00");
     if (!in_array('advance_payment', $appt_cols))
         $conn->query("ALTER TABLE appointments ADD COLUMN advance_payment DECIMAL(10,2) NOT NULL DEFAULT 0.00");
+    if (!in_array('advance_payment_date', $appt_cols))
+        $conn->query("ALTER TABLE appointments ADD COLUMN advance_payment_date DATE DEFAULT NULL");
 
     $svc_cols = [];
     $res2 = $conn->query("SHOW COLUMNS FROM services");
@@ -177,6 +179,28 @@ $_i->bind_param("s", $report_date);
 $_i->execute();
 $influencer_rows = $_i->get_result()->fetch_all(MYSQLI_ASSOC);
 $_i->close();
+
+// ── Advance Payments Received on this report date ─────────────────────────────
+// These are appointments where advance was collected on $report_date,
+// regardless of the appointment's completion status or appointment date.
+$adv_q = $conn->prepare("
+    SELECT a.id, a.advance_payment, a.advance_payment_date,
+           a.appointment_date, a.service_type,
+           s.name AS service_name,
+           COALESCE(o.customer_name, u.full_name) AS customer_name
+    FROM appointments a
+    JOIN services s ON s.id = a.service_id
+    LEFT JOIN order_items oi ON oi.id = a.order_item_id
+    LEFT JOIN orders o ON oi.order_id = o.id
+    LEFT JOIN users u ON a.user_id = u.id
+    WHERE a.advance_payment > 0
+      AND DATE(a.advance_payment_date) = ?
+");
+$adv_q->bind_param("s", $report_date);
+$adv_q->execute();
+$advances_received = $adv_q->get_result()->fetch_all(MYSQLI_ASSOC);
+$adv_q->close();
+$advances_received_total = array_sum(array_column($advances_received, 'advance_payment'));
 
 // ── Upcoming Paid Appointments (paid today, service on a future date) ─────────
 $_up_paid = $conn->prepare("
@@ -361,7 +385,8 @@ $card_total   = ($pm_totals['card']   ?? 0) + ($pm_totals['bank'] ?? 0);
 $online_total = ($pm_totals['online'] ?? 0);
 
 $denom_total  = array_sum(array_map(fn($d) => floatval($d['total']), $denoms_saved));
-$cash_on_hand = $denom_total;
+// Advances received today count as cash in the drawer (on top of denominations).
+$cash_on_hand = $denom_total + $advances_received_total;
 
 // ── NET CASH — mirrors source workbook sheet "28" cell B52 ───────────────────
 //

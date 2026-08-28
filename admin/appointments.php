@@ -1041,7 +1041,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
             }
 
-            $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=?, celebration_discount=0, advance_payment=0 WHERE id=?");
+            $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=?, celebration_discount=0 WHERE id=?");
             $upd->bind_param("isi", $cp_by, $cp_name, $appt_id);
             $upd->execute(); $upd->close();
 
@@ -1558,6 +1558,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <span style="background:<?php echo $bbg;?>;color:<?php echo $bfg;?>;padding:0.15rem 0.5rem;border-radius:20px;font-size:0.67rem;font-weight:700;vertical-align:middle;margin-left:0.35rem;"><?php echo $blabel; ?></span>
                 <?php if ($_has_discount_h): ?><span style="background:#fffbeb;color:#b45309;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fcd34d;margin-left:0.2rem;" title="Customer requested <?php echo htmlspecialchars($_dlbl_h); ?> discount — verify ID/voucher at check-in"><?php echo $_dico_h . ' ' . htmlspecialchars($_dlbl_h); ?></span><?php endif; ?>
                 <?php if (isset($conflict_appt_ids[$appt_id])): ?><span style="background:#fef3c7;color:#92400e;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fbbf24;margin-left:0.2rem;animation:pulse 2s infinite;">⚠️ Conflict</span><?php endif; ?>
+                <?php if (floatval($a['advance_payment'] ?? 0) > 0): ?><span style="background:rgba(201,106,44,0.12);color:#C96A2C;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;margin-left:0.2rem;">💰 Advance: ₱<?php echo number_format(floatval($a['advance_payment']), 2); ?></span><?php endif; ?>
             </p>
             <p class="appt-svc"><?php echo htmlspecialchars($a['service_name']); ?></p>
             <p class="appt-time">
@@ -2165,7 +2166,8 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 bookingDiscType:'<?php echo htmlspecialchars(addslashes($_cm_bdtype)); ?>',
                 extrasTotal:    <?php echo $_cm_extras; ?>,
                 alreadyPaid:    <?php echo $_cm_paid; ?>,
-                paymentStatus:  '<?php echo htmlspecialchars($pm_row['payment_status'] ?? 'unpaid'); ?>'
+                paymentStatus:  '<?php echo htmlspecialchars($pm_row['payment_status'] ?? 'unpaid'); ?>',
+                advancePayment: <?php echo floatval($a['advance_payment'] ?? 0); ?>
             };
             </script>
             <button type="button" class="btn btn-primary btn-sm"
@@ -2712,12 +2714,14 @@ function cmRecompute() {
     }
     cdAmt = Math.max(0, Math.min(cdAmt, Math.max(0, gross - bDisc)));
 
-    var totalDue = Math.max(0, gross - bDisc - cdAmt - already);
+    var advPay   = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
+    var totalDue = Math.max(0, gross - bDisc - cdAmt - advPay - already);
 
     // Build breakdown
     var rs = 'display:flex;justify-content:space-between;margin-bottom:0.28rem;';
     var gray = 'color:var(--gray);';
     var amber = 'color:#b45309;';
+    var rust  = 'color:#C96A2C;';
     var html = '';
     html += '<div style="' + rs + '"><span style="' + gray + '">Original session</span><span>₱' + cmFmt(orig) + '</span></div>';
     if (extras > 0) html += '<div style="' + rs + '"><span style="' + gray + '">Extra services</span><span>₱' + cmFmt(extras) + '</span></div>';
@@ -2728,6 +2732,7 @@ function cmRecompute() {
         if (dtype === 'voucher') cdLabel += ' (' + (vtype === 'percent' ? vvalue + '% off' : '₱ off') + ')';
         html += '<div style="' + rs + '"><span style="' + amber + '">' + cdLabel + '</span><span style="' + amber + '">−₱' + cmFmt(cdAmt) + '</span></div>';
     }
+    if (advPay > 0) html += '<div style="' + rs + '"><span style="' + rust + '">💰 Advance (pre-recorded)</span><span style="' + rust + '">−₱' + cmFmt(advPay) + '</span></div>';
     if (already > 0) html += '<div style="' + rs + '"><span style="' + gray + '">Already paid</span><span style="' + gray + '">−₱' + cmFmt(already) + '</span></div>';
     var tcolor = totalDue > 0 ? 'var(--brown)' : '#198754';
     html += '<div style="' + rs + 'border-top:1px solid var(--border2);padding-top:0.4rem;margin-top:0.15rem;font-weight:700;font-size:0.9rem;"><span>TOTAL DUE</span><span style="color:' + tcolor + ';">₱' + cmFmt(totalDue) + '</span></div>';
@@ -2784,6 +2789,16 @@ function openCompleteModal(apptId) {
     if (discSec)      discSec.style.display      = cmState.isPaid ? 'none' : 'block';
     if (voucherInputs) voucherInputs.style.display = 'none';
 
+    // Advance payment — pre-fill from booking record
+    var advRow = document.getElementById('cm-advance-row');
+    var advInp = document.getElementById('cm-advance-pay');
+    var advAmt = data.advancePayment || 0;
+    if (advInp) advInp.value = advAmt;
+    if (advRow) advRow.style.display = advAmt > 0 ? 'block' : 'none';
+    // Also prime the hidden form input so it posts even if modal is skipped
+    var hiddenAdv = document.getElementById('cp-advance-' + apptId);
+    if (hiddenAdv) hiddenAdv.value = advAmt;
+
     cmSetDiscount('none'); // resets buttons + calls cmRecompute
     document.getElementById('completeModal').style.display = 'flex';
     if (pinInp) setTimeout(function() { pinInp.focus(); }, 120);
@@ -2822,10 +2837,12 @@ function submitComplete() {
     var hiddenCdType  = document.getElementById('cp-cdtype-'  + cmState.apptId);
     var hiddenCvType  = document.getElementById('cp-cvtype-'  + cmState.apptId);
     var hiddenCvVal   = document.getElementById('cp-cvvalue-' + cmState.apptId);
+    var hiddenAdv     = document.getElementById('cp-advance-' + cmState.apptId);
     if (hiddenMethod)  hiddenMethod.value  = cmState.payMethod;
     if (hiddenCdType)  hiddenCdType.value  = cmState.discType;
     if (hiddenCvType)  hiddenCvType.value  = document.getElementById('cm-voucher-type')?.value  || 'cash';
     if (hiddenCvVal)   hiddenCvVal.value   = document.getElementById('cm-voucher-value')?.value || '0';
+    if (hiddenAdv)     hiddenAdv.value     = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
     closeCompleteModal();
     var form = document.getElementById('complete-form-' + cmState.apptId);
     if (form) form.submit();
@@ -3217,6 +3234,19 @@ function submitComplete() {
                            oninput="cmRecompute()"
                            style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--bg3);">
                 </div>
+            </div>
+        </div>
+
+        <!-- Advance payment pre-recorded at booking (hidden when 0) -->
+        <div id="cm-advance-row" style="display:none;margin-bottom:0.65rem;background:#fff8f2;border:1px solid rgba(201,106,44,0.3);border-radius:10px;padding:0.6rem 0.85rem;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
+                <div>
+                    <span style="font-size:0.78rem;font-weight:700;color:#C96A2C;">💰 Advance Payment</span>
+                    <span style="font-size:0.72rem;color:var(--gray);margin-left:0.35rem;">(recorded on booking)</span>
+                </div>
+                <input type="number" id="cm-advance-pay" step="0.01" min="0" value="0"
+                       oninput="cmRecompute()"
+                       style="width:110px;padding:0.3rem 0.5rem;border:1px solid rgba(201,106,44,0.4);border-radius:7px;background:#fff;font-size:0.85rem;font-weight:700;color:#C96A2C;text-align:right;">
             </div>
         </div>
 

@@ -95,8 +95,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     $quantity       = max(1, intval($_POST['quantity'] ?? 1));
     $people_count   = max(1, intval($_POST['people_count'] ?? 1));
     $booking_date   = $_POST['booking_date'] ?? null;
-    $payment_method = $_POST['payment_method'] ?? 'cash';
-    $rate_type      = $_POST['rate_type']      ?? 'regular';
+    $payment_method  = $_POST['payment_method'] ?? 'cash';
+    $advance_payment = max(0.0, floatval($_POST['advance_payment'] ?? 0));
+    $rate_type       = $_POST['rate_type']      ?? 'regular';
     $partner_id     = intval($_POST['partner_id'] ?? 0);
     $customer_note  = sanitize_input($_POST['customer_note'] ?? '');
     $slip_number    = sanitize_input($_POST['slip_number']    ?? '');
@@ -188,9 +189,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
             $stmt->close();
 
             if ($item) {
-                $regular_price = floatval($item['price']);
+                $regular_price    = floatval($item['price']);
+                $home_service_fee = floatval($item['home_service_fee'] ?? 0);
                 switch ($rate_type) {
-                    case 'home':       $charged_price = ($regular_price * 2) + 300; break;
+                    case 'home':       $charged_price = $regular_price + $home_service_fee; break;
                     case 'hotel':      $charged_price = $partner_rates_map[$partner_id][$item_id] ?? $regular_price; break;
                     case 'influencer': $charged_price = 0.00; break;
                     default:           $charged_price = $regular_price; break;
@@ -210,7 +212,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         ? round($total_amount * ($voucher_value / 100), 2)
                         : min($voucher_value, $total_amount);
                 }
-                $final_amount = max(0.00, $total_amount - $discount_amount_calc);
+                $final_amount = max(0.00, $total_amount - $discount_amount_calc - $advance_payment);
 
                 // ── Feature A: today + zero qualified on duty → block ─────────────
                 $is_today_booking = (date('Y-m-d') === date('Y-m-d', strtotime($booking_date)));
@@ -315,9 +317,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 // charged_price stored as total (per-person × people_count)
                 // so Complete action can safely do charged_price / people_count
                 $appt_charged_total = $charged_price * $people_count;
-                $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)");
+                $adv_date     = $advance_payment > 0 ? date('Y-m-d') : null;
+                $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)");
                 $svc_type_val = ($rate_type === 'home') ? 'home' : 'onsite';
-                $appt_stmt->bind_param("iiisissids", $walkin_user_id, $item_id, $order_item_id, $booking_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $appt_charged_total, $customer_note);
+                $appt_stmt->bind_param("iiisissidsds", $walkin_user_id, $item_id, $order_item_id, $booking_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $appt_charged_total, $customer_note, $advance_payment, $adv_date);
                 $appt_stmt->execute();
                 $appointment_id = $appt_stmt->insert_id; // ← actual appointment ID
                 $appt_stmt->close();
@@ -437,7 +440,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior Citizen','pwd'=>'PWD','employee'=>'Employee'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
                     : '';
                 $people_suffix = $people_count > 1 ? " · {$people_count} people" : '';
-                $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name}</strong> — {$item['name']} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix;
+                $adv_suffix    = $advance_payment > 0 ? ' · 💰 Advance: ₱' . number_format($advance_payment, 2) : '';
+                $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name}</strong> — {$item['name']} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix . $adv_suffix;
                 $walkin_type    = "success";
                 } catch (Throwable $_we) {
                     $conn->rollback();
@@ -770,6 +774,15 @@ require_once 'admin_header.php';
                         </div>
                         <?php endif; ?>
                         <div id="svc-online-status" style="display:none;margin-bottom:0.5rem;padding:0.55rem 0.75rem;border-radius:8px;font-size:0.8rem;font-weight:600;"></div>
+                        <div style="margin-bottom:0.7rem;">
+                            <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:3px;">
+                                💰 Advance Payment (₱) <span style="font-weight:400;color:var(--gray);font-size:0.72rem;">(optional)</span>
+                            </label>
+                            <input type="number" name="advance_payment" id="walkinAdvancePay"
+                                   step="0.01" min="0" value="0" placeholder="0.00"
+                                   oninput="updatePricePreview()"
+                                   style="width:100%;padding:0.5rem 0.65rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
+                        </div>
                         <button type="button" id="svc-book-now" onclick="proceedBooking('service')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">✅ Book Now</button>
                         <button type="button" class="pay-btn pay-btn-later" onclick="payLaterService()" style="width:100%;margin-top:0.4rem;font-size:0.9rem;">
                             ⏳ Pay Later
@@ -1270,18 +1283,25 @@ function updatePricePreview() {
     if (!display || !formula) return;
     if (!svc) { display.textContent = '₱0.00'; formula.textContent = 'Select a service first'; return; }
     const regular = parseFloat(svc.price);
+    const homeFee = parseFloat(svc.home_service_fee || 0);
     const peopleCount = parseInt(document.querySelector('[name="people_count"]')?.value || 1) || 1;
     let perPerson = regular; let formulaTxt = '';
     switch (currentRateType) {
         case 'regular':    perPerson = regular; formulaTxt = 'Regular price'; break;
-        case 'home':       perPerson = (regular * 2) + 300; formulaTxt = `(₱${regular.toFixed(2)} × 2) + ₱300`; break;
+        case 'home':       perPerson = regular + homeFee; formulaTxt = `₱${regular.toFixed(2)} + ₱${homeFee.toFixed(2)} (home fee)`; break;
         case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
         case 'influencer': perPerson = 0; formulaTxt = 'Complimentary — ₱0'; break;
     }
     if (peopleCount > 1 && currentRateType !== 'influencer') formulaTxt += ` × ${peopleCount} people`;
     const total = perPerson * peopleCount;
     display.textContent = '₱' + total.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
-    formula.textContent = formulaTxt;
+    const advance = parseFloat(document.getElementById('walkinAdvancePay')?.value) || 0;
+    if (advance > 0 && total > 0) {
+        const balanceDue = Math.max(0, total - advance);
+        formula.textContent = formulaTxt + ' · 💰 Balance due: ₱' + balanceDue.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+    } else {
+        formula.textContent = formulaTxt;
+    }
     display.style.color = currentRateType === 'influencer' ? 'var(--green)' : 'var(--gold)';
 }
 

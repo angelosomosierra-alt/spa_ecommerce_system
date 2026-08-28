@@ -1022,6 +1022,45 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     </div>
     <?php endif; ?>
 
+    <?php if (!empty($advances_received)): ?>
+    <!-- Advances Received -->
+    <div class="panel" style="margin-bottom:1.2rem;">
+        <div class="panel-header"><span class="panel-title">💰 Advance Payments Received</span></div>
+        <div class="panel-body" style="padding:0;">
+            <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+                <thead>
+                    <tr style="background:var(--bg2);color:var(--gray);text-align:left;">
+                        <th style="padding:0.45rem 1rem;">Customer</th>
+                        <th style="padding:0.45rem 0.75rem;">Service</th>
+                        <th style="padding:0.45rem 0.75rem;">Appt Date</th>
+                        <th style="padding:0.45rem 1rem;text-align:right;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($advances_received as $adv): ?>
+                    <tr style="border-bottom:1px solid var(--border2);">
+                        <td style="padding:0.4rem 1rem;"><?php echo htmlspecialchars($adv['customer_name'] ?? ''); ?></td>
+                        <td style="padding:0.4rem 0.75rem;"><?php echo htmlspecialchars($adv['service_name']); ?></td>
+                        <td style="padding:0.4rem 0.75rem;"><?php echo date('M j', strtotime($adv['appointment_date'])); ?></td>
+                        <td style="padding:0.4rem 1rem;text-align:right;font-weight:600;color:#C96A2C;">
+                            ₱<?php echo number_format(floatval($adv['advance_payment']), 2); ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+                <tfoot>
+                    <tr style="font-weight:700;border-top:2px solid var(--border2);">
+                        <td colspan="3" style="padding:0.5rem 1rem;">Total Advances Received</td>
+                        <td style="padding:0.5rem 1rem;text-align:right;color:#C96A2C;">
+                            ₱<?php echo number_format($advances_received_total, 2); ?>
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- Summary Report -->
     <div class="panel">
         <div class="panel-header"><span class="panel-title">📊 Summary Report</span></div>
@@ -1049,6 +1088,8 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'MAYA (DP)',              'val' => $maya_dp_total,        'color' => 'var(--rust)'],
                 ['label' => 'PRODUCT SOLD',           'val' => $prod_sold_total,      'color' => '#198754'],
                 ['label' => 'EXPENSES',               'val' => $expenses_total,       'color' => 'var(--rust)'],
+                ['label' => 'ADVANCES RECEIVED',      'val' => $advances_received_total, 'color' => '#C96A2C',
+                 'note' => 'Cash collected today for future/upcoming appointments'],
                 ['label' => 'SPREADSHEET NET SALES',  'val' => $spreadsheet_net_total,    'color' => '#198754',
                  'note' => 'Non-refund rows from Spreadsheet tab — added to Gross & Net Cash'],
                 ['label' => 'SPREADSHEET REFUNDS',   'val' => $spreadsheet_refund_total, 'color' => 'var(--rust)',
