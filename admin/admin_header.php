@@ -39,6 +39,7 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($page_title ?? 'Admin'); ?> — Spa Admin</title>
     <link rel="stylesheet" href="admin.css?v=<?php echo filemtime('admin.css'); ?>">
+    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/responsive.css?v=<?php echo filemtime(__DIR__ . '/../assets/responsive.css'); ?>">
     <?php if (isset($extra_head)) echo $extra_head; ?>
 </head>
 <body>
@@ -105,14 +106,12 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                                color:var(--cream);transition:background 0.15s;"
                         title="Notifications">
                     🔔
-                    <?php if ($admin_notif_unread > 0): ?>
-                    <span style="position:absolute;top:-2px;right:-4px;background:#dc3545;
+                    <span id="adminNotifBadge" style="position:absolute;top:-2px;right:-4px;background:#dc3545;
                                  color:#fff;font-size:0.6rem;font-weight:700;min-width:16px;
-                                 height:16px;border-radius:8px;display:flex;align-items:center;
+                                 height:16px;border-radius:8px;display:<?php echo $admin_notif_unread > 0 ? 'flex' : 'none'; ?>;align-items:center;
                                  justify-content:center;padding:0 3px;line-height:1;">
                         <?php echo $admin_notif_unread > 99 ? '99+' : $admin_notif_unread; ?>
                     </span>
-                    <?php endif; ?>
                 </button>
                 <div id="adminNotifPanel"
                      style="display:none;position:absolute;right:0;top:calc(100% + 8px);
@@ -122,14 +121,12 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                     <div style="display:flex;justify-content:space-between;align-items:center;
                                 padding:0.65rem 1rem;background:#3B2A1A;color:#FAF3E8;">
                         <span style="font-weight:600;font-size:0.85rem;">🔔 Notifications</span>
-                        <?php if ($admin_notif_unread > 0): ?>
-                        <a href="?mark_notif_read=1"
-                           style="font-size:0.72rem;color:#C8A46B;text-decoration:none;">
+                        <a id="adminMarkAllRead" href="?mark_notif_read=1"
+                           style="font-size:0.72rem;color:#C8A46B;text-decoration:none;display:<?php echo $admin_notif_unread > 0 ? 'inline' : 'none'; ?>;">
                             Mark all read
                         </a>
-                        <?php endif; ?>
                     </div>
-                    <div style="max-height:360px;overflow-y:auto;">
+                    <div id="adminNotifItems" style="max-height:360px;overflow-y:auto;">
                         <?php if (empty($admin_notif_list)): ?>
                         <div style="padding:1.5rem;text-align:center;color:#aaa;font-size:0.82rem;">No notifications yet</div>
                         <?php else: ?>
@@ -183,6 +180,24 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                 const p = document.getElementById('adminNotifPanel');
                 if (p && w && !w.contains(e.target)) p.style.display = 'none';
             });
+            function renderAdminNotif(data) {
+              const badge = document.getElementById('adminNotifBadge');
+              if (badge) {
+                badge.textContent = data.unread > 99 ? '99+' : data.unread;
+                badge.style.display = data.unread > 0 ? 'flex' : 'none';
+              }
+              const markLink = document.getElementById('adminMarkAllRead');
+              if (markLink) markLink.style.display = data.unread > 0 ? 'inline' : 'none';
+              const items = document.getElementById('adminNotifItems');
+              if (items) items.innerHTML = data.list_html;
+            }
+            function pollAdminNotif() {
+              fetch('notif_poll.php', { credentials: 'same-origin' })
+                .then(r => r.ok ? r.json() : null)
+                .then(data => { if (data) renderAdminNotif(data); })
+                .catch(() => { /* silent — network hiccup, keep last known state */ });
+            }
+            setInterval(pollAdminNotif, 3000);
             </script>
 
             <?php if (isset($topbar_actions)) echo $topbar_actions; ?>

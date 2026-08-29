@@ -1,0 +1,242 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   responsive.css  —  Shared responsive overrides for admin + customer pages.
+
+   Loaded by: admin/admin_header.php, user/header.php, index.php
+
+   Breakpoints
+   ───────────
+   960px  tablet landscape  (kanban collapse, wide two-panel layouts)
+   768px  tablet portrait   (stats grid, form panels, staff layouts)
+   600px  small tablet      (topbar clipping guard)
+   480px  phone             (stats 1-col, modals full-width, touch targets)
+
+   Strategy
+   ────────
+   Admin pages embed most layout rules as inline styles, so many rules here
+   use [style*="…"] attribute selectors with !important to override them.
+   Class-based selectors are used when the class exists.  Order matters:
+   the .stats-grid !important rule always follows any attribute rule that
+   might also match stats-grid elements, so the class rule wins.
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════
+   A. GLOBAL — both admin and customer sides
+════════════════════════════════════════════════════════════ */
+
+/* Tables already inside .table-wrap scroll on all screen widths */
+.table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   B. ≤ 960px — TABLET LANDSCAPE
+════════════════════════════════════════════════════════════ */
+@media (max-width: 960px) {
+
+    /* ── Admin Kanban board: 3-col → 1-col ──────────────────
+       The kanban parent has style="…grid-template-columns:1fr 1fr 1fr;…"
+       Modern browsers: target via :has(> [data-kanban-col])
+       Legacy fallback: attribute substring match                       */
+    :has(> [data-kanban-col]) {
+        grid-template-columns: 1fr !important;
+    }
+    [style*="grid-template-columns:1fr 1fr 1fr;gap:1.25rem"] {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ── Therapists.php main layout: 1.5fr 1fr → 1-col ─────── */
+    [style*="grid-template-columns:1.5fr 1fr"] {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ── Daily report main layout: 1fr 260px → stack ────────── */
+    [style*="grid-template-columns:1fr 260px"] {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   C. ≤ 768px — TABLET PORTRAIT
+════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+    /* ── Stats grid: override inline repeat(5,1fr) / repeat(3,1fr) ─
+       Both .stats-grid CSS rules carry !important so they beat the
+       per-page inline style overrides.                               */
+    [style*="grid-template-columns:repeat(5,1fr)"] {
+        grid-template-columns: repeat(3, 1fr) !important;
+    }
+    [style*="grid-template-columns:repeat(3,1fr)"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+    /* Must come after the attribute rules above so !important cascade wins */
+    .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+    /* ── Walk-in page: main 2-col form panel → 1-col ────────────
+       walkin.php uses spaces: "display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;" */
+    [style*="grid-template-columns:1fr 1fr; gap:1.5rem"] {
+        grid-template-columns: 1fr !important;
+    }
+    /* walkin_payment.php / staff.php (no spaces): "…:1fr 1fr;gap:1.5rem" */
+    [style*="grid-template-columns:1fr 1fr;gap:1.5rem"] {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ── Staff side-by-side panels → 1-col ──────────────────────
+       cashiers tab:      1fr 1.5fr
+       receptionists tab: 360px 1fr
+       commission tab:    400px 1fr                                   */
+    [style*="grid-template-columns:1fr 1.5fr"],
+    [style*="grid-template-columns:360px"],
+    [style*="grid-template-columns:400px"] {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ── Appointment / Walk-in: 6-btn rows → 3-col ──────────────
+       Used by: discount type row + payment method row in modals     */
+    [style*="grid-template-columns:repeat(6,1fr)"] {
+        grid-template-columns: repeat(3, 1fr) !important;
+    }
+
+    /* ── Modal width guard ───────────────────────────────────────
+       .modal-box class modals (admin.css sets max-width:500px;
+       this ensures they don't exceed viewport on tablets)           */
+    .modal-box { max-width: min(95vw, 500px); }
+
+    /* ── Inline modal inner boxes with large max-width ───────────
+       Targets "max-width:520px;width:100%" pattern used in edit/add
+       modals; width:100% already exists, this is a safety guard     */
+    [style*="max-width:520px;width:100%"],
+    [style*="max-width:600px;width:100%"] {
+        max-width: 95vw !important;
+    }
+
+    /* ── Notification panel: prevent off-screen overflow ─────── */
+    #adminNotifPanel { right: 0 !important; width: min(310px, 90vw) !important; }
+    .notif-panel     { right: 0 !important; width: min(300px, 90vw) !important; }
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   D. ≤ 600px — SMALL TABLET / LARGE PHONE
+════════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+
+    /* ── Topbar: compact right section ──────────────────────── */
+    .topbar-right { gap: 0.35rem !important; }
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   E. ≤ 480px — PHONE
+════════════════════════════════════════════════════════════ */
+@media (max-width: 480px) {
+
+    /* ── Stats grid: 1 col ───────────────────────────────────── */
+    [style*="grid-template-columns:repeat(5,1fr)"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+    [style*="grid-template-columns:repeat(3,1fr)"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+    /* Must follow attribute rules — wins by cascade */
+    .stats-grid { grid-template-columns: 1fr !important; }
+
+    /* ── Item select grid (service/product cards): 1-col ─────── */
+    .item-select-grid { grid-template-columns: 1fr !important; }
+
+    /* ── 6-btn rows → 2-col ────────────────────────────────────
+       Discount + payment buttons inside complete/discount modals  */
+    [style*="grid-template-columns:repeat(6,1fr)"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    /* ── Commission matrix rows: 2-col ─────────────────────────
+       2fr 0.7fr 0.8fr 1fr → 1fr 1fr
+       Row shows: service | %, then influencer rate | action       */
+    [style*="grid-template-columns:2fr 0.7fr 0.8fr 1fr"] {
+        grid-template-columns: 1fr 1fr !important;
+        font-size: 0.72rem !important;
+    }
+
+    /* ── Small 2-col input grids → 1-col ────────────────────────
+       Covers: voucher inputs, username/password side-by-side,
+       staff session-time form, etc.                               */
+    [style*="grid-template-columns:1fr 1fr;gap:0.65rem"],
+    [style*="grid-template-columns:1fr 1fr;gap:0.5rem"],
+    [style*="grid-template-columns:1fr 1fr;gap:0.3rem"] {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ── .modal-box → full-width bottom-sheet ───────────────── */
+    .modal-overlay {
+        align-items: flex-end !important;
+        padding: 0 !important;
+    }
+    .modal-box {
+        max-width: 100% !important;
+        border-radius: 12px 12px 0 0;
+    }
+
+    /* ── Inline ad-hoc modals (editModal, addServiceModal, etc.)
+       These use max-width:520px;width:100%; already, but need     */
+    [style*="max-width:520px;width:100%"],
+    [style*="max-width:420px;width:100%"],
+    [style*="max-width:440px;width:92vw"] {
+        max-width: 100% !important;
+        width: 100% !important;
+        border-radius: 14px 14px 0 0 !important;
+        max-height: 95vh !important;
+    }
+
+    /* ── Table cells: compact font + padding ─────────────────── */
+    .table-wrap table { font-size: 0.75rem; }
+    .table-wrap th,
+    .table-wrap td   { padding: 0.5rem 0.6rem; }
+
+    /* ── Panel body: tighter padding ─────────────────────────── */
+    .panel-body        { padding: 0.85rem !important; }
+    .form-section-body { padding: 0.85rem !important; }
+
+    /* ── Topbar title: truncate on phone ─────────────────────── */
+    .topbar-title {
+        font-size: 0.82rem;
+        max-width: 150px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* ── Touch targets: 44 px minimum ───────────────────────────
+       Exempt small icon-only close buttons from enlargement       */
+    .btn,
+    button:not([style*="width:28px"]):not([style*="width:32px"]):not([style*="width:38px"]):not(.bm-close) {
+        min-height: 44px;
+    }
+
+    /* ── Customer cart drawer: full viewport width ───────────── */
+    #cartSlideDrawer { width: 100vw !important; }
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   F. CUSTOMER — checkout booking modal
+════════════════════════════════════════════════════════════ */
+
+/* Time slot columns (Hour / Minute) inside booking modal      */
+@media (max-width: 480px) {
+    .bm-time-cols {
+        grid-template-columns: 1fr !important;
+    }
+    /* Slightly tighten modal body padding on phone             */
+    .bm-body { padding: 0.85rem 1rem !important; }
+    /* Booking modal: bottom-sheet style on phone               */
+    .bm-overlay { align-items: flex-end !important; }
+    .bm-box     {
+        border-radius: 18px 18px 0 0 !important;
+        max-height: 92vh !important;
+    }
+}

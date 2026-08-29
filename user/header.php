@@ -24,6 +24,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo isset($page_title) ? htmlspecialchars($page_title) . ' - Spa Ecommerce' : 'Spa Ecommerce'; ?></title>
 <link rel="stylesheet" href="../assets/style.css?v=<?php echo filemtime('../assets/style.css'); ?>">
+<link rel="stylesheet" href="../assets/responsive.css?v=<?php echo filemtime('../assets/responsive.css'); ?>">
 <script src="../assets/ui-modal.js"></script>
     <style>
         /* ── Cart icon button ── */
@@ -568,14 +569,12 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                                    color:inherit;transition:background 0.15s;"
                             title="Notifications">
                         🔔
-                        <?php if ($notif_unread > 0): ?>
-                        <span style="position:absolute;top:-2px;right:-4px;background:#dc3545;
+                        <span id="notifBadge" style="position:absolute;top:-2px;right:-4px;background:#dc3545;
                                      color:#fff;font-size:0.6rem;font-weight:700;min-width:16px;
-                                     height:16px;border-radius:8px;display:flex;align-items:center;
+                                     height:16px;border-radius:8px;display:<?php echo $notif_unread > 0 ? 'flex' : 'none'; ?>;align-items:center;
                                      justify-content:center;padding:0 3px;line-height:1;">
                             <?php echo $notif_unread > 99 ? '99+' : $notif_unread; ?>
                         </span>
-                        <?php endif; ?>
                     </button>
                     <div class="notif-panel" id="notifPanel"
                          style="display:none;position:absolute;right:0;top:calc(100% + 8px);
@@ -585,14 +584,12 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                         <div style="display:flex;justify-content:space-between;align-items:center;
                                     padding:0.65rem 1rem;background:#3B2A1A;color:#FAF3E8;">
                             <span style="font-weight:600;font-size:0.85rem;">🔔 Notifications</span>
-                            <?php if ($notif_unread > 0): ?>
-                            <a href="?mark_notif_read=1"
-                               style="font-size:0.72rem;color:#C8A46B;text-decoration:none;">
+                            <a id="userMarkAllRead" href="?mark_notif_read=1"
+                               style="font-size:0.72rem;color:#C8A46B;text-decoration:none;display:<?php echo $notif_unread > 0 ? 'inline' : 'none'; ?>;">
                                 Mark all read
                             </a>
-                            <?php endif; ?>
                         </div>
-                        <div style="max-height:340px;overflow-y:auto;">
+                        <div id="userNotifItems" style="max-height:340px;overflow-y:auto;">
                             <?php if (empty($notif_list)): ?>
                             <div style="padding:1.5rem;text-align:center;color:#aaa;font-size:0.82rem;">No notifications yet</div>
                             <?php else: ?>
@@ -649,6 +646,24 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                     const p = document.getElementById('notifPanel');
                     if (p && w && !w.contains(e.target)) p.style.display = 'none';
                 });
+                function renderUserNotif(data) {
+                  const badge = document.getElementById('notifBadge');
+                  if (badge) {
+                    badge.textContent = data.unread > 99 ? '99+' : data.unread;
+                    badge.style.display = data.unread > 0 ? 'flex' : 'none';
+                  }
+                  const markLink = document.getElementById('userMarkAllRead');
+                  if (markLink) markLink.style.display = data.unread > 0 ? 'inline' : 'none';
+                  const items = document.getElementById('userNotifItems');
+                  if (items) items.innerHTML = data.list_html;
+                }
+                function pollUserNotif() {
+                  fetch('notif_poll.php', { credentials: 'same-origin' })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(data => { if (data) renderUserNotif(data); })
+                    .catch(() => { /* silent — network hiccup, keep last known state */ });
+                }
+                setInterval(pollUserNotif, 3000);
                 </script>
                 <?php endif; ?>
             <?php else: ?>

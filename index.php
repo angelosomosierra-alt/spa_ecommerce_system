@@ -83,6 +83,7 @@ while ($row = $res_prd->fetch_assoc()) {
 $_css_v = file_exists('assets/style.css') ? filemtime('assets/style.css') : '1';
 ?>
 <link rel="stylesheet" href="assets/style.css?v=<?php echo $_css_v; ?>">
+<link rel="stylesheet" href="assets/responsive.css?v=<?php echo filemtime('assets/responsive.css'); ?>">
 <script src="assets/ui-modal.js"></script>
 <style>
     /* ── Logo: image + text ─────────────────────────────── */
