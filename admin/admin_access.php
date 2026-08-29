@@ -35,6 +35,7 @@ function admin_page_roles(): array {
         'discounts'             => ['owner','it','marketing'],
         'daily_report'          => ['owner','it','marketing','cashier'],
         'activity'              => ['owner','it','marketing'],
+        'help'                  => ['owner','it','marketing','cashier'],
         // ── Sub-pages (no sidebar entry) ─────────────────────────────────────
         'assign_therapist'      => ['owner','it','marketing','cashier'],
         'feedback'              => ['owner','it','marketing'],
@@ -65,6 +66,7 @@ function admin_nav_items(): array {
         ['file' => 'discounts',    'icon' => '🎟️', 'label' => 'Discounts',    'roles' => ['owner','it','marketing']],
         ['file' => 'daily_report', 'icon' => '📋', 'label' => 'Daily Report', 'roles' => ['owner','it','marketing','cashier']],
         ['file' => 'activity',    'icon' => '🕐', 'label' => 'Activity Log', 'roles' => ['owner','it','marketing']],
+        ['file' => 'help',        'icon' => '❓', 'label' => 'Help / Guide', 'roles' => ['owner','it','marketing','cashier']],
     ];
 }
 
