@@ -192,7 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $regular_price    = floatval($item['price']);
                 $home_service_fee = floatval($item['home_service_fee'] ?? 0);
                 switch ($rate_type) {
-                    case 'home':       $charged_price = $regular_price + $home_service_fee; break;
+                    case 'home':       $charged_price = ($regular_price * 2) + $home_service_fee; break;
                     case 'hotel':      $charged_price = $partner_rates_map[$partner_id][$item_id] ?? $regular_price; break;
                     case 'influencer': $charged_price = 0.00; break;
                     default:           $charged_price = $regular_price; break;
@@ -1288,7 +1288,7 @@ function updatePricePreview() {
     let perPerson = regular; let formulaTxt = '';
     switch (currentRateType) {
         case 'regular':    perPerson = regular; formulaTxt = 'Regular price'; break;
-        case 'home':       perPerson = regular + homeFee; formulaTxt = `₱${regular.toFixed(2)} + ₱${homeFee.toFixed(2)} (home fee)`; break;
+        case 'home':       perPerson = (regular * 2) + homeFee; formulaTxt = `(₱${regular.toFixed(2)} × 2) + ₱${homeFee.toFixed(2)} (home fee)`; break;
         case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
         case 'influencer': perPerson = 0; formulaTxt = 'Complimentary — ₱0'; break;
     }

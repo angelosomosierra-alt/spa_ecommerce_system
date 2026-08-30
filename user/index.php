@@ -575,7 +575,6 @@ $css_version = (file_exists($css_file)) ? filemtime($css_file) : '1';
     <div class="footer-inner">
         <div class="footer-brand"><div class="ft-logo">RECOVERY</div><p>Your sanctuary for wellness and restoration in the heart of Iloilo City.</p></div>
         <div class="footer-col"><h4>Quick Links</h4><ul><li><a href="index.php">Home</a></li><li><a href="#services">Services</a></li><li><a href="#products">Products</a></li><li><a href="#about">About Us</a></li><li><a href="#contact">Contact</a></li></ul></div>
-        <div class="footer-col"><h4>Services</h4><ul><li><a href="#services">Massage Therapy</a></li><li><a href="#services">Nail Care</a></li><li><a href="#services">Lash Services</a></li><li><a href="#services">Facial Treatments</a></li><li><a href="#services">Body Scrubs</a></li></ul></div>
         <div class="footer-col"><h4>Contact</h4><ul><li><a href="#contact">G&R Bldg., M.H. Del Pilar, Molo, Iloilo City</a></li><li><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></li><li><a href="tel:+639853359998">+639853359998</a></li><li><a href="#contact">Mon – Sun: 10AM – 10PM</a></li></ul></div>
     </div>
     <div class="footer-bottom">&copy; <?php echo date('Y'); ?> Recovery Spa Iloilo. All rights reserved.</div>

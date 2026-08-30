@@ -160,7 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     if ($checkout_type === 'service') {
         if ($service_type === 'home') {
             $home_fee_applied = floatval($checkout_items[0]['home_service_fee'] ?? 0);
-            $total_amount     = ($checkout_items[0]['price'] + $home_fee_applied) * $people_count;
+            $total_amount     = (($checkout_items[0]['price'] * 2) + $home_fee_applied) * $people_count;
         } else {
             $total_amount = $checkout_items[0]['price'] * $people_count;
         }
@@ -344,7 +344,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         $item_stmt->execute(); $item_stmt->close();
                     } elseif ($item['type'] === 'service') {
                         $svc_home_fee   = ($service_type === 'home') ? $home_fee_applied : 0.00;
-                        $svc_per_person = $item['price'] + $svc_home_fee;
+                        $svc_per_person = ($item['price'] * 2) + $svc_home_fee;
                         $svc_subtotal   = $svc_per_person * $people_count;
                         $item_stmt      = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal, home_service_fee) VALUES (?, ?, ?, ?, ?, ?)");
                         $item_stmt->bind_param("iiiddd", $order_id, $item['id'], $people_count, $svc_per_person, $svc_subtotal, $svc_home_fee);
@@ -2041,9 +2041,10 @@ function updateDiscountPreview() {
     if (!grandEl) return;
     const people = parseInt(document.getElementById('people_count')?.value || 1) || 1;
     const homeFeeRow = document.getElementById('homeFeeRow');
-    const homeFeePerPerson = (homeFeeRow && homeFeeRow.style.display !== 'none')
-        ? parseFloat(document.getElementById('homeFeeAmt')?.textContent?.replace(/[^0-9.]/g,'') || 0) : 0;
-    const subtotal = (BASE_TOTAL_AMOUNT + homeFeePerPerson) * people;
+    const isHome = homeFeeRow && homeFeeRow.style.display !== 'none';
+    const homeFeePerPerson = isHome ? HOME_FEE : 0;
+    const basePerPerson = isHome ? BASE_PRICE * 2 : BASE_PRICE;
+    const subtotal = (basePerPerson + homeFeePerPerson) * people;
     const subtotalEl = document.getElementById('subtotalDisplay');
     if (subtotalEl) subtotalEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
     grandEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});

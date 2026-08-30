@@ -109,8 +109,9 @@ if ($order_type === 'product') {
         echo json_encode(['success' => false, 'error' => 'Service not found.']);
         exit;
     }
-    $item_name     = $item['name'];
-    $regular_price = floatval($item['price']);
+    $item_name        = $item['name'];
+    $regular_price    = floatval($item['price']);
+    $home_service_fee = floatval($item['home_service_fee'] ?? 0);
 
     // ── Partner rates map (needed for hotel rate) ─────────────────────────────
     $partner_rates_map = [];
@@ -124,7 +125,7 @@ if ($order_type === 'product') {
     }
 
     switch ($rate_type) {
-        case 'home':       $charged_price = ($regular_price * 2) + 300; break;
+        case 'home':       $charged_price = ($regular_price * 2) + $home_service_fee; break;
         case 'hotel':      $charged_price = $partner_rates_map[$partner_id][$item_id] ?? $regular_price; break;
         case 'influencer': $charged_price = 0.00; break;
         default:           $charged_price = $regular_price; break;

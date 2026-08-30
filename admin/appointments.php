@@ -308,7 +308,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
     }
 
     if ($es_ok) {
-        $es_svc_s = $conn->prepare("SELECT id, name, price FROM services WHERE id = ?");
+        $es_svc_s = $conn->prepare("SELECT id, name, price, home_service_fee FROM services WHERE id = ?");
         $es_svc_s->bind_param("i", $es_service_id); $es_svc_s->execute();
         $es_svc = $es_svc_s->get_result()->fetch_assoc(); $es_svc_s->close();
         if (!$es_svc) { $message = "Service not found."; $message_type = "danger"; $es_ok = false; }
@@ -319,8 +319,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         $es_rate_type  = $es_appt['rate_type']  ?? 'regular';
         $es_partner_id = intval($es_appt['partner_id'] ?? 0);
         $es_reg_price  = floatval($es_svc['price']);
+        $es_home_fee   = floatval($es_svc['home_service_fee'] ?? 0);
         switch ($es_rate_type) {
-            case 'home':       $es_base = ($es_reg_price * 2) + 300; break;
+            case 'home':       $es_base = ($es_reg_price * 2) + $es_home_fee; break;
             case 'influencer': $es_base = 0.00; break;
             case 'hotel':
                 $es_base = $es_reg_price;
@@ -464,7 +465,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
 
         // Validate availability using engine
         if ($cur_row) {
-            require_once __DIR__ . '/../availability.php';
+            require_once __DIR__ . '/availability.php';
             $engine = new AvailabilityEngine($conn);
             $check  = $engine->checkSlot(
                 $cur_row['service_id'], $booking_date,
@@ -703,7 +704,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIONS — approve / decline / complete
 // ═══════════════════════════════════════════════════════════════════════════
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['approve','decline','checkin_appointment','complete','save_per_person_inline'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['approve','decline','checkin_appointment','complete','save_per_person_inline','revert_complete'])) {
     verify_csrf_token();
     $action  = $_POST['action'];
     $appt_id = intval($_POST['appt_id'] ?? 0);
@@ -1243,6 +1244,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             } catch (Throwable $e) {
                 $conn->rollback();
                 $message = "Failed to save assignments. Please try again."; $message_type = "danger";
+            }
+
+        } elseif ($action === 'revert_complete') {
+            if (!is_full_access()) {
+                $message = '❌ Only owner/IT can revert a completed appointment.';
+                $message_type = 'danger';
+                goto end_action;
+            }
+            if ($appt['status'] !== 'completed') {
+                $message = '❌ Appointment is not in Completed status.';
+                $message_type = 'danger';
+                goto end_action;
+            }
+            $rv_date = date('Y-m-d', strtotime($appt['appointment_date']));
+            $rv_lock_chk = $conn->prepare("SELECT is_locked FROM daily_reports WHERE report_date = ? AND is_locked = 1 LIMIT 1");
+            $rv_lock_chk->bind_param("s", $rv_date); $rv_lock_chk->execute();
+            $rv_locked = $rv_lock_chk->get_result()->fetch_assoc(); $rv_lock_chk->close();
+            if ($rv_locked) {
+                $message = '❌ Cannot revert — the daily report for ' . date('M d, Y', strtotime($rv_date)) . ' is already locked/submitted.';
+                $message_type = 'danger';
+                goto end_action;
+            }
+            $conn->begin_transaction();
+            try {
+                $rv_upd = $conn->prepare("UPDATE appointments SET status='assigned', completed_by=NULL, completed_by_name=NULL WHERE id=?");
+                $rv_upd->bind_param("i", $appt_id); $rv_upd->execute(); $rv_upd->close();
+                $rv_comm = $conn->prepare("UPDATE appointment_therapists SET commission=0 WHERE appointment_id=?");
+                $rv_comm->bind_param("i", $appt_id); $rv_comm->execute(); $rv_comm->close();
+                $rv_ss = $conn->prepare("DELETE FROM daily_report_spreadsheet_rows WHERE source_appointment_id=?");
+                $rv_ss->bind_param("i", $appt_id); $rv_ss->execute(); $rv_ss->close();
+                $rv_ord = $conn->prepare("UPDATE orders o
+                    JOIN order_items oi ON oi.order_id = o.id
+                    JOIN appointments a ON a.order_item_id = oi.id
+                    SET o.approval_status = 'approved'
+                    WHERE a.id = ? AND o.approval_status = 'completed'");
+                $rv_ord->bind_param("i", $appt_id); $rv_ord->execute(); $rv_ord->close();
+                $conn->commit();
+                $svc_name = htmlspecialchars($appt['service_name']);
+                $message = "✅ Completion reverted for <strong>{$svc_name}</strong> (#{$appt_id}). Appointment is back to Assigned. Commission reset to ₱0.";
+                $message_type = 'success';
+                log_activity($conn, 'revert_complete', "Reverted completion of appointment #{$appt_id} — {$appt['service_name']}", 'appointment', $appt_id, null);
+            } catch (Exception $e) {
+                $conn->rollback();
+                $message = '❌ Failed to revert: ' . htmlspecialchars($e->getMessage());
+                $message_type = 'danger';
             }
 
         } else {
@@ -2179,6 +2225,18 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
                         <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>❌ Decline</button>
+            </form>
+
+        <?php elseif ($status === 'completed' && is_full_access()): ?>
+            <form method="POST" style="margin:0;">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="action"  value="revert_complete">
+                <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                <button type="button" class="btn btn-secondary btn-sm"
+                        style="background:transparent;border:1px solid #6b7280;color:#6b7280;"
+                        onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Revert completion for this appointment?\n\nThis will reset it to Assigned, zero the commission, and remove any daily report rows for this appointment.').then(ok=>{if(ok)_f.submit()})">
+                    ↩️ Revert Completion
+                </button>
             </form>
         <?php endif; ?>
 

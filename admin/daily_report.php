@@ -1586,9 +1586,33 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 data-net-sales="<?php echo (float)($_ssr['net_sales'] ?? 0); ?>"
                 data-is-refund="<?php echo (int)$_ssr['is_refund']; ?>"
                 data-imported="<?php echo $_is_imported ? '1' : '0'; ?>"
+                data-time-in="<?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?>"
+                data-time-out="<?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?>"
+                data-slip-no="<?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?>"
+                data-client-name="<?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>"
+                data-service-id="<?php echo (int)($_ssr['service_id'] ?? 0); ?>"
+                data-service-name="<?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?>"
+                data-therapist-id="<?php echo (int)($_ssr['therapist_id'] ?? 0); ?>"
+                data-stylist="<?php echo htmlspecialchars($_ssr['stylist'] ?? ''); ?>"
+                data-regular-price="<?php echo (float)($_ssr['regular_price'] ?? 0); ?>"
+                data-promo-price="<?php echo (float)($_ssr['promo_price'] ?? 0); ?>"
+                data-celeb10="<?php echo (float)($_ssr['celeb_10'] ?? 0); ?>"
+                data-disc20="<?php echo (float)($_ssr['disc_20_pwd'] ?? 0); ?>"
+                data-comm30="<?php echo (float)($_ssr['comm_30'] ?? 0); ?>"
+                data-comm20="<?php echo (float)($_ssr['comm_20'] ?? 0); ?>"
+                data-comm15="<?php echo (float)($_ssr['comm_15'] ?? 0); ?>"
+                data-disc50="<?php echo (float)($_ssr['disc_50_staff'] ?? 0); ?>"
+                data-mop="<?php echo htmlspecialchars($_ssr['mode_of_payment'] ?? ''); ?>"
+                data-remarks="<?php echo htmlspecialchars($_ssr['remarks'] ?? ''); ?>"
+                data-advance="<?php echo (float)($_ssr['advance_payment'] ?? 0); ?>"
                 style="<?php echo $_ssr['is_refund'] ? 'background:rgba(220,53,69,0.04);' : ''; ?>border-bottom:1px solid var(--border2);">
                 <?php if (!$locked): ?>
-                <td style="padding:2px 4px;vertical-align:middle;">
+                <td style="padding:2px 4px;vertical-align:middle;white-space:nowrap;">
+                    <?php if ($can_edit): ?>
+                    <button class="btn btn-secondary btn-sm ss-edit-btn"
+                            style="font-size:0.65rem;padding:0.15rem 0.4rem;"
+                            title="Edit this row">✏️</button>
+                    <?php endif; ?>
                     <?php if (!$_is_imported || is_full_access()): ?>
                     <button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;<?php echo $can_edit ? '' : 'display:none;'; ?>">✕</button>
                     <?php endif; ?>
@@ -1686,6 +1710,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     <td colspan="19" style="padding:0.35rem 0.5rem;">
                         <div style="display:flex;align-items:center;gap:0.75rem;">
                             <button id="ss-add-btn" class="btn btn-primary btn-sm" style="font-weight:700;padding:0.35rem 1.1rem;">➕ Add Row</button>
+                            <button id="ss-cancel-edit" class="btn btn-secondary btn-sm"
+                                    style="display:none;font-size:0.72rem;padding:0.3rem 0.7rem;"
+                                    onclick="cancelEdit()">✕ Cancel</button>
                             <span id="ss-comm-note" style="font-size:0.72rem;color:var(--gray);font-style:italic;"></span>
                             <span id="ss-form-err"  style="display:none;color:#dc3545;font-size:0.78rem;font-weight:600;"></span>
                         </div>
@@ -1765,6 +1792,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     var commNote = document.getElementById('ss-comm-note');
     var _promoUserEdited = false;
     var _commUserEdited  = false;
+    var _editingRowId    = null;
 
     // ── Auto-compute ─────────────────────────────────────────────────────────
     function recompute() {
@@ -1919,12 +1947,32 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         var isRef = d.is_refund === '1' || d.is_refund === 1;
         var tr = document.createElement('tr');
         tr.className = 'ss-row';
-        tr.dataset.rowId    = rowId;
-        tr.dataset.netSales = parseFloat(d.net_sales) || 0;
-        tr.dataset.isRefund = isRef ? '1' : '0';
-        tr.style.cssText    = (isRef ? 'background:rgba(220,53,69,0.04);' : '') + 'border-bottom:1px solid var(--border2);';
+        tr.dataset.rowId        = rowId;
+        tr.dataset.netSales     = parseFloat(d.net_sales) || 0;
+        tr.dataset.isRefund     = isRef ? '1' : '0';
+        tr.dataset.imported     = d.imported || '0';
+        tr.dataset.timeIn       = d.time_in       || '';
+        tr.dataset.timeOut      = d.time_out      || '';
+        tr.dataset.slipNo       = d.slip_no       || '';
+        tr.dataset.clientName   = d.client_name   || '';
+        tr.dataset.serviceId    = d.service_id    || '0';
+        tr.dataset.serviceName  = d.service_name  || '';
+        tr.dataset.therapistId  = d.therapist_id  || '0';
+        tr.dataset.stylist      = d.stylist        || '';
+        tr.dataset.regularPrice = d.regular_price  || '0';
+        tr.dataset.promoPrice   = d.promo_price    || '0';
+        tr.dataset.celeb10      = d.celeb_10       || '0';
+        tr.dataset.disc20       = d.disc_20_pwd    || '0';
+        tr.dataset.comm30       = d.comm_30        || '0';
+        tr.dataset.comm20       = d.comm_20        || '0';
+        tr.dataset.comm15       = d.comm_15        || '0';
+        tr.dataset.disc50       = d.disc_50_staff  || '0';
+        tr.dataset.mop          = d.mode_of_payment || '';
+        tr.dataset.remarks      = d.remarks        || '';
+        tr.style.cssText        = (isRef ? 'background:rgba(220,53,69,0.04);' : '') + 'border-bottom:1px solid var(--border2);';
         var delCell = _rptLocked ? '' :
-            '<td style="padding:2px 4px;vertical-align:middle;">' +
+            '<td style="padding:2px 4px;vertical-align:middle;white-space:nowrap;">' +
+            '<button class="btn btn-secondary btn-sm ss-edit-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;" title="Edit this row">✏️</button>' +
             '<button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;">✕</button></td>';
         tr.innerHTML = delCell +
             '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_in)         + '</td>' +
@@ -1946,7 +1994,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.mode_of_payment) + '</td>' +
             '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.remarks)         + '</td>' +
             '<td style="padding:0.3rem 0.5rem;text-align:center;">'   + (isRef ? '✓' : '')   + '</td>';
-        if (!_rptLocked) attachDel(tr);
+        if (!_rptLocked) { attachDel(tr); attachEdit(tr); }
         return tr;
     }
 
@@ -1976,7 +2024,72 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             });
         });
     }
-    document.querySelectorAll('#ss-tbody tr.ss-row').forEach(attachDel);
+    document.querySelectorAll('#ss-tbody tr.ss-row').forEach(function(tr) {
+        attachDel(tr); attachEdit(tr);
+    });
+
+    // ── Edit handler ─────────────────────────────────────────────────────────
+    function attachEdit(tr) {
+        var btn = tr.querySelector('.ss-edit-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function() {
+            if (!canEdit()) return;
+            var d = tr.dataset;
+            _editingRowId = parseInt(d.rowId);
+
+            var sf = function(id, val) { var el=document.getElementById(id); if(el) el.value=val; };
+            sf('er-time_in',       d.timeIn       || '');
+            sf('er-time_out',      d.timeOut      || '');
+            sf('er-slip_no',       d.slipNo       || '');
+            sf('er-client_name',   d.clientName   || '');
+            sf('er-regular_price', parseFloat(d.regularPrice) > 0 ? d.regularPrice : '');
+            sf('er-promo_price',   parseFloat(d.promoPrice)   > 0 ? d.promoPrice   : '');
+            sf('er-celeb_10',      parseFloat(d.celeb10)      > 0 ? d.celeb10      : '');
+            sf('er-comm_30',       parseFloat(d.comm30)       > 0 ? d.comm30       : '');
+            sf('er-comm_20',       parseFloat(d.comm20)       > 0 ? d.comm20       : '');
+            sf('er-comm_15',       parseFloat(d.comm15)       > 0 ? d.comm15       : '');
+            sf('er-net_sales',     d.netSales || '');
+            sf('er-remarks',       d.remarks  || '');
+            sf('er-mop',           d.mop      || '');
+
+            // Service dropdown
+            if (sfSvc) {
+                sfSvc.value = d.serviceId;
+                if (String(sfSvc.value) !== String(d.serviceId) && d.serviceName) {
+                    var opt = document.createElement('option');
+                    opt.value = d.serviceId;
+                    opt.textContent = d.serviceName + ' (archived)';
+                    sfSvc.appendChild(opt);
+                    sfSvc.value = d.serviceId;
+                }
+            }
+            // Therapist dropdown
+            if (sfStylist) sfStylist.value = d.therapistId;
+            // Discount dropdowns
+            if (sfPwdSel) sfPwdSel.value = parseFloat(d.disc20) > 0 ? 'valid' : 'none';
+            if (sfStfSel) sfStfSel.value = parseFloat(d.disc50) > 0 ? 'valid' : 'none';
+            // Refund checkbox
+            var refChk = document.getElementById('er-is_refund');
+            if (refChk) refChk.checked = d.isRefund === '1';
+            // Keep manually-entered values intact (prevent recompute overwrite)
+            _commUserEdited  = true;
+            _promoUserEdited = true;
+            // Unlock all commission fields so admin can adjust
+            [sfC30, sfC20, sfC15].forEach(function(f) {
+                if (f) { f.readOnly = false; f.classList.remove('ss-ec-ro'); }
+            });
+            // UI state
+            var addBtn = document.getElementById('ss-add-btn');
+            if (addBtn) addBtn.textContent = '💾 Save Edit';
+            var cancelBtn = document.getElementById('ss-cancel-edit');
+            if (cancelBtn) cancelBtn.style.display = 'inline-flex';
+            document.querySelectorAll('.ss-row').forEach(function(r) {
+                r.style.opacity = r === tr ? '1' : '0.4';
+            });
+            var entryRow = document.getElementById('ss-entry-row');
+            if (entryRow) entryRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+    }
 
     // ── "Add Row" ────────────────────────────────────────────────────────────
     var addBtn = document.getElementById('ss-add-btn');
@@ -2001,7 +2114,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             var fd = new FormData();
             fd.append('action',          'save_ss_row');
             fd.append('csrf_token',      CSRF);
-            fd.append('row_id',          '0');
+            fd.append('row_id',          _editingRowId ? String(_editingRowId) : '0');
             fd.append('row_order',       String(rowCount + 1));
             fd.append('time_in',         gv('er-time_in'));
             fd.append('time_out',        gv('er-time_out'));
@@ -2030,9 +2143,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             fetch('daily_report.php?date='+RDATE, {method:'POST',body:fd})
                 .then(function(r){return r.json();})
                 .then(function(j){
-                    addBtn.disabled    = false;
-                    addBtn.textContent = '➕ Add Row';
+                    addBtn.disabled = false;
                     if (!j.ok) {
+                        addBtn.textContent  = _editingRowId ? '💾 Save Edit' : '➕ Add Row';
                         errEl.textContent   = '❌ '+(j.msg||'Save failed.');
                         errEl.style.display = 'block';
                         return;
@@ -2043,7 +2156,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                         slip_no:         gv('er-slip_no'),
                         client_name:     gv('er-client_name'),
                         service_name:    svcOpt.dataset.name || svcOpt.text,
+                        service_id:      sfSvc ? (sfSvc.value || '0') : '0',
                         stylist:         stylOpt ? (stylOpt.dataset.name || stylOpt.text) : '',
+                        therapist_id:    sfStylist ? (sfStylist.value || '0') : '0',
                         regular_price:   gv('er-regular_price'),
                         promo_price:     gv('er-promo_price'),
                         celeb_10:        gv('er-celeb_10'),
@@ -2057,9 +2172,27 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                         remarks:         gv('er-remarks'),
                         is_refund:       document.getElementById('er-is_refund').checked ? '1' : '0'
                     };
-                    var emptyRow = document.getElementById('ss-empty-row');
-                    if (emptyRow) emptyRow.remove();
-                    document.getElementById('ss-tbody').appendChild(buildPreviewRow(d, j.row_id));
+                    if (_editingRowId) {
+                        // Replace the existing row in the table
+                        var existingRow = document.querySelector('#ss-tbody tr.ss-row[data-row-id="'+_editingRowId+'"]');
+                        if (existingRow) {
+                            d.imported = existingRow.dataset.imported || '0';
+                            var newRow = buildPreviewRow(d, _editingRowId);
+                            existingRow.parentNode.replaceChild(newRow, existingRow);
+                        }
+                        // Reset edit state
+                        _editingRowId = null;
+                        addBtn.textContent = '➕ Add Row';
+                        var cancelBtn = document.getElementById('ss-cancel-edit');
+                        if (cancelBtn) cancelBtn.style.display = 'none';
+                        document.querySelectorAll('.ss-row').forEach(function(r) { r.style.opacity = '1'; });
+                    } else {
+                        // Append new row
+                        var emptyRow = document.getElementById('ss-empty-row');
+                        if (emptyRow) emptyRow.remove();
+                        document.getElementById('ss-tbody').appendChild(buildPreviewRow(d, j.row_id));
+                        addBtn.textContent = '➕ Add Row';
+                    }
                     recalcTotals();
                     // Clear entry row for next entry
                     ['er-time_in','er-time_out','er-slip_no','er-client_name',
@@ -2088,13 +2221,45 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 })
                 .catch(function(e){
                     addBtn.disabled    = false;
-                    addBtn.textContent = '➕ Add Row';
+                    addBtn.textContent = _editingRowId ? '💾 Save Edit' : '➕ Add Row';
                     errEl.textContent   = '❌ Network error.';
                     errEl.style.display = 'block';
                     console.error('SS add', e);
                 });
         });
     }
+
+    // ── Cancel edit ──────────────────────────────────────────────────────────
+    function cancelEdit() {
+        _editingRowId = null;
+        ['er-time_in','er-time_out','er-slip_no','er-client_name',
+         'er-regular_price','er-celeb_10','er-remarks'].forEach(function(id) {
+            var el = document.getElementById(id); if (el) el.value = '';
+        });
+        if (sfSvc)    sfSvc.selectedIndex     = 0;
+        if (sfStylist)sfStylist.selectedIndex  = 0;
+        var _ms = document.getElementById('er-mop'); if (_ms) _ms.selectedIndex = 0;
+        if (sfPwdSel) sfPwdSel.selectedIndex   = 0;
+        if (sfStfSel) sfStfSel.selectedIndex   = 0;
+        if (sfPwdHid) sfPwdHid.value = '0';
+        if (sfStfHid) sfStfHid.value = '0';
+        if (sfPromo)  { sfPromo.value = ''; sfPromo.readOnly = false; sfPromo.classList.remove('ss-ec-ro'); }
+        if (sfC30) { sfC30.value = ''; sfC30.readOnly = true; sfC30.classList.add('ss-ec-ro'); }
+        if (sfC20) { sfC20.value = ''; sfC20.readOnly = true; sfC20.classList.add('ss-ec-ro'); }
+        if (sfC15) { sfC15.value = ''; sfC15.readOnly = true; sfC15.classList.add('ss-ec-ro'); }
+        if (sfNet)    sfNet.value = '';
+        if (commNote) commNote.textContent = '';
+        _promoUserEdited = false;
+        _commUserEdited  = false;
+        var refEl = document.getElementById('er-is_refund');
+        if (refEl) refEl.checked = false;
+        var addBtn = document.getElementById('ss-add-btn');
+        if (addBtn) addBtn.textContent = '➕ Add Row';
+        var cancelBtn = document.getElementById('ss-cancel-edit');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        document.querySelectorAll('.ss-row').forEach(function(r) { r.style.opacity = '1'; });
+    }
+    window.cancelEdit = cancelEdit;
 
     // ── PIN unlock (cashier path) ────────────────────────────────────────────
     var unlockBtn = document.getElementById('ss-unlock-btn');
