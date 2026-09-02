@@ -237,7 +237,7 @@ foreach ($appointments as &$appt) {
     $ts->close();
 
     $es = $conn->prepare("
-        SELECT aes.charged_price AS price, s.name AS svc_name, t.full_name AS therapist_name
+        SELECT aes.charged_price AS price, s.name AS svc_name, s.image AS svc_image, t.full_name AS therapist_name
         FROM appointment_extra_services aes
         JOIN services s ON s.id = aes.service_id
         LEFT JOIN therapists t ON t.id = aes.therapist_id
@@ -680,12 +680,16 @@ details.card-section summary::-webkit-details-marker { display:none; }
                     <summary>✨ Extra Services (<?php echo count($appt['extra_services']); ?>)</summary>
                     <div style="margin-top:0.5rem;">
                         <?php foreach ($appt['extra_services'] as $xsvc): ?>
-                        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid #f3f4f6;font-size:0.87rem;">
-                            <div>
+                        <div style="display:flex;align-items:center;gap:0.65rem;padding:0.4rem 0;border-bottom:1px solid #f3f4f6;font-size:0.87rem;">
+                            <?php if (!empty($xsvc['svc_image'])): ?>
+                            <img src="../uploads/services/<?php echo htmlspecialchars($xsvc['svc_image']); ?>"
+                                 style="width:40px;height:40px;object-fit:cover;border-radius:7px;flex-shrink:0;" alt="">
+                            <?php endif; ?>
+                            <div style="flex:1;min-width:0;">
                                 <span style="color:#3B2A1A;font-weight:600;"><?php echo htmlspecialchars($xsvc['svc_name']); ?></span>
                                 <?php if (!empty($xsvc['therapist_name'])): ?><span style="color:#9a7c68;"> · <?php echo htmlspecialchars($xsvc['therapist_name']); ?></span><?php endif; ?>
                             </div>
-                            <span style="color:#C96A2C;font-weight:700;">₱<?php echo number_format(floatval($xsvc['price']), 2); ?></span>
+                            <span style="color:#C96A2C;font-weight:700;flex-shrink:0;">₱<?php echo number_format(floatval($xsvc['price']), 2); ?></span>
                         </div>
                         <?php endforeach; ?>
                     </div>
@@ -833,12 +837,16 @@ details.card-section summary::-webkit-details-marker { display:none; }
                     <summary>✨ Extra Services (<?php echo count($appt['extra_services']); ?>)</summary>
                     <div style="margin-top:0.5rem;">
                         <?php foreach ($appt['extra_services'] as $xsvc): ?>
-                        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid #f3f4f6;font-size:0.87rem;">
-                            <div>
+                        <div style="display:flex;align-items:center;gap:0.65rem;padding:0.4rem 0;border-bottom:1px solid #f3f4f6;font-size:0.87rem;">
+                            <?php if (!empty($xsvc['svc_image'])): ?>
+                            <img src="../uploads/services/<?php echo htmlspecialchars($xsvc['svc_image']); ?>"
+                                 style="width:40px;height:40px;object-fit:cover;border-radius:7px;flex-shrink:0;" alt="">
+                            <?php endif; ?>
+                            <div style="flex:1;min-width:0;">
                                 <span style="color:#3B2A1A;font-weight:600;"><?php echo htmlspecialchars($xsvc['svc_name']); ?></span>
                                 <?php if (!empty($xsvc['therapist_name'])): ?><span style="color:#9a7c68;"> · <?php echo htmlspecialchars($xsvc['therapist_name']); ?></span><?php endif; ?>
                             </div>
-                            <span style="color:#C96A2C;font-weight:700;">₱<?php echo number_format(floatval($xsvc['price']), 2); ?></span>
+                            <span style="color:#C96A2C;font-weight:700;flex-shrink:0;">₱<?php echo number_format(floatval($xsvc['price']), 2); ?></span>
                         </div>
                         <?php endforeach; ?>
                     </div>

@@ -404,3 +404,60 @@ class AvailabilityEngine {
         return $out;
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Informational conflict helper — returns same-day appointments that overlap
+// the given datetime for a therapist. Warning-only; does not block assignment.
+// ─────────────────────────────────────────────────────────────────────────────
+function get_therapist_conflicts(int $therapist_id, string $appt_datetime,
+                                 int $exclude_appt_id, mysqli $conn): array {
+    $q = $conn->prepare("
+        SELECT a.id, a.appointment_date, s.name AS service_name,
+               COALESCE(o.customer_name, u.full_name) AS customer_name,
+               s.session_time,
+               IF(a.service_type='home', 30, 0) AS buffer_min
+        FROM appointment_therapists at2
+        JOIN appointments a  ON a.id  = at2.appointment_id
+        JOIN services     s  ON s.id  = a.service_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders      o  ON o.id  = oi.order_id
+        LEFT JOIN users       u  ON u.id  = a.user_id
+        WHERE at2.therapist_id = ?
+          AND a.id   != ?
+          AND a.status IN ('pending','assigned','approved')
+          AND DATE(a.appointment_date) = DATE(?)
+        UNION ALL
+        SELECT a.id, a.appointment_date, s.name AS service_name,
+               COALESCE(o.customer_name, u.full_name) AS customer_name,
+               s.session_time,
+               IF(a.service_type='home', 30, 0) AS buffer_min
+        FROM appointment_extra_services aes
+        JOIN appointments a  ON a.id  = aes.appointment_id
+        JOIN services     s  ON s.id  = aes.service_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders      o  ON o.id  = oi.order_id
+        LEFT JOIN users       u  ON u.id  = a.user_id
+        WHERE aes.therapist_id = ?
+          AND a.id   != ?
+          AND a.status IN ('pending','assigned','approved')
+          AND DATE(a.appointment_date) = DATE(?)
+    ");
+    $q->bind_param("iisiis",
+        $therapist_id, $exclude_appt_id, $appt_datetime,
+        $therapist_id, $exclude_appt_id, $appt_datetime);
+    $q->execute();
+    $candidates = $q->get_result()->fetch_all(MYSQLI_ASSOC);
+    $q->close();
+
+    $this_start = strtotime($appt_datetime);
+    $conflicts  = [];
+    foreach ($candidates as $c) {
+        $c_start        = strtotime($c['appointment_date']);
+        $c_end          = $c_start + ((int)$c['session_time'] + (int)$c['buffer_min']) * 60;
+        $c_buffer_start = $c_start - ((int)$c['buffer_min'] * 60);
+        if ($this_start >= $c_buffer_start && $this_start < $c_end) {
+            $conflicts[] = $c;
+        }
+    }
+    return $conflicts;
+}

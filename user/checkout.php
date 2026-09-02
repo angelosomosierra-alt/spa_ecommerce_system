@@ -15,6 +15,7 @@ $checkout_items = [];
 $checkout_type  = null;
 $total_amount   = 0;
 $service_id     = null;
+$modal_services = [];
 
 if (isset($_SESSION['service_booking'])) {
     $checkout_type = 'service';
@@ -90,6 +91,28 @@ if (isset($_SESSION['service_booking'])) {
     $total_qualified  = (int)($cap_row['total_qualified']  ?? 0);
     $on_duty_qualified = (int)($cap_row['on_duty_qualified'] ?? 0);
 
+    // ── Ensure added_by is VARCHAR on appointment_extra_services ─────────────
+    $_aes_col = $conn->query("SHOW COLUMNS FROM appointment_extra_services LIKE 'added_by'");
+    if ($_aes_col && $_aes_col->num_rows === 0) {
+        $conn->query("ALTER TABLE appointment_extra_services ADD COLUMN added_by VARCHAR(64) NOT NULL DEFAULT '0'");
+    } elseif ($_aes_col && $_aes_col->num_rows > 0) {
+        $_aes_row = $_aes_col->fetch_assoc();
+        if (stripos($_aes_row['Type'] ?? '', 'int') !== false) {
+            $conn->query("ALTER TABLE appointment_extra_services MODIFY COLUMN added_by VARCHAR(64) NOT NULL DEFAULT '0'");
+        }
+    }
+
+    // ── Load all active services for "Add Other Service" modal ───────────────
+    $_ms = $conn->query("
+        SELECT s.id, s.name, s.price, s.home_service_fee, s.image,
+               COALESCE(c.name, 'General') AS category
+        FROM services s
+        LEFT JOIN categories c ON s.category_id = c.id
+        WHERE s.deleted_at IS NULL
+        ORDER BY c.name, s.name
+    ");
+    if ($_ms) { while ($r = $_ms->fetch_assoc()) $modal_services[] = $r; }
+
 } elseif (isset($_SESSION['direct_checkout'])) {
     $checkout_type = 'product';
     $product_id    = $_SESSION['direct_checkout']['product_id'];
@@ -163,6 +186,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             $total_amount     = (($checkout_items[0]['price'] * 2) + $home_fee_applied) * $people_count;
         } else {
             $total_amount = $checkout_items[0]['price'] * $people_count;
+        }
+    }
+
+    // ── Parse extra services submitted at checkout ────────────────────────────
+    $extra_svc_ids       = array_map('intval', $_POST['extra_svc_ids']      ?? []);
+    $extra_therapist_ids = array_map('intval', $_POST['extra_therapist_ids'] ?? []);
+    $extra_services_data = [];
+    if ($checkout_type === 'service' && !empty($extra_svc_ids)) {
+        foreach ($extra_svc_ids as $_eidx => $_esid) {
+            if ($_esid <= 0) continue;
+            $_esq = $conn->prepare("SELECT id, price, home_service_fee FROM services WHERE id = ? AND deleted_at IS NULL");
+            $_esq->bind_param("i", $_esid); $_esq->execute();
+            $_esr = $_esq->get_result()->fetch_assoc(); $_esq->close();
+            if (!$_esr) continue;
+            $_es_price = ($service_type === 'home')
+                ? (floatval($_esr['price']) * 2 + floatval($_esr['home_service_fee'] ?? 0))
+                : floatval($_esr['price']);
+            $total_amount += $_es_price;
+            $extra_services_data[] = [
+                'service_id'   => $_esid,
+                'therapist_id' => intval($extra_therapist_ids[$_eidx] ?? 0),
+                'price'        => $_es_price,
+            ];
         }
     }
 
@@ -383,6 +429,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                                 $new_appt_id, $preferred_therapist_id,
                                 $af_notes, $af_comm, $people_count);
                             $af_ins->execute(); $af_ins->close();
+                        }
+                        // ── Insert customer-added extra services ──────────────
+                        if (!empty($extra_services_data) && $new_appt_id > 0) {
+                            $es_rate   = ($service_type === 'home') ? 'home' : 'regular';
+                            $es_label  = 'Person 1';
+                            $es_notes  = '';
+                            $es_by     = 'customer';
+                            $es_ref    = '';
+                            $es_met    = '';
+                            $es_comm   = 0.00;
+                            $es_status = 'unpaid';
+                            $es_pm     = 'cash';
+                            $_es_ins   = $conn->prepare("
+                                INSERT INTO appointment_extra_services
+                                    (appointment_id, service_id, therapist_id, person_label,
+                                     charged_price, commission, rate_type, payment_method,
+                                     payment_status, notes, added_by, paymongo_reference, paymongo_method)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ");
+                            foreach ($extra_services_data as $_esd) {
+                                $_es_svc = $_esd['service_id'];
+                                $_es_th  = $_esd['therapist_id'];
+                                $_es_prc = $_esd['price'];
+                                $_es_ins->bind_param("iiisddsssssss",
+                                    $new_appt_id, $_es_svc, $_es_th, $es_label,
+                                    $_es_prc, $es_comm, $es_rate, $es_pm,
+                                    $es_status, $es_notes, $es_by, $es_ref, $es_met);
+                                $_es_ins->execute();
+                            }
+                            $_es_ins->close();
                         }
                     }
                 }
@@ -1556,11 +1632,30 @@ require_once 'header.php';
                             <span>Service Charge</span>
                             <span>Free</span>
                         </div>
+                        <div class="co-total-row" id="extra-svc-total-row" style="display:none;">
+                            <span>➕ Added Services</span>
+                            <span id="extra-svc-total-amt">+₱0.00</span>
+                        </div>
                         <div class="co-total-row grand">
                             <span>Total</span>
                             <span id="grandTotal">₱<?php echo number_format($total_amount, 2); ?></span>
                         </div>
                     </div>
+
+                    <!-- Customer-added extra services list -->
+                    <div id="extra-services-list" style="margin-top:0.75rem;"></div>
+                    <?php if ($checkout_type === 'service' && !empty($modal_services)): ?>
+                    <button type="button" onclick="openExtraModal()" id="addExtraSvcBtn"
+                            style="margin-top:0.85rem;width:100%;padding:0.5rem 0.85rem;
+                                   border:1.5px dashed var(--gold);border-radius:10px;
+                                   background:rgba(201,106,44,0.05);color:var(--gold);
+                                   font-size:0.85rem;font-weight:700;cursor:pointer;
+                                   transition:all .15s;font-family:'DM Sans',sans-serif;"
+                            onmouseover="this.style.background='rgba(201,106,44,0.12)'"
+                            onmouseout="this.style.background='rgba(201,106,44,0.05)'">
+                        ➕ Add Other Service
+                    </button>
+                    <?php endif; ?>
 
                     <!-- Service info box -->
                     <?php if ($checkout_type === 'service'): ?>
@@ -1634,6 +1729,85 @@ require_once 'header.php';
         </div>
     </div>
 </div>
+
+<!-- ── Add Other Service Modal ──────────────────────────────────────────────── -->
+<?php if ($checkout_type === 'service' && !empty($modal_services)): ?>
+<div class="bm-overlay" id="esOverlay">
+    <div class="bm-box" style="max-width:540px;max-height:90vh;display:flex;flex-direction:column;">
+        <div class="bm-header">
+            <span class="bm-header-title">➕ Add Other Service</span>
+            <button class="bm-close" type="button" onclick="closeExtraModal()" aria-label="Close">✕</button>
+        </div>
+        <div class="bm-body" style="flex:1;overflow-y:auto;padding:1rem 1.1rem;">
+            <input type="text" id="esSearch" placeholder="Search services…"
+                   oninput="esFilter(this.value)"
+                   style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--cream2);
+                          border-radius:8px;font-size:0.88rem;color:var(--brown);
+                          background:var(--cream);box-sizing:border-box;margin-bottom:0.85rem;">
+            <div id="esGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:0.55rem;">
+                <?php $prev_cat = null; foreach ($modal_services as $ms): ?>
+                <?php if ($ms['category'] !== $prev_cat): $prev_cat = $ms['category']; ?>
+                <div class="es-cat-label"
+                     data-cat="<?php echo htmlspecialchars($ms['category']); ?>"
+                     style="grid-column:1/-1;font-size:0.7rem;font-weight:700;color:var(--gray);
+                            text-transform:uppercase;letter-spacing:.06em;margin-top:0.5rem;
+                            padding-bottom:0.25rem;border-bottom:1px solid var(--cream2);">
+                    <?php echo htmlspecialchars($ms['category']); ?>
+                </div>
+                <?php endif; ?>
+                <div class="es-svc-card"
+                     data-id="<?php echo $ms['id']; ?>"
+                     data-name="<?php echo htmlspecialchars($ms['name'], ENT_QUOTES); ?>"
+                     data-price="<?php echo floatval($ms['price']); ?>"
+                     data-homefee="<?php echo floatval($ms['home_service_fee'] ?? 0); ?>"
+                     data-cat="<?php echo htmlspecialchars($ms['category'], ENT_QUOTES); ?>"
+                     data-image="<?php echo htmlspecialchars($ms['image'] ?? '', ENT_QUOTES); ?>"
+                     onclick="esSelectSvc(this)"
+                     style="padding:0.6rem 0.7rem;border:1.5px solid var(--cream2);border-radius:10px;
+                            cursor:pointer;transition:all .15s;background:var(--cream);">
+                    <div style="font-size:0.82rem;font-weight:600;color:var(--brown);
+                                line-height:1.3;margin-bottom:0.2rem;">
+                        <?php echo htmlspecialchars($ms['name']); ?>
+                    </div>
+                    <div style="font-size:0.75rem;color:var(--gold);font-weight:700;">
+                        ₱<?php echo number_format($ms['price'], 2); ?>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+
+            <!-- Therapist picker (shown after service selected) -->
+            <div id="esTherapistPick" style="display:none;margin-top:1rem;padding:0.85rem;
+                 background:var(--cream);border-radius:10px;border:1px solid var(--cream2);">
+                <div style="font-size:0.75rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">
+                    Selected: <span id="esSelName" style="color:var(--gold);"></span>
+                    — <span id="esSelPrice" style="color:var(--gold);"></span>
+                </div>
+                <label style="font-size:0.73rem;color:var(--gray);font-weight:600;
+                              display:block;margin-bottom:4px;">Preferred Therapist (optional)</label>
+                <select id="esTherapistDd"
+                        style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--cream2);
+                               border-radius:7px;background:#fff;color:var(--brown);font-size:0.85rem;">
+                    <option value="0">Any Available</option>
+                    <?php foreach ($therapists_for_selection as $th): ?>
+                    <option value="<?php echo intval($th['id']); ?>">
+                        <?php echo htmlspecialchars($th['full_name']); ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="button" onclick="esConfirmAdd()"
+                        style="margin-top:0.75rem;width:100%;padding:0.5rem;border-radius:8px;
+                               border:none;background:var(--gold);color:#fff;font-size:0.88rem;
+                               font-weight:700;cursor:pointer;transition:all .15s;"
+                        onmouseover="this.style.opacity='0.88'"
+                        onmouseout="this.style.opacity='1'">
+                    ✅ Add This Service
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <?php
 $total_qualified   = $total_qualified   ?? 0;
@@ -2049,6 +2223,188 @@ function updateDiscountPreview() {
     if (subtotalEl) subtotalEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
     grandEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
+
+// ── Extra Services (customer-added at checkout) ───────────────────────────────
+<?php if ($checkout_type === 'service' && !empty($modal_services)): ?>
+const SERVICE_THERAPISTS = <?php
+$_st_map = [];
+$_st_q = $conn->query("
+    SELECT DISTINCT qs.service_id, t.id, t.full_name
+    FROM (
+        SELECT therapist_id, service_id FROM therapist_specialty_services
+        UNION
+        SELECT ts.therapist_id, s.id AS service_id
+        FROM therapist_specialties ts
+        JOIN services s ON s.category_id = ts.category_id
+        WHERE s.deleted_at IS NULL
+        UNION
+        SELECT t2.id AS therapist_id, s2.id AS service_id
+        FROM therapists t2 CROSS JOIN services s2
+        WHERE t2.is_generalist = 1 AND s2.deleted_at IS NULL
+    ) AS qs
+    JOIN therapists t ON t.id = qs.therapist_id
+    ORDER BY qs.service_id, t.full_name
+");
+if ($_st_q) {
+    while ($_st_r = $_st_q->fetch_assoc()) {
+        $_st_map[(int)$_st_r['service_id']][] = ['id' => (int)$_st_r['id'], 'name' => $_st_r['full_name']];
+    }
+}
+echo json_encode($_st_map, JSON_HEX_TAG | JSON_HEX_APOS);
+?>;
+var _extraItems = [];
+var _esPending  = {id: 0, name: '', price: 0, image: ''};
+
+(function () {
+    var _origDiscount = updateDiscountPreview;
+    updateDiscountPreview = function () {
+        _origDiscount();
+        if (_extraItems.length === 0) return;
+        var grand = document.getElementById('grandTotal');
+        if (!grand) return;
+        var base  = parseFloat(grand.textContent.replace(/[₱,]/g, '')) || 0;
+        var extra = _extraItems.reduce(function (s, x) { return s + x.price; }, 0);
+        grand.textContent = '₱' + (base + extra).toLocaleString('en-PH',
+            {minimumFractionDigits:2, maximumFractionDigits:2});
+    };
+}());
+
+function openExtraModal() {
+    var ov = document.getElementById('esOverlay');
+    if (!ov) return;
+    ov.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    var srch = document.getElementById('esSearch');
+    if (srch) { srch.value = ''; esFilter(''); }
+    document.getElementById('esTherapistPick').style.display = 'none';
+    _esPending = {id: 0, name: '', price: 0};
+    document.querySelectorAll('.es-svc-card').forEach(function (c) {
+        c.style.borderColor = 'var(--cream2)'; c.style.background = 'var(--cream)';
+    });
+}
+
+function closeExtraModal() {
+    var ov = document.getElementById('esOverlay');
+    if (ov) ov.classList.remove('open');
+    document.body.style.overflow = '';
+}
+
+document.getElementById('esOverlay').addEventListener('click', function (e) {
+    if (e.target === this) closeExtraModal();
+});
+
+function esFilter(q) {
+    var term = q.toLowerCase();
+    document.querySelectorAll('#esGrid .es-svc-card').forEach(function (card) {
+        card.style.display = (!term || card.dataset.name.toLowerCase().includes(term)) ? '' : 'none';
+    });
+    document.querySelectorAll('#esGrid .es-cat-label').forEach(function (lbl) {
+        var cat = lbl.dataset.cat;
+        var anyVis = false;
+        document.querySelectorAll('#esGrid .es-svc-card').forEach(function (c) {
+            if (c.dataset.cat === cat && c.style.display !== 'none') anyVis = true;
+        });
+        lbl.style.display = anyVis ? '' : 'none';
+    });
+}
+
+function esSelectSvc(card) {
+    document.querySelectorAll('.es-svc-card').forEach(function (c) {
+        c.style.borderColor = 'var(--cream2)'; c.style.background = 'var(--cream)';
+    });
+    card.style.borderColor = 'var(--gold)'; card.style.background = '#fff8f2';
+    var svcTypeEl = document.getElementById('service_type_hidden');
+    var isHome = svcTypeEl && svcTypeEl.value === 'home';
+    var price  = isHome
+        ? parseFloat(card.dataset.price) * 2 + parseFloat(card.dataset.homefee || 0)
+        : parseFloat(card.dataset.price);
+    _esPending = {id: parseInt(card.dataset.id), name: card.dataset.name,
+                  price: price, image: card.dataset.image || ''};
+    document.getElementById('esSelName').textContent  = _esPending.name;
+    document.getElementById('esSelPrice').textContent = '₱' + price.toLocaleString('en-PH',
+        {minimumFractionDigits:2, maximumFractionDigits:2});
+    document.getElementById('esTherapistPick').style.display = '';
+    // Repopulate therapist dropdown filtered to this service's qualified therapists
+    var dd = document.getElementById('esTherapistDd');
+    dd.innerHTML = '<option value="0">Any Available</option>';
+    var ths = (typeof SERVICE_THERAPISTS !== 'undefined' && SERVICE_THERAPISTS[_esPending.id]) || [];
+    ths.forEach(function (th) {
+        var opt = document.createElement('option');
+        opt.value = th.id; opt.textContent = th.name;
+        dd.appendChild(opt);
+    });
+}
+
+function esConfirmAdd() {
+    if (!_esPending.id) return;
+    var thId = parseInt(document.getElementById('esTherapistDd').value) || 0;
+    _extraItems.push({service_id: _esPending.id, therapist_id: thId,
+                      price: _esPending.price, name: _esPending.name,
+                      image: _esPending.image || ''});
+    _syncExtraInputs();
+    _renderExtraList();
+    closeExtraModal();
+    updateDiscountPreview();
+}
+
+function esRemoveItem(idx) {
+    _extraItems.splice(idx, 1);
+    _syncExtraInputs();
+    _renderExtraList();
+    updateDiscountPreview();
+}
+
+function _syncExtraInputs() {
+    var form = document.getElementById('checkoutForm');
+    if (!form) return;
+    form.querySelectorAll('input[name="extra_svc_ids[]"], input[name="extra_therapist_ids[]"]')
+        .forEach(function (el) { el.remove(); });
+    _extraItems.forEach(function (item) {
+        var si = document.createElement('input');
+        si.type = 'hidden'; si.name = 'extra_svc_ids[]'; si.value = item.service_id;
+        var ti = document.createElement('input');
+        ti.type = 'hidden'; ti.name = 'extra_therapist_ids[]'; ti.value = item.therapist_id;
+        form.appendChild(si); form.appendChild(ti);
+    });
+}
+
+function _renderExtraList() {
+    var list     = document.getElementById('extra-services-list');
+    var totalRow = document.getElementById('extra-svc-total-row');
+    var totalAmt = document.getElementById('extra-svc-total-amt');
+    if (!list) return;
+    list.innerHTML = '';
+    if (_extraItems.length === 0) {
+        if (totalRow) totalRow.style.display = 'none';
+        return;
+    }
+    if (totalRow) totalRow.style.display = '';
+    var extraTotal = _extraItems.reduce(function (s, x) { return s + x.price; }, 0);
+    if (totalAmt) totalAmt.textContent = '+₱' + extraTotal.toLocaleString('en-PH',
+        {minimumFractionDigits:2, maximumFractionDigits:2});
+    _extraItems.forEach(function (item, idx) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.6rem;'
+            + 'background:var(--cream);border:1px solid var(--cream2);border-radius:8px;'
+            + 'margin-bottom:0.35rem;font-size:0.8rem;';
+        var safeName = item.name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var imgHtml = item.image
+            ? '<img src="/spa_ecommerce_system/uploads/services/' + item.image
+              + '" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;" alt="">'
+            : '';
+        row.innerHTML = imgHtml
+            + '<div style="flex:1;min-width:0;">'
+            + '<div style="font-weight:600;font-size:0.85rem;color:var(--brown);">' + safeName + '</div>'
+            + '<div style="font-size:0.8rem;color:var(--gold);">₱'
+            + item.price.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})
+            + '</div></div>'
+            + '<button type="button" onclick="esRemoveItem(' + idx + ')" '
+            + 'style="flex-shrink:0;background:none;border:none;color:#dc2626;cursor:pointer;'
+            + 'font-size:0.85rem;padding:0.1rem 0.3rem;" title="Remove">✕</button>';
+        list.appendChild(row);
+    });
+}
+<?php endif; ?>
 
 // Init
 selectPayment('onsite');

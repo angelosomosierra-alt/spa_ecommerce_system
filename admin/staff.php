@@ -53,9 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
     $role_type     = trim($_POST['role_type']       ?? 'cashier');
 
     // Map button value → admin_role column value
-    $valid_roles   = ['cashier' => 'cashier', 'marketing' => 'marketing', 'it' => 'it'];
+    $valid_roles   = ['cashier' => 'cashier', 'marketing' => 'marketing', 'it' => 'it', 'hr' => 'hr'];
     $admin_role_val = $valid_roles[$role_type] ?? 'cashier';
-    $role_labels   = ['cashier' => 'Receptionist', 'marketing' => 'Marketing', 'it' => 'IT Support'];
+    $role_labels   = ['cashier' => 'Receptionist', 'marketing' => 'Marketing', 'it' => 'IT Support', 'hr' => 'HR'];
     $role_label    = $role_labels[$admin_role_val] ?? 'Staff';
 
     $creator_role = current_admin_role();
@@ -222,7 +222,7 @@ if (isset($_GET['delete_cashier'])) {
     } else {
         $stmt = $conn->prepare("DELETE FROM users WHERE id=? AND admin_role=?");
         $stmt->bind_param("is", $del_id, $target_role); $stmt->execute(); $stmt->close();
-        $role_labels_del = ['cashier' => 'Receptionist', 'marketing' => 'Marketing', 'it' => 'IT Support'];
+        $role_labels_del = ['cashier' => 'Receptionist', 'marketing' => 'Marketing', 'it' => 'IT Support', 'hr' => 'HR'];
         $msg = '🗑️ ' . ($role_labels_del[$target_role] ?? ucfirst($target_role)) . ' account removed.';
     }
 }
@@ -502,6 +502,7 @@ $owners     = array_filter($staff_list, fn($s) => $s['admin_role'] === 'owner');
 $cashiers   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'cashier');
 $marketings = array_filter($staff_list, fn($s) => $s['admin_role'] === 'marketing');
 $it_staff   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'it');
+$hr_staff   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'hr');
 
 // Receptionist PIN profiles
 $receptionist_pins = $conn->query("SELECT * FROM receptionist_pins ORDER BY full_name ASC")->fetch_all(MYSQLI_ASSOC);
@@ -769,7 +770,7 @@ require_once 'admin_header.php';
             border-bottom:2px solid var(--border2);padding-bottom:0;flex-wrap:wrap;">
     <?php
     $tabs = [
-        'cashiers'      => ['🏪 Staff Accounts',        count($cashiers) + count($marketings) + count($it_staff)],
+        'cashiers'      => ['🏪 Staff Accounts',        count($cashiers) + count($marketings) + count($it_staff) + count($hr_staff)],
         'receptionists' => ['📋 Receptionists',        count($receptionist_pins)],
         'therapists'    => ['💆 Therapists',           count($all_therapists)],
         'commission'    => ['💰 Commission Matrix',    null],
@@ -838,6 +839,13 @@ require_once 'admin_header.php';
                         'note_bg'     => 'rgba(37,99,235,0.07)', 'note_border' => '#2563eb',
                         'note_color'  => '#1e3a8a',
                         'note_text'   => '💻 <strong>IT Support:</strong> Full access to all pages — same as Marketing. Intended for system maintenance and technical management.',
+                    ],
+                    'hr' => [
+                        'icon' => '🧑‍💼 HR', 'sub' => 'Full access',
+                        'sub_color'   => 'var(--gray)',
+                        'note_bg'     => 'rgba(168,85,247,0.07)', 'note_border' => '#a855f7',
+                        'note_color'  => '#581c87',
+                        'note_text'   => '🧑‍💼 <strong>HR:</strong> Same full access as IT Support. Intended for human resources and staff management.',
                     ],
                 ];
                 $_col_str = implode(' ', array_fill(0, count($_allowed_create), '1fr'));
@@ -1097,6 +1105,56 @@ require_once 'admin_header.php';
                             <div style="display:flex;align-items:center;gap:0.6rem;">
                                 <div style="width:34px;height:34px;border-radius:50%;
                                             background:linear-gradient(135deg,#2563eb,#1e3a8a);
+                                            color:#fff;display:flex;align-items:center;justify-content:center;
+                                            font-weight:700;font-size:0.85rem;flex-shrink:0;">
+                                    <?php echo strtoupper(substr($s['full_name'],0,1)); ?>
+                                </div>
+                                <div>
+                                    <div style="font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($s['full_name']); ?></div>
+                                    <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($s['phone'] ?? ''); ?></div>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="font-family:monospace;font-size:0.85rem;"><?php echo htmlspecialchars($s['username']); ?></td>
+                        <td style="font-size:0.82rem;color:var(--gray);"><?php echo htmlspecialchars($s['email']); ?></td>
+                        <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($s['created_at'])); ?></td>
+                        <td>
+                            <?php if ($s['id'] !== (int)$_SESSION['user_id']): ?>
+                            <a href="staff.php?delete_cashier=<?php echo $s['id']; ?>&tab=cashiers"
+                               class="btn btn-danger btn-sm" style="font-size:0.72rem;"
+                               onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- HR accounts -->
+        <div class="panel">
+            <div class="panel-header">
+                <span class="panel-title">🧑‍💼 HR Accounts (<?php echo count($hr_staff); ?>)</span>
+            </div>
+            <?php if (empty($hr_staff)): ?>
+            <div class="panel-body" style="text-align:center;padding:1.5rem;color:var(--gray);">
+                <div style="font-size:1.75rem;margin-bottom:0.3rem;">🧑‍💼</div>No HR accounts yet.
+            </div>
+            <?php else: ?>
+            <div class="table-wrap" style="border:none;border-radius:0;">
+                <table>
+                    <thead>
+                        <tr><th>Name</th><th>Username</th><th>Email</th><th>Since</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($hr_staff as $s): ?>
+                    <tr>
+                        <td>
+                            <div style="display:flex;align-items:center;gap:0.6rem;">
+                                <div style="width:34px;height:34px;border-radius:50%;
+                                            background:linear-gradient(135deg,#a855f7,#581c87);
                                             color:#fff;display:flex;align-items:center;justify-content:center;
                                             font-weight:700;font-size:0.85rem;flex-shrink:0;">
                                     <?php echo strtoupper(substr($s['full_name'],0,1)); ?>

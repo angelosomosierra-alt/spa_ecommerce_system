@@ -205,14 +205,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_header'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_denoms'])) {
     verify_csrf_token();
     if ($rpt && (!$LOCK_FEATURE_ENABLED || !$rpt['is_locked'])) {
+        // Save opening COH as a single amount (no longer a denomination grid)
+        $opening_coh_val = floatval($_POST['opening_coh'] ?? 0);
+        $oc_stmt = $conn->prepare("UPDATE daily_reports SET opening_coh=? WHERE id=?");
+        $oc_stmt->bind_param("di", $opening_coh_val, $rpt['id']); $oc_stmt->execute(); $oc_stmt->close();
+        $rpt['opening_coh'] = $opening_coh_val; // keep $rpt in sync for this request
+
+        // Save closing denominations only
         $denoms = [1000,500,200,100,50,20,10,5,1];
         $stmt = $conn->prepare("
-            INSERT INTO daily_report_denominations (report_id, denomination, quantity)
-            VALUES (?, ?, ?)
+            INSERT INTO daily_report_denominations (report_id, denomination, quantity, `type`)
+            VALUES (?, ?, ?, 'closing')
             ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)
         ");
         foreach ($denoms as $d) {
-            $qty = intval($_POST['denom_'.$d] ?? 0);
+            $qty = intval($_POST['closing_denom_' . $d] ?? 0);
             $stmt->bind_param("iii", $rpt['id'], $d, $qty);
             $stmt->execute();
         }
@@ -474,9 +481,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
     $eq->close();
 
     $mop_map = [
-        'cash'   => 'Cash',  'gcash'  => 'GCash', 'maya'   => 'Maya',
-        'card'   => 'Card',  'swiper' => 'Card',   'qr_ph'  => 'QR PH',
-        'qrph'   => 'QR PH', 'online' => 'GCash',
+        'cash'   => 'Cash',   'gcash'  => 'GCash', 'maya'   => 'Maya',
+        'card'   => 'Card',   'swiper' => 'Swiper', 'qr_ph'  => 'QR PH',
+        'qrph'   => 'QR PH',  'online' => 'GCash',
     ];
 
     $ins = $conn->prepare("
@@ -538,6 +545,110 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $ins->execute();
     }
     $ins->close();
+})();
+
+// ── AUTO-IMPORT: Extra services → spreadsheet rows (one row per extra service) ─
+(function() use ($conn, $report_date) {
+    // Fetch paid extra services for completed appointments on this date
+    $esq = $conn->prepare("
+        SELECT
+            es.id                AS extra_id,
+            es.appointment_id,
+            es.service_id,
+            es.therapist_id,
+            es.charged_price,
+            es.commission,
+            es.payment_method,
+            es.person_label,
+            COALESCE(s.name, '[Deleted Service]') AS service_name,
+            s.price              AS regular_price,
+            t.full_name          AS therapist_name,
+            o.customer_name,
+            o.slip_number,
+            a.appointment_date
+        FROM appointment_extra_services es
+        JOIN appointments a ON a.id = es.appointment_id
+        LEFT JOIN services  s ON s.id = es.service_id
+        LEFT JOIN therapists t ON t.id = es.therapist_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders o ON o.id = oi.order_id
+        WHERE DATE(a.appointment_date) = ?
+          AND a.status = 'completed'
+          AND es.payment_status = 'paid'
+        ORDER BY a.appointment_date ASC, es.id ASC
+    ");
+    $esq->bind_param("s", $report_date); $esq->execute();
+    $imp_extras = $esq->get_result()->fetch_all(MYSQLI_ASSOC); $esq->close();
+    if (empty($imp_extras)) goto skip_extra_import;
+
+    // Collect already-imported extra service IDs
+    $eeq = $conn->prepare("SELECT source_extra_service_id FROM daily_report_spreadsheet_rows WHERE report_date=? AND source_extra_service_id IS NOT NULL");
+    $eeq->bind_param("s", $report_date); $eeq->execute();
+    $already_extra = array_flip(array_column($eeq->get_result()->fetch_all(MYSQLI_ASSOC), 'source_extra_service_id'));
+    $eeq->close();
+
+    $mop_map2 = [
+        'cash'   => 'Cash',   'gcash'  => 'GCash', 'maya'   => 'Maya',
+        'card'   => 'Card',   'swiper' => 'Swiper', 'qr_ph'  => 'QR PH',
+        'qrph'   => 'QR PH',  'online' => 'GCash',
+    ];
+
+    $eins = $conn->prepare("
+        INSERT INTO daily_report_spreadsheet_rows
+            (report_date, row_order, time_in, time_out, slip_no, client_name,
+             service_name, service_id, stylist, therapist_id,
+             regular_price, promo_price, celeb_10,
+             disc_20_pwd, comm_30, comm_20, comm_15, disc_50_staff,
+             net_sales, mode_of_payment, remarks, is_refund, created_by_name,
+             source_extra_service_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ");
+
+    // Pre-load commission percents for column routing
+    $ecm = [];
+    $cq2 = $conn->query("SELECT therapist_id, service_id, commission_percent FROM therapist_commission");
+    if ($cq2) foreach ($cq2->fetch_all(MYSQLI_ASSOC) as $_c)
+        $ecm[(int)$_c['therapist_id'] . '_' . (int)$_c['service_id']] = (float)$_c['commission_percent'];
+
+    foreach ($imp_extras as $ex) {
+        $extra_id = (int)$ex['extra_id'];
+        if (isset($already_extra[$extra_id])) continue;
+
+        $time_in       = date('h:i A', strtotime($ex['appointment_date']));
+        $service_id    = (int)$ex['service_id'];
+        $therapist_id  = (int)($ex['therapist_id'] ?? 0);
+        $regular_price = (float)($ex['regular_price'] ?? 0);
+        $promo_price   = (float)($ex['charged_price'] ?? 0);
+        $total_comm    = (float)($ex['commission'] ?? 0);
+        $pct_key       = $therapist_id . '_' . $service_id;
+        $pct           = $ecm[$pct_key] ?? 0;
+        $comm_30 = $comm_20 = $comm_15 = 0.0;
+        if     ($pct >= 28 && $pct <= 32) $comm_30 = $total_comm;
+        elseif ($pct >= 18 && $pct <= 22) $comm_20 = $total_comm;
+        elseif ($pct >= 13 && $pct <= 17) $comm_15 = $total_comm;
+        else                               $comm_30 = $total_comm;
+        $net_sales     = $promo_price - $total_comm;
+        $raw_mop       = strtolower(trim($ex['payment_method'] ?? ''));
+        $mode_of_pay   = $mop_map2[$raw_mop] ?? 'Cash';
+        $slip_no       = $ex['slip_number']   ?? '';
+        $client_name   = $ex['customer_name'] ?? '';
+        $svc_name      = $ex['service_name']  ?? '';
+        $stylist       = $ex['therapist_name'] ?? '';
+        $remarks       = $ex['person_label']  ?? '';
+        $row_order = 0; $celeb_10 = 0.0; $disc_20_pwd = 0.0; $disc_50_staff = 0.0;
+        $is_refund = 0; $created_by = 'import'; $time_out = '';
+
+        $eins->bind_param("sisssssisidddddddddssisi",
+            $report_date, $row_order, $time_in, $time_out, $slip_no, $client_name,
+            $svc_name, $service_id, $stylist, $therapist_id,
+            $regular_price, $promo_price, $celeb_10,
+            $disc_20_pwd, $comm_30, $comm_20, $comm_15, $disc_50_staff,
+            $net_sales, $mode_of_pay, $remarks, $is_refund, $created_by,
+            $extra_id);
+        $eins->execute();
+    }
+    $eins->close();
+    skip_extra_import:;
 })();
 
 require_once __DIR__ . '/_daily_report_data.php';
@@ -635,7 +746,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
         <div class="table-wrap" style="border:none;border-radius:0;overflow-x:auto;">
         <?php
         // ── Per-row commission-tier & totals accumulators ─────────────────────
-        $pm_icons = ['cash'=>'💵','gcash'=>'📱','maya'=>'💜','qrph'=>'📷','bank'=>'🏦','card'=>'💳','online'=>'💳'];
+        $pm_icons = ['cash'=>'💵','gcash'=>'📱','maya'=>'💜','qrph'=>'📷','bank'=>'🏦','card'=>'💳','swiper'=>'💳','online'=>'💳'];
         $t_reg=$t_promo=$t_celeb=$t_dpwd=$t_c30=$t_c20=$t_c15=$t_d50=$t_net=0;
         ?>
             <table style="min-width:1900px;font-size:0.78rem;">
@@ -930,52 +1041,80 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start;">
 
-    <!-- Cash Denomination Breakdown -->
-    <div class="panel">
+    <!-- Cash Denomination Breakdown (Opening + Closing) -->
+    <div class="panel" style="grid-column:1/-1;">
         <div class="panel-header"><span class="panel-title">💵 Cash Denomination Breakdown</span></div>
         <div class="panel-body" style="padding:1rem;">
             <form method="POST">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="save_denoms" value="1">
-                <table style="width:100%;border-collapse:collapse;">
-                    <thead>
-                        <tr>
-                            <th style="text-align:left;padding:0.4rem 0.5rem;font-size:0.78rem;color:var(--gray);border-bottom:1px solid var(--border2);">Denomination</th>
-                            <th style="text-align:center;padding:0.4rem 0.5rem;font-size:0.78rem;color:var(--gray);border-bottom:1px solid var(--border2);">Qty</th>
-                            <th style="text-align:right;padding:0.4rem 0.5rem;font-size:0.78rem;color:var(--gray);border-bottom:1px solid var(--border2);">Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($denom_list as $d):
-                        $saved_qty = intval($denoms_saved[$d]['quantity'] ?? 0);
-                        $saved_tot = floatval($denoms_saved[$d]['total']    ?? 0);
-                    ?>
-                    <tr style="border-bottom:1px solid var(--border2);">
-                        <td style="padding:0.35rem 0.5rem;font-weight:600;color:var(--brown);">₱<?php echo number_format($d, $d < 1 ? 2 : 0); ?></td>
-                        <td style="padding:0.35rem 0.5rem;text-align:center;">
-                            <input type="number" name="denom_<?php echo $d; ?>"
-                                   value="<?php echo $saved_qty; ?>" min="0"
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+
+                    <!-- Opening COH (single amount) -->
+                    <div>
+                        <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;padding-bottom:0.3rem;border-bottom:2px solid var(--border2);">📂 Opening Count</div>
+                        <div style="margin-bottom:1.5rem;">
+                            <h4 style="font-size:0.88rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">
+                                💰 Opening COH
+                                <span style="font-weight:400;font-size:0.75rem;color:var(--gray);">
+                                    (Start of Day — total cash in register before any transactions)
+                                </span>
+                            </h4>
+                            <input type="number" name="opening_coh" id="opening-coh"
+                                   step="0.01" min="0" placeholder="e.g. 3000"
+                                   value="<?php echo floatval($rpt['opening_coh'] ?? 0); ?>"
                                    <?php echo $locked ? 'disabled' : ''; ?>
-                                   oninput="updateDenomTotal(this, <?php echo $d; ?>)"
-                                   style="width:70px;padding:0.3rem;border:1px solid var(--border2);
-                                          border-radius:6px;background:var(--bg3);color:var(--brown);
-                                          font-size:0.85rem;text-align:center;">
-                        </td>
-                        <td id="denom-total-<?php echo $d; ?>" style="padding:0.35rem 0.5rem;text-align:right;font-family:monospace;font-size:0.85rem;color:var(--brown);">
-                            ₱<?php echo number_format($saved_tot,2); ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                    <tfoot>
-                        <tr style="background:var(--bg3);border-top:2px solid var(--border2);">
-                            <td colspan="2" style="padding:0.5rem;font-weight:700;font-size:0.9rem;color:var(--brown);">TOTAL</td>
-                            <td id="denom-grand-total" style="padding:0.5rem;text-align:right;font-weight:700;font-size:0.9rem;color:var(--gold);">
-                                ₱<?php echo number_format($denom_total,2); ?>
-                            </td>
-                        </tr>
-                    </tfoot>
-                </table>
+                                   oninput="recalcShortOver()"
+                                   style="width:220px;padding:0.55rem 0.7rem;border:1px solid var(--border2);
+                                          border-radius:8px;font-size:0.95rem;font-weight:600;">
+                        </div>
+                    </div>
+
+                    <!-- Closing Count -->
+                    <div>
+                        <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;padding-bottom:0.3rem;border-bottom:2px solid var(--border2);">📁 Closing Count</div>
+                        <table style="width:100%;border-collapse:collapse;">
+                            <thead>
+                                <tr>
+                                    <th style="text-align:left;padding:0.4rem 0.5rem;font-size:0.78rem;color:var(--gray);border-bottom:1px solid var(--border2);">Denomination</th>
+                                    <th style="text-align:center;padding:0.4rem 0.5rem;font-size:0.78rem;color:var(--gray);border-bottom:1px solid var(--border2);">Qty</th>
+                                    <th style="text-align:right;padding:0.4rem 0.5rem;font-size:0.78rem;color:var(--gray);border-bottom:1px solid var(--border2);">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($denom_list as $d):
+                                $c_qty = intval($denoms_closing[$d]['quantity'] ?? 0);
+                                $c_tot = floatval($denoms_closing[$d]['total']   ?? 0);
+                            ?>
+                            <tr style="border-bottom:1px solid var(--border2);">
+                                <td style="padding:0.35rem 0.5rem;font-weight:600;color:var(--brown);">₱<?php echo number_format($d, $d < 1 ? 2 : 0); ?></td>
+                                <td style="padding:0.35rem 0.5rem;text-align:center;">
+                                    <input type="number" name="closing_denom_<?php echo $d; ?>"
+                                           value="<?php echo $c_qty; ?>" min="0"
+                                           <?php echo $locked ? 'disabled' : ''; ?>
+                                           oninput="updateDenomTotal(this, <?php echo $d; ?>, 'closing')"
+                                           style="width:70px;padding:0.3rem;border:1px solid var(--border2);
+                                                  border-radius:6px;background:var(--bg3);color:var(--brown);
+                                                  font-size:0.85rem;text-align:center;">
+                                </td>
+                                <td id="closing-denom-total-<?php echo $d; ?>" style="padding:0.35rem 0.5rem;text-align:right;font-family:monospace;font-size:0.85rem;color:var(--brown);">
+                                    ₱<?php echo number_format($c_tot,2); ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                            <tfoot>
+                                <tr style="background:var(--bg3);border-top:2px solid var(--border2);">
+                                    <td colspan="2" style="padding:0.5rem;font-weight:700;font-size:0.9rem;color:var(--brown);">TOTAL</td>
+                                    <td id="closing-grand-total" style="padding:0.5rem;text-align:right;font-weight:700;font-size:0.9rem;color:var(--gold);">
+                                        ₱<?php echo number_format($closing_denom_total,2); ?>
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                </div>
                 <?php if (!$locked): ?>
                 <button type="submit" class="btn btn-primary" style="width:100%;margin-top:0.75rem;font-size:0.82rem;">💾 Save Denominations</button>
                 <?php endif; ?>
@@ -1097,12 +1236,15 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'NET CASH',               'val' => $net_cash,             'color' => '#198754', 'bold' => true,
                  'bg' => 'rgba(25,135,84,0.07)',
                  'note' => 'POS Reading − payments − discounts − unpaids − advance − expenses − mktg ± spreadsheet'],
-                ['label' => 'COH (Cash on Hand)',     'val' => $cash_on_hand,         'color' => '#0070f3', 'bold' => true,
-                 'id' => 'live-coh'],
+                ['label' => 'OPENING COH',            'val' => $opening_denom_total,  'color' => '#6366f1',
+                 'note' => 'Start of day cash in register'],
+                ['label' => 'CLOSING COH (Cash on Hand)', 'val' => $cash_on_hand,     'color' => '#0070f3', 'bold' => true,
+                 'id' => 'live-coh',
+                 'note' => 'Closing denomination count + advances received'],
                 ['label' => '(SHORT) / OVER',         'val' => $short_over,
                  'color' => $short_over >= 0 ? '#198754' : '#dc3545', 'bold' => true,
                  'bg' => $short_over >= 0 ? 'rgba(25,135,84,0.1)' : 'rgba(220,53,69,0.1)',
-                 'note' => 'COH − Net Cash', 'id' => 'live-short-over'],
+                 'note' => 'Closing COH − (Opening COH + Net Cash)', 'id' => 'live-short-over'],
             ];
             ?>
             <?php foreach ($summary_rows as $sr): ?>
@@ -1709,8 +1851,8 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 <tr style="background:#fdf8f0;border-bottom:2px solid var(--gold);">
                     <td colspan="19" style="padding:0.35rem 0.5rem;">
                         <div style="display:flex;align-items:center;gap:0.75rem;">
-                            <button id="ss-add-btn" class="btn btn-primary btn-sm" style="font-weight:700;padding:0.35rem 1.1rem;">➕ Add Row</button>
-                            <button id="ss-cancel-edit" class="btn btn-secondary btn-sm"
+                            <button type="button" id="ss-add-btn" class="btn btn-primary btn-sm" style="font-weight:700;padding:0.35rem 1.1rem;">➕ Add Row</button>
+                            <button type="button" id="ss-cancel-edit" class="btn btn-secondary btn-sm"
                                     style="display:none;font-size:0.72rem;padding:0.3rem 0.7rem;"
                                     onclick="cancelEdit()">✕ Cancel</button>
                             <span id="ss-comm-note" style="font-size:0.72rem;color:var(--gray);font-style:italic;"></span>
@@ -2517,52 +2659,61 @@ foreach ($_disc_kpis as [$_dl, $_dv, $_dc]):
 
 <script>
 (function () {
-    // Server-computed cash received today; JS never recomputes earnings — reads only.
-    var cashReceivedToday = <?php echo json_encode((float)$cash_received_today); ?>;
-    var expensesTotal  = <?php echo json_encode((float)$expenses_total); ?>;
-    var expectedDrawer = cashReceivedToday - expensesTotal;
+    var serverNetCash = <?php echo json_encode((float)$net_cash); ?>;
 
     function fmtMoney(n) {
         return n.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     }
 
-    window.updateDenomTotal = function (input, denom) {
-        // 1. Per-row total
-        var qty     = Math.max(0, parseInt(input.value) || 0);
-        var rowCell = document.getElementById('denom-total-' + denom);
-        if (rowCell) rowCell.textContent = '₱' + fmtMoney(denom * qty);
-
-        // 2. Grand total — sum from inputs directly to avoid floating-point drift
-        var grandTotal = 0;
-        document.querySelectorAll('input[name^="denom_"]').forEach(function (inp) {
-            var d = parseFloat(inp.name.replace('denom_', '')) || 0;
+    function sumDenomInputs(prefix) {
+        var total = 0;
+        document.querySelectorAll('input[name^="' + prefix + '_denom_"]').forEach(function(inp) {
+            var d = parseFloat(inp.name.replace(prefix + '_denom_', '')) || 0;
             var q = Math.max(0, parseInt(inp.value) || 0);
-            grandTotal += d * q;
+            total += d * q;
         });
+        return total;
+    }
 
-        var grandEl = document.getElementById('denom-grand-total');
-        if (grandEl) grandEl.textContent = '₱' + fmtMoney(grandTotal);
-
-        // 3. Keep read-only COH header input in sync so save_header submits correct value
-        var cohInput = document.getElementById('coh-input');
-        if (cohInput) cohInput.value = grandTotal.toFixed(2);
-
-        // 4. COH row in the Summary panel
-        var cohVal = document.getElementById('live-coh-val');
-        if (cohVal) cohVal.textContent = '₱' + fmtMoney(grandTotal);
-
-        // 5. SHORT / OVER — value, sign, and color
-        var shortOver  = grandTotal - expectedDrawer;
-        var isOver     = shortOver >= 0;
-        var soRow      = document.getElementById('live-short-over');
-        var soVal      = document.getElementById('live-short-over-val');
+    // Recalculate SHORT / OVER live — reads opening-coh input directly
+    function recalcShortOver() {
+        var openingVal   = parseFloat((document.getElementById('opening-coh') || {}).value) || 0;
+        var closingTotal = sumDenomInputs('closing');
+        var shortOver    = closingTotal - (openingVal + serverNetCash);
+        var isOver = shortOver >= 0;
+        var soRow = document.getElementById('live-short-over');
+        var soVal = document.getElementById('live-short-over-val');
         if (soRow) soRow.style.background = isOver ? 'rgba(25,135,84,0.1)' : 'rgba(220,53,69,0.1)';
         if (soVal) {
-            soVal.style.color  = isOver ? '#198754' : '#dc3545';
-            soVal.textContent  = shortOver < 0
+            soVal.style.color = isOver ? '#198754' : '#dc3545';
+            soVal.textContent = shortOver < 0
                 ? '(₱' + fmtMoney(Math.abs(shortOver)) + ')'
                 : '₱' + fmtMoney(shortOver);
         }
+    }
+    window.recalcShortOver = recalcShortOver;
+
+    window.updateDenomTotal = function (input, denom, dtype) {
+        // 1. Per-row subtotal for this denomination
+        var qty = Math.max(0, parseInt(input.value) || 0);
+        var rowCell = document.getElementById(dtype + '-denom-total-' + denom);
+        if (rowCell) rowCell.textContent = '₱' + fmtMoney(denom * qty);
+
+        // 2. Grand total for this type
+        var typeTotal = sumDenomInputs(dtype);
+        var grandEl = document.getElementById(dtype + '-grand-total');
+        if (grandEl) grandEl.textContent = '₱' + fmtMoney(typeTotal);
+
+        // 3. If closing, sync COH header input and live-coh display
+        if (dtype === 'closing') {
+            var cohInput = document.getElementById('coh-input');
+            if (cohInput) cohInput.value = typeTotal.toFixed(2);
+            var cohVal = document.getElementById('live-coh-val');
+            if (cohVal) cohVal.textContent = '₱' + fmtMoney(typeTotal);
+        }
+
+        // 4. SHORT / OVER — delegates to shared function that reads #opening-coh
+        recalcShortOver();
     };
 }());
 </script>

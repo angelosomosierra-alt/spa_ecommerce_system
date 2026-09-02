@@ -167,8 +167,7 @@ foreach ($spreadsheet_rows as $sr) {
     if ($r  > 0) $cv('R' . $data_row, $r);
 
     // S = net sales formula: =K-O-P-Q  (commission columns are the deductions)
-    $cv('S' . $data_row, "=K{$data_row}-O{$data_row}-P{$data_row}-Q{$data_row}");
-
+$cv('S' . $data_row, "=L{$data_row}-SUM(O{$data_row}:Q{$data_row})");
     // T = mode of payment, U = advance payment, W = remarks
     // V = secondary MOP (not stored separately — leave blank)
     $cv('T' . $data_row, $sr['mode_of_payment'] ?? '');

@@ -26,7 +26,9 @@ foreach ([
     "cancelled_by_name VARCHAR(120) NULL DEFAULT NULL",
     "rescheduled_by    INT NULL DEFAULT NULL",
     "rescheduled_by_name VARCHAR(120) NULL DEFAULT NULL",
-    "rescheduled_at    DATETIME NULL DEFAULT NULL",
+    "rescheduled_at             DATETIME     NULL DEFAULT NULL",
+    "has_therapist_conflict     TINYINT(1)   NOT NULL DEFAULT 0",
+    "therapist_conflict_details TEXT         NULL",
 ] as $col_def) {
     $col_name = explode(' ', trim($col_def))[0];
     $chk = $conn->query("SHOW COLUMNS FROM appointments LIKE '$col_name'");
@@ -176,7 +178,14 @@ function send_approval_email($conn, $appt_id) {
     }
 }
 
-$message = ''; $message_type = '';
+// ── Flash message retrieval (PRG pattern) ────────────────────────────────────
+$message = '';
+$message_type = 'success';
+if (!empty($_SESSION['flash_message'])) {
+    $message      = $_SESSION['flash_message'];
+    $message_type = $_SESSION['flash_message_type'] ?? 'success';
+    unset($_SESSION['flash_message'], $_SESSION['flash_message_type']);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTION: ASSIGN THERAPIST
@@ -256,6 +265,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
             $ins = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, notes, commission, people_handled) VALUES (?,?,?,?,?)");
             $ins->bind_param("iisdi",$appt_id,$therapist_id,$notes,$commission,$people_handled);
             $ok = $ins->execute(); $ins->close();
+            if ($ok) {
+                // Recompute informational conflict flag for this appointment
+                require_once __DIR__ . '/availability.php';
+                $_cf_all = [];
+                // Primary-service therapists
+                $_cf_pq = $conn->prepare("SELECT therapist_id FROM appointment_therapists WHERE appointment_id=?");
+                $_cf_pq->bind_param("i", $appt_id); $_cf_pq->execute();
+                foreach ($_cf_pq->get_result()->fetch_all(MYSQLI_ASSOC) as $_cft)
+                    foreach (get_therapist_conflicts((int)$_cft['therapist_id'], $ai_date, $appt_id, $conn) as $_c)
+                        $_cf_all[] = $_c;
+                $_cf_pq->close();
+                // Extra-service therapists
+                $_cf_eq = $conn->prepare("SELECT DISTINCT therapist_id FROM appointment_extra_services WHERE appointment_id=? AND therapist_id > 0");
+                $_cf_eq->bind_param("i", $appt_id); $_cf_eq->execute();
+                foreach ($_cf_eq->get_result()->fetch_all(MYSQLI_ASSOC) as $_cft)
+                    foreach (get_therapist_conflicts((int)$_cft['therapist_id'], $ai_date, $appt_id, $conn) as $_c)
+                        $_cf_all[] = $_c;
+                $_cf_eq->close();
+                $_has_cf   = !empty($_cf_all) ? 1 : 0;
+                $_cf_json  = $_has_cf ? json_encode($_cf_all) : null;
+                $_cf_upd   = $conn->prepare("UPDATE appointments SET has_therapist_conflict=?, therapist_conflict_details=? WHERE id=?");
+                $_cf_upd->bind_param("isi", $_has_cf, $_cf_json, $appt_id);
+                $_cf_upd->execute(); $_cf_upd->close();
+            }
             $message = $ok ? "✅ Therapist assigned." : "Failed.";
             $message_type = $ok ? "success" : "danger";
         }
@@ -280,7 +313,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
     $es_therapist_id = intval($_POST['extra_therapist'] ?? 0);
     $es_person_label = sanitize_input($_POST['person_label']  ?? 'Person 1');
     $extra_pm        = sanitize_input($_POST['extra_payment_method'] ?? 'cash');
-    if (!in_array($extra_pm, ['cash','gcash','maya','qrph','card','bank'])) $extra_pm = 'cash';
+    if (!in_array($extra_pm, ['cash','gcash','maya','qrph','card','swiper','bank'])) $extra_pm = 'cash';
     $es_pm_ref       = sanitize_input($_POST['paymongo_reference'] ?? '');
     $es_pm_method    = sanitize_input($_POST['paymongo_method']    ?? '');
     $es_notes        = sanitize_input($_POST['extra_notes']   ?? '');
@@ -382,7 +415,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
                     $es_reg_price = floatval($es_reg_q->get_result()->fetch_assoc()['price'] ?? 0); $es_reg_q->close();
                     $es_commission = round($es_reg_price * floatval($es_cm_row['commission_percent']) / 100, 2);
                 } else {
-                    $es_commission = round($es_charged * floatval($es_cm_row['commission_percent']) / 100, 2);
+                    $es_commission = round($es_reg_price * floatval($es_cm_row['commission_percent']) / 100, 2);
                 }
             }
         }
@@ -447,18 +480,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
         }
     }
 
-    $appt_id      = intval($_POST['appt_id'] ?? 0);
-    $booking_date = sanitize_input($_POST['booking_date'] ?? '');
-    $service_type = in_array($_POST['service_type']??'',['regular','home','hotel','influencer'])
-                    ? $_POST['service_type'] : 'regular';
-    $people_count = max(1, intval($_POST['people_count'] ?? 1));
-    $notes        = sanitize_input($_POST['notes'] ?? '');
+    $appt_id        = intval($_POST['appt_id'] ?? 0);
+    $booking_date   = sanitize_input($_POST['booking_date'] ?? '');
+    $service_type   = in_array($_POST['service_type']??'',['regular','home','hotel','influencer'])
+                      ? $_POST['service_type'] : 'regular';
+    $people_count   = max(1, intval($_POST['people_count'] ?? 1));
+    $notes          = sanitize_input($_POST['notes'] ?? '');
+    $new_service_id = intval($_POST['new_service_id'] ?? 0);
 
     if ($appt_id && $booking_date) {
-        // Fetch current appointment to get service_id and session_time for overlap check
-        $cur = $conn->prepare("SELECT a.service_id, s.session_time FROM appointments a JOIN services s ON s.id = a.service_id WHERE a.id=?");
+        // Fetch current appointment to get service_id, partner_id, and session_time for overlap check
+        $cur = $conn->prepare("SELECT a.service_id, a.partner_id, s.session_time FROM appointments a JOIN services s ON s.id = a.service_id WHERE a.id=?");
         $cur->bind_param("i", $appt_id); $cur->execute();
         $cur_row = $cur->get_result()->fetch_assoc(); $cur->close();
+
+        // Resolve final service_id (may have changed)
+        $use_service_id   = $cur_row['service_id'] ?? 0;
+        $use_session_time = intval($cur_row['session_time'] ?? 60);
+        $new_svc_data     = null;
+        if ($new_service_id > 0 && $cur_row) {
+            $svc_q = $conn->prepare("SELECT session_time, price, home_service_fee FROM services WHERE id=?");
+            $svc_q->bind_param("i", $new_service_id); $svc_q->execute();
+            $new_svc_data = $svc_q->get_result()->fetch_assoc(); $svc_q->close();
+            if ($new_svc_data) {
+                $use_service_id   = $new_service_id;
+                $use_session_time = intval($new_svc_data['session_time']);
+            }
+        }
 
         // Moved up so the overlap check below can use it before the UPDATE runs
         $reassign_id = intval($_POST['reassign_therapist_id'] ?? 0);
@@ -468,7 +516,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
             require_once __DIR__ . '/availability.php';
             $engine = new AvailabilityEngine($conn);
             $check  = $engine->checkSlot(
-                $cur_row['service_id'], $booking_date,
+                $use_service_id, $booking_date,
                 $people_count, $service_type, $appt_id
             );
             if (!$check['available']) {
@@ -480,7 +528,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
             // Per-therapist overlap check — prevents double-booking the reassigned therapist
             if ($reassign_id > 0) {
                 $ra_buffer   = ($service_type === 'home') ? 30 : 0;
-                $ra_session  = intval($cur_row['session_time'] ?? 60);
+                $ra_session  = $use_session_time;
                 $ra_end_mins = ($ra_session * max(1, $people_count)) + $ra_buffer;
 
                 $conf = $conn->prepare("
@@ -518,8 +566,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
             ? $pr_edit['full_name']
             : ($_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Admin');
         $editor_id   = (int)$_SESSION['user_id'];
-        $upd = $conn->prepare("UPDATE appointments SET appointment_date=?, service_type=?, people_count=?, customer_note=?, rescheduled_by=?, rescheduled_by_name=?, rescheduled_at=NOW() WHERE id=?");
-        $upd->bind_param("ssissii", $booking_date, $service_type, $people_count, $notes, $editor_id, $editor_name, $appt_id);
+
+        // Compute new charged_price (per-person × people_count)
+        if (!$new_svc_data) {
+            $svc_q2 = $conn->prepare("SELECT price, home_service_fee FROM services WHERE id=?");
+            $svc_q2->bind_param("i", $use_service_id); $svc_q2->execute();
+            $new_svc_data = $svc_q2->get_result()->fetch_assoc(); $svc_q2->close();
+        }
+        $new_charged_price = 0.0;
+        if ($new_svc_data) {
+            $per_person = floatval($new_svc_data['price']);
+            switch ($service_type) {
+                case 'home':
+                    $per_person = ($per_person * 2) + floatval($new_svc_data['home_service_fee'] ?? 0);
+                    break;
+                case 'influencer':
+                    $per_person = 0.0;
+                    break;
+                case 'hotel':
+                    $pit = intval($cur_row['partner_id'] ?? 0);
+                    if ($pit > 0) {
+                        $pr_q = $conn->prepare("SELECT price FROM partner_rates WHERE partner_id=? AND service_id=?");
+                        $pr_q->bind_param("ii", $pit, $use_service_id); $pr_q->execute();
+                        $pr_r = $pr_q->get_result()->fetch_assoc(); $pr_q->close();
+                        if ($pr_r) $per_person = floatval($pr_r['price']);
+                    }
+                    break;
+            }
+            $new_charged_price = round($per_person * $people_count, 2);
+        }
+
+        $upd = $conn->prepare("UPDATE appointments SET appointment_date=?, service_id=?, charged_price=?, service_type=?, people_count=?, customer_note=?, rescheduled_by=?, rescheduled_by_name=?, rescheduled_at=NOW() WHERE id=?");
+        $upd->bind_param("sidsissii", $booking_date, $use_service_id, $new_charged_price, $service_type, $people_count, $notes, $editor_id, $editor_name, $appt_id);
         $upd->execute(); $upd->close();
 
         // Therapist reassignment (optional)
@@ -704,7 +782,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIONS — approve / decline / complete
 // ═══════════════════════════════════════════════════════════════════════════
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['approve','decline','checkin_appointment','complete','save_per_person_inline','revert_complete'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['approve','decline','checkin_appointment','complete','save_per_person_inline','revert_complete','set_payment_choice'])) {
     verify_csrf_token();
     $action  = $_POST['action'];
     $appt_id = intval($_POST['appt_id'] ?? 0);
@@ -887,56 +965,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 }
             }
 
-            $ci_pay_method = sanitize_input($_POST['pay_method'] ?? 'cash');
-            $ci_allowed_pm = ['cash','qrph','gcash','maya','bank','bpi_debit','bpi_credit','pay_later'];
-            if (!in_array($ci_pay_method, $ci_allowed_pm)) $ci_pay_method = 'cash';
-            $ci_pm_ref  = sanitize_input($_POST['paymongo_reference'] ?? '');
-            $ci_pm_meth = sanitize_input($_POST['paymongo_method']    ?? '');
-
-            // Discount fields (validated server-side — never trust client amounts for % discounts)
-            $ci_disc_type  = sanitize_input($_POST['ci_discount_type'] ?? 'none');
-            $ci_disc_allow = ['none','voucher','gift_card','senior','pwd','employee'];
-            if (!in_array($ci_disc_type, $ci_disc_allow)) $ci_disc_type = 'none';
-            $ci_disc_amt_raw = floatval($_POST['ci_discount_amount'] ?? 0);
-
-            // pay_later: skip payment/discount update — collect at session completion
-            if ($ci_pay_method !== 'pay_later' && !empty($appt['order_item_id'])) {
-                $po_chk = $conn->prepare("SELECT o.id, o.total_amount, o.payment_status FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
-                $po_chk->bind_param("i", $appt['order_item_id']); $po_chk->execute();
-                $po_row = $po_chk->get_result()->fetch_assoc(); $po_chk->close();
-                if (!empty($po_row) && $po_row['payment_status'] !== 'paid') {
-                    $base_total = floatval($po_row['total_amount']);
-                    // Recalculate server-side (% discounts — never trust client amount)
-                    $sv_disc = 0.00;
-                    if ($ci_disc_type === 'senior' || $ci_disc_type === 'pwd') {
-                        $sv_disc = round($base_total * 0.20, 2);
-                    } elseif ($ci_disc_type === 'employee') {
-                        $sv_disc = round($base_total * 0.50, 2);
-                    } elseif ($ci_disc_type === 'voucher' || $ci_disc_type === 'gift_card') {
-                        $sv_disc = min($ci_disc_amt_raw, $base_total); // cap at total
-                    }
-                    $sv_final = max(0.00, $base_total - $sv_disc);
-                    $po_id    = (int)$po_row['id'];
-
-                    $ci_upd = $conn->prepare("
-                        UPDATE orders
-                        SET payment_status  = 'paid',
-                            payment_method  = ?,
-                            paymongo_reference = ?,
-                            paymongo_method = ?,
-                            discount_type   = ?,
-                            discount_amount = ?,
-                            final_amount    = ?
-                        WHERE id = ?
-                          AND payment_status != 'paid'
-                    ");
-                    $ci_upd->bind_param("ssssddi",
-                        $ci_pay_method, $ci_pm_ref, $ci_pm_meth,
-                        $ci_disc_type, $sv_disc, $sv_final, $po_id);
-                    $ci_upd->execute(); $ci_upd->close();
-                }
-            }
-
             $ci_by   = (int)$_SESSION['user_id'];
             $ci_name = (is_cashier() && !empty($pr_ci['full_name']))
                 ? $pr_ci['full_name']
@@ -977,7 +1005,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 ? $pr['full_name']
                 : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
             $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
-            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','bank'])) $cp_pay_method = 'cash';
+            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','bank'])) $cp_pay_method = 'cash';
 
             // ── Completion discount — server-side recompute (never trust client totals) ──
             $cd_type  = sanitize_input($_POST['complete_disc_type'] ?? 'none');
@@ -1030,7 +1058,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     }
                     // Clamp: completion discount cannot make combined discount exceed gross
                     $cd_amount = max(0.0, min($cd_amount, max(0.0, $sv_gross - $sv_bdisc)));
-                    $new_final = max(0.0, $sv_orig - $sv_bdisc - $cd_amount);
+                    $new_final = max(0.0, $sv_orig + $sv_extras - $sv_bdisc - $cd_amount);
 
                     $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
                     $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
@@ -1101,7 +1129,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                             $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
                             $commission_amt = round($reg_price * $ph * floatval($cm_row['commission_percent']) / 100, 2);
                         } else {
-                            $commission_amt = round($per_person_price * $ph * floatval($cm_row['commission_percent']) / 100, 2);
+                            $reg_q = $conn->prepare("SELECT price FROM services WHERE id=? LIMIT 1");
+                            $reg_q->bind_param("i", $svc_id); $reg_q->execute();
+                            $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
+                            $bdisc_frac = (isset($sv_orig) && $sv_orig > 0) ? (($sv_bdisc ?? 0.0) / $sv_orig) : 0.0;
+                            $commission_amt = round($reg_price * (1 - $bdisc_frac) * $ph * floatval($cm_row['commission_percent']) / 100, 2);
                         }
                     }
                 }
@@ -1291,11 +1323,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $message_type = 'danger';
             }
 
+        // ── SET PAYMENT CHOICE (assigned card, before check-in) ──────────────
+        } elseif ($action === 'set_payment_choice' && $appt['status'] === 'assigned') {
+            $pay_choice = $_POST['pay_choice'] ?? '';
+            if (!in_array($pay_choice, ['now', 'later'])) {
+                $message = "Invalid payment choice."; $message_type = "danger";
+            } elseif ($pay_choice === 'later') {
+                $message = "Payment deferred — will be collected at completion.";
+                $message_type = "success";
+            } else {
+                $oi_s = $conn->prepare("SELECT o.id FROM orders o JOIN order_items oi ON oi.order_id = o.id WHERE oi.id = ? LIMIT 1");
+                $oi_s->bind_param("i", $appt['order_item_id']); $oi_s->execute();
+                $oi_r = $oi_s->get_result()->fetch_assoc(); $oi_s->close();
+                $_spc_order_id = intval($oi_r['id'] ?? 0);
+                if ($_spc_order_id === 0) {
+                    $message = "Order not found."; $message_type = "danger";
+                } else {
+                    $_spc_methods = ['cash','gcash','maya','card','qrph','onsite','swiper'];
+                    $_spc_method  = $_POST['pay_method_choice'] ?? 'cash';
+                    if (!in_array($_spc_method, $_spc_methods)) $_spc_method = 'cash';
+                    $_spc_upd = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=? WHERE id=? AND payment_status != 'paid'");
+                    $_spc_upd->bind_param("si", $_spc_method, $_spc_order_id);
+                    $_spc_upd->execute();
+                    $_spc_affected = $_spc_upd->affected_rows; $_spc_upd->close();
+                    $message      = $_spc_affected > 0 ? "✅ Payment collected for Appointment #$appt_id." : "Payment already recorded.";
+                    $message_type = "success";
+                    log_activity($conn, 'payment_collected',
+                        "Collected walk-in payment for appointment #{$appt_id} via {$_spc_method}",
+                        'appointment', $appt_id, null);
+                }
+            }
+
         } else {
             $message = "Action not allowed for current status."; $message_type = "danger";
         }
     }
     end_action:;
+}
+
+// ── PRG: redirect every POST to GET so refresh never re-submits ───────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $_SESSION['flash_message']      = $message;
+    $_SESSION['flash_message_type'] = $message_type ?: 'success';
+    $redir_params = [];
+    if (!empty($_GET['filter']))      $redir_params[] = 'filter='      . urlencode($_GET['filter']);
+    if (!empty($_GET['filter_date'])) $redir_params[] = 'filter_date=' . urlencode($_GET['filter_date']);
+    if (!empty($_GET['range']))       $redir_params[] = 'range='       . urlencode($_GET['range']);
+    if (!empty($_GET['appt_date']))   $redir_params[] = 'appt_date='   . urlencode($_GET['appt_date']);
+    header('Location: appointments.php' . ($redir_params ? '?' . implode('&', $redir_params) : ''));
+    exit();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1605,6 +1681,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php if ($_has_discount_h): ?><span style="background:#fffbeb;color:#b45309;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fcd34d;margin-left:0.2rem;" title="Customer requested <?php echo htmlspecialchars($_dlbl_h); ?> discount — verify ID/voucher at check-in"><?php echo $_dico_h . ' ' . htmlspecialchars($_dlbl_h); ?></span><?php endif; ?>
                 <?php if (isset($conflict_appt_ids[$appt_id])): ?><span style="background:#fef3c7;color:#92400e;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fbbf24;margin-left:0.2rem;animation:pulse 2s infinite;">⚠️ Conflict</span><?php endif; ?>
                 <?php if (floatval($a['advance_payment'] ?? 0) > 0): ?><span style="background:rgba(201,106,44,0.12);color:#C96A2C;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;margin-left:0.2rem;">💰 Advance: ₱<?php echo number_format(floatval($a['advance_payment']), 2); ?></span><?php endif; ?>
+                <?php if (!empty($a['has_therapist_conflict'])): $_cf_list = json_decode($a['therapist_conflict_details'] ?? '[]', true) ?: []; $_cf_tooltip = htmlspecialchars(implode("\n", array_map(function($_c){ return $_c['customer_name'] . ' — ' . $_c['service_name'] . ' at ' . date('g:i A', strtotime($_c['appointment_date'])); }, $_cf_list))); ?><span title="<?php echo $_cf_tooltip; ?>" style="display:inline-flex;align-items:center;gap:3px;padding:0.1rem 0.4rem;border-radius:20px;background:rgba(220,53,69,0.12);color:#dc3545;font-size:0.64rem;font-weight:600;margin-left:0.2rem;cursor:help;">⚠️ Therapist Conflict</span><?php endif; ?>
             </p>
             <p class="appt-svc"><?php echo htmlspecialchars($a['service_name']); ?></p>
             <p class="appt-time">
@@ -2159,6 +2236,22 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </form>
 
         <?php elseif ($status === 'assigned'): ?>
+            <?php $_spc_is_paid = ($pm_row['payment_status'] ?? 'unpaid') === 'paid'; ?>
+            <?php if ($_spc_is_paid): ?>
+                <span style="display:inline-flex;align-items:center;gap:3px;padding:0.22rem 0.6rem;border-radius:20px;background:rgba(25,135,84,0.1);color:#198754;font-size:0.77rem;font-weight:600;">✅ Payment collected</span>
+            <?php else: ?>
+                <form id="spc-form-<?php echo $appt_id; ?>" method="POST" style="display:none;">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="action"           value="set_payment_choice">
+                    <input type="hidden" name="appt_id"          value="<?php echo $appt_id; ?>">
+                    <input type="hidden" name="pay_choice"        id="spc-choice-<?php echo $appt_id; ?>" value="">
+                    <input type="hidden" name="pay_method_choice" id="spc-method-<?php echo $appt_id; ?>" value="cash">
+                </form>
+                <button type="button" class="btn btn-primary btn-sm"
+                        onclick="openPayNowModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>')">💵 Pay Now</button>
+                <button type="button" class="btn btn-secondary btn-sm"
+                        onclick="submitPayLater(<?php echo $appt_id; ?>)">⏳ Pay Later</button>
+            <?php endif; ?>
             <button type="button" class="btn btn-success btn-sm"
                     onclick="openCheckinModal(
                         <?php echo $appt_id; ?>,
@@ -2868,7 +2961,7 @@ function closeCompleteModal() {
 
 function cmSelectPayment(method) {
     cmState.payMethod = method;
-    ['cash','qrph','bank'].forEach(function(m) {
+    ['cash','swiper','qrph','bank'].forEach(function(m) {
         var btn = document.getElementById('cm-pay-' + m);
         if (!btn) return;
         btn.style.borderColor = m === method ? '#C96A2C' : '#e5e7eb';
@@ -3077,6 +3170,38 @@ function submitComplete() {
             <button type="button" id="pinConfirmBtn" onclick="submitApproval()" class="btn btn-primary" style="flex:2;">✅ Approve</button>
         </div>
         <div style="margin-top:0.85rem;text-align:center;font-size:0.72rem;color:var(--gray);">🔒 Action recorded under your name for accountability.</div>
+    </div>
+</div>
+
+<!-- ══ PAY NOW MODAL ══════════════════════════════════════════════════════════ -->
+<div id="payNowModal" style="display:none;position:fixed;inset:0;z-index:9997;
+     background:rgba(30,20,10,0.5);backdrop-filter:blur(4px);
+     align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:16px;padding:1.75rem 1.75rem 1.5rem;
+                max-width:400px;width:92vw;box-shadow:0 24px 60px rgba(0,0,0,0.2);
+                animation:popIn .3s cubic-bezier(.34,1.56,.64,1);">
+        <div style="text-align:center;margin-bottom:1.25rem;">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);display:flex;align-items:center;justify-content:center;font-size:1.3rem;margin:0 auto 0.6rem;">💵</div>
+            <div style="font-size:1rem;font-weight:700;color:var(--brown);">Collect Payment</div>
+            <div style="font-size:0.8rem;color:var(--gray);margin-top:0.25rem;" id="pnCustomerName"></div>
+        </div>
+        <div style="margin-bottom:1rem;">
+            <label style="font-size:0.8rem;font-weight:600;color:var(--brown);display:block;margin-bottom:0.4rem;">Payment Method</label>
+            <select id="pnMethod" style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.88rem;">
+                <option value="cash">💵 Cash</option>
+                <option value="swiper">💳 Swiper</option>
+                <option value="gcash">📱 GCash</option>
+                <option value="maya">📱 Maya</option>
+                <option value="card">💳 Card</option>
+                <option value="qrph">📷 QR Ph</option>
+            </select>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:1rem;">
+            <button type="button" onclick="submitPayNow()"
+                    style="flex:1;padding:0.65rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:0.9rem;font-weight:700;cursor:pointer;">✅ Confirm Payment</button>
+            <button type="button" onclick="closePayNowModal()"
+                    style="padding:0.65rem 1rem;background:var(--bg3);color:var(--gray);border:1px solid var(--border2);border-radius:10px;font-size:0.9rem;cursor:pointer;">Cancel</button>
+        </div>
     </div>
 </div>
 
@@ -3319,11 +3444,16 @@ function submitComplete() {
         <!-- Payment method selector (shown only when TOTAL DUE > 0) -->
         <div id="cm-payment-section" style="display:none;margin-bottom:1rem;">
             <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Payment Method</div>
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;">
                 <div id="cm-pay-cash" onclick="cmSelectPayment('cash')"
                      style="padding:0.7rem 0.4rem;border:2px solid #C96A2C;background:#fff8f2;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
                     <div style="font-size:1rem;">💵</div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Cash</div>
+                </div>
+                <div id="cm-pay-swiper" onclick="cmSelectPayment('swiper')"
+                     style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
+                    <div style="font-size:1rem;">💳</div>
+                    <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Swiper</div>
                 </div>
                 <div id="cm-pay-qrph" onclick="cmSelectPayment('qrph')"
                      style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
@@ -3673,9 +3803,42 @@ document.addEventListener('keydown', e => {
         closeDiscountModal(); closePinModal();
         closeCheckinModal(); closeCompleteModal();
         closeEditModal(); closeAddServiceModal();
+        closePayNowModal();
     }
     if (e.key === 'Enter' && document.getElementById('pinModal').style.display === 'flex') submitApproval();
 });
+
+// ── PAY NOW MODAL JS ──────────────────────────────────────────────────────────
+var _pnApptId = 0;
+function openPayNowModal(apptId, customerName) {
+    _pnApptId = apptId;
+    document.getElementById('pnCustomerName').textContent = customerName || '';
+    document.getElementById('pnMethod').value = 'cash';
+    document.getElementById('payNowModal').style.display = 'flex';
+}
+function closePayNowModal() {
+    document.getElementById('payNowModal').style.display = 'none';
+    _pnApptId = 0;
+}
+function submitPayNow() {
+    if (!_pnApptId) return;
+    var method = document.getElementById('pnMethod').value;
+    var choiceEl = document.getElementById('spc-choice-' + _pnApptId);
+    var methodEl = document.getElementById('spc-method-' + _pnApptId);
+    var form     = document.getElementById('spc-form-' + _pnApptId);
+    if (!form || !choiceEl || !methodEl) return;
+    choiceEl.value = 'now';
+    methodEl.value = method;
+    closePayNowModal();
+    form.submit();
+}
+function submitPayLater(apptId) {
+    var choiceEl = document.getElementById('spc-choice-' + apptId);
+    var form     = document.getElementById('spc-form-' + apptId);
+    if (!form || !choiceEl) return;
+    choiceEl.value = 'later';
+    form.submit();
+}
 
 // ── CHECK-IN MODAL JS ─────────────────────────────────────────────────────────
 var ciState = {
@@ -3875,13 +4038,13 @@ function submitCheckin() {
 
 // ── FULL EDIT APPOINTMENT ─────────────────────────────────────────────────────
 function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount, notes, currentTherapistNames) {
-    document.getElementById('edit_appt_id').value      = apptId;
-    document.getElementById('edit_service_id').value   = serviceId;
-    document.getElementById('edit_date_picker').value  = currentDate ? currentDate.substring(0,10) : '';
-    document.getElementById('edit_service_type').value = serviceType || 'regular';
-    document.getElementById('edit_people_count').value = peopleCount || 1;
-    document.getElementById('edit_notes').value        = notes || '';
-    document.getElementById('edit_booking_date').value = currentDate || '';
+    document.getElementById('edit_appt_id').value           = apptId;
+    document.getElementById('edit_new_service_id').value    = serviceId;
+    document.getElementById('edit_date_picker').value       = currentDate ? currentDate.substring(0,10) : '';
+    document.getElementById('edit_service_type').value      = serviceType || 'regular';
+    document.getElementById('edit_people_count').value      = peopleCount || 1;
+    document.getElementById('edit_notes').value             = notes || '';
+    document.getElementById('edit_booking_date').value      = currentDate || '';
 
     const thWrap = document.getElementById('edit_current_therapists_wrap');
     const thDisp = document.getElementById('edit_current_therapists_display');
@@ -3987,14 +4150,26 @@ function loadAddSvcSlots() {
             <?php echo csrf_field(); ?>
             <input type="hidden" name="action"          value="edit_appointment">
             <input type="hidden" name="appt_id"         id="edit_appt_id">
-            <input type="hidden" name="service_id"      id="edit_service_id">
             <input type="hidden" name="booking_date"    id="edit_booking_date">
+            <div style="margin-bottom:0.85rem;">
+                <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Service</label>
+                <?php $_edit_svcs = $conn->query("SELECT id, name, price FROM services ORDER BY name ASC")->fetch_all(MYSQLI_ASSOC); ?>
+                <select name="new_service_id" id="edit_new_service_id"
+                        style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;"
+                        onchange="loadEditSlots(document.getElementById('edit_date_picker').value, this.value, parseInt(document.getElementById('edit_people_count').value)||1)">
+                    <?php foreach ($_edit_svcs as $_esv): ?>
+                    <option value="<?php echo intval($_esv['id']); ?>">
+                        <?php echo htmlspecialchars($_esv['name']); ?> — ₱<?php echo number_format((float)$_esv['price'], 2); ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.85rem;margin-bottom:0.85rem;">
                 <div>
                     <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Service Type</label>
                     <select name="service_type" id="edit_service_type"
                             style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;"
-                            onchange="loadEditSlots(document.getElementById('edit_date_picker').value, document.getElementById('edit_service_id').value, parseInt(document.getElementById('edit_people_count').value)||1)">
+                            onchange="loadEditSlots(document.getElementById('edit_date_picker').value, document.getElementById('edit_new_service_id').value, parseInt(document.getElementById('edit_people_count').value)||1)">
                         <option value="regular">Regular (On-site)</option>
                         <option value="home">Home Service</option>
                         <option value="hotel">Hotel/Partner</option>
@@ -4004,7 +4179,7 @@ function loadAddSvcSlots() {
                     <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Number of People</label>
                     <input type="number" name="people_count" id="edit_people_count" min="1" max="10" value="1"
                            style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;"
-                           onchange="loadEditSlots(document.getElementById('edit_date_picker').value, document.getElementById('edit_service_id').value, parseInt(this.value)||1)">
+                           onchange="loadEditSlots(document.getElementById('edit_date_picker').value, document.getElementById('edit_new_service_id').value, parseInt(this.value)||1)">
                 </div>
             </div>
             <!-- Current therapist(s) — shown when present -->
@@ -4035,7 +4210,7 @@ function loadAddSvcSlots() {
                 <input type="date" id="edit_date_picker"
                        min="<?php echo date('Y-m-d'); ?>"
                        style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;"
-                       onchange="loadEditSlots(this.value, document.getElementById('edit_service_id').value, parseInt(document.getElementById('edit_people_count').value)||1)">
+                       onchange="loadEditSlots(this.value, document.getElementById('edit_new_service_id').value, parseInt(document.getElementById('edit_people_count').value)||1)">
             </div>
             <div style="margin-bottom:0.85rem;">
                 <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Available Time Slots</label>

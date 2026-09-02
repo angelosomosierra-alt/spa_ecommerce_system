@@ -23,8 +23,14 @@ if ($walkin_user) {
     $stmt->close();
 }
 
+// ── Flash message retrieval (PRG pattern) ────────────────────────────────────
 $walkin_message = '';
-$walkin_type    = '';
+$walkin_type    = 'success';
+if (!empty($_SESSION['walkin_flash_message'])) {
+    $walkin_message = $_SESSION['walkin_flash_message'];
+    $walkin_type    = $_SESSION['walkin_flash_type'] ?? 'success';
+    unset($_SESSION['walkin_flash_message'], $_SESSION['walkin_flash_type']);
+}
 
 // ── Fetch partner rates FIRST (needed in POST handler for hotel pricing) ──────
 $all_partners = [];
@@ -296,14 +302,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 }
 
                 if (empty($walkin_message)) {
-                $is_pay_later    = ($payment_method === 'pay_later');
-                $order_pay_method = $is_pay_later ? 'onsite' : $payment_method;
-                $order_pay_status = $is_pay_later ? 'unpaid'  : 'paid';
+                $svc_pay_method = 'onsite';
+                $svc_pay_status = 'unpaid';
                 $conn->begin_transaction();
                 $specialty_error = false;
                 try {
                 $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)");
-                $stmt->bind_param("isssdsssdds", $walkin_user_id, $customer_name, $phone, $booking_date, $total_amount, $order_pay_method, $order_pay_status, $discount_type, $discount_amount_calc, $final_amount, $slip_number);
+                $stmt->bind_param("isssdsssdds", $walkin_user_id, $customer_name, $phone, $booking_date, $total_amount, $svc_pay_method, $svc_pay_status, $discount_type, $discount_amount_calc, $final_amount, $slip_number);
                 $stmt->execute();
                 $order_id = $stmt->insert_id;
                 $stmt->close();
@@ -413,7 +418,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                                 $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
                                 $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                             } else {
-                                $commission = round($charged_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                                $disc_frac  = ($total_amount > 0) ? ($discount_amount_calc / $total_amount) : 0.0;
+                                $commission = round($regular_price * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                             }
                         }
                         $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
@@ -457,6 +463,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
             }
         }
     }
+}
+
+// ── PRG: redirect walk-in booking POST to GET ────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
+    $_SESSION['walkin_flash_message'] = $walkin_message;
+    $_SESSION['walkin_flash_type']    = $walkin_type ?: 'success';
+    header('Location: walkin.php');
+    exit();
 }
 
 $all_services = [];
@@ -742,12 +756,13 @@ require_once 'admin_header.php';
                         <div id="svc-pm-container" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));gap:0.4rem;margin-bottom:0.75rem;">
                             <?php
                             $pm_wk = [
-                                'cash'  => ['💵', 'Cash'],
-                                'gcash' => ['📱', 'GCash'],
-                                'maya'  => ['💜', 'Maya'],
-                                'qrph'  => ['📷', 'QR Ph'],
-                                'card'  => ['💳', 'Card'],
-                                'bank'  => ['🏦', 'Bank'],
+                                'cash'   => ['💵', 'Cash'],
+                                'gcash'  => ['📱', 'GCash'],
+                                'maya'   => ['💜', 'Maya'],
+                                'qrph'   => ['📷', 'QR Ph'],
+                                'card'   => ['💳', 'Card'],
+                                'swiper' => ['💳', 'Swiper'],
+                                'bank'   => ['🏦', 'Bank'],
                             ];
                             $online_pm = ['gcash','maya','card','qrph'];
                             foreach ($pm_wk as $pmv => $pmi):
@@ -783,11 +798,7 @@ require_once 'admin_header.php';
                                    oninput="updatePricePreview()"
                                    style="width:100%;padding:0.5rem 0.65rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
                         </div>
-                        <button type="button" id="svc-book-now" onclick="proceedBooking('service')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">✅ Book Now</button>
-                        <button type="button" class="pay-btn pay-btn-later" onclick="payLaterService()" style="width:100%;margin-top:0.4rem;font-size:0.9rem;">
-                            ⏳ Pay Later
-                            <span class="coming-soon-badge">at completion</span>
-                        </button>
+                        <button type="button" id="svc-book-now" onclick="proceedBooking('service')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">📋 Book Walk-In</button>
                     </div>
                 </div>
             </div>
@@ -1353,10 +1364,6 @@ function proceedBooking(formType) {
     form.submit();
 }
 
-function payLaterService() {
-    document.getElementById('service_payment_method').value = 'pay_later';
-    proceedBooking('service');
-}
 
 function syncSlipNumber(form, val) { const other = form === 'service' ? 'product_slip_number' : 'service_slip_number'; const el = document.getElementById(other); if (el) el.value = val; }
 

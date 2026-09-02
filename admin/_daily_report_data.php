@@ -31,6 +31,8 @@
     if ($res3) { while ($r = $res3->fetch_assoc()) $rpt_cols[] = $r['Field']; }
     if (!in_array('maya_dp', $rpt_cols))
         $conn->query("ALTER TABLE daily_reports ADD COLUMN maya_dp DECIMAL(10,2) NOT NULL DEFAULT 0.00");
+    if (!in_array('opening_coh', $rpt_cols))
+        $conn->query("ALTER TABLE daily_reports ADD COLUMN opening_coh DECIMAL(10,2) NOT NULL DEFAULT 0.00");
 
     $conn->query("CREATE TABLE IF NOT EXISTS `daily_report_spreadsheet_rows` (
         `id`               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -60,6 +62,22 @@
         `updated_at`       DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
         INDEX `idx_drsr_date` (`report_date`)
     )");
+    $ss_cols = [];
+    $res3 = $conn->query("SHOW COLUMNS FROM daily_report_spreadsheet_rows");
+    if ($res3) { while ($r = $res3->fetch_assoc()) $ss_cols[] = $r['Field']; }
+    if (!in_array('advance_payment', $ss_cols))
+        $conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN advance_payment DECIMAL(10,2) NOT NULL DEFAULT 0.00");
+    if (!in_array('source_extra_service_id', $ss_cols))
+        $conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN source_extra_service_id INT NULL DEFAULT NULL, ADD INDEX idx_drsr_src_extra (source_extra_service_id)");
+    // Migration: add 'type' column (opening vs closing) to denomination table
+    $_ddc = $conn->query("SHOW COLUMNS FROM daily_report_denominations LIKE 'type'");
+    if ($_ddc && $_ddc->num_rows === 0) {
+        $conn->query("ALTER TABLE daily_report_denominations ADD COLUMN `type` VARCHAR(10) NOT NULL DEFAULT 'closing' AFTER quantity");
+        // Replace 2-column unique key (report_id, denomination) with 3-column one
+        $ki = $conn->query("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='daily_report_denominations' AND NON_UNIQUE=0 AND INDEX_NAME!='PRIMARY' GROUP BY INDEX_NAME HAVING COUNT(*)=2");
+        if ($ki) while ($kr = $ki->fetch_assoc()) $conn->query("ALTER TABLE daily_report_denominations DROP INDEX `{$kr['INDEX_NAME']}`");
+        $conn->query("ALTER TABLE daily_report_denominations ADD UNIQUE KEY uq_rpt_denom_type (report_id, denomination, `type`)");
+    }
 })();
 
 // ── Report header ─────────────────────────────────────────────────────────────
@@ -225,11 +243,12 @@ $upcoming_paid = $_up_paid->get_result()->fetch_all(MYSQLI_ASSOC);
 $_up_paid->close();
 
 // ── Denominations ─────────────────────────────────────────────────────────────
-$denoms_saved = [];
-$denom_list   = [1000, 500, 200, 100, 50, 20, 10, 5, 1, 0.5, 0.1, 0.05];
+$denoms_opening = [];
+$denoms_closing = [];
+$denom_list     = [1000, 500, 200, 100, 50, 20, 10, 5, 1, 0.5, 0.1, 0.05];
 if ($rpt) {
     $_d = $conn->prepare("
-        SELECT denomination, quantity, total
+        SELECT denomination, quantity, total, `type`
         FROM daily_report_denominations
         WHERE report_id = ?
         ORDER BY denomination DESC
@@ -237,9 +256,15 @@ if ($rpt) {
     $_d->bind_param("i", $rpt['id']);
     $_d->execute();
     $_dr = $_d->get_result();
-    while ($row = $_dr->fetch_assoc()) $denoms_saved[floatval($row['denomination'])] = $row;
+    while ($row = $_dr->fetch_assoc()) {
+        if (($row['type'] ?? 'closing') === 'opening')
+            $denoms_opening[floatval($row['denomination'])] = $row;
+        else
+            $denoms_closing[floatval($row['denomination'])] = $row;
+    }
     $_d->close();
 }
+$denoms_saved = $denoms_closing; // backward compat alias for export_daily_report.php
 
 // ── Gift Certificates ─────────────────────────────────────────────────────────
 $_gc1 = $conn->prepare("SELECT * FROM gift_certificates WHERE report_date = ? AND type = 'sold' ORDER BY id");
@@ -381,12 +406,15 @@ foreach ($system_product_sales as $_sp) {
 $gcash_total  = ($pm_totals['gcash']  ?? 0);
 $maya_total   = ($pm_totals['maya']   ?? 0);
 $qrph_total   = ($pm_totals['qrph']   ?? 0);
-$card_total   = ($pm_totals['card']   ?? 0) + ($pm_totals['bank'] ?? 0);
+$card_total   = ($pm_totals['card']   ?? 0) + ($pm_totals['bank'] ?? 0) + ($pm_totals['swiper'] ?? 0);
 $online_total = ($pm_totals['online'] ?? 0);
 
-$denom_total  = array_sum(array_map(fn($d) => floatval($d['total']), $denoms_saved));
-// Advances received today count as cash in the drawer (on top of denominations).
-$cash_on_hand = $denom_total + $advances_received_total;
+$opening_coh         = floatval($rpt['opening_coh'] ?? 0);
+$opening_denom_total = $opening_coh; // alias used in summary rows
+$closing_denom_total = array_sum(array_map(fn($d) => floatval($d['total']), $denoms_closing));
+$denom_total  = $closing_denom_total; // backward compat for export
+// Advances received today count as cash in the closing drawer.
+$cash_on_hand = $closing_denom_total + $advances_received_total;
 
 // ── NET CASH — mirrors source workbook sheet "28" cell B52 ───────────────────
 //
@@ -477,8 +505,8 @@ if (!empty($appt_ids)) {
 $manual_prod_total   = array_sum(array_column($product_sales, 'amount'));
 $cash_received_today = $cash_from_orders + $cash_from_addons + $manual_prod_total;
 $expected_drawer     = $cash_received_today - $expenses_total;
-// (Short) / Over = COH − Net Cash  (matches the sheet: with COH=0, gives −8427.65)
-$short_over          = $cash_on_hand - $net_cash;
+// (Short) / Over = Closing COH − (Opening COH + Net Cash)
+$short_over = $closing_denom_total - ($opening_denom_total + $net_cash);
 
 // ════════════════════════════════════════════════════════════════════════════
 // ANALYSIS LAYER — all vars prefixed $wow_ or named clearly

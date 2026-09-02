@@ -68,8 +68,9 @@ function confirmPinGate() {
     }
     var confirmBtn = document.querySelector('#pinGateModal button[onclick="confirmPinGate()"]');
     if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Verifying…'; }
+    var cb = _pgmCallback;
     closePinGate();
-    if (_pgmCallback) _pgmCallback(pin);
+    if (cb) cb(pin);
 }
 
 // ── Generic form-submit guard (prevents double-submit on all native forms) ────

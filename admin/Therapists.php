@@ -294,8 +294,34 @@ if (isset($_GET['history'])) {
     $stmt->bind_param("i", $hist_id); $stmt->execute();
     $history_therapist = $stmt->get_result()->fetch_assoc(); $stmt->close();
 
+    // Filter params
+    $hist_status = $_GET['hist_status'] ?? 'worked'; // 'worked' | 'all'
+    if (!in_array($hist_status, ['worked', 'all'], true)) $hist_status = 'worked';
+    $hist_from = trim($_GET['hist_from'] ?? '');
+    $hist_to   = trim($_GET['hist_to']   ?? '');
+    if ($hist_from && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $hist_from)) $hist_from = '';
+    if ($hist_to   && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $hist_to))   $hist_to   = '';
+
     if ($history_therapist) {
-        $stmt = $conn->prepare("
+        $status_filter_sql = '';
+        if ($hist_status === 'worked') {
+            $status_filter_sql = " AND ap.status IN ('approved','completed') ";
+        }
+        $date_filter_sql    = '';
+        $date_filter_params = [];
+        $date_filter_types  = '';
+        if ($hist_from) {
+            $date_filter_sql     .= " AND DATE(ap.appointment_date) >= ? ";
+            $date_filter_params[] = $hist_from;
+            $date_filter_types   .= 's';
+        }
+        if ($hist_to) {
+            $date_filter_sql     .= " AND DATE(ap.appointment_date) <= ? ";
+            $date_filter_params[] = $hist_to;
+            $date_filter_types   .= 's';
+        }
+
+        $sql = "
             SELECT
                 ap.id            AS appt_id,
                 ap.appointment_date,
@@ -317,9 +343,15 @@ if (isset($_GET['history'])) {
                 ON tr.therapist_id   = at2.therapist_id
                AND tr.appointment_id = ap.id
             WHERE at2.therapist_id = ?
+            $status_filter_sql
+            $date_filter_sql
             ORDER BY ap.appointment_date DESC
-        ");
-        $stmt->bind_param("i", $hist_id); $stmt->execute();
+        ";
+        $stmt = $conn->prepare($sql);
+        $bind_types  = 'i' . $date_filter_types;
+        $bind_values = array_merge([$hist_id], $date_filter_params);
+        $stmt->bind_param($bind_types, ...$bind_values);
+        $stmt->execute();
         $history_records = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
     }
 }
@@ -332,9 +364,26 @@ require_once 'admin_header.php';
 <?php endif; ?>
 
 <?php if ($history_therapist):
-    $total_sessions    = count($history_records);
-    $completed_records = array_filter($history_records, fn($r) => $r['status'] === 'completed');
-    $total_earned      = array_sum(array_column(iterator_to_array($completed_records), 'commission'));
+    $total_sessions = count($history_records);
+    $total_earned   = array_sum(array_column($history_records, 'commission'));
+
+    // Cash advance / deductions for the same period
+    $ded_sql = "SELECT id, type, amount, label, notes, deduction_date
+                FROM therapist_deductions
+                WHERE therapist_id = ?";
+    $ded_params = [$hist_id];
+    $ded_types  = 'i';
+    if ($hist_from) { $ded_sql .= " AND deduction_date >= ?"; $ded_params[] = $hist_from; $ded_types .= 's'; }
+    if ($hist_to)   { $ded_sql .= " AND deduction_date <= ?"; $ded_params[] = $hist_to;   $ded_types .= 's'; }
+    $ded_sql .= " ORDER BY deduction_date DESC";
+    $ded_stmt = $conn->prepare($ded_sql);
+    $ded_stmt->bind_param($ded_types, ...$ded_params);
+    $ded_stmt->execute();
+    $deductions = $ded_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $ded_stmt->close();
+    $total_ca      = array_sum(array_map(fn($d) => $d['type']==='ca'      ? (float)$d['amount'] : 0, $deductions));
+    $total_expense = array_sum(array_map(fn($d) => $d['type']==='expense' ? (float)$d['amount'] : 0, $deductions));
+    $net_payroll   = $total_earned - $total_ca - $total_expense;
 
     // Lifetime average rating from therapist_ratings table
     $avg_stmt = $conn->prepare("SELECT AVG(rating) AS avg_r, COUNT(*) AS total_r FROM therapist_ratings WHERE therapist_id=?");
@@ -384,6 +433,37 @@ require_once 'admin_header.php';
             </div>
         </div>
     </div>
+</div>
+
+<form method="GET" style="display:flex;gap:0.6rem;align-items:end;flex-wrap:wrap;margin-bottom:1rem;">
+    <input type="hidden" name="history" value="<?php echo $hist_id; ?>">
+    <input type="hidden" name="hist_status" value="<?php echo htmlspecialchars($hist_status); ?>">
+    <div>
+        <label style="font-size:0.72rem;font-weight:600;color:var(--gray);display:block;">Payroll Period From</label>
+        <input type="date" name="hist_from" value="<?php echo htmlspecialchars($hist_from); ?>"
+               style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:8px;">
+    </div>
+    <div>
+        <label style="font-size:0.72rem;font-weight:600;color:var(--gray);display:block;">To</label>
+        <input type="date" name="hist_to" value="<?php echo htmlspecialchars($hist_to); ?>"
+               style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:8px;">
+    </div>
+    <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+    <?php if ($hist_from || $hist_to): ?>
+    <a href="?history=<?php echo $hist_id; ?>&hist_status=<?php echo htmlspecialchars($hist_status); ?>"
+       class="btn btn-sm btn-secondary">Clear Dates</a>
+    <?php endif; ?>
+</form>
+
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+    <a href="?history=<?php echo $hist_id; ?>&hist_status=worked<?php echo !empty($hist_from) ? '&hist_from='.urlencode($hist_from) : ''; ?><?php echo !empty($hist_to) ? '&hist_to='.urlencode($hist_to) : ''; ?>"
+       class="btn btn-sm <?php echo $hist_status==='worked' ? 'btn-primary' : 'btn-secondary'; ?>">
+       ✅ Approved + Completed
+    </a>
+    <a href="?history=<?php echo $hist_id; ?>&hist_status=all<?php echo !empty($hist_from) ? '&hist_from='.urlencode($hist_from) : ''; ?><?php echo !empty($hist_to) ? '&hist_to='.urlencode($hist_to) : ''; ?>"
+       class="btn btn-sm <?php echo $hist_status==='all' ? 'btn-primary' : 'btn-secondary'; ?>">
+       All Statuses
+    </a>
 </div>
 
 <div class="panel">
@@ -460,6 +540,68 @@ require_once 'admin_header.php';
         </table>
     </div>
     <?php endif; ?>
+</div>
+
+<div class="panel" style="margin-top:1.5rem;">
+    <div class="panel-header"><span class="panel-title">💸 Cash Advance / Deductions (<?php echo count($deductions); ?>)</span></div>
+    <?php if (empty($deductions)): ?>
+    <div class="panel-body" style="text-align:center;padding:1.5rem;color:var(--gray);">
+        No deductions recorded<?php echo ($hist_from || $hist_to) ? ' for this period' : ''; ?>.
+    </div>
+    <?php else: ?>
+    <div class="table-wrap" style="border:none;border-radius:0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Label</th>
+                    <th>Notes</th>
+                    <th style="text-align:right;">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($deductions as $d): ?>
+                <tr>
+                    <td><?php echo date('M d, Y', strtotime($d['deduction_date'])); ?></td>
+                    <td>
+                        <span style="padding:0.2rem 0.6rem;border-radius:20px;font-size:0.72rem;font-weight:600;
+                            background:<?php echo $d['type']==='ca' ? '#fff3cd' : '#f8d7da'; ?>;
+                            color:<?php echo $d['type']==='ca' ? '#664d03' : '#842029'; ?>;">
+                            <?php echo $d['type']==='ca' ? '💵 Cash Advance' : '📝 Deduction'; ?>
+                        </span>
+                    </td>
+                    <td><?php echo htmlspecialchars($d['label'] ?? '—'); ?></td>
+                    <td style="font-size:0.8rem;color:var(--gray);"><?php echo htmlspecialchars($d['notes'] ?? ''); ?></td>
+                    <td style="text-align:right;color:#842029;font-weight:700;">−₱<?php echo number_format($d['amount'],2); ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php endif; ?>
+
+    <div class="panel-body" style="border-top:2px solid var(--border2);padding:1rem 1.25rem;">
+        <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.3rem;">
+            <span style="color:var(--gray);">Total Commission Earned</span>
+            <span style="font-weight:700;color:#2d8a4e;">₱<?php echo number_format($total_earned,2); ?></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.3rem;">
+            <span style="color:var(--gray);">Cash Advances</span>
+            <span style="font-weight:700;color:#842029;">−₱<?php echo number_format($total_ca,2); ?></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.6rem;">
+            <span style="color:var(--gray);">Deductions</span>
+            <span style="font-weight:700;color:#842029;">−₱<?php echo number_format($total_expense,2); ?></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:1rem;font-weight:800;
+                    padding-top:0.6rem;border-top:1px solid var(--border2);">
+            <span style="color:var(--brown);">Net Payout</span>
+            <span style="color:<?php echo $net_payroll >= 0 ? '#2d8a4e' : '#842029'; ?>;">
+                ₱<?php echo number_format($net_payroll,2); ?>
+            </span>
+        </div>
+    </div>
 </div>
 
 <?php require_once 'admin_footer.php'; exit(); endif; ?>

@@ -47,7 +47,8 @@ if (isset($_GET['approve_order'])) {
         $stmt->bind_param("isi", $approver_id, $approver_nm, $id); $stmt->execute(); $stmt->close();
 
         if (in_array($o['payment_method'], ['onsite','cash','gcash','maya','qrph','bank','card'])) {
-            $stmt = $conn->prepare("UPDATE orders SET payment_status='paid' WHERE id=?");
+            // Guard: only mark paid for product orders; service orders are paid via the Complete action in appointments.php
+            $stmt = $conn->prepare("UPDATE orders o INNER JOIN order_items oi ON oi.order_id=o.id AND oi.product_id IS NOT NULL SET o.payment_status='paid' WHERE o.id=?");
             $stmt->bind_param("i",$id); $stmt->execute(); $stmt->close();
         }
 
@@ -75,7 +76,8 @@ if (isset($_GET['complete_order'])) {
     $o = $stmt->get_result()->fetch_assoc(); $stmt->close();
 
     if ($o) {
-        $stmt = $conn->prepare("UPDATE orders SET approval_status='completed', payment_status='paid', updated_by_name=? WHERE id=? AND approval_status='approved'");
+        // Guard: only mark paid for product orders; service orders are paid via the Complete action in appointments.php
+        $stmt = $conn->prepare("UPDATE orders o INNER JOIN order_items oi ON oi.order_id=o.id AND oi.product_id IS NOT NULL SET o.approval_status='completed', o.payment_status='paid', o.updated_by_name=? WHERE o.id=? AND o.approval_status='approved'");
         $stmt->bind_param("si", $updater_nm, $id); $stmt->execute(); $stmt->close();
 
         require_once __DIR__ . '/../notify.php';

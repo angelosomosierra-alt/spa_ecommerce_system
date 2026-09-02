@@ -18,28 +18,28 @@
 function admin_page_roles(): array {
     return [
         // ── Main nav (all roles present in the sidebar) ───────────────────────
-        'index'                 => ['owner','it','marketing','cashier'],
-        'services'              => ['owner','it'],
-        'products'              => ['owner','it'],
-        'categories'            => ['owner','it'],
-        'users'                 => ['owner','it'],
-        'staff'                 => ['owner','it'],
-        'appointments'          => ['owner','it','marketing','cashier'],
-        'orders'                => ['owner','it','marketing','cashier'],
-        'Therapists'            => ['owner','it','marketing','cashier'],
-        'analytics'             => ['owner','it','marketing'],
-        'walkin'                => ['owner','it','cashier'],
-        'refunds'               => ['owner','it'],
-        'partners'              => ['owner','it'],
-        'vouchers'              => ['owner','it','marketing'],
-        'discounts'             => ['owner','it','marketing'],
-        'daily_report'          => ['owner','it','marketing','cashier'],
-        'activity'              => ['owner','it','marketing'],
-        'help'                  => ['owner','it','marketing','cashier'],
+        'index'                 => ['owner','it','hr','marketing','cashier'],
+        'services'              => ['owner','it','hr'],
+        'products'              => ['owner','it','hr'],
+        'categories'            => ['owner','it','hr'],
+        'users'                 => ['owner','it','hr'],
+        'staff'                 => ['owner','it','hr'],
+        'appointments'          => ['owner','it','hr','marketing','cashier'],
+        'orders'                => ['owner','it','hr','marketing','cashier'],
+        'Therapists'            => ['owner','it','hr','marketing','cashier'],
+        'analytics'             => ['owner','it','hr','marketing'],
+        'walkin'                => ['owner','it','hr','cashier'],
+        'refunds'               => ['owner','it','hr'],
+        'partners'              => ['owner','it','hr'],
+        'vouchers'              => ['owner','it','hr','marketing'],
+        'discounts'             => ['owner','it','hr','marketing'],
+        'daily_report'          => ['owner','it','hr','marketing','cashier'],
+        'activity'              => ['owner','it','hr','marketing'],
+        'help'                  => ['owner','it','hr','marketing','cashier'],
         // ── Sub-pages (no sidebar entry) ─────────────────────────────────────
-        'assign_therapist'      => ['owner','it','marketing','cashier'],
-        'feedback'              => ['owner','it','marketing'],
-        'export_sales'          => ['owner','it'],
+        'assign_therapist'      => ['owner','it','hr','marketing','cashier'],
+        'feedback'              => ['owner','it','hr','marketing'],
+        'export_sales'          => ['owner','it','hr'],
         'receptionist_settings' => ['owner'],
     ];
 }
@@ -50,23 +50,23 @@ function admin_page_roles(): array {
  */
 function admin_nav_items(): array {
     return [
-        ['file' => 'index',        'icon' => '🏠', 'label' => 'Dashboard',    'roles' => ['owner','it','marketing','cashier']],
-        ['file' => 'services',     'icon' => '💆', 'label' => 'Services',     'roles' => ['owner','it']],
-        ['file' => 'products',     'icon' => '🛍️', 'label' => 'Products',     'roles' => ['owner','it']],
-        ['file' => 'categories',   'icon' => '🏷️', 'label' => 'Categories',   'roles' => ['owner','it']],
-        ['file' => 'users',        'icon' => '👥', 'label' => 'Users',        'roles' => ['owner','it']],
-        ['file' => 'staff',        'icon' => '🪪', 'label' => 'Staff',        'roles' => ['owner','it']],
-        ['file' => 'appointments', 'icon' => '📅', 'label' => 'Appointments', 'roles' => ['owner','it','marketing','cashier']],
-        ['file' => 'orders',       'icon' => '📦', 'label' => 'Orders',       'roles' => ['owner','it','marketing','cashier']],
-        ['file' => 'Therapists',   'icon' => '💆', 'label' => 'Therapists',   'roles' => ['owner','it','marketing','cashier']],
-        ['file' => 'analytics',    'icon' => '📊', 'label' => 'Analytics',    'roles' => ['owner','it','marketing']],
-        ['file' => 'walkin',       'icon' => '🏪', 'label' => 'Walk-in',      'roles' => ['owner','it','cashier']],
-        ['file' => 'refunds',      'icon' => '💸', 'label' => 'Refunds',      'roles' => ['owner','it']],
-        ['file' => 'partners',     'icon' => '🤝', 'label' => 'Partners',     'roles' => ['owner','it']],
-        ['file' => 'discounts',    'icon' => '🎟️', 'label' => 'Discounts',    'roles' => ['owner','it','marketing']],
-        ['file' => 'daily_report', 'icon' => '📋', 'label' => 'Daily Report', 'roles' => ['owner','it','marketing','cashier']],
-        ['file' => 'activity',    'icon' => '🕐', 'label' => 'Activity Log', 'roles' => ['owner','it','marketing']],
-        ['file' => 'help',        'icon' => '❓', 'label' => 'Help / Guide', 'roles' => ['owner','it','marketing','cashier']],
+        ['file' => 'index',        'icon' => '🏠', 'label' => 'Dashboard',    'roles' => ['owner','it','hr','marketing','cashier']],
+        ['file' => 'services',     'icon' => '💆', 'label' => 'Services',     'roles' => ['owner','it','hr']],
+        ['file' => 'products',     'icon' => '🛍️', 'label' => 'Products',     'roles' => ['owner','it','hr']],
+        ['file' => 'categories',   'icon' => '🏷️', 'label' => 'Categories',   'roles' => ['owner','it','hr']],
+        ['file' => 'users',        'icon' => '👥', 'label' => 'Users',        'roles' => ['owner','it','hr']],
+        ['file' => 'staff',        'icon' => '🪪', 'label' => 'Staff',        'roles' => ['owner','it','hr']],
+        ['file' => 'appointments', 'icon' => '📅', 'label' => 'Appointments', 'roles' => ['owner','it','hr','marketing','cashier']],
+        ['file' => 'orders',       'icon' => '📦', 'label' => 'Orders',       'roles' => ['owner','it','hr','marketing','cashier']],
+        ['file' => 'Therapists',   'icon' => '💆', 'label' => 'Therapists',   'roles' => ['owner','it','hr','marketing','cashier']],
+        ['file' => 'analytics',    'icon' => '📊', 'label' => 'Analytics',    'roles' => ['owner','it','hr','marketing']],
+        ['file' => 'walkin',       'icon' => '🏪', 'label' => 'Walk-in',      'roles' => ['owner','it','hr','cashier']],
+        ['file' => 'refunds',      'icon' => '💸', 'label' => 'Refunds',      'roles' => ['owner','it','hr']],
+        ['file' => 'partners',     'icon' => '🤝', 'label' => 'Partners',     'roles' => ['owner','it','hr']],
+        ['file' => 'discounts',    'icon' => '🎟️', 'label' => 'Discounts',    'roles' => ['owner','it','hr','marketing']],
+        ['file' => 'daily_report', 'icon' => '📋', 'label' => 'Daily Report', 'roles' => ['owner','it','hr','marketing','cashier']],
+        ['file' => 'activity',    'icon' => '🕐', 'label' => 'Activity Log', 'roles' => ['owner','it','hr','marketing']],
+        ['file' => 'help',        'icon' => '❓', 'label' => 'Help / Guide', 'roles' => ['owner','it','hr','marketing','cashier']],
     ];
 }
 
@@ -75,12 +75,8 @@ function admin_nav_items(): array {
  * 'owner' is intentionally absent from every list — no UI path should create owners.
  */
 function creatable_roles(string $creator_role): array {
-    switch ($creator_role) {
-        case 'it':        return ['cashier', 'marketing', 'it'];
-        case 'owner':     return ['cashier', 'marketing'];
-        case 'marketing': return ['cashier'];
-        default:          return []; // cashier or unknown → none
-    }
+    if ($creator_role === 'owner') return ['cashier', 'marketing', 'it', 'hr'];
+    return []; // only owner may create accounts
 }
 
 /**
@@ -102,5 +98,44 @@ function enforce_page_access(): void {
     if (!in_array($role, $allowed, true)) {
         header('Location: ' . BASE_URL . 'admin/appointments.php?access_denied=1');
         exit();
+    }
+
+    // Per-request re-validation for cashier: session token + login hours
+    if ($role === 'cashier') {
+        global $conn;
+        $uid = (int)($_SESSION['user_id'] ?? 0);
+        $tok = $_SESSION['session_token'] ?? '';
+
+        $s = $conn->prepare("SELECT session_token, session_started FROM users WHERE id=? AND role='admin'");
+        $s->bind_param("i", $uid);
+        $s->execute();
+        $db_row = $s->get_result()->fetch_assoc();
+        $s->close();
+
+        if (!$db_row || $db_row['session_token'] !== $tok) {
+            session_unset();
+            session_destroy();
+            header('Location: ' . BASE_URL . 'admin/admin_login.php?ended=1');
+            exit();
+        }
+
+        $tz_r = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_timezone' LIMIT 1")->fetch_assoc();
+        $st_r = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_login_start' LIMIT 1")->fetch_assoc();
+        $en_r = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_login_end' LIMIT 1")->fetch_assoc();
+        date_default_timezone_set($tz_r['setting_value'] ?? 'Asia/Manila');
+        $now  = date('H:i');
+        $tst  = $st_r['setting_value'] ?? '07:00';
+        $tend = $en_r['setting_value'] ?? '23:59';
+
+        if ($now < $tst || $now > $tend) {
+            $clr = $conn->prepare("UPDATE users SET session_token=NULL, session_started=NULL WHERE id=?");
+            $clr->bind_param("i", $uid);
+            $clr->execute();
+            $clr->close();
+            session_unset();
+            session_destroy();
+            header('Location: ' . BASE_URL . 'admin/admin_login.php?hours_ended=1');
+            exit();
+        }
     }
 }
