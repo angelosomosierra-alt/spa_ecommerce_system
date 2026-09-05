@@ -196,9 +196,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
 
             if ($item) {
                 $regular_price    = floatval($item['price']);
-                $home_service_fee = floatval($item['home_service_fee'] ?? 0);
+                $home_service_fee = floatval($item['home_service_fee'] ?? 0); // legacy, kept for reference
                 switch ($rate_type) {
-                    case 'home':       $charged_price = ($regular_price * 2) + $home_service_fee; break;
+                    case 'home':       $charged_price = floatval($item['home_service_price'] ?? 0); break;
                     case 'hotel':      $charged_price = $partner_rates_map[$partner_id][$item_id] ?? $regular_price; break;
                     case 'influencer': $charged_price = 0.00; break;
                     default:           $charged_price = $regular_price; break;
@@ -440,7 +440,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 }
 
                 $conn->commit();
-                $rate_labels = ['regular'=>'Regular','home'=>'Home Service (2× + ₱300)','hotel'=>'Hotel/Partner','influencer'=>'Influencer (Free)'];
+                $rate_labels = ['regular'=>'Regular','home'=>'Home Service (Fixed Price)','hotel'=>'Hotel/Partner','influencer'=>'Influencer (Free)'];
                 $rate_label = $rate_labels[$rate_type] ?? 'Regular';
                 $disc_suffix = $discount_type !== 'none' && $discount_amount_calc > 0
                     ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior Citizen','pwd'=>'PWD','employee'=>'Employee'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
@@ -474,7 +474,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
 }
 
 $all_services = [];
-$result = $conn->query("SELECT id, name, price, session_time, is_home_service, home_service_fee FROM services WHERE deleted_at IS NULL ORDER BY name");
+$result = $conn->query("SELECT id, name, price, session_time, is_home_service, home_service_fee, home_service_price FROM services WHERE deleted_at IS NULL ORDER BY name");
 while ($row = $result->fetch_assoc()) $all_services[] = $row;
 
 // $all_partners and $partner_rates_map already fetched above POST handler
@@ -692,7 +692,7 @@ require_once 'admin_header.php';
                         <input type="hidden" name="partner_id" id="partner_id_val" value="0">
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.85rem;">
                             <div class="rate-type-btn active" id="rtbtn-regular" onclick="selectRateType('regular')"><span style="font-size:1.1rem;">🟢</span><span style="font-weight:700;font-size:0.82rem;">Regular</span><span style="font-size:0.7rem;opacity:0.75;">Standard price</span></div>
-                            <div class="rate-type-btn" id="rtbtn-home" onclick="selectRateType('home')"><span style="font-size:1.1rem;">🏠</span><span style="font-weight:700;font-size:0.82rem;">Home Service</span><span style="font-size:0.7rem;opacity:0.75;">2× + ₱300</span></div>
+                            <div class="rate-type-btn" id="rtbtn-home" onclick="selectRateType('home')"><span style="font-size:1.1rem;">🏠</span><span style="font-weight:700;font-size:0.82rem;">Home Service</span><span style="font-size:0.7rem;opacity:0.75;">Fixed total price</span></div>
                             <div class="rate-type-btn" id="rtbtn-hotel" onclick="selectRateType('hotel')"><span style="font-size:1.1rem;">🏨</span><span style="font-weight:700;font-size:0.82rem;">Hotel / Partner</span><span style="font-size:0.7rem;opacity:0.75;">Partner rate</span></div>
                             <div class="rate-type-btn" id="rtbtn-influencer" onclick="selectRateType('influencer')"><span style="font-size:1.1rem;">🌟</span><span style="font-weight:700;font-size:0.82rem;">Influencer / PR</span><span style="font-size:0.7rem;opacity:0.75;">Free — ₱0</span></div>
                         </div>
@@ -762,7 +762,6 @@ require_once 'admin_header.php';
                                 'qrph'   => ['📷', 'QR Ph'],
                                 'card'   => ['💳', 'Card'],
                                 'swiper' => ['💳', 'Swiper'],
-                                'bank'   => ['🏦', 'Bank'],
                             ];
                             $online_pm = ['gcash','maya','card','qrph'];
                             foreach ($pm_wk as $pmv => $pmi):
@@ -1294,12 +1293,13 @@ function updatePricePreview() {
     if (!display || !formula) return;
     if (!svc) { display.textContent = '₱0.00'; formula.textContent = 'Select a service first'; return; }
     const regular = parseFloat(svc.price);
-    const homeFee = parseFloat(svc.home_service_fee || 0);
+    const homeFee   = parseFloat(svc.home_service_fee   || 0); // legacy
+    const homePrice = parseFloat(svc.home_service_price || 0);
     const peopleCount = parseInt(document.querySelector('[name="people_count"]')?.value || 1) || 1;
     let perPerson = regular; let formulaTxt = '';
     switch (currentRateType) {
-        case 'regular':    perPerson = regular; formulaTxt = 'Regular price'; break;
-        case 'home':       perPerson = (regular * 2) + homeFee; formulaTxt = `(₱${regular.toFixed(2)} × 2) + ₱${homeFee.toFixed(2)} (home fee)`; break;
+        case 'regular':    perPerson = regular;    formulaTxt = 'Regular price'; break;
+        case 'home':       perPerson = homePrice;  formulaTxt = `Home Service — Fixed price (₱${homePrice.toFixed(2)})`; break;
         case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
         case 'influencer': perPerson = 0; formulaTxt = 'Complimentary — ₱0'; break;
     }

@@ -97,14 +97,31 @@ if ($rpt) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// 1b. INSERT comm_25 COLUMN — insert a blank column before R so that:
+//     O=comm_30, P=comm_20, Q=comm_15 stay untouched (existing formulas safe)
+//     NEW R = comm_25, S = disc_50_staff (was R), T = net_sales (was S), etc.
+//     PhpSpreadsheet shifts all column references in formulas automatically.
+// ════════════════════════════════════════════════════════════════════════════
+$ws->insertNewColumnBefore('R', 1);
+
+// New R column is a blank physical insert — copy header style and width from
+// adjacent Q14/Q15 (comm_15 header) so the new comm_25 column looks uniform.
+$ws->duplicateStyle($ws->getStyle('Q14'), 'R14');
+$ws->duplicateStyle($ws->getStyle('Q15'), 'R15');
+$cv('R14', "25%\nCommission fee");
+$q_width = $ws->getColumnDimension('Q')->getWidth();
+$ws->getColumnDimension('R')->setWidth($q_width);
+
+// ════════════════════════════════════════════════════════════════════════════
 // 2. CLEAR DATA ZONES
 //    Rule: only clear data-entry cells; never touch row 58 SUM formulas,
 //    preserved summary formulas in B36-B39/B41/B47-B52/B56, or other
 //    structural formula rows (N76, H95, N87/N90, T86, V104/V105, etc.).
+//    After column insertion: old W (remarks) is now at X — clear X too.
 // ════════════════════════════════════════════════════════════════════════════
 
-// Sales data rows 16–57 (E through W; row 58 is preserved SUM row)
-$sales_cols = ['E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W'];
+// Sales data rows 16–57 (E through X; row 58 is preserved SUM row)
+$sales_cols = ['E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X'];
 $clr($sales_cols, 16, 57);
 
 // Cash breakdown: quantity column A only (rows 17-28; B=denominations, C==A*B stay)
@@ -124,11 +141,11 @@ $clr(['F','G','H'], 80, 94);
 // Unpaids Corp J–N rows 80–86 (N87/N90 formulas preserved)
 $clr(['J','K','L','M','N'], 80, 86);
 
-// Service GC Sold P–U rows 80–85 (T86 = =SUM(T80:T85) preserved)
-$clr(['P','Q','R','S','T','U'], 80, 85);
+// Service GC Sold P–V rows 80–85 (after col insert: old T86→U86, old U→V)
+$clr(['P','Q','R','S','T','U','V'], 80, 85);
 
-// Product Sold R–V rows 97–103 (V104/V105 formulas preserved)
-$clr(['R','S','T','U','V'], 97, 103);
+// Product Sold S–W rows 97–103 (after col insert: old R→S, old V104/V105→W104/W105)
+$clr(['R','S','T','U','V','W'], 97, 103);
 
 // ════════════════════════════════════════════════════════════════════════════
 // 3. SALES DATA ROWS (rows 16–57, columns E–W)
@@ -151,13 +168,14 @@ foreach ($spreadsheet_rows as $sr) {
     $cv('L' . $data_row, (float)($sr['promo_price']   ?? 0));
 
     // Discount/commission columns — write non-zero values only (cleaner output)
-    $m  = (float)($sr['celeb_10']       ?? 0);
-    $n  = (float)($sr['disc_20_pwd']    ?? 0);
-    $o  = (float)($sr['comm_30']        ?? 0);
-    $p  = (float)($sr['comm_20']        ?? 0);
-    $q  = (float)($sr['comm_15']        ?? 0);
-    $r  = (float)($sr['disc_50_staff']  ?? 0);
-    $adv= (float)($sr['advance_payment']?? 0);
+    $m   = (float)($sr['celeb_10']       ?? 0);
+    $n   = (float)($sr['disc_20_pwd']    ?? 0);
+    $o   = (float)($sr['comm_30']        ?? 0);
+    $p   = (float)($sr['comm_20']        ?? 0);
+    $q   = (float)($sr['comm_15']        ?? 0);
+    $r   = (float)($sr['comm_25']        ?? 0); // NEW: comm_25 now at column R
+    $s   = (float)($sr['disc_50_staff']  ?? 0); // disc_50_staff shifted to S
+    $adv = (float)($sr['advance_payment']?? 0);
 
     if ($m  > 0) $cv('M' . $data_row, $m);
     if ($n  > 0) $cv('N' . $data_row, $n);
@@ -165,14 +183,14 @@ foreach ($spreadsheet_rows as $sr) {
     if ($p  > 0) $cv('P' . $data_row, $p);
     if ($q  > 0) $cv('Q' . $data_row, $q);
     if ($r  > 0) $cv('R' . $data_row, $r);
+    if ($s  > 0) $cv('S' . $data_row, $s);
 
-    // S = net sales formula: =K-O-P-Q  (commission columns are the deductions)
-$cv('S' . $data_row, "=L{$data_row}-SUM(O{$data_row}:Q{$data_row})");
-    // T = mode of payment, U = advance payment, W = remarks
-    // V = secondary MOP (not stored separately — leave blank)
-    $cv('T' . $data_row, $sr['mode_of_payment'] ?? '');
-    if ($adv > 0) $cv('U' . $data_row, $adv);
-    $cv('W' . $data_row, $sr['remarks'] ?? '');
+    // T = net sales formula: =L-SUM(O:R)  (all four commission columns deducted)
+    $cv('T' . $data_row, "=L{$data_row}-SUM(O{$data_row}:R{$data_row})");
+    // U = mode of payment, V = advance payment, W = secondary MOP (blank), X = remarks
+    $cv('U' . $data_row, $sr['mode_of_payment'] ?? '');
+    if ($adv > 0) $cv('V' . $data_row, $adv);
+    $cv('X' . $data_row, $sr['remarks'] ?? '');
 
     $data_row++;
 }
@@ -198,9 +216,9 @@ foreach ($denom_row_map as $denom => $drow) {
 // ════════════════════════════════════════════════════════════════════════════
 // 5. SUMMARY REPORT — column B (rows 36-57)
 //
-//    PRESERVED formula cells (do NOT overwrite):
+//    PRESERVED formula cells (do NOT overwrite, EXCEPT B37 which is updated):
 //      B36 =B39+B38-B50  (Gross Sales)
-//      B37 =O58+P58+Q58+N76  (Staff CF)
+//      B37 — written explicitly below as =O58+P58+Q58+R58+N76 (Staff CF, now includes comm_25)
 //      B38 =T86  (Sold GC)
 //      B39 =K58+O76+V104  (POS Reading — derived from sheet data)
 //      B41 =M58  (Celeb. Discounts)
@@ -221,6 +239,10 @@ foreach ($denom_row_map as $denom => $drow) {
 //      B46 = Maya DP
 //      B53 = Cash on Hand (from denominations)
 // ════════════════════════════════════════════════════════════════════════════
+// Newly inserted column R needs its own SUM formula (old R58 shifted to S58)
+$cv('R58', '=SUM(R16:R57)');
+// Update Staff CF formula to include comm_25 column
+$cv('B37', '=O58+P58+Q58+R58+N76');
 $cv('B40', (float)$total_discounts);
 $cv('B42', (float)$gc_redeem_total);
 $cv('B43', (float)$card_total);
@@ -291,10 +313,11 @@ foreach ($gc_sold as $gc) {
     if ($gc_row > 85) break;
     $cv('P' . $gc_row, $gc['series']       ?? '');
     $cv('Q' . $gc_row, $gc['client_name']  ?? '');
-    $cv('R' . $gc_row, $gc['voucher_code'] ?? '');
-    $cv('S' . $gc_row, (int)($gc['qty']    ?? 1));
-    $cv('T' . $gc_row, (float)($gc['amount']    ?? 0));
-    $cv('U' . $gc_row, $gc['remarks']      ?? '');
+    // After insertNewColumnBefore('R'): voucher→S, qty→T, amount→U, remarks→V
+    $cv('S' . $gc_row, $gc['voucher_code'] ?? '');
+    $cv('T' . $gc_row, (int)($gc['qty']    ?? 1));
+    $cv('U' . $gc_row, (float)($gc['amount']    ?? 0));
+    $cv('V' . $gc_row, $gc['remarks']      ?? '');
     $gc_row++;
 }
 
@@ -308,11 +331,12 @@ $all_products = array_merge($product_sales, $system_product_sales);
 $prod_row = 97;
 foreach ($all_products as $p) {
     if ($prod_row > 103) break;
-    $cv('R' . $prod_row, '•');
-    $cv('S' . $prod_row, $p['particular'] ?? '');
-    $cv('T' . $prod_row, (int)($p['qty']   ?? 1));
-    $cv('U' . $prod_row, (float)($p['price'] ?? 0));
-    $cv('V' . $prod_row, "=T{$prod_row}*U{$prod_row}");
+    // After insertNewColumnBefore('R'): bullet→S, particular→T, qty→U, price→V, total→W
+    $cv('S' . $prod_row, '•');
+    $cv('T' . $prod_row, $p['particular'] ?? '');
+    $cv('U' . $prod_row, (int)($p['qty']   ?? 1));
+    $cv('V' . $prod_row, (float)($p['price'] ?? 0));
+    $cv('W' . $prod_row, "=U{$prod_row}*V{$prod_row}");
     $prod_row++;
 }
 

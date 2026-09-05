@@ -34,8 +34,9 @@ if (isset($_SESSION['service_booking'])) {
         'price'            => $service['price'],
         'quantity'         => 1,
         'session_time'     => $service['session_time'],
-        'is_home_service'  => $service['is_home_service'],
-        'home_service_fee' => floatval($service['home_service_fee'] ?? 0),
+        'is_home_service'    => $service['is_home_service'],
+        'home_service_fee'   => floatval($service['home_service_fee']   ?? 0),
+        'home_service_price' => floatval($service['home_service_price'] ?? 0),
     ];
     $total_amount = $service['price'];
 
@@ -104,7 +105,7 @@ if (isset($_SESSION['service_booking'])) {
 
     // ── Load all active services for "Add Other Service" modal ───────────────
     $_ms = $conn->query("
-        SELECT s.id, s.name, s.price, s.home_service_fee, s.image,
+        SELECT s.id, s.name, s.price, s.home_service_fee, s.home_service_price, s.image,
                COALESCE(c.name, 'General') AS category
         FROM services s
         LEFT JOIN categories c ON s.category_id = c.id
@@ -179,11 +180,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
 
     $payment_status  = $payment_method === 'online' ? 'pending_payment' : 'unpaid';
 
-    $home_fee_applied = 0.00;
+    $home_fee_applied = 0.00; // legacy, no longer added; home_service_price is the fixed total
     if ($checkout_type === 'service') {
         if ($service_type === 'home') {
-            $home_fee_applied = floatval($checkout_items[0]['home_service_fee'] ?? 0);
-            $total_amount     = (($checkout_items[0]['price'] * 2) + $home_fee_applied) * $people_count;
+            $total_amount = floatval($checkout_items[0]['home_service_price'] ?? 0) * $people_count;
         } else {
             $total_amount = $checkout_items[0]['price'] * $people_count;
         }
@@ -196,12 +196,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     if ($checkout_type === 'service' && !empty($extra_svc_ids)) {
         foreach ($extra_svc_ids as $_eidx => $_esid) {
             if ($_esid <= 0) continue;
-            $_esq = $conn->prepare("SELECT id, price, home_service_fee FROM services WHERE id = ? AND deleted_at IS NULL");
+            $_esq = $conn->prepare("SELECT id, price, home_service_fee, home_service_price FROM services WHERE id = ? AND deleted_at IS NULL");
             $_esq->bind_param("i", $_esid); $_esq->execute();
             $_esr = $_esq->get_result()->fetch_assoc(); $_esq->close();
             if (!$_esr) continue;
             $_es_price = ($service_type === 'home')
-                ? (floatval($_esr['price']) * 2 + floatval($_esr['home_service_fee'] ?? 0))
+                ? floatval($_esr['home_service_price'] ?? 0)
                 : floatval($_esr['price']);
             $total_amount += $_es_price;
             $extra_services_data[] = [
@@ -389,8 +389,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         $item_stmt->bind_param("iiidd", $order_id, $item['id'], $item['quantity'], $item['price'], $subtotal);
                         $item_stmt->execute(); $item_stmt->close();
                     } elseif ($item['type'] === 'service') {
-                        $svc_home_fee   = ($service_type === 'home') ? $home_fee_applied : 0.00;
-                        $svc_per_person = ($item['price'] * 2) + $svc_home_fee;
+                        $svc_home_fee   = 0.00; // legacy column kept at 0; pricing now via home_service_price
+                        $svc_per_person = ($service_type === 'home')
+                            ? floatval($item['home_service_price'] ?? 0)
+                            : floatval($item['price']);
                         $svc_subtotal   = $svc_per_person * $people_count;
                         $item_stmt      = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal, home_service_fee) VALUES (?, ?, ?, ?, ?, ?)");
                         $item_stmt->bind_param("iiiddd", $order_id, $item['id'], $people_count, $svc_per_person, $svc_subtotal, $svc_home_fee);
@@ -1542,6 +1544,7 @@ require_once 'header.php';
         </div>
 
         <?php endif; ?>
+        
 
         <!-- Payment Method -->
         <div class="co-card" style="margin-bottom:1.25rem;">
@@ -1760,6 +1763,7 @@ require_once 'header.php';
                      data-name="<?php echo htmlspecialchars($ms['name'], ENT_QUOTES); ?>"
                      data-price="<?php echo floatval($ms['price']); ?>"
                      data-homefee="<?php echo floatval($ms['home_service_fee'] ?? 0); ?>"
+                     data-homeprice="<?php echo floatval($ms['home_service_price'] ?? 0); ?>"
                      data-cat="<?php echo htmlspecialchars($ms['category'], ENT_QUOTES); ?>"
                      data-image="<?php echo htmlspecialchars($ms['image'] ?? '', ENT_QUOTES); ?>"
                      onclick="esSelectSvc(this)"
@@ -1842,7 +1846,8 @@ function checkCapacityWarning(count) {
 
 // ── Service type ──────────────────────────────────────────────────────────────
 const BASE_PRICE    = <?php echo floatval($checkout_items[0]['price'] ?? 0); ?>;
-const HOME_FEE      = <?php echo floatval($checkout_items[0]['home_service_fee'] ?? 0); ?>;
+const HOME_FEE      = <?php echo floatval($checkout_items[0]['home_service_fee'] ?? 0); ?>; // legacy
+const HOME_PRICE    = <?php echo floatval($checkout_items[0]['home_service_price'] ?? 0); ?>;
 
 function selectServiceType(type) {
     ['onsite','home'].forEach(t => {
@@ -2216,9 +2221,8 @@ function updateDiscountPreview() {
     const people = parseInt(document.getElementById('people_count')?.value || 1) || 1;
     const homeFeeRow = document.getElementById('homeFeeRow');
     const isHome = homeFeeRow && homeFeeRow.style.display !== 'none';
-    const homeFeePerPerson = isHome ? HOME_FEE : 0;
-    const basePerPerson = isHome ? BASE_PRICE * 2 : BASE_PRICE;
-    const subtotal = (basePerPerson + homeFeePerPerson) * people;
+    const basePerPerson = isHome ? HOME_PRICE : BASE_PRICE;
+    const subtotal = basePerPerson * people;
     const subtotalEl = document.getElementById('subtotalDisplay');
     if (subtotalEl) subtotalEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
     grandEl.textContent = '₱' + subtotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});

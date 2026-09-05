@@ -142,6 +142,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remov
     }
 }
 
+// ── EDIT THERAPIST COMMISSION (AJAX, owner/IT only) ──────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_therapist_commission') {
+    verify_csrf_token();
+    header('Content-Type: application/json');
+    if (!is_full_access()) {
+        echo json_encode(['success' => false, 'message' => 'Owner/IT lang ang pwedeng mag-edit ng commission.']);
+        exit();
+    }
+    $at_id    = intval($_POST['at_id']       ?? 0);
+    $new_comm = floatval($_POST['commission'] ?? 0);
+    if ($at_id <= 0 || $new_comm < 0) {
+        echo json_encode(['success' => false, 'message' => 'Invalid na halaga.']);
+        exit();
+    }
+    $at_chk = $conn->prepare("SELECT appointment_id FROM appointment_therapists WHERE id=?");
+    $at_chk->bind_param("i", $at_id); $at_chk->execute();
+    $at_row = $at_chk->get_result()->fetch_assoc(); $at_chk->close();
+    if (!$at_row) {
+        echo json_encode(['success' => false, 'message' => 'Hindi mahanap ang record.']);
+        exit();
+    }
+    $upd = $conn->prepare("UPDATE appointment_therapists SET commission=? WHERE id=?");
+    $upd->bind_param("di", $new_comm, $at_id); $upd->execute(); $upd->close();
+    // Sync to daily_report_spreadsheet_rows if this appointment was already imported
+    $ss_chk = $conn->prepare("SELECT id, comm_30, comm_25, comm_20, comm_15
+                               FROM daily_report_spreadsheet_rows
+                               WHERE source_appointment_id=? LIMIT 1");
+    $ss_chk->bind_param("i", $at_row['appointment_id']); $ss_chk->execute();
+    $ss_row = $ss_chk->get_result()->fetch_assoc(); $ss_chk->close();
+    $synced = false;
+    if ($ss_row) {
+        // Update only the column that already has a value (the one used for this appt's rate)
+        foreach (['comm_30','comm_25','comm_20','comm_15'] as $col) {
+            if ((float)$ss_row[$col] > 0) {
+                $ss_upd = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET {$col}=? WHERE id=?");
+                $ss_upd->bind_param("di", $new_comm, $ss_row['id']); $ss_upd->execute(); $ss_upd->close();
+                $synced = true; break;
+            }
+        }
+    }
+    echo json_encode(['success' => true, 'synced_to_report' => $synced]);
+    exit();
+}
+
 // ── FETCH TODAY'S ROSTER ─────────────────────────────────────────────────────
 // Uses appointment_therapists junction table (not the old therapist_id column)
 $today_roster = $conn->query("
@@ -295,17 +339,20 @@ if (isset($_GET['history'])) {
     $history_therapist = $stmt->get_result()->fetch_assoc(); $stmt->close();
 
     // Filter params
-    $hist_status = $_GET['hist_status'] ?? 'worked'; // 'worked' | 'all'
-    if (!in_array($hist_status, ['worked', 'all'], true)) $hist_status = 'worked';
+    $hist_status = $_GET['hist_status'] ?? 'worked'; // 'worked' | 'completed_only' | 'all'
+    if (!in_array($hist_status, ['worked', 'all', 'completed_only'], true)) $hist_status = 'worked';
     $hist_from = trim($_GET['hist_from'] ?? '');
     $hist_to   = trim($_GET['hist_to']   ?? '');
     if ($hist_from && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $hist_from)) $hist_from = '';
     if ($hist_to   && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $hist_to))   $hist_to   = '';
 
     if ($history_therapist) {
-        $status_filter_sql = '';
-        if ($hist_status === 'worked') {
+        if ($hist_status === 'completed_only') {
+            $status_filter_sql = " AND ap.status = 'completed' ";
+        } elseif ($hist_status === 'worked') {
             $status_filter_sql = " AND ap.status IN ('approved','completed') ";
+        } else {
+            $status_filter_sql = '';
         }
         $date_filter_sql    = '';
         $date_filter_params = [];
@@ -324,6 +371,7 @@ if (isset($_GET['history'])) {
         $sql = "
             SELECT
                 ap.id            AS appt_id,
+                at2.id           AS at_id,
                 ap.appointment_date,
                 ap.status,
                 ap.people_count,
@@ -460,6 +508,10 @@ require_once 'admin_header.php';
        class="btn btn-sm <?php echo $hist_status==='worked' ? 'btn-primary' : 'btn-secondary'; ?>">
        ✅ Approved + Completed
     </a>
+    <a href="?history=<?php echo $hist_id; ?>&hist_status=completed_only<?php echo !empty($hist_from) ? '&hist_from='.urlencode($hist_from) : ''; ?><?php echo !empty($hist_to) ? '&hist_to='.urlencode($hist_to) : ''; ?>"
+       class="btn btn-sm <?php echo $hist_status==='completed_only' ? 'btn-primary' : 'btn-secondary'; ?>">
+       🏁 Completed Only
+    </a>
     <a href="?history=<?php echo $hist_id; ?>&hist_status=all<?php echo !empty($hist_from) ? '&hist_from='.urlencode($hist_from) : ''; ?><?php echo !empty($hist_to) ? '&hist_to='.urlencode($hist_to) : ''; ?>"
        class="btn btn-sm <?php echo $hist_status==='all' ? 'btn-primary' : 'btn-secondary'; ?>">
        All Statuses
@@ -513,11 +565,25 @@ require_once 'admin_header.php';
                         <?php echo ucfirst($rec['status']); ?>
                     </span>
                 </td>
-                <td>
-                    <?php if ($rec['commission'] > 0): ?>
-                    <span style="color:#2d8a4e;font-weight:700;">₱<?php echo number_format($rec['commission'],2); ?></span>
-                    <?php else: ?>
-                    <span style="color:var(--gray);">—</span>
+                <td data-at-id="<?php echo $rec['at_id']; ?>">
+                    <?php echo csrf_field(); ?>
+                    <span class="comm-display" style="font-weight:700;color:<?php echo $rec['commission'] > 0 ? '#2d8a4e' : 'var(--gray)'; ?>;">
+                        <?php echo $rec['commission'] > 0 ? '₱'.number_format($rec['commission'],2) : '—'; ?>
+                    </span>
+                    <input type="number" class="comm-edit-input" step="0.01"
+                           value="<?php echo (float)$rec['commission']; ?>"
+                           style="display:none;width:90px;padding:0.3rem;border:1px solid var(--border2);border-radius:6px;">
+                    <?php if (is_full_access()): ?>
+                    <button type="button" class="comm-edit-btn" onclick="toggleCommEdit(this)"
+                            style="margin-left:4px;background:none;border:none;cursor:pointer;font-size:0.85rem;"
+                            title="I-edit ang commission">✏️</button>
+                    <button type="button" class="comm-save-btn" style="display:none;margin-left:4px;
+                            background:none;border:none;cursor:pointer;color:#2d8a4e;font-size:0.85rem;"
+                            onclick="saveCommEdit(this, <?php echo $rec['at_id']; ?>)"
+                            title="I-save">💾</button>
+                    <button type="button" class="comm-cancel-btn" style="display:none;margin-left:2px;
+                            background:none;border:none;cursor:pointer;color:#dc3545;font-size:0.85rem;"
+                            onclick="cancelCommEdit(this)" title="Kanselahin">✕</button>
                     <?php endif; ?>
                 </td>
                 <td>
@@ -604,6 +670,53 @@ require_once 'admin_header.php';
     </div>
 </div>
 
+<script>
+function toggleCommEdit(btn) {
+    const td = btn.closest('td');
+    td.querySelector('.comm-display').style.display = 'none';
+    td.querySelector('.comm-edit-input').style.display = 'inline-block';
+    td.querySelector('.comm-edit-btn').style.display = 'none';
+    td.querySelector('.comm-save-btn').style.display = 'inline-block';
+    td.querySelector('.comm-cancel-btn').style.display = 'inline-block';
+    td.querySelector('.comm-edit-input').focus();
+}
+
+function cancelCommEdit(btn) {
+    const td = btn.closest('td');
+    const input = td.querySelector('.comm-edit-input');
+    // Restore input to its original rendered value (stored as the input's default value)
+    input.value = input.defaultValue;
+    td.querySelector('.comm-display').style.display = 'inline';
+    input.style.display = 'none';
+    td.querySelector('.comm-edit-btn').style.display = 'inline-block';
+    td.querySelector('.comm-save-btn').style.display = 'none';
+    td.querySelector('.comm-cancel-btn').style.display = 'none';
+}
+
+function saveCommEdit(btn, atId) {
+    const td = btn.closest('td');
+    const newVal = parseFloat(td.querySelector('.comm-edit-input').value) || 0;
+    const csrfInput = td.querySelector('input[name="csrf_token"]');
+    const csrfToken = csrfInput ? csrfInput.value : '';
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append('action', 'edit_therapist_commission');
+    fd.append('at_id', atId);
+    fd.append('commission', newVal);
+    fd.append('csrf_token', csrfToken);
+    fetch(window.location.pathname, { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert(data.message || 'Hindi na-save.');
+                btn.disabled = false;
+            }
+        })
+        .catch(() => { alert('Network error.'); btn.disabled = false; });
+}
+</script>
 <?php require_once 'admin_footer.php'; exit(); endif; ?>
 
 <!-- ── STATS ──────────────────────────────────────────────────────────────── -->

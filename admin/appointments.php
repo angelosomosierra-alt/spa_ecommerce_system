@@ -90,6 +90,15 @@ if ($_ps_chk && $_ps_chk->num_rows === 0) {
 }
 unset($_ps_chk);
 
+// ── Add therapist_selected flag to appointment_extra_services ─────────────────
+// Distinguishes "Any Available (NULL, intentionally chosen)" from
+// "untouched default NULL" so approve_pending can verify all extras were set.
+$_ts_chk = $conn->query("SHOW COLUMNS FROM appointment_extra_services LIKE 'therapist_selected'");
+if ($_ts_chk && $_ts_chk->num_rows === 0) {
+    $conn->query("ALTER TABLE appointment_extra_services ADD COLUMN therapist_selected TINYINT(1) NOT NULL DEFAULT 0");
+}
+unset($_ts_chk);
+
 
 // ── AJAX: VERIFY PIN (for approve modal) ─────────────────────────────────────
 if (isset($_POST['verify_pin_only'])) {
@@ -375,12 +384,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         $message_type = "danger"; $es_ok = false;
     } elseif (!$es_service_id) {
         $message = "Please select a service."; $message_type = "danger"; $es_ok = false;
-    } elseif ($es_therapist_id <= 0) {
-        $message = "Please select a therapist for the extra service."; $message_type = "danger"; $es_ok = false;
     }
 
     if ($es_ok) {
-        $es_svc_s = $conn->prepare("SELECT id, name, price, home_service_fee FROM services WHERE id = ?");
+        $es_svc_s = $conn->prepare("SELECT id, name, price, home_service_fee, home_service_price FROM services WHERE id = ?");
         $es_svc_s->bind_param("i", $es_service_id); $es_svc_s->execute();
         $es_svc = $es_svc_s->get_result()->fetch_assoc(); $es_svc_s->close();
         if (!$es_svc) { $message = "Service not found."; $message_type = "danger"; $es_ok = false; }
@@ -393,7 +400,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         $es_reg_price  = floatval($es_svc['price']);
         $es_home_fee   = floatval($es_svc['home_service_fee'] ?? 0);
         switch ($es_rate_type) {
-            case 'home':       $es_base = ($es_reg_price * 2) + $es_home_fee; break;
+            case 'home':       $es_base = floatval($es_svc['home_service_price'] ?? 0); break;
             case 'influencer': $es_base = 0.00; break;
             case 'hotel':
                 $es_base = $es_reg_price;
@@ -460,26 +467,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         }
 
         // ── INSERT — all bind_param values are plain local variables ──────────
-        // Columns: appointment_id(i) service_id(i) therapist_id(i) person_label(s)
-        //          charged_price(d) commission(d) rate_type(s) payment_method(s)
-        //          payment_status(s) notes(s) added_by(i) paymongo_reference(s) paymongo_method(s)
         $es_pay_status = 'unpaid';
-        $es_ins = $conn->prepare("
-            INSERT INTO appointment_extra_services
-                (appointment_id, service_id, therapist_id, person_label, charged_price,
-                 commission, rate_type, payment_method, payment_status, notes, added_by,
-                 paymongo_reference, paymongo_method)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $es_ins->bind_param("iiisddssssiss",
-            $es_appt_id, $es_service_id, $es_therapist_id,
-            $es_person_label, $es_charged, $es_commission,
-            $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by,
-            $es_pm_ref, $es_pm_method);
-        $es_ins->execute(); $es_ins->close();
+        $es_new_id = 0;
+        if ($es_therapist_id > 0) {
+            $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $es_ins->bind_param("iiisddssssiss", $es_appt_id, $es_service_id, $es_therapist_id, $es_person_label, $es_charged, $es_commission, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method);
+        } else {
+            $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $es_ins->bind_param("iisddssssiss", $es_appt_id, $es_service_id, $es_person_label, $es_charged, $es_commission, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method);
+        }
+        $es_ins->execute();
+        $es_new_id = (int)$conn->insert_id;
+        $es_ins->close();
 
         $message = "✅ Extra service added for {$es_person_label}.";
         $message_type = "success";
+    }
+
+    // AJAX path — return JSON instead of falling through to PRG redirect
+    if (!empty($_POST['ajax'])) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success'  => ($message_type === 'success'),
+            'message'  => $message,
+            'extra_id' => $es_new_id,
+            'name'     => ($es_ok && isset($es_svc)) ? ($es_svc['name'] ?? '') : '',
+            'price'    => ($es_ok && isset($es_charged)) ? $es_charged : 0.0,
+        ]);
+        exit();
     }
 }
 
@@ -538,7 +553,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
         $use_session_time = intval($cur_row['session_time'] ?? 60);
         $new_svc_data     = null;
         if ($new_service_id > 0 && $cur_row) {
-            $svc_q = $conn->prepare("SELECT session_time, price, home_service_fee FROM services WHERE id=?");
+            $svc_q = $conn->prepare("SELECT session_time, price, home_service_fee, home_service_price FROM services WHERE id=?");
             $svc_q->bind_param("i", $new_service_id); $svc_q->execute();
             $new_svc_data = $svc_q->get_result()->fetch_assoc(); $svc_q->close();
             if ($new_svc_data) {
@@ -608,7 +623,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
 
         // Compute new charged_price (per-person × people_count)
         if (!$new_svc_data) {
-            $svc_q2 = $conn->prepare("SELECT price, home_service_fee FROM services WHERE id=?");
+            $svc_q2 = $conn->prepare("SELECT price, home_service_fee, home_service_price FROM services WHERE id=?");
             $svc_q2->bind_param("i", $use_service_id); $svc_q2->execute();
             $new_svc_data = $svc_q2->get_result()->fetch_assoc(); $svc_q2->close();
         }
@@ -617,7 +632,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
             $per_person = floatval($new_svc_data['price']);
             switch ($service_type) {
                 case 'home':
-                    $per_person = ($per_person * 2) + floatval($new_svc_data['home_service_fee'] ?? 0);
+                    $per_person = floatval($new_svc_data['home_service_price'] ?? 0);
                     break;
                 case 'influencer':
                     $per_person = 0.0;
@@ -821,10 +836,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIONS — approve / decline / complete
 // ═══════════════════════════════════════════════════════════════════════════
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['approve','decline','checkin_appointment','complete','save_per_person_inline','revert_complete','assign_extra_therapist','assign_person_slot','remove_person_slot'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['approve','decline','checkin_appointment','complete','save_per_person_inline','revert_complete','assign_extra_therapist','assign_person_slot','remove_person_slot','approve_pending','remove_extra_service'])) {
     // AJAX actions return JSON — use the bool variant so a failed token
     // sends a parseable JSON error instead of die(plain-text).
-    $_ajax_actions = ['assign_person_slot', 'remove_person_slot', 'assign_extra_therapist'];
+    $_ajax_actions = ['assign_person_slot', 'remove_person_slot', 'assign_extra_therapist', 'approve_pending', 'remove_extra_service'];
     if (in_array($_POST['action'] ?? '', $_ajax_actions)) {
         if (!verify_csrf_token_ajax()) {
             header('Content-Type: application/json');
@@ -1073,12 +1088,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     } elseif ($ci_disc_type === 'employee') {
                         $ci_disc_amt = round($ci_base * 0.50, 2);
                     } elseif ($ci_disc_type === 'voucher') {
-                        $ci_vchr_type  = sanitize_input($_POST['voucher_type']  ?? 'cash');
+                        $ci_vchr_type  = sanitize_input($_POST['voucher_type']  ?? 'percent');
+                        if (!in_array($ci_vchr_type, ['percent', 'fixed'])) $ci_vchr_type = 'percent';
                         $ci_vchr_value = floatval($_POST['voucher_value'] ?? 0);
                         if ($ci_vchr_value > 0) {
-                            $ci_disc_amt = $ci_vchr_type === 'percent'
-                                ? round($ci_base * ($ci_vchr_value / 100), 2)
-                                : min($ci_vchr_value, $ci_base);
+                            if ($ci_vchr_type === 'percent') {
+                                $ci_disc_amt = round($ci_base * (min($ci_vchr_value, 100) / 100), 2);
+                            } else {
+                                $ci_disc_amt = round(min($ci_vchr_value, $ci_base), 2);
+                            }
                         } else {
                             $message .= ($message ? ' ' : '') . '⚠️ Voucher amount not entered — no discount applied.';
                             $ci_disc_type = 'none';
@@ -1192,10 +1210,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     $upd_ord->execute(); $upd_ord->close();
                 }
 
-                // Mark unpaid extra services as paid with the collected method
-                $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
-                $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
             }
+
+            // Mark unpaid extras paid — runs unconditionally so extras added after check-in are settled even when the main order was already paid
+            $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
+            $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
 
             $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=?, celebration_discount=0 WHERE id=?");
             $upd->bind_param("isi", $cp_by, $cp_name, $appt_id);
@@ -1505,29 +1524,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 }
                 $si->execute(); $si->close();
 
-                // Promote pending → assigned on first slot save; send notification once
-                $aps_upd = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=? AND status='pending'");
-                $aps_upd->bind_param("i", $appt_id); $aps_upd->execute();
-                $aps_affected = $aps_upd->affected_rows; $aps_upd->close();
-                if ($aps_affected > 0) {
-                    add_notification($conn, $appt['user_id'], 'appointment',
-                        '💆 Therapist Assigned — Appointment Confirmed!',
-                        'Your ' . $appt['service_name'] . ' appointment on ' .
-                        date('F j, Y g:i A', strtotime($appt['appointment_date'])) .
-                        ' has been confirmed.',
-                        'appointments.php');
-                    send_approval_email($conn, $appt_id);
-                    if (!empty($appt['order_item_id'])) {
-                        $po2 = $conn->prepare("SELECT o.id FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
-                        $po2->bind_param("i", $appt['order_item_id']); $po2->execute();
-                        $po2_r = $po2->get_result()->fetch_assoc(); $po2->close();
-                        if (!empty($po2_r['id'])) {
-                            $po2_upd = $conn->prepare("UPDATE orders SET approval_status='approved' WHERE id=? AND approval_status='pending'");
-                            $po2_upd->bind_param("i", $po2_r['id']); $po2_upd->execute(); $po2_upd->close();
-                        }
-                    }
-                }
-
                 $stray = ob_get_clean();
                 header('Content-Type: application/json');
                 $resp = ['success' => true];
@@ -1562,20 +1558,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $new_tid_raw = $_POST['therapist_id'] ?? '';
             $new_tid     = ($new_tid_raw === '__any__') ? null : intval($new_tid_raw);
             if ($aes_id <= 0) {
-                $message = "Invalid extra service."; $message_type = "danger";
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Invalid extra service.']);
+                exit();
             } elseif ($new_tid !== null && $new_tid < 0) {
-                $message = "Please select a therapist."; $message_type = "danger";
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Please select a therapist.']);
+                exit();
             } else {
                 if ($new_tid === null) {
-                    $aes_upd = $conn->prepare("UPDATE appointment_extra_services SET therapist_id=NULL WHERE id=? AND appointment_id=?");
+                    $aes_upd = $conn->prepare("UPDATE appointment_extra_services SET therapist_id=NULL, therapist_selected=1 WHERE id=? AND appointment_id=?");
                     $aes_upd->bind_param("ii", $aes_id, $appt_id);
                 } else {
-                    $aes_upd = $conn->prepare("UPDATE appointment_extra_services SET therapist_id=? WHERE id=? AND appointment_id=?");
+                    $aes_upd = $conn->prepare("UPDATE appointment_extra_services SET therapist_id=?, therapist_selected=1 WHERE id=? AND appointment_id=?");
                     $aes_upd->bind_param("iii", $new_tid, $aes_id, $appt_id);
                 }
                 $aes_upd->execute(); $aes_upd->close();
-                $message = "Therapist assigned to extra service."; $message_type = "success";
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true]);
+                exit();
             }
+
+        } elseif ($action === 'remove_extra_service') {
+            $rm_extra_id = intval($_POST['extra_id'] ?? 0);
+            if ($rm_extra_id > 0) {
+                $del = $conn->prepare("DELETE FROM appointment_extra_services WHERE id=? AND appointment_id=?");
+                $del->bind_param("ii", $rm_extra_id, $appt_id); $del->execute(); $del->close();
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true]);
+                exit();
+            }
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Invalid request.']);
+            exit();
+
+        } elseif ($action === 'approve_pending') {
+            if ($appt['status'] !== 'pending') {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Appointment is not pending.']);
+                exit();
+            }
+
+            $people_needed = (int)($appt['people_count'] ?? 1);
+
+            // All required person slots must have an explicit row (NULL = Any Available is fine).
+            $chk_slots = $conn->prepare("SELECT COUNT(DISTINCT person_slot) AS c FROM appointment_therapists WHERE appointment_id=?");
+            $chk_slots->bind_param("i", $appt_id); $chk_slots->execute();
+            $filled_slots = (int)$chk_slots->get_result()->fetch_assoc()['c']; $chk_slots->close();
+
+            if ($filled_slots < $people_needed) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => "Please select a therapist (or Any Available) for all {$people_needed} person slot(s) before approving."]);
+                exit();
+            }
+
+            // All extra services must have been explicitly set (therapist_selected=1).
+            $chk_extras = $conn->prepare("SELECT COUNT(*) AS total, SUM(therapist_selected) AS selected FROM appointment_extra_services WHERE appointment_id=?");
+            $chk_extras->bind_param("i", $appt_id); $chk_extras->execute();
+            $extras_row = $chk_extras->get_result()->fetch_assoc(); $chk_extras->close();
+            $extras_total    = (int)($extras_row['total'] ?? 0);
+            $extras_selected = (int)($extras_row['selected'] ?? 0);
+
+            if ($extras_total > 0 && $extras_selected < $extras_total) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => "Please select a therapist (or Any Available) for all extra services before approving."]);
+                exit();
+            }
+
+            // Promote pending → assigned.
+            $ap_upd = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=? AND status='pending'");
+            $ap_upd->bind_param("i", $appt_id); $ap_upd->execute();
+            $ap_affected = $ap_upd->affected_rows; $ap_upd->close();
+
+            if ($ap_affected > 0) {
+                add_notification($conn, $appt['user_id'], 'appointment',
+                    '💆 Therapist Assigned — Appointment Confirmed!',
+                    'Your ' . $appt['service_name'] . ' appointment on ' .
+                    date('F j, Y g:i A', strtotime($appt['appointment_date'])) .
+                    ' has been confirmed.',
+                    'appointments.php');
+                send_approval_email($conn, $appt_id);
+                if (!empty($appt['order_item_id'])) {
+                    $po2 = $conn->prepare("SELECT o.id FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
+                    $po2->bind_param("i", $appt['order_item_id']); $po2->execute();
+                    $po2_r = $po2->get_result()->fetch_assoc(); $po2->close();
+                    if (!empty($po2_r['id'])) {
+                        $po2_upd = $conn->prepare("UPDATE orders SET approval_status='approved' WHERE id=? AND approval_status='pending'");
+                        $po2_upd->bind_param("i", $po2_r['id']); $po2_upd->execute(); $po2_upd->close();
+                    }
+                }
+            }
+
+            header('Content-Type: application/json');
+            echo json_encode(['success' => true]);
+            exit();
 
         } else {
             $message = "Action not allowed for current status."; $message_type = "danger";
@@ -2548,6 +2624,15 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <!-- ══ ACTION BUTTONS ═════════════════════════════════════════════════ -->
     <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
         <?php if ($status==='pending'): ?>
+            <script>
+            (window._apptExtras = window._apptExtras || {})[<?php echo $appt_id; ?>] = <?php echo json_encode(array_map(function($e){ return ['id'=>(int)$e['id'],'name'=>$e['svc_name'],'price'=>(float)$e['charged_price']]; }, $extra_services)); ?>;
+            </script>
+            <button type="button" class="btn btn-success btn-sm" data-approve-btn
+                    onclick="submitApprove(<?php echo $appt_id; ?>)"
+                    <?php if ($t_count < $people): ?>
+                    disabled title="Select a therapist (or Any Available) for all <?php echo $people; ?> slot(s) first"
+                    style="opacity:0.5;cursor:not-allowed;"
+                    <?php endif; ?>>✅ Approve / Assign</button>
             <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
@@ -2558,12 +2643,20 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </form>
 
         <?php elseif ($status === 'assigned'): ?>
+            <?php
+            // Bill lines for Check-In modal (main service + extras)
+            $_bill_lines = [['name' => $a['service_name'], 'price' => floatval($a['charged_price'] ?? 0)]];
+            foreach ($extra_services as $_be) { $_bill_lines[] = ['name' => $_be['svc_name'], 'price' => floatval($_be['charged_price'])]; }
+            ?>
+            <script>
+            (window._apptExtras = window._apptExtras || {})[<?php echo $appt_id; ?>] = <?php echo json_encode(array_map(function($e){ return ['id'=>(int)$e['id'],'name'=>$e['svc_name'],'price'=>(float)$e['charged_price']]; }, $extra_services)); ?>;
+            </script>
             <button type="button" class="btn btn-success btn-sm" data-checkin-btn
+                    data-bill-json='<?php echo htmlspecialchars(json_encode($_bill_lines), ENT_QUOTES); ?>'
+                    onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>')"
                     <?php if ($_has_unassigned_therapist): ?>
                     disabled title="Assign a specific therapist to all services first"
                     style="opacity:0.5;cursor:not-allowed;"
-                    <?php else: ?>
-                    onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>')"
                     <?php endif; ?>>✅ Check In</button>
             <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
@@ -3135,22 +3228,8 @@ function cmRecompute() {
     var vtype   = document.getElementById('cm-voucher-type')?.value  || 'cash';
     var vvalue  = parseFloat(document.getElementById('cm-voucher-value')?.value) || 0;
 
-    // If payment was already collected at check-in, show simple summary
-    if (cmState.isPaid) {
-        var rs   = 'display:flex;justify-content:space-between;margin-bottom:0.28rem;';
-        var gray = 'color:var(--gray);';
-        var amber= 'color:#b45309;';
-        var html = '';
-        html += '<div style="' + rs + '"><span style="' + gray + '">Original session</span><span>₱' + cmFmt(orig) + '</span></div>';
-        if (extras > 0) html += '<div style="' + rs + '"><span style="' + gray + '">Extra services</span><span>₱' + cmFmt(extras) + '</span></div>';
-        if (bDisc > 0) html += '<div style="' + rs + '"><span style="' + amber + '">' + cmDiscLabel(cmState.bookingDiscType) + ' (booking)</span><span style="' + amber + '">−₱' + cmFmt(bDisc) + '</span></div>';
-        html += '<div style="' + rs + 'border-top:1px solid var(--border2);padding-top:0.4rem;margin-top:0.1rem;font-weight:700;font-size:0.9rem;color:#198754;"><span>✅ Already paid</span><span>₱' + cmFmt(already) + '</span></div>';
-        document.getElementById('cm-breakdown').innerHTML = html;
-        document.getElementById('cm-no-payment').style.display  = 'block';
-        document.getElementById('cm-payment-section').style.display = 'none';
-        return;
-    }
-
+    // Always run full formula so extras-with-balance are never hidden behind the
+    // isPaid shortcut. isPaid affects only visual styling, not the payment gate.
     var gross = orig + extras;
 
     var cdAmt = 0;
@@ -3187,7 +3266,11 @@ function cmRecompute() {
         html += '<div style="' + rs + '"><span style="' + amber + '">' + cdLabel + '</span><span style="' + amber + '">−₱' + cmFmt(cdAmt) + '</span></div>';
     }
     if (advPay > 0) html += '<div style="' + rs + '"><span style="' + rust + '">💰 Advance (pre-recorded)</span><span style="' + rust + '">−₱' + cmFmt(advPay) + '</span></div>';
-    if (already > 0) html += '<div style="' + rs + '"><span style="' + gray + '">Already paid</span><span style="' + gray + '">−₱' + cmFmt(already) + '</span></div>';
+    if (already > 0) {
+        var alrStyle = cmState.isPaid ? 'color:#198754;font-weight:600;' : gray;
+        var alrLabel = cmState.isPaid ? '✅ Paid at check-in' : 'Already paid';
+        html += '<div style="' + rs + '"><span style="' + alrStyle + '">' + alrLabel + '</span><span style="' + alrStyle + '">−₱' + cmFmt(already) + '</span></div>';
+    }
     var tcolor = totalDue > 0 ? 'var(--brown)' : '#198754';
     html += '<div style="' + rs + 'border-top:1px solid var(--border2);padding-top:0.4rem;margin-top:0.15rem;font-weight:700;font-size:0.9rem;"><span>TOTAL DUE</span><span style="color:' + tcolor + ';">₱' + cmFmt(totalDue) + '</span></div>';
     document.getElementById('cm-breakdown').innerHTML = html;
@@ -3489,6 +3572,19 @@ function submitComplete() {
             <div style="font-size:0.8rem;color:var(--gray);margin-top:0.3rem;" id="ciCustomerName"></div>
         </div>
 
+        <!-- Bill summary -->
+        <div id="checkin-bill-summary" style="margin-bottom:1rem;padding:0.8rem;background:var(--bg3);border-radius:10px;">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">🧾 Buong Bill</div>
+            <div id="checkin-bill-lines"></div>
+            <div id="checkin-discount-line" style="display:none;justify-content:space-between;font-size:0.8rem;color:#dc3545;margin-top:0.25rem;">
+                <span>Discount</span><span class="disc-amt">−₱0.00</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-weight:800;padding-top:0.5rem;border-top:1px solid var(--border2);margin-top:0.4rem;font-size:0.88rem;">
+                <span>Total</span>
+                <span id="checkin-bill-total">₱0.00</span>
+            </div>
+        </div>
+
         <!-- Pay Now / Pay Later toggle -->
         <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Payment Timing</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem;">
@@ -3524,22 +3620,23 @@ function submitComplete() {
                     <option value="employee">Employee (50%)</option>
                     <option value="voucher">Voucher</option>
                 </select>
-                <div id="ci-voucher-wrap" style="display:none;margin-top:0.5rem;display:none;">
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;">
-                        <div>
-                            <label style="font-size:0.72rem;color:#6b7280;display:block;margin-bottom:3px;">Type</label>
-                            <select id="ci-voucher-type"
-                                    style="width:100%;padding:0.45rem 0.55rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;color:#1a1a1a;background:var(--bg3);">
-                                <option value="cash">₱ Fixed Amount</option>
-                                <option value="percent">% Percentage</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label style="font-size:0.72rem;color:#6b7280;display:block;margin-bottom:3px;">Amount</label>
-                            <input type="number" id="ci-voucher-value" min="0" step="0.01" placeholder="e.g. 100"
-                                   style="width:100%;padding:0.45rem 0.55rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;color:#1a1a1a;background:var(--bg3);box-sizing:border-box;">
-                        </div>
+                <div id="ci-voucher-wrap" style="display:none;margin-top:0.5rem;">
+                    <div style="display:flex;gap:0.4rem;margin-bottom:0.4rem;">
+                        <button type="button" id="ci-voucher-type-percent"
+                                onclick="ciSetVoucherType('percent')"
+                                style="flex:1;padding:0.4rem;border:1px solid var(--border2);border-radius:8px;background:var(--gold);color:#fff;font-size:0.78rem;font-weight:600;cursor:pointer;">
+                            % Percentage
+                        </button>
+                        <button type="button" id="ci-voucher-type-fixed"
+                                onclick="ciSetVoucherType('fixed')"
+                                style="flex:1;padding:0.4rem;border:1px solid var(--border2);border-radius:8px;background:transparent;color:var(--brown);font-size:0.78rem;font-weight:600;cursor:pointer;">
+                            ₱ Fixed Amount
+                        </button>
                     </div>
+                    <input type="number" id="ci-voucher-value" step="0.01" min="0"
+                           placeholder="e.g. 20 (para sa 20%)"
+                           oninput="ciRecomputeTotal()"
+                           style="width:100%;padding:0.5rem;border:1px solid var(--border2);border-radius:8px;font-size:0.85rem;color:#1a1a1a;background:var(--bg3);box-sizing:border-box;">
                 </div>
             </div>
         </div>
@@ -4022,12 +4119,25 @@ document.addEventListener('keydown', e => {
 
 // ── CHECK-IN MODAL JS ─────────────────────────────────────────────────────────
 var _ciApptId = 0;
+var _ciVoucherType = 'percent';
 
 function openCheckinModal(apptId, customerName) {
     _ciApptId = apptId;
     document.getElementById('ciCustomerName').textContent = customerName || '';
     document.getElementById('ci-appt-id').value  = apptId;
     document.getElementById('ci-pay-choice').value = '';
+
+    // Populate bill summary from data-bill-json on the Check-In button
+    var card = document.querySelector('.appt-card[data-appt-id="' + apptId + '"]');
+    var checkinBtn = card ? card.querySelector('[data-checkin-btn]') : null;
+    window._ciBillLines = [];
+    try { window._ciBillLines = JSON.parse((checkinBtn && checkinBtn.dataset.billJson) || '[]'); } catch(e) {}
+    var linesEl = document.getElementById('checkin-bill-lines');
+    if (linesEl) {
+        linesEl.innerHTML = window._ciBillLines.map(function(line) {
+            return '<div style="display:flex;justify-content:space-between;font-size:0.82rem;padding:0.2rem 0;"><span>' + line.name + '</span><span>₱' + line.price.toFixed(2) + '</span></div>';
+        }).join('');
+    }
     document.getElementById('ci-pay-method').value = '';
     // Reset toggles
     var nowBtn   = document.getElementById('ci-pay-now-btn');
@@ -4040,6 +4150,9 @@ function openCheckinModal(apptId, customerName) {
     if (mSel) mSel.value = 'cash';
     var discSel = document.getElementById('ci-discount-type');
     if (discSel) { discSel.value = 'none'; ciToggleVoucherInput(); }
+    _ciVoucherType = 'percent';
+    ciSetVoucherType('percent');
+    ciRecomputeTotal();
     var vchrVal = document.getElementById('ci-voucher-value');
     if (vchrVal) vchrVal.value = '';
     var pinInput = document.getElementById('ci-pin-input');
@@ -4078,6 +4191,50 @@ function setCheckinPayMode(mode) {
 function ciToggleVoucherInput() {
     var isVoucher = document.getElementById('ci-discount-type').value === 'voucher';
     document.getElementById('ci-voucher-wrap').style.display = isVoucher ? 'block' : 'none';
+    ciRecomputeTotal();
+}
+
+function ciSetVoucherType(type) {
+    _ciVoucherType = type;
+    var pBtn = document.getElementById('ci-voucher-type-percent');
+    var fBtn = document.getElementById('ci-voucher-type-fixed');
+    if (pBtn) { pBtn.style.background = type === 'percent' ? 'var(--gold)' : 'transparent'; pBtn.style.color = type === 'percent' ? '#fff' : 'var(--brown)'; }
+    if (fBtn) { fBtn.style.background = type === 'fixed'   ? 'var(--gold)' : 'transparent'; fBtn.style.color = type === 'fixed'   ? '#fff' : 'var(--brown)'; }
+    var vIn = document.getElementById('ci-voucher-value');
+    if (vIn) vIn.placeholder = type === 'percent' ? 'e.g. 20 (para sa 20%)' : 'e.g. 500 (para sa ₱500)';
+    ciRecomputeTotal();
+}
+
+function ciRecomputeTotal() {
+    var billLines = window._ciBillLines || [];
+    var subtotal  = billLines.reduce(function(sum, l) { return sum + l.price; }, 0);
+    var discType  = (document.getElementById('ci-discount-type') || {}).value || 'none';
+    var discAmt   = 0;
+    if (discType === 'pwd' || discType === 'senior') {
+        discAmt = subtotal * 0.20;
+    } else if (discType === 'employee') {
+        discAmt = subtotal * 0.50;
+    } else if (discType === 'voucher') {
+        var vVal = parseFloat((document.getElementById('ci-voucher-value') || {}).value) || 0;
+        if (_ciVoucherType === 'percent') {
+            discAmt = subtotal * (Math.min(vVal, 100) / 100);
+        } else {
+            discAmt = Math.min(vVal, subtotal);
+        }
+    }
+    var total = Math.max(0, subtotal - discAmt);
+    var totalEl = document.getElementById('checkin-bill-total');
+    if (totalEl) totalEl.textContent = '₱' + total.toFixed(2);
+    var discLineEl = document.getElementById('checkin-discount-line');
+    if (discLineEl) {
+        if (discAmt > 0) {
+            discLineEl.style.display = 'flex';
+            var amtSpan = discLineEl.querySelector('.disc-amt');
+            if (amtSpan) amtSpan.textContent = '−₱' + discAmt.toFixed(2);
+        } else {
+            discLineEl.style.display = 'none';
+        }
+    }
 }
 
 function submitCheckin() {
@@ -4087,10 +4244,9 @@ function submitCheckin() {
     if (mSel) document.getElementById('ci-pay-method').value = mSel.value;
     // Stamp discount fields
     var discType  = document.getElementById('ci-discount-type');
-    var vchrType  = document.getElementById('ci-voucher-type');
     var vchrValue = document.getElementById('ci-voucher-value');
     document.getElementById('ci-disc-type').value  = discType  ? discType.value  : 'none';
-    document.getElementById('ci-vchr-type').value  = vchrType  ? vchrType.value  : 'cash';
+    document.getElementById('ci-vchr-type').value  = _ciVoucherType;
     document.getElementById('ci-vchr-value').value = vchrValue ? (vchrValue.value || '0') : '0';
     var ciPinVisible = document.getElementById('ci-pin-input');
     var ciPinHidden  = document.getElementById('ci-pin-hidden');
@@ -4122,7 +4278,7 @@ function autoSaveSlot(selectEl) {
                 var row = selectEl.closest('.therapist-slot-row');
                 var ind = row ? row.querySelector('.slot-saved-indicator') : null;
                 if (ind) { ind.textContent = '✓ Saved'; setTimeout(function() { ind.textContent = ''; }, 1200); }
-                if (card) { updateFilledCounter(card); refreshCheckinButton(card); }
+                if (card) { updateFilledCounter(card); refreshCheckinButton(card); refreshApproveButton(card); }
             } else {
                 alert(data.message || 'Failed to save.');
             }
@@ -4152,7 +4308,7 @@ function autoSaveExtraSlot(selectEl) {
                 var ind = selectEl.parentElement ? selectEl.parentElement.querySelector('.slot-saved-indicator') : null;
                 if (ind) { ind.textContent = '✓ Saved'; setTimeout(function() { ind.textContent = ''; }, 1200); }
                 var card = selectEl.closest('.appt-card');
-                if (card) { updateFilledCounter(card); refreshCheckinButton(card); }
+                if (card) { updateFilledCounter(card); refreshCheckinButton(card); refreshApproveButton(card); }
             } else {
                 alert(data.message || 'Failed to save.');
             }
@@ -4202,6 +4358,38 @@ function refreshCheckinButton(cardEl) {
 }
 document.querySelectorAll('.appt-card').forEach(refreshCheckinButton);
 
+// ── APPROVE / ASSIGN BUTTON (pending cards only) ──────────────────────────────
+function refreshApproveButton(cardEl) {
+    var approveBtn = cardEl.querySelector('[data-approve-btn]');
+    if (!approveBtn) return; // not a pending card
+    var primarySels = cardEl.querySelectorAll('select[data-person-slot]');
+    var extraSels   = cardEl.querySelectorAll('select[data-extra-therapist-select]');
+    var allSels     = Array.from(primarySels).concat(Array.from(extraSels));
+    var allFilled   = allSels.length > 0 && allSels.every(function(s) { return !!s.value; });
+    approveBtn.disabled      = !allFilled;
+    approveBtn.style.opacity = allFilled ? '1' : '0.5';
+    approveBtn.style.cursor  = allFilled ? 'pointer' : 'not-allowed';
+    approveBtn.title         = allFilled ? '' : 'Select a therapist (or Any Available) for every slot first';
+}
+document.querySelectorAll('.appt-card').forEach(refreshApproveButton);
+
+function submitApprove(apptId) {
+    var fd = new FormData();
+    fd.append('action',     'approve_pending');
+    fd.append('appt_id',   apptId);
+    fd.append('csrf_token', pmGetCsrf());
+    fetch(window.location.pathname, { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert(data.message || 'Hindi na-approve.');
+            }
+        })
+        .catch(function() { alert('Network error — please try again.'); });
+}
+
 // ── FULL EDIT APPOINTMENT ─────────────────────────────────────────────────────
 function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount, notes, currentTherapistNames) {
     document.getElementById('edit_appt_id').value           = apptId;
@@ -4222,11 +4410,116 @@ function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount,
     }
     document.getElementById('edit_reassign_therapist').value = '0';
 
+    // Populate extra services list
+    document.getElementById('edit-add-extra-wrap').style.display = 'none';
+    const listEl = document.getElementById('edit-extra-services-list');
+    const extras = (window._apptExtras || {})[apptId] || [];
+    if (extras.length === 0) {
+        listEl.innerHTML = '<div style="font-size:0.78rem;color:var(--gray);">Walang extra service.</div>';
+    } else {
+        listEl.innerHTML = extras.map(function(e) {
+            return '<div class="edit-extra-row" data-extra-id="' + e.id + '" style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid var(--border2);">' +
+                '<span style="font-size:0.82rem;">' + e.name + ' — ₱' + e.price.toFixed(2) + '</span>' +
+                '<button type="button" onclick="removeEditExtraService(this,' + e.id + ',' + apptId + ')" style="background:rgba(220,53,69,0.1);color:#dc3545;border:1px solid rgba(220,53,69,0.3);border-radius:6px;padding:0.2rem 0.5rem;font-size:0.75rem;cursor:pointer;">✕ Tanggalin</button>' +
+                '</div>';
+        }).join('');
+    }
+    // Store current apptId for submitAddExtraInEdit
+    document.getElementById('editModal').dataset.apptId = apptId;
+
     document.getElementById('editModal').style.display = 'flex';
     if (currentDate) loadEditSlots(currentDate.substring(0,10), serviceId, parseInt(peopleCount)||1);
 }
 function closeEditModal() {
     document.getElementById('editModal').style.display = 'none';
+}
+
+function removeEditExtraService(btnEl, extraId, apptId) {
+    if (!confirm('Sigurado ka bang tatanggalin ito?')) return;
+    var fd = new FormData();
+    fd.append('action',     'remove_extra_service');
+    fd.append('extra_id',   extraId);
+    fd.append('appt_id',    apptId);
+    fd.append('csrf_token', pmGetCsrf());
+    fetch(window.location.pathname, { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                var row = btnEl.closest('.edit-extra-row');
+                if (row) row.remove();
+                // Sync _apptExtras cache
+                if (window._apptExtras && window._apptExtras[apptId]) {
+                    window._apptExtras[apptId] = window._apptExtras[apptId].filter(function(e) { return e.id !== extraId; });
+                }
+                var listEl = document.getElementById('edit-extra-services-list');
+                if (listEl && !listEl.querySelector('.edit-extra-row')) {
+                    listEl.innerHTML = '<div style="font-size:0.78rem;color:var(--gray);">Walang extra service.</div>';
+                }
+            } else {
+                alert(data.message || 'Hindi natanggal.');
+            }
+        })
+        .catch(function() { alert('Network error.'); });
+}
+
+function openAddExtraServiceInEdit() {
+    var wrap = document.getElementById('edit-add-extra-wrap');
+    if (wrap) {
+        wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
+        var svcSel = document.getElementById('edit-add-extra-svc-id');
+        var priceIn = document.getElementById('edit-add-extra-price');
+        if (svcSel) svcSel.value = '';
+        if (priceIn) priceIn.value = '';
+    }
+}
+
+function submitAddExtraInEdit() {
+    var apptId  = document.getElementById('editModal').dataset.apptId;
+    var svcSel  = document.getElementById('edit-add-extra-svc-id');
+    var priceIn = document.getElementById('edit-add-extra-price');
+    var svcId   = svcSel ? svcSel.value : '';
+    var price   = priceIn ? priceIn.value : '';
+    if (!svcId) { alert('Pumili ng serbisyo.'); return; }
+    if (price === '' || isNaN(parseFloat(price)) || parseFloat(price) < 0) { alert('Maglagay ng tamang presyo.'); return; }
+    var fd = new FormData();
+    fd.append('action',                'add_extra_service');
+    fd.append('appt_id',               apptId);
+    fd.append('extra_svc_id',          svcId);
+    fd.append('extra_therapist',       '0');
+    fd.append('extra_price',           price);
+    fd.append('person_label',          'Person 1');
+    fd.append('extra_payment_method',  'cash');
+    fd.append('extra_notes',           '');
+    fd.append('ajax',                  '1');
+    fd.append('csrf_token',            pmGetCsrf());
+    fetch(window.location.pathname, { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                // Update _apptExtras cache and refresh list
+                window._apptExtras = window._apptExtras || {};
+                window._apptExtras[apptId] = window._apptExtras[apptId] || [];
+                var newEntry = { id: data.extra_id, name: data.name, price: data.price };
+                window._apptExtras[apptId].push(newEntry);
+                // Add row to list
+                var listEl = document.getElementById('edit-extra-services-list');
+                var placeholder = listEl ? listEl.querySelector('div[style*="color:var(--gray)"]') : null;
+                if (placeholder) placeholder.remove();
+                if (listEl) {
+                    var row = document.createElement('div');
+                    row.className = 'edit-extra-row';
+                    row.dataset.extraId = data.extra_id;
+                    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0;border-bottom:1px solid var(--border2);';
+                    row.innerHTML = '<span style="font-size:0.82rem;">' + data.name + ' — ₱' + parseFloat(data.price).toFixed(2) + '</span>' +
+                        '<button type="button" onclick="removeEditExtraService(this,' + data.extra_id + ',' + apptId + ')" style="background:rgba(220,53,69,0.1);color:#dc3545;border:1px solid rgba(220,53,69,0.3);border-radius:6px;padding:0.2rem 0.5rem;font-size:0.75rem;cursor:pointer;">✕ Tanggalin</button>';
+                    listEl.appendChild(row);
+                }
+                document.getElementById('edit-add-extra-wrap').style.display = 'none';
+            } else {
+                alert(data.message || 'Hindi naidagdag.');
+            }
+        })
+        .catch(function() { alert('Network error.'); });
 }
 function loadEditSlots(date, serviceId, people) {
     if (!date || !serviceId) return;
@@ -4312,6 +4605,42 @@ function loadAddSvcSlots() {
             <span style="font-weight:800;font-size:1rem;color:var(--brown);">✏️ Edit Appointment</span>
             <button onclick="closeEditModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);">✕</button>
         </div>
+        <!-- ── Extra Services section (populated by openEditModal via window._apptExtras) ── -->
+        <div style="margin-bottom:1rem;padding:0.7rem;background:var(--bg3);border-radius:10px;">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">➕ Extra Services</div>
+            <div id="edit-extra-services-list"></div>
+            <button type="button" onclick="openAddExtraServiceInEdit()"
+                    style="margin-top:0.5rem;width:100%;padding:0.5rem;background:transparent;border:1px dashed var(--gold);border-radius:8px;color:var(--gold);font-weight:600;font-size:0.8rem;cursor:pointer;">
+                ➕ Magdagdag ng Serbisyo
+            </button>
+            <!-- Inline add-extra form (hidden by default) -->
+            <div id="edit-add-extra-wrap" style="display:none;margin-top:0.75rem;padding:0.75rem;background:var(--bg2);border-radius:8px;border:1px solid var(--border2);">
+                <div style="font-size:0.75rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">Pumili ng Serbisyo</div>
+                <select id="edit-add-extra-svc-id"
+                        onchange="var o=this.options[this.selectedIndex];var p=document.getElementById('edit-add-extra-price');if(p&&o.dataset.price)p.value=parseFloat(o.dataset.price).toFixed(2);"
+                        style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.82rem;margin-bottom:0.5rem;">
+                    <option value="">— Pumili —</option>
+                    <?php foreach ($_edit_svcs as $_esv2): ?>
+                    <option value="<?php echo intval($_esv2['id']); ?>" data-price="<?php echo floatval($_esv2['price']); ?>">
+                        <?php echo htmlspecialchars($_esv2['name']); ?> — ₱<?php echo number_format((float)$_esv2['price'],2); ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <input type="number" id="edit-add-extra-price" min="0" step="0.01" placeholder="Presyo (₱)"
+                       style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.82rem;margin-bottom:0.5rem;box-sizing:border-box;">
+                <div style="display:flex;gap:0.5rem;">
+                    <button type="button" onclick="submitAddExtraInEdit()"
+                            style="flex:1;padding:0.4rem;background:#C96A2C;color:#fff;border:none;border-radius:7px;font-size:0.8rem;font-weight:600;cursor:pointer;">
+                        ✓ Idagdag
+                    </button>
+                    <button type="button" onclick="document.getElementById('edit-add-extra-wrap').style.display='none';"
+                            style="padding:0.4rem 0.75rem;background:transparent;border:1px solid var(--border2);border-radius:7px;font-size:0.8rem;cursor:pointer;">
+                        ✕
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <form method="POST">
             <?php echo csrf_field(); ?>
             <input type="hidden" name="action"          value="edit_appointment">

@@ -69,6 +69,8 @@
         $conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN advance_payment DECIMAL(10,2) NOT NULL DEFAULT 0.00");
     if (!in_array('source_extra_service_id', $ss_cols))
         $conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN source_extra_service_id INT NULL DEFAULT NULL, ADD INDEX idx_drsr_src_extra (source_extra_service_id)");
+    if (!in_array('comm_25', $ss_cols))
+        $conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN comm_25 DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER comm_15");
     // Migration: add 'type' column (opening vs closing) to denomination table
     $_ddc = $conn->query("SHOW COLUMNS FROM daily_report_denominations LIKE 'type'");
     if ($_ddc && $_ddc->num_rows === 0) {

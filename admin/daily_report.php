@@ -354,6 +354,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     $comm_30       = floatval($_POST['comm_30']       ?? 0);
     $comm_20       = floatval($_POST['comm_20']       ?? 0);
     $comm_15       = floatval($_POST['comm_15']       ?? 0);
+    $comm_25       = floatval($_POST['comm_25']       ?? 0);
     $disc_50_staff = floatval($_POST['disc_50_staff'] ?? 0);
     $net_sales     = floatval($_POST['net_sales']     ?? 0);
     $mode_of_pay   = sanitize_input($_POST['mode_of_payment'] ?? '');
@@ -372,15 +373,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 row_order=?,time_in=?,time_out=?,slip_no=?,client_name=?,
                 service_name=?,service_id=?,stylist=?,therapist_id=?,
                 regular_price=?,promo_price=?,celeb_10=?,
-                disc_20_pwd=?,comm_30=?,comm_20=?,comm_15=?,disc_50_staff=?,
+                disc_20_pwd=?,comm_30=?,comm_20=?,comm_15=?,comm_25=?,disc_50_staff=?,
                 net_sales=?,mode_of_payment=?,remarks=?,is_refund=?,updated_by_name=?
             WHERE id=? AND report_date=?
         ");
-        $stmt->bind_param("isssssisidddddddddssisis",
+        $stmt->bind_param("isssssisiddddddddddssisis",
             $row_order,$time_in,$time_out,$slip_no,$client_name,
             $service_name,$service_id,$stylist,$therapist_id,
             $regular_price,$promo_price,$celeb_10,
-            $disc_20_pwd,$comm_30,$comm_20,$comm_15,$disc_50_staff,
+            $disc_20_pwd,$comm_30,$comm_20,$comm_15,$comm_25,$disc_50_staff,
             $net_sales,$mode_of_pay,$remarks,$is_refund,$ss_editor,
             $row_id,$report_date);
         $stmt->execute(); $stmt->close();
@@ -391,15 +392,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 (report_date,row_order,time_in,time_out,slip_no,client_name,
                  service_name,service_id,stylist,therapist_id,
                  regular_price,promo_price,celeb_10,
-                 disc_20_pwd,comm_30,comm_20,comm_15,disc_50_staff,
+                 disc_20_pwd,comm_30,comm_20,comm_15,comm_25,disc_50_staff,
                  net_sales,mode_of_payment,remarks,is_refund,created_by_name)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ");
-        $stmt->bind_param("sisssssisidddddddddssis",
+        $stmt->bind_param("sisssssisiddddddddddssis",
             $report_date,$row_order,$time_in,$time_out,$slip_no,$client_name,
             $service_name,$service_id,$stylist,$therapist_id,
             $regular_price,$promo_price,$celeb_10,
-            $disc_20_pwd,$comm_30,$comm_20,$comm_15,$disc_50_staff,
+            $disc_20_pwd,$comm_30,$comm_20,$comm_15,$comm_25,$disc_50_staff,
             $net_sales,$mode_of_pay,$remarks,$is_refund,$ss_editor);
         $stmt->execute();
         $new_id = $conn->insert_id;
@@ -491,10 +492,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             (report_date, row_order, time_in, time_out, slip_no, client_name,
              service_name, service_id, stylist, therapist_id,
              regular_price, promo_price, celeb_10,
-             disc_20_pwd, comm_30, comm_20, comm_15, disc_50_staff,
+             disc_20_pwd, comm_30, comm_20, comm_15, comm_25, disc_50_staff,
              net_sales, mode_of_payment, remarks, is_refund, created_by_name,
              source_appointment_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
 
     foreach ($imp_appts as $ap) {
@@ -517,8 +518,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         // Route commission to the column matching the therapist+service percent
         $pct_key = $therapist_id . '_' . $service_id;
         $pct     = $imp_cm[$pct_key] ?? 0;
-        $comm_30 = $comm_20 = $comm_15 = 0.0;
+        $comm_30 = $comm_20 = $comm_15 = $comm_25 = 0.0;
         if     ($pct >= 28 && $pct <= 32) $comm_30 = $total_comm;
+        elseif ($pct >= 23 && $pct <= 27) $comm_25 = $total_comm;
         elseif ($pct >= 18 && $pct <= 22) $comm_20 = $total_comm;
         elseif ($pct >= 13 && $pct <= 17) $comm_15 = $total_comm;
         else                               $comm_30 = $total_comm; // fallback
@@ -535,11 +537,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $is_refund   = 0;
         $created_by  = 'import';
 
-        $ins->bind_param("sisssssisidddddddddssisi",
+        $ins->bind_param("sisssssisiddddddddddssisi",
             $report_date, $row_order, $time_in, $time_out, $slip_no, $client_name,
             $svc_name, $service_id, $stylist, $therapist_id,
             $regular_price, $promo_price, $celeb_10,
-            $disc_20_pwd, $comm_30, $comm_20, $comm_15, $disc_50_staff,
+            $disc_20_pwd, $comm_30, $comm_20, $comm_15, $comm_25, $disc_50_staff,
             $net_sales, $mode_of_pay, $remarks, $is_refund, $created_by,
             $appt_id);
         $ins->execute();
@@ -598,10 +600,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             (report_date, row_order, time_in, time_out, slip_no, client_name,
              service_name, service_id, stylist, therapist_id,
              regular_price, promo_price, celeb_10,
-             disc_20_pwd, comm_30, comm_20, comm_15, disc_50_staff,
+             disc_20_pwd, comm_30, comm_20, comm_15, comm_25, disc_50_staff,
              net_sales, mode_of_payment, remarks, is_refund, created_by_name,
              source_extra_service_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
 
     // Pre-load commission percents for column routing
@@ -622,8 +624,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $total_comm    = (float)($ex['commission'] ?? 0);
         $pct_key       = $therapist_id . '_' . $service_id;
         $pct           = $ecm[$pct_key] ?? 0;
-        $comm_30 = $comm_20 = $comm_15 = 0.0;
+        $comm_30 = $comm_20 = $comm_15 = $comm_25 = 0.0;
         if     ($pct >= 28 && $pct <= 32) $comm_30 = $total_comm;
+        elseif ($pct >= 23 && $pct <= 27) $comm_25 = $total_comm;
         elseif ($pct >= 18 && $pct <= 22) $comm_20 = $total_comm;
         elseif ($pct >= 13 && $pct <= 17) $comm_15 = $total_comm;
         else                               $comm_30 = $total_comm;
@@ -638,11 +641,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $row_order = 0; $celeb_10 = 0.0; $disc_20_pwd = 0.0; $disc_50_staff = 0.0;
         $is_refund = 0; $created_by = 'import'; $time_out = '';
 
-        $eins->bind_param("sisssssisidddddddddssisi",
+        $eins->bind_param("sisssssisiddddddddddssisi",
             $report_date, $row_order, $time_in, $time_out, $slip_no, $client_name,
             $svc_name, $service_id, $stylist, $therapist_id,
             $regular_price, $promo_price, $celeb_10,
-            $disc_20_pwd, $comm_30, $comm_20, $comm_15, $disc_50_staff,
+            $disc_20_pwd, $comm_30, $comm_20, $comm_15, $comm_25, $disc_50_staff,
             $net_sales, $mode_of_pay, $remarks, $is_refund, $created_by,
             $extra_id);
         $eins->execute();
@@ -1217,7 +1220,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'CELEB. DISCOUNTS 10%',  'val' => $celeb_discount,       'color' => 'var(--rust)'],
                 ['label' => 'REDEEMED GC',            'val' => $gc_redeem_total,      'color' => 'var(--rust)'],
                 ['label' => 'SWIPER',                 'val' => $card_total,           'color' => 'var(--brown)',
-                 'note' => 'Card / bank swiper'],
+                 'note' => 'Card / Swiper'],
                 ['label' => 'GCASH',                  'val' => $gcash_total,          'color' => 'var(--brown)'],
                 ['label' => 'MAYA',                   'val' => $maya_total,           'color' => 'var(--brown)'],
                 ['label' => 'QRPH',                   'val' => $qrph_total,           'color' => 'var(--brown)'],
@@ -1710,6 +1713,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 30%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 20%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 15%</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 25%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc 50% Staff</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;background:rgba(255,255,255,0.15);">Net Sales</th>
                     <th style="padding:0.4rem 0.5rem;width:95px;">Mode of Pay</th>
@@ -1743,6 +1747,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 data-comm30="<?php echo (float)($_ssr['comm_30'] ?? 0); ?>"
                 data-comm20="<?php echo (float)($_ssr['comm_20'] ?? 0); ?>"
                 data-comm15="<?php echo (float)($_ssr['comm_15'] ?? 0); ?>"
+                data-comm25="<?php echo (float)($_ssr['comm_25'] ?? 0); ?>"
                 data-disc50="<?php echo (float)($_ssr['disc_50_staff'] ?? 0); ?>"
                 data-mop="<?php echo htmlspecialchars($_ssr['mode_of_payment'] ?? ''); ?>"
                 data-remarks="<?php echo htmlspecialchars($_ssr['remarks'] ?? ''); ?>"
@@ -1775,6 +1780,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['comm_30'] ? '₱'.number_format((float)$_ssr['comm_30'],2) : ''; ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['comm_20'] ? '₱'.number_format((float)$_ssr['comm_20'],2) : ''; ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['comm_15'] ? '₱'.number_format((float)$_ssr['comm_15'],2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['comm_25'] ? '₱'.number_format((float)$_ssr['comm_25'],2) : ''; ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_ssr['disc_50_staff'] ? '₱'.number_format((float)$_ssr['disc_50_staff'],2) : ''; ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;background:rgba(25,135,84,0.05);color:<?php echo $_ssr['is_refund'] ? '#dc3545' : '#198754'; ?>;">
                     <?php echo $_ssr['net_sales'] ? '₱'.number_format((float)$_ssr['net_sales'],2) : ''; ?>
@@ -1828,6 +1834,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     <td style="padding:2px 3px;"><input type="number" id="er-comm_30"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
                     <td style="padding:2px 3px;"><input type="number" id="er-comm_20"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
                     <td style="padding:2px 3px;"><input type="number" id="er-comm_15"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
+                    <td style="padding:2px 3px;"><input type="number" id="er-comm_25"        class="ss-ec ss-ec-num ss-ec-ro" step="0.01" readonly placeholder="0.00"></td>
                     <td style="padding:2px 3px;">
                         <select id="er-disc_50_staff_sel" class="ss-ec ss-ec-sel">
                             <option value="none">None</option>
@@ -1849,7 +1856,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     </td>
                 </tr>
                 <tr style="background:#fdf8f0;border-bottom:2px solid var(--gold);">
-                    <td colspan="19" style="padding:0.35rem 0.5rem;">
+                    <td colspan="20" style="padding:0.35rem 0.5rem;">
                         <div style="display:flex;align-items:center;gap:0.75rem;">
                             <button type="button" id="ss-add-btn" class="btn btn-primary btn-sm" style="font-weight:700;padding:0.35rem 1.1rem;">➕ Add Row</button>
                             <button type="button" id="ss-cancel-edit" class="btn btn-secondary btn-sm"
@@ -1865,7 +1872,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             <tfoot id="ss-tfoot">
                 <tr style="background:#5c3a1e;color:#fff;font-weight:700;">
                     <?php if (!$locked): ?><td></td><?php endif; ?>
-                    <td colspan="14" style="padding:0.5rem 0.75rem;font-size:0.8rem;">TOTALS</td>
+                    <td colspan="15" style="padding:0.5rem 0.75rem;font-size:0.8rem;">TOTALS</td>
                     <td id="ss-totals-net" style="padding:0.5rem 0.5rem;text-align:right;font-size:0.88rem;background:rgba(255,255,255,0.12);">
                         ₱<?php echo number_format($spreadsheet_net_total,2); ?>
                     </td>
@@ -1874,7 +1881,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 <?php if ($spreadsheet_refund_total > 0): ?>
                 <tr id="ss-refund-row" style="background:rgba(220,53,69,0.08);border-top:1px solid var(--border2);">
                     <?php if (!$locked): ?><td></td><?php endif; ?>
-                    <td colspan="14" style="padding:0.4rem 0.75rem;font-size:0.78rem;color:#dc3545;font-weight:600;">↩ Refund Rows (deducted from Net Cash)</td>
+                    <td colspan="15" style="padding:0.4rem 0.75rem;font-size:0.78rem;color:#dc3545;font-weight:600;">↩ Refund Rows (deducted from Net Cash)</td>
                     <td id="ss-refund-total" style="padding:0.4rem 0.5rem;text-align:right;font-size:0.82rem;font-weight:700;color:#dc3545;">
                         ₱<?php echo number_format($spreadsheet_refund_total,2); ?>
                     </td>
@@ -1930,6 +1937,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     var sfC30    = document.getElementById('er-comm_30');
     var sfC20    = document.getElementById('er-comm_20');
     var sfC15    = document.getElementById('er-comm_15');
+    var sfC25    = document.getElementById('er-comm_25');
     var sfNet    = document.getElementById('er-net_sales');
     var commNote = document.getElementById('ss-comm-note');
     var _promoUserEdited = false;
@@ -1964,27 +1972,29 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         var svcId  = sfSvc     ? (parseInt(sfSvc.value)    || 0) : 0;
         var stylId = sfStylist ? (parseInt(sfStylist.value) || 0) : 0;
         var pct = 0;
-        var c30 = 0, c20 = 0, c15 = 0, noteText = '';
+        var c30 = 0, c20 = 0, c15 = 0, c25 = 0, noteText = '';
         if (svcId && stylId) {
             var key = stylId + '_' + svcId;
             if (Object.prototype.hasOwnProperty.call(SS_COMMISSIONS, key)) {
                 pct = SS_COMMISSIONS[key];
                 var amt = promo * pct / 100;
-                if      (pct === 30) { c30 = amt; }
-                else if (pct === 20) { c20 = amt; }
-                else if (pct === 15) { c15 = amt; }
-                else                 { c30 = amt; noteText = 'rate ' + pct + '%'; }
+                if      (pct >= 28 && pct <= 32) { c30 = amt; }
+                else if (pct >= 23 && pct <= 27) { c25 = amt; }
+                else if (pct >= 18 && pct <= 22) { c20 = amt; }
+                else if (pct >= 13 && pct <= 17) { c15 = amt; }
+                else                             { c30 = amt; noteText = 'rate ' + pct + '%'; }
             } else { noteText = 'no commission set'; }
         }
 
         // Lock/unlock: only the field matching this therapist's rate is editable
         var activeField = null;
         if (pct >= 28 && pct <= 32)      activeField = sfC30;
+        else if (pct >= 23 && pct <= 27) activeField = sfC25;
         else if (pct >= 18 && pct <= 22) activeField = sfC20;
         else if (pct >= 13 && pct <= 17) activeField = sfC15;
         else if (pct > 0)                activeField = sfC30; // fallback for non-standard rates
 
-        [sfC30, sfC20, sfC15].forEach(function(f) {
+        [sfC30, sfC20, sfC15, sfC25].forEach(function(f) {
             if (!f) return;
             if (f === activeField) {
                 f.readOnly = false;
@@ -1995,9 +2005,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             }
         });
 
-        // If no stylist/service selected yet, lock all three
+        // If no stylist/service selected yet, lock all four
         if (!svcId || !stylId || !pct) {
-            [sfC30, sfC20, sfC15].forEach(function(f) {
+            [sfC30, sfC20, sfC15, sfC25].forEach(function(f) {
                 if (f) { f.readOnly = true; f.classList.add('ss-ec-ro'); }
             });
         }
@@ -2006,6 +2016,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             if (sfC30) sfC30.value = c30.toFixed(2);
             if (sfC20) sfC20.value = c20.toFixed(2);
             if (sfC15) sfC15.value = c15.toFixed(2);
+            if (sfC25) sfC25.value = c25.toFixed(2);
         }
         if (commNote) commNote.textContent = noteText;
 
@@ -2013,7 +2024,8 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         var actualC30 = parseFloat(sfC30 ? sfC30.value : 0) || 0;
         var actualC20 = parseFloat(sfC20 ? sfC20.value : 0) || 0;
         var actualC15 = parseFloat(sfC15 ? sfC15.value : 0) || 0;
-        var net = promo - (actualC30 + actualC20 + actualC15);
+        var actualC25 = parseFloat(sfC25 ? sfC25.value : 0) || 0;
+        var net = promo - (actualC30 + actualC20 + actualC15 + actualC25);
         if (sfNet) sfNet.value = net.toFixed(2);
     }
 
@@ -2039,6 +2051,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         if (!this.readOnly) { _commUserEdited = true; recompute(); }
     });
     if (sfC15) sfC15.addEventListener('input', function() {
+        if (!this.readOnly) { _commUserEdited = true; recompute(); }
+    });
+    if (sfC25) sfC25.addEventListener('input', function() {
         if (!this.readOnly) { _commUserEdited = true; recompute(); }
     });
 
@@ -2071,7 +2086,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 refRow.style.cssText = 'background:rgba(220,53,69,0.08);border-top:1px solid var(--border2);';
                 var blank = _rptLocked ? '' : '<td></td>';
                 refRow.innerHTML = blank +
-                    '<td colspan="14" style="padding:0.4rem 0.75rem;font-size:0.78rem;color:#dc3545;font-weight:600;">↩ Refund Rows (deducted from Net Cash)</td>' +
+                    '<td colspan="15" style="padding:0.4rem 0.75rem;font-size:0.78rem;color:#dc3545;font-weight:600;">↩ Refund Rows (deducted from Net Cash)</td>' +
                     '<td id="ss-refund-total" style="padding:0.4rem 0.5rem;text-align:right;font-size:0.82rem;font-weight:700;color:#dc3545;"></td>' +
                     '<td colspan="3"></td>';
                 document.getElementById('ss-tfoot').appendChild(refRow);
@@ -2108,6 +2123,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         tr.dataset.comm30       = d.comm_30        || '0';
         tr.dataset.comm20       = d.comm_20        || '0';
         tr.dataset.comm15       = d.comm_15        || '0';
+        tr.dataset.comm25       = d.comm_25        || '0';
         tr.dataset.disc50       = d.disc_50_staff  || '0';
         tr.dataset.mop          = d.mode_of_payment || '';
         tr.dataset.remarks      = d.remarks        || '';
@@ -2130,6 +2146,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.comm_30)        + '</td>' +
             '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.comm_20)        + '</td>' +
             '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.comm_15)        + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.comm_25)        + '</td>' +
             '<td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);">'           + peso(d.disc_50_staff)  + '</td>' +
             '<td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;background:rgba(25,135,84,0.05);color:' +
                 (isRef ? '#dc3545' : '#198754') + ';">'                                         + peso(d.net_sales)      + '</td>' +
@@ -2190,6 +2207,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             sf('er-comm_30',       parseFloat(d.comm30)       > 0 ? d.comm30       : '');
             sf('er-comm_20',       parseFloat(d.comm20)       > 0 ? d.comm20       : '');
             sf('er-comm_15',       parseFloat(d.comm15)       > 0 ? d.comm15       : '');
+            sf('er-comm_25',       parseFloat(d.comm25)       > 0 ? d.comm25       : '');
             sf('er-net_sales',     d.netSales || '');
             sf('er-remarks',       d.remarks  || '');
             sf('er-mop',           d.mop      || '');
@@ -2217,7 +2235,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             _commUserEdited  = true;
             _promoUserEdited = true;
             // Unlock all commission fields so admin can adjust
-            [sfC30, sfC20, sfC15].forEach(function(f) {
+            [sfC30, sfC20, sfC15, sfC25].forEach(function(f) {
                 if (f) { f.readOnly = false; f.classList.remove('ss-ec-ro'); }
             });
             // UI state
@@ -2273,6 +2291,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             fd.append('comm_30',         gv('er-comm_30')        || '0');
             fd.append('comm_20',         gv('er-comm_20')        || '0');
             fd.append('comm_15',         gv('er-comm_15')        || '0');
+            fd.append('comm_25',         gv('er-comm_25')        || '0');
             fd.append('disc_50_staff',   gv('er-disc_50_staff')  || '0');
             fd.append('net_sales',       gv('er-net_sales')      || '0');
             fd.append('mode_of_payment', mopSel ? mopSel.value : '');
@@ -2308,6 +2327,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                         comm_30:         gv('er-comm_30'),
                         comm_20:         gv('er-comm_20'),
                         comm_15:         gv('er-comm_15'),
+                        comm_25:         gv('er-comm_25'),
                         disc_50_staff:   gv('er-disc_50_staff'),
                         net_sales:       gv('er-net_sales'),
                         mode_of_payment: mopSel ? mopSel.value : '',
@@ -2349,10 +2369,11 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     if (sfPwdHid) sfPwdHid.value = '0';
                     if (sfStfHid) sfStfHid.value = '0';
                     if (sfPromo)  { sfPromo.value=''; sfPromo.readOnly=false; sfPromo.classList.remove('ss-ec-ro'); }
-                    if (sfC30) sfC30.value=''; if (sfC20) sfC20.value=''; if (sfC15) sfC15.value='';
+                    if (sfC30) sfC30.value=''; if (sfC20) sfC20.value=''; if (sfC15) sfC15.value=''; if (sfC25) sfC25.value='';
                     if (sfC30) { sfC30.readOnly = true; sfC30.classList.add('ss-ec-ro'); }
                     if (sfC20) { sfC20.readOnly = true; sfC20.classList.add('ss-ec-ro'); }
                     if (sfC15) { sfC15.readOnly = true; sfC15.classList.add('ss-ec-ro'); }
+                    if (sfC25) { sfC25.readOnly = true; sfC25.classList.add('ss-ec-ro'); }
                     if (sfNet)    sfNet.value='';
                     if (commNote) commNote.textContent='';
                     _promoUserEdited = false;
@@ -2389,6 +2410,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         if (sfC30) { sfC30.value = ''; sfC30.readOnly = true; sfC30.classList.add('ss-ec-ro'); }
         if (sfC20) { sfC20.value = ''; sfC20.readOnly = true; sfC20.classList.add('ss-ec-ro'); }
         if (sfC15) { sfC15.value = ''; sfC15.readOnly = true; sfC15.classList.add('ss-ec-ro'); }
+        if (sfC25) { sfC25.value = ''; sfC25.readOnly = true; sfC25.classList.add('ss-ec-ro'); }
         if (sfNet)    sfNet.value = '';
         if (commNote) commNote.textContent = '';
         _promoUserEdited = false;

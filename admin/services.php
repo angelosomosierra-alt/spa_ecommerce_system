@@ -6,6 +6,7 @@ redirect_if_not_admin();
 require_once __DIR__ . '/../notify.php';
 
 $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS deleted_at DATETIME NULL DEFAULT NULL");
+$conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS home_service_price DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER home_service_fee");
 
 $message      = '';
 $message_type = '';
@@ -96,9 +97,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     $price            = floatval($_POST['price']);
     $session_time     = intval($_POST['session_time']);
     $category_id      = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
-    $is_home_service  = isset($_POST['is_home_service']) ? 1 : 0;
-    $home_service_fee = $is_home_service ? floatval($_POST['home_service_fee'] ?? 0) : 0.00;
-    $at_cost          = max(0.0, floatval($_POST['at_cost'] ?? 0));
+    $is_home_service    = isset($_POST['is_home_service']) ? 1 : 0;
+    $home_service_price = $is_home_service ? floatval($_POST['home_service_price'] ?? 0) : 0.00;
+    $at_cost            = max(0.0, floatval($_POST['at_cost'] ?? 0));
 
     $image_name = '';
 
@@ -130,16 +131,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         if ($id) {
             // EDITING
             if ($image_name !== '') {
-                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_fee=?, at_cost=? WHERE id=?");
-                $stmt->bind_param("ssdisiiddi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee, $at_cost, $id);
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=? WHERE id=?");
+                $stmt->bind_param("ssdisiiddi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost, $id);
             } else {
-                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_fee=?, at_cost=? WHERE id=?");
-                $stmt->bind_param("ssdiiiddi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_fee, $at_cost, $id);
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=? WHERE id=?");
+                $stmt->bind_param("ssdiiiddi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_price, $at_cost, $id);
             }
         } else {
             // NEW SERVICE
-            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_fee, at_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("ssdisiidd", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_fee, $at_cost);
+            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_price, at_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("ssdisiidd", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost);
         }
 
         if ($stmt->execute()) {
@@ -292,13 +293,13 @@ require_once 'admin_header.php';
                  id="homeFeeSectionRow"
                  <?php if (empty($edit_service['is_home_service'])): ?>style="display:none;"<?php endif; ?>>
                 <div class="form-group">
-                    <label>🏠 Home Service Fee (₱) <span class="required">*</span></label>
-                    <input type="number" name="home_service_fee" id="homeServiceFee"
+                    <label>🏠 Home Service Price (₱) — Fixed Total <span class="required">*</span></label>
+                    <input type="number" name="home_service_price" id="homeServicePrice"
                            step="0.01" min="0"
-                           value="<?php echo $edit_service['home_service_fee'] ?? '0.00'; ?>"
-                           placeholder="e.g. 150.00">
+                           value="<?php echo floatval($edit_service['home_service_price'] ?? 0); ?>"
+                           placeholder="e.g. 1500.00">
                     <small style="color:var(--gray);">
-                        Extra charge added to the total when customer selects Home Service. Set to 0 for no extra fee.
+                        Kumpletong halaga para sa home service booking — direktang total, hindi add-on.
                     </small>
                 </div>
             </div>
@@ -316,21 +317,21 @@ require_once 'admin_header.php';
             </div>
             <script>
             document.getElementById('homeServiceToggle').addEventListener('change', function() {
-                const row = document.getElementById('homeFeeSectionRow');
-                const fee = document.getElementById('homeServiceFee');
+                const row   = document.getElementById('homeFeeSectionRow');
+                const price = document.getElementById('homeServicePrice');
                 if (this.checked) {
                     row.style.display = '';
-                    fee.required = true;
+                    if (price) price.required = true;
                 } else {
                     row.style.display = 'none';
-                    fee.required = false;
-                    fee.value = '0.00';
+                    if (price) { price.required = false; price.value = '0.00'; }
                 }
             });
             // Set required state on page load
             (function(){
                 const chk = document.getElementById('homeServiceToggle');
-                document.getElementById('homeServiceFee').required = chk.checked;
+                const price = document.getElementById('homeServicePrice');
+                if (price) price.required = chk.checked;
             })();
             </script>
 

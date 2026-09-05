@@ -111,7 +111,7 @@ if ($order_type === 'product') {
     }
     $item_name        = $item['name'];
     $regular_price    = floatval($item['price']);
-    $home_service_fee = floatval($item['home_service_fee'] ?? 0);
+    $home_service_fee = floatval($item['home_service_fee'] ?? 0); // legacy, kept for reference
 
     // ── Partner rates map (needed for hotel rate) ─────────────────────────────
     $partner_rates_map = [];
@@ -125,7 +125,7 @@ if ($order_type === 'product') {
     }
 
     switch ($rate_type) {
-        case 'home':       $charged_price = ($regular_price * 2) + $home_service_fee; break;
+        case 'home':       $charged_price = floatval($item['home_service_price'] ?? 0); break;
         case 'hotel':      $charged_price = $partner_rates_map[$partner_id][$item_id] ?? $regular_price; break;
         case 'influencer': $charged_price = 0.00; break;
         default:           $charged_price = $regular_price; break;

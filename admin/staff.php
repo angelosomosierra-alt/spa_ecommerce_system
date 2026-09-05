@@ -1997,7 +1997,7 @@ function showCommission(therapistId) {
                     : 'background:var(--bg3);border:1px solid var(--border2);');
             const price = parseFloat(svc.price).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
             var pctNum   = parseFloat(s.pct) || 0;
-            var selPct   = pctNum >= 28 ? 30 : pctNum >= 18 ? 20 : pctNum >= 13 ? 15 : 0;
+            var selPct   = pctNum >= 28 ? 30 : pctNum >= 23 ? 25 : pctNum >= 18 ? 20 : pctNum >= 13 ? 15 : 0;
             var pctVal   = parseFloat(s.pct) || 0;
             var svcPrice = parseFloat(svc.price) || 0;
             var previewAmt = pctVal > 0 ? '₱' + (svcPrice * pctVal / 100).toFixed(2) : '';
@@ -2017,6 +2017,7 @@ function showCommission(therapistId) {
                         <option value="0"${selPct === 0 ? ' selected' : ''}>— %</option>
                         <option value="15"${selPct === 15 ? ' selected' : ''}>15%</option>
                         <option value="20"${selPct === 20 ? ' selected' : ''}>20%</option>
+                        <option value="25"${selPct === 25 ? ' selected' : ''}>25%</option>
                         <option value="30"${selPct === 30 ? ' selected' : ''}>30%</option>
                     </select>
                 </div>
