@@ -69,10 +69,19 @@ define('APP_SECRET', $_secret);
 unset($_secret);
 
 // ─── DATABASE CREDENTIALS ────────────────────────────────────────────────────
-$_db_server = getenv('DB_SERVER');   if (empty($_db_server))   $_db_server   = 'localhost';
-$_db_user   = getenv('DB_USERNAME'); if ($_db_user   === false) $_db_user    = 'root';
-$_db_pass   = getenv('DB_PASSWORD'); if ($_db_pass   === false) $_db_pass    = '';
-$_db_name   = getenv('DB_NAME');     if (empty($_db_name))     $_db_name     = 'spa_ecommerce_db';
+$_is_hostinger = strpos($_SERVER['HTTP_HOST'] ?? '', 'hostingersite.com') !== false;
+
+if ($_is_hostinger) {
+    $_db_server = 'localhost';
+    $_db_user   = 'u655952816_recoveryadmin';
+    $_db_pass   = 'RecoveryIloilo2024';
+    $_db_name   = 'u655952816_recovery_spa';
+} else {
+    $_db_server = getenv('DB_SERVER');   if (empty($_db_server))   $_db_server   = 'localhost';
+    $_db_user   = getenv('DB_USERNAME'); if ($_db_user   === false) $_db_user    = 'root';
+    $_db_pass   = getenv('DB_PASSWORD'); if ($_db_pass   === false) $_db_pass    = '';
+    $_db_name   = getenv('DB_NAME');     if (empty($_db_name))     $_db_name     = 'spa_ecommerce_db';
+}
 define('DB_SERVER',   $_db_server); unset($_db_server);
 define('DB_USERNAME', $_db_user);   unset($_db_user);
 define('DB_PASSWORD', $_db_pass);   unset($_db_pass);
@@ -170,8 +179,9 @@ $conn->query("CREATE TABLE IF NOT EXISTS activity_logs (
 // ─── BASE URL ─────────────────────────────────────────────────────────────────
 $protocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
 $host     = $_SERVER['HTTP_HOST'] ?? 'localhost';
-$folder   = getenv('APP_SUBFOLDER') ?: '/spa_ecommerce_system/';
+$folder   = $_is_hostinger ? '/' : (getenv('APP_SUBFOLDER') ?: '/spa_ecommerce_system/');
 define('BASE_URL', $protocol . '://' . $host . $folder);
+unset($_is_hostinger);
 
 // ─── UPLOAD DIRECTORIES ───────────────────────────────────────────────────────
 define('UPLOAD_DIR_SERVICES', __DIR__ . '/uploads/services/');
