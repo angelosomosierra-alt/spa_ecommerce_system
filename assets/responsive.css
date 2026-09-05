@@ -240,3 +240,92 @@
         max-height: 92vh !important;
     }
 }
+
+
+/* ════════════════════════════════════════════════════════════
+   G. ≤ 480px — CUSTOMER HOMEPAGE  (index.php)
+   All rules here duplicate desktop values reduced ~5 %.
+   !important is required where the source definition lives in
+   index.php's inline <style> block (which loads after this
+   file) or in an element's style="" attribute.
+════════════════════════════════════════════════════════════ */
+@media (max-width: 480px) {
+
+    /* ── Overflow guard ──────────────────────────────────────
+       Prevents any overflowing child from creating a
+       horizontal scrollbar on the whole page.               */
+    html, body { overflow-x: hidden; }
+
+    /* ── Header logo: smaller text + image ──────────────────
+       .logo span is defined in index.php inline <style>.    */
+    .logo span {
+        font-size:      1rem !important;
+        letter-spacing: 0.04em !important;
+    }
+    .logo img { width: 34px !important; height: 27px !important; }
+
+    /* ── Header auth area: compact layout ───────────────────
+       .auth-links gap comes from style.css — no !important
+       needed for gap itself; but Login link has inline
+       font-size and Register has inline padding + font-size,
+       so both selectors below need !important.              */
+    .auth-links { gap: 0.35rem !important; }
+
+    .auth-links a:not(.cart-icon-btn),
+    .auth-links .hero-btn-primary {
+        padding:   0.3rem 0.55rem !important;
+        font-size: 0.72rem !important;
+    }
+
+    /* ── Service carousel: arrows fit within padding zone ───
+       Arrow 24 px wide at left:0 / right:0, padding 26 px
+       → arrow edge clears content edge by 2 px.
+       Defined in index.php inline <style> → !important.    */
+    .slider-outer { padding: 0 26px !important; }
+    .slider-arrow {
+        width:     24px !important;
+        height:    24px !important;
+        font-size: 0.85rem !important;
+    }
+
+    /* ── ~5 % size reduction: service cards ─────────────────
+       Base values from index.php inline <style>.           */
+    .svc-body     { padding:   1.425rem !important; }
+    .svc-name     { font-size: 1.235rem !important; }
+    .svc-desc     { font-size: 0.79rem  !important; }
+    .svc-price    { font-size: 1.425rem !important; }
+    .svc-duration { font-size: 0.71rem  !important; }
+    .btn-book-grid {
+        padding:   0.71rem  !important;
+        font-size: 0.836rem !important;
+    }
+
+    /* ── ~5 % size reduction: product cards ─────────────────
+       Base values from index.php inline <style>.           */
+    .prd-body  { padding:   1.28rem !important; }
+    .prd-name  { font-size: 1.14rem !important; }
+    .prd-desc  { font-size: 0.76rem !important; }
+    .prd-price { font-size: 1.33rem !important; }
+    .btn-cart-grid {
+        padding:   0.665rem !important;
+        font-size: 0.81rem  !important;
+    }
+
+    /* ── ~5 % size reduction: per-category heading ───────── */
+    .cat-section-heading { font-size: 1.33rem !important; }
+
+    /* ── ~5 % size reduction: About stats bar ───────────── */
+    .stat-num { font-size: 1.9rem  !important; }
+    .stat-lbl { font-size: 0.68rem !important; }
+
+    /* ── ~5 % size reduction: value cards (About section) ── */
+    .value-card    { padding: 1.66rem 1.19rem !important; }
+    .value-card h3 { font-size: 0.9rem  !important; }
+    .value-card p  { font-size: 0.79rem !important; }
+
+    /* ── ~5 % size reduction: contact form send button ───── */
+    .btn-send {
+        font-size: 0.9rem  !important;
+        padding:   0.81rem !important;
+    }
+}
