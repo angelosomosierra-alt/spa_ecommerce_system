@@ -735,6 +735,7 @@ function setWidths(key) {
     if (!track) return;
     var vis = getVisibleCount();
     var gap  = vis === 1 ? '0px' : vis === 2 ? '1rem' : '1.35rem';
+    track.style.gap = vis === 1 ? '0px' : '';
     track.querySelectorAll('.service-slide').forEach(function(s) {
         s.style.flex = '0 0 calc(' + (100 / vis) + '% - ' + gap + ')';
     });
