@@ -79,12 +79,9 @@ while ($row = $res_prd->fetch_assoc()) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Recovery Spa — Home</title>
-<?php
-$_css_v = file_exists('assets/style.css') ? filemtime('assets/style.css') : '1';
-?>
-<link rel="stylesheet" href="assets/style.css?v=<?php echo $_css_v; ?>">
-<link rel="stylesheet" href="assets/responsive.css?v=<?php echo filemtime('assets/responsive.css'); ?>">
-<script src="assets/ui-modal.js"></script>
+<link rel="stylesheet" href="assets/style.css?v=<?php echo filemtime(__DIR__ . '/assets/style.css'); ?>">
+<link rel="stylesheet" href="assets/responsive.css?v=<?php echo filemtime(__DIR__ . '/assets/responsive.css'); ?>">
+<script src="assets/ui-modal.js?v=<?php echo filemtime(__DIR__ . '/assets/ui-modal.js'); ?>"></script>
 <style>
     /* ── Logo: image + text ─────────────────────────────── */
     .logo { display:flex; align-items:center; gap:0.75rem; }
