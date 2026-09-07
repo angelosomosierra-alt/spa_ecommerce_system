@@ -163,7 +163,7 @@ while ($row = $res_prd->fetch_assoc()) {
     .slider-track { display:flex; gap:2rem; transition:transform .4s ease; will-change:transform; }
     .service-slide { flex:0 0 calc(33.333% - 1.35rem); min-width:0; }
     @media(max-width:960px){ .service-slide{ flex:0 0 calc(50% - 1rem); } }
-    @media(max-width:580px){ .service-slide{ flex:0 0 100%; } }
+    @media(max-width:580px){ .service-slide{ flex:0 0 calc(100% - 0.75rem); } }
     .slider-arrow {
         position:absolute; top:40%; transform:translateY(-50%);
         background:var(--brown); color:var(--cream); border:none; border-radius:50%;
@@ -732,7 +732,7 @@ function setWidths(key) {
     if (!track) return;
     var vis = getVisibleCount();
     var gap  = vis === 1 ? '0px' : vis === 2 ? '1rem' : '1.35rem';
-    track.style.gap = vis === 1 ? '0px' : '';
+    track.style.gap = vis === 1 ? '0.75rem' : '';
     track.querySelectorAll('.service-slide').forEach(function(s) {
         s.style.flex = '0 0 calc(' + (100 / vis) + '% - ' + gap + ')';
     });
