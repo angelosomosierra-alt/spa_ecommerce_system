@@ -61,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reorder'])) {
         $stmt = $conn->prepare("UPDATE therapist_attendance SET rotation_order=? WHERE id=? AND duty_date=CURDATE()");
         $stmt->bind_param("ii", $order, $aid); $stmt->execute(); $stmt->close();
     }
-    header("Location: Therapists.php?reordered=1"); exit();
+    header("Location: therapists.php?reordered=1"); exit();
 }
 
 if (isset($_GET['reordered'])) {
@@ -92,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $stmt->bind_param("si", $timeout, $aid); $stmt->execute(); $stmt->close();
         if ($co_row) log_activity($conn, 'therapist_logout',
             "{$co_row['full_name']} clocked out", 'therapist', (int)$co_row['id'], $actor);
-        header("Location: Therapists.php"); exit();
+        header("Location: therapists.php"); exit();
     }
 }
 
@@ -115,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'toggl
         $aid  = intval($_POST['attendance_id'] ?? 0);
         $stmt = $conn->prepare("UPDATE therapist_attendance SET is_on_break = !is_on_break WHERE id=? AND duty_date=CURDATE()");
         $stmt->bind_param("i", $aid); $stmt->execute(); $stmt->close();
-        header("Location: Therapists.php"); exit();
+        header("Location: therapists.php"); exit();
     }
 }
 
@@ -138,7 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remov
         $aid  = intval($_POST['attendance_id'] ?? 0);
         $stmt = $conn->prepare("DELETE FROM therapist_attendance WHERE id=? AND duty_date=CURDATE()");
         $stmt->bind_param("i", $aid); $stmt->execute(); $stmt->close();
-        header("Location: Therapists.php"); exit();
+        header("Location: therapists.php"); exit();
     }
 }
 
@@ -441,7 +441,7 @@ require_once 'admin_header.php';
     $total_ratings = (int)$avg_row['total_r'];
 ?>
 <div style="margin-bottom:1rem;">
-    <a href="Therapists.php" class="btn btn-secondary btn-sm">← Back to Roster</a>
+    <a href="therapists.php" class="btn btn-secondary btn-sm">← Back to Roster</a>
 </div>
 
 <div class="panel" style="margin-bottom:1.5rem;">
@@ -912,11 +912,11 @@ function saveCommEdit(btn, atId) {
 
                 <!-- Actions -->
                 <div style="display:flex;gap:0.3rem;flex-shrink:0;">
-                    <a href="Therapists.php?history=<?php echo $r['therapist_id']; ?>"
+                    <a href="therapists.php?history=<?php echo $r['therapist_id']; ?>"
                        class="btn btn-secondary btn-sm"
                        style="font-size:0.72rem;padding:0.25rem 0.5rem;"
                        title="View history">📋</a>
-                    <form method="POST" action="Therapists.php" style="display:inline;margin:0;">
+                    <form method="POST" action="therapists.php" style="display:inline;margin:0;">
                         <?php echo csrf_field(); ?>
                         <input type="hidden" name="action"       value="toggle_break">
                         <input type="hidden" name="attendance_id" value="<?php echo $r['id']; ?>">
@@ -929,7 +929,7 @@ function saveCommEdit(btn, atId) {
                             ☕
                         </button>
                     </form>
-                    <form method="POST" action="Therapists.php" style="display:inline;margin:0;">
+                    <form method="POST" action="therapists.php" style="display:inline;margin:0;">
                         <?php echo csrf_field(); ?>
                         <input type="hidden" name="action"        value="remove_today">
                         <input type="hidden" name="attendance_id" value="<?php echo $r['id']; ?>">
@@ -947,7 +947,7 @@ function saveCommEdit(btn, atId) {
             <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.65rem;
                         padding-top:0.65rem;border-top:1px solid var(--border2);flex-wrap:wrap;">
                 <?php if (empty($r['time_out'])): ?>
-                <form method="POST" action="Therapists.php" style="display:inline;margin:0;">
+                <form method="POST" action="therapists.php" style="display:inline;margin:0;">
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="action"        value="check_out">
                     <input type="hidden" name="attendance_id" value="<?php echo $r['id']; ?>">
