@@ -16,6 +16,7 @@ $admin_role_label = match($admin_role) {
     'cashier'   => '🏪 Receptionist',
     'marketing' => '📣 Marketing',
     'it'        => '💻 IT Support',
+    'hr'        => '🧑‍💼 HR',
     default     => '👑 Owner',
 };
 
@@ -61,7 +62,7 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
         <?php foreach ($nav_items as $item): ?>
         <li>
             <a href="<?php echo $item['file']; ?>.php"
-               class="<?php echo ($active_page ?? '') === $item['file'] ? 'active' : ''; ?>">
+               class="<?php echo strtolower($active_page ?? '') === strtolower($item['file']) ? 'active' : ''; ?>">
                 <span class="menu-icon"><?php echo $item['icon']; ?></span>
                 <?php echo $item['label']; ?>
             </a>

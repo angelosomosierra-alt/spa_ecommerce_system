@@ -758,7 +758,12 @@ function go(key, newPos) {
     var maxPos = Math.max(0, sl.count - vis);
     newPos = Math.max(0, Math.min(newPos, maxPos)); sl.pos = newPos;
     var track = document.getElementById('track-' + key);
-    if (track) track.style.transform = 'translateX(-' + (newPos * 100 / vis) + '%)';
+    if (track) {
+        var firstCard = track.querySelector('.service-slide');
+        var cardW  = firstCard ? firstCard.getBoundingClientRect().width : 0;
+        var gapPx  = parseFloat(getComputedStyle(track).columnGap) || 0;
+        track.style.transform = 'translateX(-' + (newPos * (cardW + gapPx)) + 'px)';
+    }
     var prev = document.getElementById('prev-' + key);
     var next = document.getElementById('next-' + key);
     if (prev) prev.style.display = newPos === 0 ? 'none' : '';

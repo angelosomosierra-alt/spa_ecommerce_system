@@ -402,6 +402,39 @@ require_once 'admin_header.php';
         </div>
     </div>
 
+    <style>
+    .svc-search-wrap { position:relative; margin:1rem 1.5rem 0.75rem; display:flex; align-items:center; }
+    .svc-search-icon { position:absolute; left:0.85rem; font-size:0.9rem; pointer-events:none; opacity:0.55; }
+    .svc-search-input {
+        width:100%; padding:0.55rem 2.5rem 0.55rem 2.4rem;
+        border:1.5px solid var(--border2,#e5e0d8); border-radius:10px;
+        background:var(--bg3,#f7f5f2); color:var(--brown,#3B2A1A);
+        font-size:0.9rem; outline:none; box-sizing:border-box;
+        transition:border-color .15s, box-shadow .15s;
+    }
+    .svc-search-input:focus {
+        border-color:var(--rust,#A94F1D);
+        box-shadow:0 0 0 3px rgba(169,79,29,0.12);
+        background:#fff;
+    }
+    .svc-search-clear {
+        position:absolute; right:0.75rem; background:none; border:none;
+        color:var(--gray,#6b7280); cursor:pointer; font-size:0.85rem;
+        padding:0.2rem 0.3rem; border-radius:4px; line-height:1;
+    }
+    .svc-search-clear:hover { color:var(--rust,#A94F1D); }
+    </style>
+
+    <div class="svc-search-wrap">
+        <span class="svc-search-icon">🔍</span>
+        <input type="search" id="serviceSearchInput" class="svc-search-input"
+               placeholder="Search by name or category…"
+               oninput="filterServices(this.value)"
+               autocomplete="off">
+        <button type="button" id="svcSearchClear" class="svc-search-clear"
+                onclick="clearServiceSearch()" style="display:none;">✕</button>
+    </div>
+
     <div class="table-wrap" style="border:none;border-radius:0;">
         <table>
             <thead>
@@ -427,7 +460,9 @@ require_once 'admin_header.php';
                 ?>
                 <?php if (!empty($filtered)): ?>
                     <?php foreach ($filtered as $service): ?>
-                    <tr<?php if ($service['deleted_at']): ?> style="opacity:0.5;"<?php endif; ?>>
+                    <tr class="service-row"
+                        data-search="<?php echo htmlspecialchars(strtolower($service['name'].' '.($service['category_name'] ?? ''))); ?>"
+                        <?php if ($service['deleted_at']): ?> style="opacity:0.5;"<?php endif; ?>>
                         <td>
                             <?php if (!empty($service['image'])): ?>
                                 <img src="../uploads/services/<?php echo htmlspecialchars($service['image']); ?>"
@@ -499,5 +534,32 @@ require_once 'admin_header.php';
 </div>
 
 <?php endif; ?>
+
+<div id="svcNoResults" style="display:none;text-align:center;padding:2rem 1rem;color:var(--gray);font-size:0.9rem;background:var(--bg3);border-radius:12px;margin:0 1.5rem 1rem;">
+    No services match your search.
+</div>
+
+<script>
+function filterServices(query) {
+    var q   = query.trim().toLowerCase();
+    var rows = document.querySelectorAll('tr.service-row');
+    var visible = 0;
+    rows.forEach(function(row) {
+        var match = !q || (row.dataset.search || '').indexOf(q) !== -1;
+        row.style.display = match ? '' : 'none';
+        if (match) visible++;
+    });
+    var noResults = document.getElementById('svcNoResults');
+    if (noResults) noResults.style.display = (q && visible === 0) ? '' : 'none';
+    var clearBtn = document.getElementById('svcSearchClear');
+    if (clearBtn) clearBtn.style.display = q ? '' : 'none';
+}
+
+function clearServiceSearch() {
+    var input = document.getElementById('serviceSearchInput');
+    if (input) { input.value = ''; input.focus(); }
+    filterServices('');
+}
+</script>
 
 <?php require_once 'admin_footer.php'; ?>
