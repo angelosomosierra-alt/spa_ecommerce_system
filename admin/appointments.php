@@ -1216,19 +1216,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
             $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
 
-            $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=?, celebration_discount=0 WHERE id=?");
-            $upd->bind_param("isi", $cp_by, $cp_name, $appt_id);
-            $upd->execute(); $upd->close();
+            // ── Appointment status + supply deduction — atomic transaction ────────
+            $conn->begin_transaction();
+            try {
+                $upd = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=?, celebration_discount=0 WHERE id=?");
+                $upd->bind_param("isi", $cp_by, $cp_name, $appt_id);
+                $upd->execute(); $upd->close();
 
-            if (!empty($appt['order_item_id'])) {
-                $oi_stmt = $conn->prepare("SELECT order_id FROM order_items WHERE id=?");
-                $oi_stmt->bind_param("i", $appt['order_item_id']); $oi_stmt->execute();
-                $oi_row = $oi_stmt->get_result()->fetch_assoc(); $oi_stmt->close();
-                if ($oi_row && $oi_row['order_id']) {
-                    $upd_ord = $conn->prepare("UPDATE orders SET approval_status='completed' WHERE id=?");
-                    $upd_ord->bind_param("i", $oi_row['order_id']); $upd_ord->execute(); $upd_ord->close();
+                // ── Supply deduction (Phase 2) ────────────────────────────────────
+                $_ppl   = max(1, intval($appt['people_count'] ?? 1));
+                $_svc_d = (int)$appt['service_id'];
+                $_rs    = $conn->prepare("SELECT supply_id, quantity_per_person FROM service_supply_usage WHERE service_id = ?");
+                $_rs->bind_param("i", $_svc_d); $_rs->execute();
+                $_rrows = $_rs->get_result()->fetch_all(MYSQLI_ASSOC); $_rs->close();
+                foreach ($_rrows as $_rr) {
+                    $_sid    = (int)$_rr['supply_id'];
+                    $_qty    = floatval($_rr['quantity_per_person']) * $_ppl;
+                    $_sb_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ?");
+                    $_sb_s->bind_param("i", $_sid); $_sb_s->execute();
+                    $_sbefore = (float)($_sb_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sb_s->close();
+                    $_ud     = $conn->prepare("UPDATE supplies SET current_stock = GREATEST(0, current_stock - ?) WHERE id = ?");
+                    $_ud->bind_param("di", $_qty, $_sid); $_ud->execute(); $_ud->close();
+                    $_sa_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ?");
+                    $_sa_s->bind_param("i", $_sid); $_sa_s->execute();
+                    $_safter  = (float)($_sa_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sa_s->close();
+                    $_sul    = $conn->prepare("INSERT INTO supply_usage_log (appointment_id, supply_id, quantity_deducted, stock_before, stock_after) VALUES (?, ?, ?, ?, ?)");
+                    $_sul->bind_param("iiddd", $appt_id, $_sid, $_qty, $_sbefore, $_safter); $_sul->execute(); $_sul->close();
                 }
+                // ── End supply deduction ──────────────────────────────────────────
+
+                if (!empty($appt['order_item_id'])) {
+                    $oi_stmt = $conn->prepare("SELECT order_id FROM order_items WHERE id=?");
+                    $oi_stmt->bind_param("i", $appt['order_item_id']); $oi_stmt->execute();
+                    $oi_row = $oi_stmt->get_result()->fetch_assoc(); $oi_stmt->close();
+                    if ($oi_row && $oi_row['order_id']) {
+                        $upd_ord = $conn->prepare("UPDATE orders SET approval_status='completed' WHERE id=?");
+                        $upd_ord->bind_param("i", $oi_row['order_id']); $upd_ord->execute(); $upd_ord->close();
+                    }
+                }
+
+                $conn->commit();
+            } catch (Throwable $e) {
+                $conn->rollback();
+                $message = "❌ Failed to complete appointment: " . htmlspecialchars($e->getMessage());
+                $message_type = "danger";
+                goto end_action;
             }
+            // ── End atomic transaction ────────────────────────────────────────────
 
             // ── Calculate and save commission for each assigned therapist ────
             // charged_price is on the appointment row; fallback to order total_amount

@@ -18,6 +18,27 @@ while ($row = $cat_result->fetch_assoc()) {
     $categories[] = $row;
 }
 
+// ─── SUPPLIES FOR RECIPE DROPDOWN ────────────────────────────────────────────
+$supply_opts = [];
+$_svc_sr = $conn->query("SELECT id, name, category, base_unit_label FROM supplies WHERE deleted_at IS NULL ORDER BY category, name");
+while ($row = $_svc_sr->fetch_assoc()) $supply_opts[] = $row;
+$supply_map_svc = array_column($supply_opts, null, 'id');
+
+// Build options HTML for recipe select dropdowns (reused in PHP pre-populated rows and JS template)
+$recipe_opts_html = '<option value="">-- Select Supply --</option>';
+$_rocat = null;
+foreach ($supply_opts as $_rsp) {
+    if ($_rsp['category'] !== $_rocat) {
+        if ($_rocat !== null) $recipe_opts_html .= '</optgroup>';
+        $recipe_opts_html .= '<optgroup label="' . htmlspecialchars($_rsp['category']) . '">';
+        $_rocat = $_rsp['category'];
+    }
+    $recipe_opts_html .= '<option value="' . $_rsp['id'] . '" data-unit="' . htmlspecialchars($_rsp['base_unit_label']) . '">'
+                       . htmlspecialchars($_rsp['name']) . '</option>';
+}
+if ($_rocat !== null) $recipe_opts_html .= '</optgroup>';
+unset($_rocat, $_rsp, $_svc_sr);
+
 // ─── ARCHIVE (SOFT DELETE) ────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_service') {
     verify_csrf_token();
@@ -153,7 +174,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             } else {
                 log_activity($conn, 'service_created', "Created service: {$name}", 'service', $svc_logged_id, $_actor_svc);
             }
-            header("Location: services.php?success=1");
+            // ── Save recipe: delete-then-reinsert ─────────────────────────
+            $r_sids = array_map('intval', (array)($_POST['recipe_supply_id']    ?? []));
+            $r_qtys = (array)($_POST['recipe_qty_per_person'] ?? []);
+            $del_rr = $conn->prepare("DELETE FROM service_supply_usage WHERE service_id = ?");
+            $del_rr->bind_param("i", $svc_logged_id);
+            $del_rr->execute(); $del_rr->close();
+            $seen_r = [];
+            foreach ($r_sids as $_ri => $_rsid) {
+                if (!$_rsid || !isset($supply_map_svc[$_rsid])) continue;
+                if (in_array($_rsid, $seen_r, true)) continue;
+                $_rqty = max(0.0001, (float)($r_qtys[$_ri] ?? 0));
+                $ins_rr = $conn->prepare("INSERT INTO service_supply_usage (service_id, supply_id, quantity_per_person) VALUES (?, ?, ?)");
+                $ins_rr->bind_param("iid", $svc_logged_id, $_rsid, $_rqty);
+                $ins_rr->execute(); $ins_rr->close();
+                $seen_r[] = $_rsid;
+            }
+            // ──────────────────────────────────────────────────────────────
+            $redirect_to = $id ? "services.php?edit={$svc_logged_id}&saved=1" : "services.php?success=1";
+            header("Location: $redirect_to");
             exit();
         } else {
             $message = "Database Error: " . $conn->error;
@@ -174,6 +213,16 @@ if (isset($_GET['edit'])) {
     $stmt->close();
 }
 
+// ─── FETCH RECIPE FOR EDITING ─────────────────────────────────────────────────
+$svc_recipe = [];
+if ($edit_service) {
+    $rr_stmt = $conn->prepare("SELECT supply_id, quantity_per_person FROM service_supply_usage WHERE service_id = ? ORDER BY id");
+    $rr_stmt->bind_param("i", $edit_service['id']);
+    $rr_stmt->execute();
+    $svc_recipe = $rr_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $rr_stmt->close();
+}
+
 // ─── FETCH ALL SERVICES ───────────────────────────────────────────────────────
 $services = [];
 $result   = $conn->query("
@@ -186,10 +235,19 @@ while ($row = $result->fetch_assoc()) {
     $services[] = $row;
 }
 
+// ─── RECIPE COUNTS (for list indicator) ──────────────────────────────────────
+$svc_recipe_counts = [];
+$_rcq = $conn->query("SELECT service_id, COUNT(*) AS cnt FROM service_supply_usage GROUP BY service_id");
+while ($row = $_rcq->fetch_assoc()) $svc_recipe_counts[(int)$row['service_id']] = (int)$row['cnt'];
+
 // ─── STATS ────────────────────────────────────────────────────────────────────
 $total_services    = count($services);
 $avg_price         = $total_services ? array_sum(array_column($services, 'price')) / $total_services : 0;
 $categorized_count = count(array_filter($services, fn($s) => !empty($s['category_id'])));
+$with_recipe_count = count(array_filter($services, fn($s) => !$s['deleted_at'] && ($svc_recipe_counts[$s['id']] ?? 0) > 0));
+
+if (!$message && isset($_GET['saved']))   { $message = "Service updated.";           $message_type = "success"; }
+if (!$message && isset($_GET['success'])) { $message = "Service added successfully."; $message_type = "success"; }
 
 $page_title  = $edit_service ? 'Edit Service' : 'Services';
 $page_icon   = '💆';
@@ -202,9 +260,7 @@ require_once 'admin_header.php';
 <?php endif; ?>
 
 <?php if (!$edit_service && !isset($_GET['action'])): ?>
-    <form method="POST" enctype="multipart/form-data">
-    <?php echo csrf_field(); ?>
-<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1.5rem;">
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
     <div class="stat-card">
         <div class="stat-icon">💆</div>
         <div class="stat-number"><?php echo $total_services; ?></div>
@@ -219,6 +275,11 @@ require_once 'admin_header.php';
         <div class="stat-icon">🏷️</div>
         <div class="stat-number"><?php echo $categorized_count; ?></div>
         <div class="stat-label">Categorized</div>
+    </div>
+    <div class="stat-card green">
+        <div class="stat-icon">🧴</div>
+        <div class="stat-number"><?php echo $with_recipe_count; ?></div>
+        <div class="stat-label">With Recipe</div>
     </div>
 </div>
 <?php endif; ?>
@@ -240,6 +301,7 @@ require_once 'admin_header.php';
                 <input type="hidden" name="id" value="<?php echo $edit_service['id']; ?>">
             <?php endif; ?>
 
+            <span class="section-label-sm">🪪 Service Info</span>
             <div class="form-grid form-grid-2" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label>Service Name <span class="required">*</span></label>
@@ -261,19 +323,32 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
-            <div class="form-grid form-grid-2" style="margin-bottom:1.25rem;">
+            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
+                <span class="section-label-sm">💰 Pricing &amp; Duration</span>
+            </div>
+            <div class="form-grid form-grid-3" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label>Price (₱) <span class="required">*</span></label>
                     <input type="number" name="price" step="0.01" min="0.01" required
                            value="<?php echo $edit_service['price'] ?? ''; ?>">
                 </div>
                 <div class="form-group">
-                    <label>Session Time (minutes) <span class="required">*</span></label>
+                    <label>Session Time (mins) <span class="required">*</span></label>
                     <input type="number" name="session_time" min="1" required
                            value="<?php echo $edit_service['session_time'] ?? ''; ?>">
                 </div>
+                <div class="form-group">
+                    <label>At Cost (₱) <span style="font-size:0.72rem;color:var(--gray);font-weight:400;">— Influencer / Marketing</span></label>
+                    <input type="number" name="at_cost" step="0.01" min="0"
+                           value="<?php echo floatval($edit_service['at_cost'] ?? 0); ?>"
+                           placeholder="0.00">
+                    <small>Used in Marketing Expense = At Cost + Therapist CF. Leave 0 for regular.</small>
+                </div>
             </div>
 
+            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
+                <span class="section-label-sm">🏠 Availability</span>
+            </div>
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;user-select:none;">
@@ -289,9 +364,9 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
-            <div class="form-grid form-grid-2" style="margin-bottom:1.25rem;"
+            <div class="form-grid form-grid-2"
                  id="homeFeeSectionRow"
-                 <?php if (empty($edit_service['is_home_service'])): ?>style="display:none;"<?php endif; ?>>
+                 style="margin-bottom:1.25rem;<?php echo empty($edit_service['is_home_service']) ? 'display:none;' : ''; ?>">
                 <div class="form-group">
                     <label>🏠 Home Service Price (₱) — Fixed Total <span class="required">*</span></label>
                     <input type="number" name="home_service_price" id="homeServicePrice"
@@ -304,17 +379,6 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
-            <div class="form-group" style="margin-bottom:1.25rem;">
-                <label>🎯 At Cost (₱) — Influencer / Marketing</label>
-                <input type="number" name="at_cost" step="0.01" min="0"
-                       value="<?php echo floatval($edit_service['at_cost'] ?? 0); ?>"
-                       placeholder="0.00">
-                <small style="color:var(--gray);">
-                    Cost borne by the salon for influencer/marketing appointments.
-                    Used in Marketing Expense = At Cost + Therapist CF.
-                    Leave 0 for regular services.
-                </small>
-            </div>
             <script>
             document.getElementById('homeServiceToggle').addEventListener('change', function() {
                 const row   = document.getElementById('homeFeeSectionRow');
@@ -327,14 +391,19 @@ require_once 'admin_header.php';
                     if (price) { price.required = false; price.value = '0.00'; }
                 }
             });
-            // Set required state on page load
+            // Sync display + required state on page load
             (function(){
-                const chk = document.getElementById('homeServiceToggle');
+                const chk   = document.getElementById('homeServiceToggle');
+                const row   = document.getElementById('homeFeeSectionRow');
                 const price = document.getElementById('homeServicePrice');
+                if (row)   row.style.display = chk.checked ? '' : 'none';
                 if (price) price.required = chk.checked;
             })();
             </script>
 
+            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
+                <span class="section-label-sm">🖼️ Media</span>
+            </div>
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label>Service Image <?php echo !$edit_service ? '<span class="required">*</span>' : ''; ?></label>
@@ -358,6 +427,154 @@ require_once 'admin_header.php';
                     <textarea name="description" rows="4" required><?php echo htmlspecialchars($edit_service['description'] ?? ''); ?></textarea>
                 </div>
             </div>
+
+            <!-- ─── SUPPLIES USED PER SESSION ────────────────────────────────── -->
+            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
+                <span class="section-label-sm" style="color:var(--brown-md);">🧴 Supplies Used per Session</span>
+                <p style="font-size:0.83rem;color:var(--gray);margin:0.4rem 0 1rem;">
+                    Define which supplies are consumed per person when this service is completed.
+                    Quantities are in base units (ml, g, pcs…). Leave empty if no supplies are deducted.
+                </p>
+                <style>
+                .recipe-supply-sel, .recipe-qty-inp {
+                    background: #fff;
+                    border: 2px solid var(--border);
+                    border-radius: 6px;
+                    padding: 0.55rem 0.75rem;
+                    font-family: var(--font-body);
+                    font-size: 0.875rem;
+                    color: var(--brown);
+                    transition: all 0.18s;
+                    box-sizing: border-box;
+                }
+                .recipe-supply-sel:focus, .recipe-qty-inp:focus {
+                    outline: none;
+                    border-color: var(--rust);
+                    box-shadow: 0 0 0 3px rgba(201,106,44,0.12);
+                }
+                </style>
+                <div style="overflow-x:auto;">
+                    <div id="recipeColHeaders"
+                         style="display:flex;gap:0.75rem;margin-bottom:0.4rem;<?php echo count($svc_recipe) > 0 ? '' : 'display:none;'; ?>">
+                        <div style="flex:1;min-width:200px;font-size:0.7rem;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--gray);">Supply</div>
+                        <div style="width:85px;flex-shrink:0;font-size:0.7rem;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--gray);">Qty / person</div>
+                        <div style="width:40px;flex-shrink:0;font-size:0.7rem;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--gray);">Unit</div>
+                        <div style="width:32px;flex-shrink:0;"></div>
+                    </div>
+                    <div id="recipeRows">
+                        <p id="recipeEmpty"
+                           style="color:var(--gray);font-size:0.83rem;margin:0.5rem 0;<?php echo count($svc_recipe) > 0 ? 'display:none;' : ''; ?>">
+                            No supplies added yet — click <strong>+ Add Supply</strong> to define which items are consumed per session.
+                        </p>
+                        <?php foreach ($svc_recipe as $rrow):
+                            $rsid     = (int)$rrow['supply_id'];
+                            $row_opts = str_replace(
+                                '<option value="' . $rsid . '" data-unit=',
+                                '<option value="' . $rsid . '" selected data-unit=',
+                                $recipe_opts_html
+                            );
+                            $bul = htmlspecialchars($supply_map_svc[$rsid]['base_unit_label'] ?? '');
+                        ?>
+                        <div class="recipe-row" style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.6rem;">
+                            <select name="recipe_supply_id[]" class="recipe-supply-sel"
+                                    onchange="updateRecipeUnit(this)"
+                                    style="flex:1;min-width:200px;">
+                                <?php echo $row_opts; ?>
+                            </select>
+                            <input type="number" name="recipe_qty_per_person[]"
+                                   class="recipe-qty-inp"
+                                   step="0.0001" min="0.0001"
+                                   value="<?php echo htmlspecialchars($rrow['quantity_per_person']); ?>"
+                                   style="width:85px;flex-shrink:0;">
+                            <span class="recipe-unit-label"
+                                  style="width:40px;flex-shrink:0;color:var(--gray);font-size:0.82rem;">
+                                <?php echo $bul; ?>
+                            </span>
+                            <button type="button" class="btn btn-danger btn-sm"
+                                    onclick="removeRecipeRow(this)"
+                                    style="flex-shrink:0;">×</button>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-top:0.75rem;">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="addRecipeRow()">
+                        + Add Supply
+                    </button>
+                    <span id="recipeDupeWarning"
+                          style="color:var(--rust);font-size:0.82rem;display:none;">
+                        ⚠️ Duplicate supply — each supply can only appear once per service.
+                    </span>
+                </div>
+            </div>
+            <script>
+            var _recipeOptsTpl = <?php echo json_encode($recipe_opts_html); ?>;
+
+            function addRecipeRow(selVal, qty) {
+                selVal = selVal || '';
+                qty    = qty    || '';
+                var container = document.getElementById('recipeRows');
+                var div = document.createElement('div');
+                div.className = 'recipe-row';
+                div.style.cssText = 'display:flex;align-items:center;gap:0.75rem;margin-bottom:0.6rem;';
+                div.innerHTML =
+                    '<select name="recipe_supply_id[]" class="recipe-supply-sel" onchange="updateRecipeUnit(this)" style="flex:1;min-width:200px;">' +
+                        _recipeOptsTpl +
+                    '</select>' +
+                    '<input type="number" name="recipe_qty_per_person[]" class="recipe-qty-inp" step="0.0001" min="0.0001" value="' + qty + '" style="width:85px;flex-shrink:0;">' +
+                    '<span class="recipe-unit-label" style="width:40px;flex-shrink:0;color:var(--gray);font-size:0.82rem;"></span>' +
+                    '<button type="button" class="btn btn-danger btn-sm" onclick="removeRecipeRow(this)" style="flex-shrink:0;">×</button>';
+                container.appendChild(div);
+                if (selVal) {
+                    var sel = div.querySelector('select');
+                    sel.value = selVal;
+                    updateRecipeUnit(sel);
+                }
+                checkRecipeDupes();
+                checkRecipeEmpty();
+                var inp = div.querySelector('input[type=number]');
+                if (inp && !qty) inp.focus();
+            }
+
+            function removeRecipeRow(btn) {
+                var row = btn.closest('.recipe-row');
+                if (row) { row.remove(); checkRecipeDupes(); checkRecipeEmpty(); }
+            }
+
+            function updateRecipeUnit(sel) {
+                var opt  = sel.options[sel.selectedIndex];
+                var span = sel.closest('.recipe-row').querySelector('.recipe-unit-label');
+                if (span) span.textContent = (opt && opt.dataset.unit) ? opt.dataset.unit : '';
+                checkRecipeDupes();
+            }
+
+            function checkRecipeDupes() {
+                var sels = document.querySelectorAll('#recipeRows .recipe-supply-sel');
+                var seen = {}, hasDupe = false;
+                sels.forEach(function(s) {
+                    var v = s.value; if (!v) return;
+                    if (seen[v]) hasDupe = true;
+                    seen[v] = true;
+                });
+                var w = document.getElementById('recipeDupeWarning');
+                if (w) w.style.display = hasDupe ? '' : 'none';
+            }
+
+            function checkRecipeEmpty() {
+                var hasRows = document.querySelectorAll('#recipeRows .recipe-row').length > 0;
+                var empty = document.getElementById('recipeEmpty');
+                var hdr   = document.getElementById('recipeColHeaders');
+                if (empty) empty.style.display = hasRows ? 'none' : '';
+                if (hdr)   hdr.style.display   = hasRows ? ''     : 'none';
+            }
+
+            // Init unit labels and empty state on pre-populated rows
+            document.querySelectorAll('#recipeRows .recipe-supply-sel').forEach(function(s) {
+                updateRecipeUnit(s);
+            });
+            checkRecipeEmpty();
+            </script>
+            <!-- ──────────────────────────────────────────────────────────── -->
 
             <?php if (is_cashier()): ?>
             <div class="form-group" style="max-width:200px;">
@@ -445,7 +662,7 @@ require_once 'admin_header.php';
                     <th>Type</th>
                     <th>Price</th>
                     <th>Duration</th>
-                    <th>Description</th>
+                    <th>Recipe</th>
                     <th>Date Added</th>
                     <th>Actions</th>
                 </tr>
@@ -470,7 +687,7 @@ require_once 'admin_header.php';
                                      alt="Service Thumbnail"
                                      style="width:50px;height:50px;object-fit:cover;border-radius:6px;">
                             <?php else: ?>
-                                <div class="thumb" style="width:50px;height:50px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--gray);font-size:0.7rem;border-radius:6px;">No img</div>
+                                <div class="no-thumb">No img</div>
                             <?php endif; ?>
                         </td>
                         
@@ -491,8 +708,13 @@ require_once 'admin_header.php';
                         </td>
                         <td><strong style="color:var(--rust);">₱<?php echo number_format($service['price'], 2); ?></strong></td>
                         <td style="color:var(--gray);">⏱ <?php echo $service['session_time']; ?> mins</td>
-                        <td style="max-width:180px;color:var(--gray);font-size:0.82rem;">
-                            <?php echo htmlspecialchars(substr($service['description'], 0, 60)) . '...'; ?>
+                        <td style="white-space:nowrap;">
+                            <?php $rcnt = $svc_recipe_counts[$service['id']] ?? 0; ?>
+                            <?php if ($rcnt > 0): ?>
+                                <span class="badge badge-completed" style="font-size:0.7rem;">🧴 <?php echo $rcnt; ?></span>
+                            <?php else: ?>
+                                <span style="color:var(--gray);font-size:0.8rem;">—</span>
+                            <?php endif; ?>
                         </td>
                         <td style="font-size:0.78rem;color:var(--gray);">
                             <?php echo date('M d, Y', strtotime($service['created_at'])); ?>
@@ -523,7 +745,7 @@ require_once 'admin_header.php';
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="11" style="text-align:center;color:var(--gray);padding:2rem;">
+                        <td colspan="9" style="text-align:center;color:var(--gray);padding:2rem;">
                             No services found in this category.
                         </td>
                     </tr>
