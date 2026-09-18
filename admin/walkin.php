@@ -101,6 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     $quantity       = max(1, intval($_POST['quantity'] ?? 1));
     $people_count   = max(1, intval($_POST['people_count'] ?? 1));
     $booking_date   = $_POST['booking_date'] ?? null;
+    $booking_date_2 = trim($_POST['booking_date_2'] ?? ''); // TEMP guard field — see 2-session block check below (remove once Step 3 dual-appointment creation is built)
     $payment_method  = $_POST['payment_method'] ?? 'cash';
     $advance_payment = max(0.0, floatval($_POST['advance_payment'] ?? 0));
     $advance_pm      = in_array($_POST['advance_payment_method'] ?? 'cash', ['cash','gcash','maya','qrph','card','swiper']) ? ($_POST['advance_payment_method'] ?? 'cash') : 'cash';
@@ -129,6 +130,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
         $walkin_type    = "danger";
     } elseif ($discount_type === 'celebration' && $voucher_value <= 0) {
         $walkin_message = "Please enter the celebration discount percentage, or select 'None' if no discount is used.";
+        $walkin_type    = "danger";
+    } elseif ($order_type === 'service' && $booking_date_2 !== '') {
+        // TEMP GUARD — remove this branch once 2-session dual-appointment backend creation is built.
+        // Without it, submitting "2 Sessions" mode silently books ONLY Session 1 at services.price,
+        // silently drops Session 2 and undercharges vs. the flat package price (session2_price).
+        $walkin_message = "⚠️ 2-Session booking is not yet available on this system — please book Session 1 only for now (use '1 Session' mode), or contact IT.";
         $walkin_type    = "danger";
     } else {
         if ($order_type === 'product') {
@@ -483,7 +490,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
 }
 
 $all_services = [];
-$result = $conn->query("SELECT id, name, price, session_time, is_home_service, home_service_fee, home_service_price FROM services WHERE deleted_at IS NULL ORDER BY name");
+$result = $conn->query("SELECT id, name, price, session_time, is_home_service, home_service_fee, home_service_price, is_two_session, session2_price FROM services WHERE deleted_at IS NULL ORDER BY name");
 while ($row = $result->fetch_assoc()) $all_services[] = $row;
 
 // $all_partners and $partner_rates_map already fetched above POST handler
@@ -676,17 +683,56 @@ require_once 'admin_header.php';
                 <div class="form-section">
                     <div class="form-section-header">📅 Booking Details</div>
                     <div class="form-section-body">
-                        <div class="form-group" style="margin-bottom:1rem;">
+                        <div id="sessionModeSelector" style="display:none;margin-bottom:1rem;">
+                            <label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:4px;font-weight:600;">Booking Mode <span class="required">*</span></label>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+                                <div class="rate-type-btn active" id="sessionMode1Btn" onclick="selectSessionMode('single')">
+                                    <span style="font-size:1.1rem;">1️⃣</span><span style="font-weight:700;font-size:0.82rem;">1 Session</span><span style="font-size:0.7rem;opacity:0.75;">Regular price</span>
+                                </div>
+                                <div class="rate-type-btn" id="sessionMode2Btn" onclick="selectSessionMode('two')">
+                                    <span style="font-size:1.1rem;">🔁</span><span style="font-weight:700;font-size:0.82rem;">2 Sessions</span><span style="font-size:0.7rem;opacity:0.75;">Package price</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom:0.35rem;" id="singleSessionLabelWrap">
                             <label>Booking Date & Time <span class="required">*</span></label>
+                        </div>
+                        <div class="form-group" style="margin-bottom:0.35rem;display:none;" id="session1LabelWrap">
+                            <label>🔁 Session 1 <span class="required">*</span></label>
+                        </div>
+                        <div class="form-group" style="margin-bottom:1rem;">
                             <input type="hidden" name="booking_date" id="walkin_booking_date">
                             <button type="button" class="walkin-dt-pick-btn" id="walkinPickDateBtn"
-                                    onclick="openWalkinBM()" disabled>
+                                    onclick="openWalkinBM('session1')" disabled>
                                 📅 Pick Date &amp; Time
                             </button>
                             <div id="walkinSelectedDateTime" style="font-size:0.78rem;color:var(--gray);margin-top:5px;">
                                 Select a service and therapist first
                             </div>
                         </div>
+
+                        <div id="session2DateBlock" style="display:none;margin-bottom:1rem;">
+                            <div class="form-group" style="margin-bottom:0.35rem;">
+                                <label>🔁 Session 2 <span class="required">*</span></label>
+                            </div>
+                            <div class="form-group">
+                                <input type="hidden" name="booking_date_2" id="walkin_booking_date_2">
+                                <button type="button" class="walkin-dt-pick-btn" id="walkinPickDate2Btn"
+                                        onclick="openWalkinBM('session2')" disabled>
+                                    📅 Pick Date &amp; Time
+                                </button>
+                                <div id="walkinSelectedDateTime2" style="font-size:0.78rem;color:var(--gray);margin-top:5px;">
+                                    Pick Session 1's date first
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="combinedTotalRow" style="display:none;margin-bottom:1rem;padding:0.6rem 0.85rem;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;align-items:center;justify-content:space-between;">
+                            <span style="font-size:0.78rem;color:var(--gray);font-weight:600;">2-Session Package Price</span>
+                            <strong style="font-size:1rem;color:var(--gold);" id="combinedTotalValue">₱0.00</strong>
+                        </div>
+
                         <div class="form-group">
                             <label>Number of People <span class="required">*</span></label>
                             <input type="number" name="people_count" value="1" min="1" required>
@@ -699,7 +745,10 @@ require_once 'admin_header.php';
                     <div class="form-section-body">
                         <input type="hidden" name="rate_type"  id="rate_type_val"  value="regular">
                         <input type="hidden" name="partner_id" id="partner_id_val" value="0">
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.85rem;">
+                        <div id="rateTypeTwoSessionNotice" style="display:none;margin-bottom:0.75rem;padding:0.55rem 0.75rem;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;font-size:0.78rem;color:#92400e;">
+                            🔁 2-Session Package — rate type is fixed to <strong>Regular</strong>. Session prices are set manually per package and are not modified by Home/Hotel/Influencer rates.
+                        </div>
+                        <div id="rateTypeBtnGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.85rem;">
                             <div class="rate-type-btn active" id="rtbtn-regular" onclick="selectRateType('regular')"><span style="font-size:1.1rem;">🟢</span><span style="font-weight:700;font-size:0.82rem;">Regular</span><span style="font-size:0.7rem;opacity:0.75;">Standard price</span></div>
                             <div class="rate-type-btn" id="rtbtn-home" onclick="selectRateType('home')"><span style="font-size:1.1rem;">🏠</span><span style="font-weight:700;font-size:0.82rem;">Home Service</span><span style="font-size:0.7rem;opacity:0.75;">Fixed total price</span></div>
                             <div class="rate-type-btn" id="rtbtn-hotel" onclick="selectRateType('hotel')"><span style="font-size:1.1rem;">🏨</span><span style="font-weight:700;font-size:0.82rem;">Hotel / Partner</span><span style="font-size:0.7rem;opacity:0.75;">Partner rate</span></div>
@@ -1098,6 +1147,7 @@ let currentServiceId   = null;
 let currentRateType    = 'regular';
 let currentPartnerId   = 0;
 let walkinAvailBlocked = false;
+let currentSessionMode = 'single'; // 'single' or 'two' — only meaningful when the selected service is_two_session capable
 
 const CLOSING_HOUR = 22; // 10 PM — last slot must end by this hour
 
@@ -1134,6 +1184,7 @@ function selectItem(type, id, el) {
     document.getElementById(type + '_item_id').value = id;
     if (type === 'service') {
         currentServiceId = id;
+        currentSessionMode = 'single'; // default mode whenever a (new) service is picked
         selectWalkinTherapist(0); // resets therapist + clears date + calls updatePickDateBtn
         const hint = document.getElementById('walkinSelectedDateTime');
         if (hint) hint.textContent = 'Select a therapist above to pick a date';
@@ -1172,6 +1223,82 @@ function selectWalkinTherapist(id) {
     if (pickBtn) { pickBtn.textContent = '📅 Pick Date & Time'; pickBtn.classList.remove('has-value'); }
     const hint = document.getElementById('walkinSelectedDateTime');
     if (hint) hint.textContent = id > 0 ? 'Tap to pick a date and time slot' : 'Select a therapist above to pick a date';
+    // Session 2's date depends on Session 1's date — clear it too so it can't go stale
+    const hiddenDate2 = document.getElementById('walkin_booking_date_2');
+    if (hiddenDate2) hiddenDate2.value = '';
+    const pickBtn2 = document.getElementById('walkinPickDate2Btn');
+    if (pickBtn2) { pickBtn2.textContent = '📅 Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
+    const hint2 = document.getElementById('walkinSelectedDateTime2');
+    if (hint2) hint2.textContent = "Pick Session 1's date first";
+    updatePickDateBtn();
+}
+
+function isTwoSessionCapable(svc) {
+    return !!(svc && parseInt(svc.is_two_session) === 1);
+}
+
+// True only when the selected service supports 2-session packages AND the receptionist
+// has switched the mode selector to "2 Sessions" (default mode is always 'single').
+function isTwoSessionModeActive() {
+    const svc = currentServiceId ? serviceData[currentServiceId] : null;
+    return isTwoSessionCapable(svc) && currentSessionMode === 'two';
+}
+
+function selectSessionMode(mode) {
+    currentSessionMode = mode;
+    const btn1 = document.getElementById('sessionMode1Btn');
+    const btn2 = document.getElementById('sessionMode2Btn');
+    if (btn1) btn1.classList.toggle('active', mode === 'single');
+    if (btn2) btn2.classList.toggle('active', mode === 'two');
+
+    if (mode === 'single') {
+        // Leaving 2-Sessions mode — Session 2's date no longer applies, clear it
+        const hiddenDate2 = document.getElementById('walkin_booking_date_2');
+        if (hiddenDate2) hiddenDate2.value = '';
+        const pickBtn2 = document.getElementById('walkinPickDate2Btn');
+        if (pickBtn2) { pickBtn2.textContent = '📅 Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
+        const hint2 = document.getElementById('walkinSelectedDateTime2');
+        if (hint2) hint2.textContent = "Pick Session 1's date first";
+    }
+
+    updatePricePreview();
+    updateTherapistMode();
+}
+
+function updateTwoSessionUI() {
+    const svc     = currentServiceId ? serviceData[currentServiceId] : null;
+    const capable = isTwoSessionCapable(svc);
+    const isTwo   = capable && currentSessionMode === 'two';
+
+    const modeSelector = document.getElementById('sessionModeSelector');
+    if (modeSelector) modeSelector.style.display = capable ? '' : 'none';
+
+    const singleWrap    = document.getElementById('singleSessionLabelWrap');
+    const s1Wrap         = document.getElementById('session1LabelWrap');
+    const s2Block         = document.getElementById('session2DateBlock');
+    const combinedRow      = document.getElementById('combinedTotalRow');
+    const rateTypeNotice = document.getElementById('rateTypeTwoSessionNotice');
+    const rateTypeGrid    = document.getElementById('rateTypeBtnGrid');
+
+    if (singleWrap)   singleWrap.style.display   = isTwo ? 'none' : '';
+    if (s1Wrap)        s1Wrap.style.display        = isTwo ? '' : 'none';
+    if (s2Block)        s2Block.style.display        = isTwo ? '' : 'none';
+    if (combinedRow)    combinedRow.style.display    = isTwo ? 'flex' : 'none';
+
+    if (isTwo) {
+        const pkgTotal  = parseFloat(svc.session2_price) || 0;
+        const totalVal = document.getElementById('combinedTotalValue');
+        if (totalVal) totalVal.textContent = '₱' + pkgTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+        // Lock rate type to Regular — 2-session package price is fixed, not rate-adjusted
+        if (currentRateType !== 'regular') selectRateType('regular');
+        if (rateTypeGrid)   { rateTypeGrid.style.pointerEvents = 'none'; rateTypeGrid.style.opacity = '0.45'; }
+        if (rateTypeNotice) rateTypeNotice.style.display = '';
+    } else {
+        if (rateTypeGrid)   { rateTypeGrid.style.pointerEvents = ''; rateTypeGrid.style.opacity = ''; }
+        if (rateTypeNotice) rateTypeNotice.style.display = 'none';
+    }
+
     updatePickDateBtn();
 }
 
@@ -1349,20 +1476,31 @@ function onPartnerChange(partnerId) { currentPartnerId = parseInt(partnerId) || 
 function updatePricePreview() {
     const svc = serviceData[currentServiceId]; const display = document.getElementById('price-display'); const formula = document.getElementById('price-formula');
     if (!display || !formula) return;
-    if (!svc) { display.textContent = '₱0.00'; formula.textContent = 'Select a service first'; return; }
-    const regular = parseFloat(svc.price);
-    const homeFee   = parseFloat(svc.home_service_fee   || 0); // legacy
-    const homePrice = parseFloat(svc.home_service_price || 0);
-    const peopleCount = parseInt(document.querySelector('[name="people_count"]')?.value || 1) || 1;
-    let perPerson = regular; let formulaTxt = '';
-    switch (currentRateType) {
-        case 'regular':    perPerson = regular;    formulaTxt = 'Regular price'; break;
-        case 'home':       perPerson = homePrice;  formulaTxt = `Home Service — Fixed price (₱${homePrice.toFixed(2)})`; break;
-        case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
-        case 'influencer': perPerson = 0; formulaTxt = 'Complimentary — ₱0'; break;
+    if (!svc) { display.textContent = '₱0.00'; formula.textContent = 'Select a service first'; updateTwoSessionUI(); return; }
+
+    let total = 0, formulaTxt = '';
+
+    if (isTwoSessionModeActive()) {
+        total = parseFloat(svc.session2_price) || 0;
+        formulaTxt = '2-Session Package Price';
+        display.style.color = 'var(--gold)';
+    } else {
+        const regular = parseFloat(svc.price);
+        const homeFee   = parseFloat(svc.home_service_fee   || 0); // legacy
+        const homePrice = parseFloat(svc.home_service_price || 0);
+        const peopleCount = parseInt(document.querySelector('[name="people_count"]')?.value || 1) || 1;
+        let perPerson = regular;
+        switch (currentRateType) {
+            case 'regular':    perPerson = regular;    formulaTxt = 'Regular price'; break;
+            case 'home':       perPerson = homePrice;  formulaTxt = `Home Service — Fixed price (₱${homePrice.toFixed(2)})`; break;
+            case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
+            case 'influencer': perPerson = 0; formulaTxt = 'Complimentary — ₱0'; break;
+        }
+        if (peopleCount > 1 && currentRateType !== 'influencer') formulaTxt += ` × ${peopleCount} people`;
+        total = perPerson * peopleCount;
+        display.style.color = currentRateType === 'influencer' ? 'var(--green)' : 'var(--gold)';
     }
-    if (peopleCount > 1 && currentRateType !== 'influencer') formulaTxt += ` × ${peopleCount} people`;
-    const total = perPerson * peopleCount;
+
     display.textContent = '₱' + total.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
     const advance = parseFloat(document.getElementById('walkinAdvancePay')?.value) || 0;
     if (advance > 0 && total > 0) {
@@ -1371,7 +1509,8 @@ function updatePricePreview() {
     } else {
         formula.textContent = formulaTxt;
     }
-    display.style.color = currentRateType === 'influencer' ? 'var(--green)' : 'var(--gold)';
+
+    updateTwoSessionUI();
 }
 
 function highlightPM(container) {
@@ -1413,6 +1552,7 @@ function proceedBooking(formType) {
     if (formType === 'service') {
         const bookingDate = form.querySelector('[name="booking_date"]')?.value;
         if (!bookingDate) { uiAlert('Please select a booking date first.'); return; }
+        if (isTwoSessionModeActive() && !form.querySelector('[name="booking_date_2"]')?.value) { uiAlert("Please select Session 2's booking date first."); return; }
         if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
         if (walkinAvailBlocked) {
             uiAlert('⛔ Cannot book: no qualified therapist is available at the selected time. Please adjust the booking time or choose a future date.');
@@ -1435,6 +1575,7 @@ function openPaymongoPopup(formType, method) {
     if (!name || !phone) { uiAlert('Please fill in customer name and phone number first.'); return; }
     if (formType === 'service') {
         if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
+        if (isTwoSessionModeActive() && !form.querySelector('[name="booking_date_2"]')?.value) { uiAlert("Please select Session 2's booking date first."); return; }
         if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
     }
     const bookBtn = document.getElementById(formType === 'service' ? 'svc-book-now' : 'prod-book-now');
@@ -1476,6 +1617,7 @@ window.addEventListener('message', function(event) {
 document.getElementById('serviceForm').addEventListener('submit', function(e) {
     if (!document.getElementById('service_item_id').value) { e.preventDefault(); uiAlert('Please select a service first.'); return; }
     if (!document.getElementById('walkin_booking_date').value) { e.preventDefault(); uiAlert('Please pick a booking date and time first.'); return; }
+    if (isTwoSessionModeActive() && !document.getElementById('walkin_booking_date_2').value) { e.preventDefault(); uiAlert("Please pick Session 2's booking date and time first."); return; }
     if (currentRateType === 'hotel' && currentPartnerId === 0) { e.preventDefault(); uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
 });
 document.getElementById('productForm').addEventListener('submit', function(e) {
@@ -1548,6 +1690,7 @@ const WALKIN_BM_MONTHS = ['January','February','March','April','May','June','Jul
 const WALKIN_BM_DAYS   = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 let walkinBMYear, walkinBMMonth, walkinBMSelectedDate = null;
 let walkinBwData = null, walkinBMSelectedHour = null, walkinBMSelectedMinute = null;
+let walkinBMTarget = 'session1', walkinBMMinDate = null;
 
 function updatePickDateBtn() {
     const svcId = currentServiceId ? parseInt(currentServiceId) : 0;
@@ -1560,19 +1703,42 @@ function updatePickDateBtn() {
         const hint = document.getElementById('walkinSelectedDateTime');
         if (hint) hint.textContent = 'Tap to pick a date and time slot';
     }
+
+    // Session 2's picker unlocks only in "2 Sessions" mode, once Session 1's date is set
+    const btn2 = document.getElementById('walkinPickDate2Btn');
+    if (btn2) {
+        const s1Filled = !!document.getElementById('walkin_booking_date')?.value;
+        const enabled2 = enabled && s1Filled && isTwoSessionModeActive();
+        btn2.disabled = !enabled2;
+        if (!document.getElementById('walkin_booking_date_2')?.value) {
+            const hint2 = document.getElementById('walkinSelectedDateTime2');
+            if (hint2) hint2.textContent = enabled2 ? 'Tap to pick a date and time slot' : "Pick Session 1's date first";
+        }
+    }
 }
 
-function openWalkinBM() {
+function openWalkinBM(target) {
+    walkinBMTarget = target || 'session1';
     const svcId = currentServiceId ? parseInt(currentServiceId) : 0;
     const thId  = parseInt(document.getElementById('svc_therapist_id')?.value || 0);
     if (!svcId || !thId) return;
 
+    walkinBMMinDate = null;
+    if (walkinBMTarget === 'session2') {
+        if (!isTwoSessionModeActive()) return; // Session 2 only applies in 2-Sessions mode
+        const s1Value = document.getElementById('walkin_booking_date')?.value;
+        if (!s1Value) return; // Session 1 must be picked first
+        const [y, m, d] = s1Value.split(' ')[0].split('-').map(Number);
+        walkinBMMinDate = new Date(y, m - 1, d);
+    }
+
     const tnBtn = document.getElementById('tbtn-' + thId);
     const thName = tnBtn ? tnBtn.querySelector('[style*="font-weight:700"]')?.textContent?.trim() : '';
+    const sessionPrefix = walkinBMTarget === 'session2' ? 'Session 2 — ' : (isTwoSessionModeActive() ? 'Session 1 — ' : '');
     const lbl = document.getElementById('walkinBMTitle');
-    if (lbl) lbl.textContent = '📅 Pick Date & Time' + (thName ? ' — ' + thName : '');
+    if (lbl) lbl.textContent = sessionPrefix + '📅 Pick Date & Time' + (thName ? ' — ' + thName : '');
 
-    const now = new Date();
+    const now = walkinBMMinDate || new Date();
     walkinBMYear  = now.getFullYear();
     walkinBMMonth = now.getMonth();
     walkinBMSelectedDate   = null;
@@ -1619,6 +1785,7 @@ function walkinBMRenderCalendar() {
     const firstDay    = new Date(walkinBMYear, walkinBMMonth, 1).getDay();
     const daysInMonth = new Date(walkinBMYear, walkinBMMonth + 1, 0).getDate();
     const today = new Date(); today.setHours(0,0,0,0);
+    const minBound = (walkinBMTarget === 'session2' && walkinBMMinDate) ? walkinBMMinDate : today;
     const maxD  = new Date(today); maxD.setDate(maxD.getDate() + 60);
 
     for (let i = 0; i < firstDay; i++) {
@@ -1633,7 +1800,7 @@ function walkinBMRenderCalendar() {
         const year = walkinBMYear, month = walkinBMMonth, day = d;
         const dateStr    = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
         const isToday    = cellDate.getTime() === today.getTime();
-        const isPast     = cellDate < today;
+        const isPast     = cellDate < minBound;
         const isFuture   = cellDate > maxD;
         const isSelected = walkinBMSelectedDate === dateStr;
 
@@ -1820,21 +1987,41 @@ function confirmWalkinBM() {
     const [yr, mo, dy] = walkinBMSelectedDate.split('-').map(Number);
     const dateStr = yr + '-' + String(mo).padStart(2, '0') + '-' + String(dy).padStart(2, '0');
     const timeStr = String(walkinBMSelectedHour).padStart(2, '0') + ':' + String(walkinBMSelectedMinute).padStart(2, '0') + ':00';
-    document.getElementById('walkin_booking_date').value = dateStr + ' ' + timeStr;
+    const fullValue = dateStr + ' ' + timeStr;
 
     const h12   = walkinBMSelectedHour === 0 ? 12 : walkinBMSelectedHour > 12 ? walkinBMSelectedHour - 12 : walkinBMSelectedHour;
     const ampm  = walkinBMSelectedHour < 12 ? 'AM' : 'PM';
     const timeLabel = h12 + ':' + String(walkinBMSelectedMinute).padStart(2, '0') + ' ' + ampm;
     const displayText = '📅 ' + WALKIN_BM_MONTHS[mo - 1] + ' ' + dy + ', ' + yr + ' · ' + timeLabel + ' — Change';
 
-    const pickBtn = document.getElementById('walkinPickDateBtn');
-    if (pickBtn) { pickBtn.textContent = displayText; pickBtn.classList.add('has-value'); }
+    if (walkinBMTarget === 'session2') {
+        document.getElementById('walkin_booking_date_2').value = fullValue;
+        const pickBtn2 = document.getElementById('walkinPickDate2Btn');
+        if (pickBtn2) { pickBtn2.textContent = displayText; pickBtn2.classList.add('has-value'); }
+        const hint2 = document.getElementById('walkinSelectedDateTime2');
+        if (hint2) hint2.textContent = '';
+    } else {
+        document.getElementById('walkin_booking_date').value = fullValue;
+        const pickBtn = document.getElementById('walkinPickDateBtn');
+        if (pickBtn) { pickBtn.textContent = displayText; pickBtn.classList.add('has-value'); }
+        const hint = document.getElementById('walkinSelectedDateTime');
+        if (hint) hint.textContent = '';
 
-    const hint = document.getElementById('walkinSelectedDateTime');
-    if (hint) hint.textContent = '';
+        // Session 1's date changed — Session 2's previously picked date may now be invalid
+        // (it must fall on/after Session 1's date), so it must be re-picked.
+        if (isTwoSessionModeActive()) {
+            const hiddenDate2 = document.getElementById('walkin_booking_date_2');
+            if (hiddenDate2) hiddenDate2.value = '';
+            const pickBtn2 = document.getElementById('walkinPickDate2Btn');
+            if (pickBtn2) { pickBtn2.textContent = '📅 Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
+            const hint2 = document.getElementById('walkinSelectedDateTime2');
+            if (hint2) hint2.textContent = "Pick Session 1's date first";
+        }
+    }
 
     closeWalkinBM();
     updateTherapistMode();
+    updatePickDateBtn();
 }
 </script>
 

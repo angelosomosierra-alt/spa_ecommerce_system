@@ -7,6 +7,8 @@ require_once __DIR__ . '/../notify.php';
 
 $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS deleted_at DATETIME NULL DEFAULT NULL");
 $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS home_service_price DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER home_service_fee");
+$conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS is_two_session TINYINT(1) NOT NULL DEFAULT 0");
+$conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS session2_price DECIMAL(10,2) NULL DEFAULT NULL");
 
 $message      = '';
 $message_type = '';
@@ -121,6 +123,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     $is_home_service    = isset($_POST['is_home_service']) ? 1 : 0;
     $home_service_price = $is_home_service ? floatval($_POST['home_service_price'] ?? 0) : 0.00;
     $at_cost            = max(0.0, floatval($_POST['at_cost'] ?? 0));
+    $is_two_session     = isset($_POST['is_two_session']) ? 1 : 0;
+    $session2_price     = $is_two_session ? floatval($_POST['session2_price'] ?? 0) : null;
 
     $image_name = '';
 
@@ -152,16 +156,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         if ($id) {
             // EDITING
             if ($image_name !== '') {
-                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=? WHERE id=?");
-                $stmt->bind_param("ssdisiiddi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost, $id);
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=?, is_two_session=?, session2_price=? WHERE id=?");
+                $stmt->bind_param("ssdisiiddidi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost, $is_two_session, $session2_price, $id);
             } else {
-                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=? WHERE id=?");
-                $stmt->bind_param("ssdiiiddi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_price, $at_cost, $id);
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=?, is_two_session=?, session2_price=? WHERE id=?");
+                $stmt->bind_param("ssdiiiddidi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_price, $at_cost, $is_two_session, $session2_price, $id);
             }
         } else {
             // NEW SERVICE
-            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_price, at_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("ssdisiidd", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost);
+            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_price, at_cost, is_two_session, session2_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("ssdisiiddid", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost, $is_two_session, $session2_price);
         }
 
         if ($stmt->execute()) {
@@ -420,6 +424,57 @@ require_once 'admin_header.php';
                 const chk   = document.getElementById('homeServiceToggle');
                 const row   = document.getElementById('homeFeeSectionRow');
                 const price = document.getElementById('homeServicePrice');
+                if (row)   row.style.display = chk.checked ? '' : 'none';
+                if (price) price.required = chk.checked;
+            })();
+            </script>
+
+            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;user-select:none;">
+                        <input type="checkbox" name="is_two_session" value="1"
+                               id="twoSessionToggle"
+                               style="width:18px;height:18px;cursor:pointer;"
+                               <?php echo !empty($edit_service['is_two_session']) ? 'checked' : ''; ?>>
+                        <span>🔁 This service can also be booked as a <strong>2-Session Package</strong></span>
+                    </label>
+                    <small style="color:var(--gray);margin-top:0.3rem;display:block;">
+                        Customers/receptionists choose 1 Session (regular price) or 2 Sessions (flat package price) at booking time.
+                    </small>
+                </div>
+            </div>
+
+            <div class="form-grid form-grid-2"
+                 id="session2PriceRow"
+                 style="margin-bottom:1.25rem;<?php echo empty($edit_service['is_two_session']) ? 'display:none;' : ''; ?>">
+                <div class="form-group">
+                    <label>🔁 Price for 2 Sessions (Total) (₱) <span class="required">*</span></label>
+                    <input type="number" name="session2_price" id="session2Price"
+                           step="0.01" min="0"
+                           value="<?php echo isset($edit_service['session2_price']) && $edit_service['session2_price'] !== null ? floatval($edit_service['session2_price']) : ''; ?>"
+                           placeholder="e.g. 599.00">
+                    <small style="color:var(--gray);">
+                        The flat, combined price for booking BOTH sessions together (e.g. ₱599) — not Session 1's price plus a Session 2 add-on. Manually entered, independent of Session 1's regular price.
+                    </small>
+                </div>
+            </div>
+
+            <script>
+            document.getElementById('twoSessionToggle').addEventListener('change', function() {
+                const row   = document.getElementById('session2PriceRow');
+                const price = document.getElementById('session2Price');
+                if (this.checked) {
+                    row.style.display = '';
+                    if (price) price.required = true;
+                } else {
+                    row.style.display = 'none';
+                    if (price) { price.required = false; price.value = ''; }
+                }
+            });
+            (function(){
+                const chk   = document.getElementById('twoSessionToggle');
+                const row   = document.getElementById('session2PriceRow');
+                const price = document.getElementById('session2Price');
                 if (row)   row.style.display = chk.checked ? '' : 'none';
                 if (price) price.required = chk.checked;
             })();
