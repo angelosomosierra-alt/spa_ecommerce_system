@@ -1154,7 +1154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
 
             // ── Completion discount — server-side recompute (never trust client totals) ──
             $cd_type  = sanitize_input($_POST['complete_disc_type'] ?? 'none');
-            if (!in_array($cd_type, ['none','voucher','senior','pwd','employee'])) $cd_type = 'none';
+            if (!in_array($cd_type, ['none','voucher','senior','pwd','employee','celebration'])) $cd_type = 'none';
             $cd_vtype  = sanitize_input($_POST['complete_voucher_type'] ?? 'cash');
             if (!in_array($cd_vtype, ['cash','percent'])) $cd_vtype = 'cash';
             $cd_vvalue = max(0.0, floatval($_POST['complete_voucher_value'] ?? 0));
@@ -1172,6 +1172,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             if (!$order_already_paid) {
                 if ($cd_type === 'voucher' && $cd_vvalue <= 0) {
                     $message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
+                    $message_type = "danger";
+                    goto end_action;
+                }
+                if ($cd_type === 'celebration' && $cd_vvalue <= 0) {
+                    $message = "Please enter the celebration discount percentage, or select 'None' if no discount is used.";
                     $message_type = "danger";
                     goto end_action;
                 }
@@ -1196,6 +1201,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $cd_amount = round($sv_gross * 0.20, 2);
                     } elseif ($cd_type === 'employee') {
                         $cd_amount = round($sv_gross * 0.50, 2);
+                    } elseif ($cd_type === 'celebration' && $cd_vvalue > 0) {
+                        $cd_amount = round($sv_gross * min(100.0, $cd_vvalue) / 100.0, 2);
                     } elseif ($cd_type === 'voucher' && $cd_vvalue > 0) {
                         $cd_amount = ($cd_vtype === 'percent')
                             ? round($sv_gross * min(100.0, $cd_vvalue) / 100.0, 2)
@@ -1232,14 +1239,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 foreach ($_rrows as $_rr) {
                     $_sid    = (int)$_rr['supply_id'];
                     $_qty    = floatval($_rr['quantity_per_person']) * $_ppl;
-                    $_sb_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ?");
+                    $_sb_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
                     $_sb_s->bind_param("i", $_sid); $_sb_s->execute();
-                    $_sbefore = (float)($_sb_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sb_s->close();
-                    $_ud     = $conn->prepare("UPDATE supplies SET current_stock = GREATEST(0, current_stock - ?) WHERE id = ?");
-                    $_ud->bind_param("di", $_qty, $_sid); $_ud->execute(); $_ud->close();
-                    $_sa_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ?");
-                    $_sa_s->bind_param("i", $_sid); $_sa_s->execute();
-                    $_safter  = (float)($_sa_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sa_s->close();
+                    $_sb_row  = $_sb_s->get_result()->fetch_assoc(); $_sb_s->close();
+                    if ($_sb_row === null) {
+                        // Supply is archived — log the skip with stock_before/after = 0; do not deduct
+                        $_sbefore = 0.0; $_safter = 0.0;
+                    } else {
+                        $_sbefore = (float)$_sb_row['current_stock'];
+                        $_ud     = $conn->prepare("UPDATE supplies SET current_stock = GREATEST(0, current_stock - ?) WHERE id = ? AND deleted_at IS NULL");
+                        $_ud->bind_param("di", $_qty, $_sid); $_ud->execute(); $_ud->close();
+                        $_sa_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
+                        $_sa_s->bind_param("i", $_sid); $_sa_s->execute();
+                        $_safter  = (float)($_sa_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sa_s->close();
+                    }
                     $_sul    = $conn->prepare("INSERT INTO supply_usage_log (appointment_id, supply_id, quantity_deducted, stock_before, stock_after) VALUES (?, ?, ?, ?, ?)");
                     $_sul->bind_param("iiddd", $appt_id, $_sid, $_qty, $_sbefore, $_safter); $_sul->execute(); $_sul->close();
                 }
@@ -1352,7 +1365,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $_actor_cp = (is_cashier() && !empty($pr['full_name']))
                 ? ['id' => null, 'name' => $pr['full_name'], 'role' => 'receptionist']
                 : null;
-            $cd_log = ($cd_type !== 'none') ? " | completion disc: {$cd_type}" . ($cd_type === 'voucher' ? " {$cd_vvalue}" . ($cd_vtype === 'percent' ? '%' : '₱') : '') : '';
+            $cd_log = ($cd_type !== 'none') ? " | completion disc: {$cd_type}" . (($cd_type === 'voucher' || $cd_type === 'celebration') ? " {$cd_vvalue}" . ($cd_type === 'celebration' || $cd_vtype === 'percent' ? '%' : '₱') : '') : '';
             log_activity($conn, 'appointment_completed',
                 "Completed appointment #{$appt_id} — {$appt['service_name']}{$cd_log}",
                 'appointment', $appt_id, $_actor_cp);
@@ -2779,8 +2792,22 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         <button type="button"
                 onclick="toggleCancel(<?php echo $appt_id; ?>)"
                 style="padding:0.35rem 0.8rem;border-radius:7px;border:1px solid #6b7280;background:transparent;color:#6b7280;font-size:0.82rem;font-weight:600;cursor:pointer;">
-            🚫 Customer Cancel
+            ✏️ Cancel Booking
         </button>
+        <?php if ($status === 'assigned'): ?>
+        <form method="POST" style="margin:0;display:inline;">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="action"        value="cancel">
+            <input type="hidden" name="appt_id"       value="<?php echo $appt_id; ?>">
+            <input type="hidden" name="cancel_reason" value="No-show — customer did not arrive">
+            <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+            <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
+                    style="padding:0.35rem 0.8rem;border-radius:7px;border:1px solid #d97706;background:transparent;color:#d97706;font-size:0.82rem;font-weight:600;cursor:pointer;"
+                    <?php if (is_cashier()): ?>onclick="uiConfirm('Mark this appointment as a no-show?\n\nThe appointment will be cancelled and the customer will be notified. This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Mark No-Show',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Mark this appointment as a no-show?\n\nThe appointment will be cancelled and the customer will be notified. This cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>
+                ⚠️ No-Show
+            </button>
+        </form>
+        <?php endif; ?>
         <?php endif; ?>
     </div>
 
@@ -2811,7 +2838,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
     <!-- Cancel inline form -->
     <div id="cancel-<?php echo $appt_id; ?>" style="display:none;margin-top:0.85rem;padding:1rem 1.1rem;background:#fef2f2;border-radius:10px;border:1px solid #fecaca;">
-        <div style="font-size:0.78rem;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">🚫 Cancel Appointment — Customer Request</div>
+        <div style="font-size:0.78rem;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">✏️ Cancel Booking — Admin Correction</div>
         <form method="POST" style="display:flex;flex-direction:column;gap:0.6rem;">
             <?php echo csrf_field(); ?>
             <input type="hidden" name="action"  value="cancel">
@@ -2824,7 +2851,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
             <div style="display:flex;gap:0.6rem;">
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="uiConfirm('Mark this appointment as cancelled by customer?').then(ok=>{if(!ok)return;openPinGate('Cancel Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Mark this appointment as cancelled by customer?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>🚫 Confirm Cancellation</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Cancel this booking as an admin correction?\n\nUse this only for booking mistakes, not for missed appointments. This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Cancel Booking',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Cancel this booking as an admin correction?\n\nUse this only for booking mistakes, not for missed appointments. This cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>✏️ Confirm Cancellation</button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCancel(<?php echo $appt_id; ?>)">Back</button>
             </div>
         </form>
@@ -3239,18 +3266,19 @@ function cmFmt(n) {
     return parseFloat(n).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 function cmDiscLabel(type) {
-    return {none:'None', voucher:'Voucher', senior:'Senior Citizen (20%)', pwd:'PWD (20%)', employee:'Staff (50%)'}[type] || type;
+    return {none:'None', voucher:'Voucher', senior:'Senior Citizen (20%)', pwd:'PWD (20%)', employee:'Staff (50%)', celebration:'Celebration Discount'}[type] || type;
 }
 
 function cmSetDiscount(type) {
     cmState.discType = type;
-    ['none','voucher','senior','pwd','employee'].forEach(function(t) {
+    ['none','voucher','senior','pwd','employee','celebration'].forEach(function(t) {
         var btn = document.getElementById('cm-discbtn-' + t);
         if (!btn) return;
         btn.style.borderColor = (t === type) ? 'var(--gold)' : 'var(--border2)';
         btn.style.background  = (t === type) ? '#fff8f2'    : 'var(--bg3)';
     });
-    document.getElementById('cm-voucher-inputs').style.display = (type === 'voucher') ? 'block' : 'none';
+    document.getElementById('cm-voucher-inputs').style.display    = (type === 'voucher')     ? 'block' : 'none';
+    document.getElementById('cm-celeb-inputs').style.display      = (type === 'celebration') ? 'block' : 'none';
     cmRecompute();
 }
 
@@ -3272,6 +3300,9 @@ function cmRecompute() {
         cdAmt = Math.round(gross * 0.20 * 100) / 100;
     } else if (dtype === 'employee') {
         cdAmt = Math.round(gross * 0.50 * 100) / 100;
+    } else if (dtype === 'celebration') {
+        var cpct = parseFloat(document.getElementById('cm-celeb-pct')?.value) || 0;
+        cdAmt = Math.round(gross * Math.min(100, cpct) / 100 * 100) / 100;
     } else if (dtype === 'voucher') {
         if (vtype === 'percent') {
             cdAmt = Math.round(gross * Math.min(100, vvalue) / 100 * 100) / 100;
@@ -3296,7 +3327,8 @@ function cmRecompute() {
     if (bDisc > 0) html += '<div style="' + rs + '"><span style="' + amber + '">' + cmDiscLabel(cmState.bookingDiscType) + ' (booking)</span><span style="' + amber + '">−₱' + cmFmt(bDisc) + '</span></div>';
     if (cdAmt > 0) {
         var cdLabel = cmDiscLabel(dtype);
-        if (dtype === 'voucher') cdLabel += ' (' + (vtype === 'percent' ? vvalue + '% off' : '₱ off') + ')';
+        if (dtype === 'voucher')     cdLabel += ' (' + (vtype === 'percent' ? vvalue + '% off' : '₱ off') + ')';
+        if (dtype === 'celebration') cdLabel += ' (' + (parseFloat(document.getElementById('cm-celeb-pct')?.value)||0) + '% off)';
         html += '<div style="' + rs + '"><span style="' + amber + '">' + cdLabel + '</span><span style="' + amber + '">−₱' + cmFmt(cdAmt) + '</span></div>';
     }
     if (advPay > 0) html += '<div style="' + rs + '"><span style="' + rust + '">💰 Advance (pre-recorded)</span><span style="' + rust + '">−₱' + cmFmt(advPay) + '</span></div>';
@@ -3411,8 +3443,13 @@ function submitComplete() {
     var hiddenAdv     = document.getElementById('cp-advance-' + cmState.apptId);
     if (hiddenMethod)  hiddenMethod.value  = cmState.payMethod;
     if (hiddenCdType)  hiddenCdType.value  = cmState.discType;
-    if (hiddenCvType)  hiddenCvType.value  = document.getElementById('cm-voucher-type')?.value  || 'cash';
-    if (hiddenCvVal)   hiddenCvVal.value   = document.getElementById('cm-voucher-value')?.value || '0';
+    if (cmState.discType === 'celebration') {
+        if (hiddenCvType) hiddenCvType.value = 'percent';
+        if (hiddenCvVal)  hiddenCvVal.value  = document.getElementById('cm-celeb-pct')?.value || '0';
+    } else {
+        if (hiddenCvType) hiddenCvType.value = document.getElementById('cm-voucher-type')?.value  || 'cash';
+        if (hiddenCvVal)  hiddenCvVal.value  = document.getElementById('cm-voucher-value')?.value || '0';
+    }
     if (hiddenAdv)     hiddenAdv.value     = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
     closeCompleteModal();
     var form = document.getElementById('complete-form-' + cmState.apptId);
@@ -3730,11 +3767,15 @@ function submitComplete() {
         <!-- Completion discount selector -->
         <div id="cm-disc-section" style="margin-bottom:0.65rem;">
             <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">🎟️ Completion Discount</div>
-            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.35rem;">
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.35rem;margin-bottom:0.35rem;">
                 <button type="button" id="cm-discbtn-none"     onclick="cmSetDiscount('none')"
                     style="padding:0.5rem 0.2rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🚫 None</button>
                 <button type="button" id="cm-discbtn-voucher"  onclick="cmSetDiscount('voucher')"
                     style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🎟️ Voucher</button>
+                <button type="button" id="cm-discbtn-celebration" onclick="cmSetDiscount('celebration')"
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🎉 Celebration<br><small style="font-weight:400;">% off</small></button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.35rem;">
                 <button type="button" id="cm-discbtn-senior"   onclick="cmSetDiscount('senior')"
                     style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">👴 Senior<br><small style="font-weight:400;">20%</small></button>
                 <button type="button" id="cm-discbtn-pwd"      onclick="cmSetDiscount('pwd')"
@@ -3761,6 +3802,17 @@ function submitComplete() {
                            oninput="cmRecompute()"
                            style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--bg3);">
                 </div>
+            </div>
+        </div>
+
+        <!-- Celebration discount inputs (shown only when celebration selected) -->
+        <div id="cm-celeb-inputs" style="display:none;background:#fef0ff;border:1px solid #d946ef;border-radius:8px;padding:0.75rem;margin-bottom:0.65rem;">
+            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">🎉 Enter discount percentage for this celebration</div>
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+                <input type="number" id="cm-celeb-pct" min="0" max="100" step="0.01" placeholder="e.g. 10" value=""
+                       oninput="cmRecompute()"
+                       style="width:120px;padding:0.45rem 0.6rem;border:1px solid #d946ef;border-radius:7px;font-size:0.9rem;font-weight:700;text-align:center;box-sizing:border-box;">
+                <span style="font-size:0.85rem;color:#7e22ce;font-weight:600;">% off the total</span>
             </div>
         </div>
 
@@ -4647,6 +4699,7 @@ function loadAddSvcSlots() {
                     style="margin-top:0.5rem;width:100%;padding:0.5rem;background:transparent;border:1px dashed var(--gold);border-radius:8px;color:var(--gold);font-weight:600;font-size:0.8rem;cursor:pointer;">
                 ➕ Magdagdag ng Serbisyo
             </button>
+            <?php $_edit_svcs = $conn->query("SELECT id, name, price FROM services ORDER BY name ASC")->fetch_all(MYSQLI_ASSOC); ?>
             <!-- Inline add-extra form (hidden by default) -->
             <div id="edit-add-extra-wrap" style="display:none;margin-top:0.75rem;padding:0.75rem;background:var(--bg2);border-radius:8px;border:1px solid var(--border2);">
                 <div style="font-size:0.75rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">Pumili ng Serbisyo</div>
@@ -4682,7 +4735,6 @@ function loadAddSvcSlots() {
             <input type="hidden" name="booking_date"    id="edit_booking_date">
             <div style="margin-bottom:0.85rem;">
                 <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Service</label>
-                <?php $_edit_svcs = $conn->query("SELECT id, name, price FROM services ORDER BY name ASC")->fetch_all(MYSQLI_ASSOC); ?>
                 <select name="new_service_id" id="edit_new_service_id"
                         style="width:100%;padding:0.55rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;"
                         onchange="loadEditSlots(document.getElementById('edit_date_picker').value, this.value, parseInt(document.getElementById('edit_people_count').value)||1)">

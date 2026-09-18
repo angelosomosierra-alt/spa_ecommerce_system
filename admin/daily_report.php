@@ -181,18 +181,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_header'])) {
     $cc    = sanitize_input($_POST['closing_cashier'] ?? '');
     $coh   = floatval($_POST['cash_on_hand'] ?? 0);
     $pos   = floatval($_POST['pos_reading']  ?? 0);
-    $mdp   = floatval($_POST['maya_dp']      ?? 0);
     $notes = sanitize_input($_POST['notes'] ?? '');
     if ($rpt) {
         if (!$LOCK_FEATURE_ENABLED || !$rpt['is_locked']) {
-            $stmt = $conn->prepare("UPDATE daily_reports SET opening_cashier=?,closing_cashier=?,cash_on_hand=?,pos_reading=?,notes=?,maya_dp=? WHERE id=?");
-            $stmt->bind_param("ssddsdi", $oc, $cc, $coh, $pos, $notes, $mdp, $rpt['id']); $stmt->execute(); $stmt->close();
+            $stmt = $conn->prepare("UPDATE daily_reports SET opening_cashier=?,closing_cashier=?,cash_on_hand=?,pos_reading=?,notes=? WHERE id=?");
+            $stmt->bind_param("ssddsi", $oc, $cc, $coh, $pos, $notes, $rpt['id']); $stmt->execute(); $stmt->close();
             $msg = "✅ Report header saved.";
         } else { $msg = "⚠️ Report is locked."; $msg_type = 'warning'; }
     } else {
         $uid = (int)$_SESSION['user_id'];
-        $stmt = $conn->prepare("INSERT INTO daily_reports (report_date,opening_cashier,closing_cashier,cash_on_hand,pos_reading,notes,maya_dp,created_by) VALUES (?,?,?,?,?,?,?,?)");
-        $stmt->bind_param("sssddsdi", $report_date, $oc, $cc, $coh, $pos, $notes, $mdp, $uid); $stmt->execute(); $stmt->close();
+        $stmt = $conn->prepare("INSERT INTO daily_reports (report_date,opening_cashier,closing_cashier,cash_on_hand,pos_reading,notes,created_by) VALUES (?,?,?,?,?,?,?)");
+        $stmt->bind_param("sssddsi", $report_date, $oc, $cc, $coh, $pos, $notes, $uid); $stmt->execute(); $stmt->close();
         $msg = "✅ Daily report created.";
     }
     // Re-fetch after save using prepared statement
@@ -205,12 +204,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_header'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_denoms'])) {
     verify_csrf_token();
     if ($rpt && (!$LOCK_FEATURE_ENABLED || !$rpt['is_locked'])) {
-        // Save opening COH as a single amount (no longer a denomination grid)
-        $opening_coh_val = floatval($_POST['opening_coh'] ?? 0);
-        $oc_stmt = $conn->prepare("UPDATE daily_reports SET opening_coh=? WHERE id=?");
-        $oc_stmt->bind_param("di", $opening_coh_val, $rpt['id']); $oc_stmt->execute(); $oc_stmt->close();
-        $rpt['opening_coh'] = $opening_coh_val; // keep $rpt in sync for this request
-
         // Save closing denominations only
         $denoms = [1000,500,200,100,50,20,10,5,1];
         $stmt = $conn->prepare("
@@ -937,15 +930,37 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         <?php endif; ?>
                     </div>
                     <div style="margin-bottom:0.65rem;">
-                        <label style="font-size:0.75rem;font-weight:600;color:var(--brown);display:block;margin-bottom:3px;">Maya (DP) (₱)</label>
-                        <input type="number" name="maya_dp" step="0.01" min="0"
-                               value="<?php echo floatval($rpt['maya_dp'] ?? 0); ?>"
-                               <?php echo $locked ? 'disabled' : ''; ?>
-                               style="width:100%;padding:0.45rem 0.65rem;border:1px solid var(--border2);
-                                      border-radius:7px;background:var(--bg3);color:var(--brown);
-                                      font-size:0.85rem;box-sizing:border-box;">
+                        <label style="font-size:0.75rem;font-weight:600;color:var(--brown);display:block;margin-bottom:3px;">Non-Cash Advance (DP)</label>
+                        <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:7px;padding:0.45rem 0.65rem;font-size:0.82rem;">
+                            <?php
+                            $dp_display = [
+                                'GCash'  => $gcash_dp_total,
+                                'Maya'   => $maya_dp_total,
+                                'Card'   => $card_dp_total,
+                                'QR Ph'  => $qrph_dp_total,
+                            ];
+                            $any_noncash_dp = false;
+                            foreach ($dp_display as $_lbl => $_val):
+                                if ($_val <= 0) continue;
+                                $any_noncash_dp = true;
+                            ?>
+                            <div style="display:flex;justify-content:space-between;margin-bottom:0.15rem;">
+                                <span style="color:var(--gray);"><?php echo $_lbl; ?> (DP)</span>
+                                <span style="color:var(--rust);font-weight:600;">−₱<?php echo number_format($_val, 2); ?></span>
+                            </div>
+                            <?php endforeach; ?>
+                            <?php if (!$any_noncash_dp): ?>
+                            <span style="color:var(--gray);font-style:italic;font-size:0.78rem;">None today</span>
+                            <?php endif; ?>
+                            <?php if ($noncash_dp_total > 0): ?>
+                            <div style="border-top:1px solid var(--border2);margin-top:0.3rem;padding-top:0.3rem;display:flex;justify-content:space-between;">
+                                <span style="font-weight:700;color:var(--brown);">Total DP deducted</span>
+                                <span style="color:var(--rust);font-weight:700;">−₱<?php echo number_format($noncash_dp_total, 2); ?></span>
+                            </div>
+                            <?php endif; ?>
+                        </div>
                         <div style="font-size:0.7rem;color:var(--gray);margin-top:2px;">
-                            Advance payments via Maya DP (deducted from Net Cash)
+                            Auto-calculated from today's advance payments — GCash, Maya, Card, and QRPH are deducted from Net Cash; Cash advances are not.
                         </div>
                     </div>
                     <div style="margin-bottom:0.65rem;">
@@ -1051,27 +1066,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
             <form method="POST">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="save_denoms" value="1">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
-
-                    <!-- Opening COH (single amount) -->
-                    <div>
-                        <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;padding-bottom:0.3rem;border-bottom:2px solid var(--border2);">📂 Opening Count</div>
-                        <div style="margin-bottom:1.5rem;">
-                            <h4 style="font-size:0.88rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">
-                                💰 Opening COH
-                                <span style="font-weight:400;font-size:0.75rem;color:var(--gray);">
-                                    (Start of Day — total cash in register before any transactions)
-                                </span>
-                            </h4>
-                            <input type="number" name="opening_coh" id="opening-coh"
-                                   step="0.01" min="0" placeholder="e.g. 3000"
-                                   value="<?php echo floatval($rpt['opening_coh'] ?? 0); ?>"
-                                   <?php echo $locked ? 'disabled' : ''; ?>
-                                   oninput="recalcShortOver()"
-                                   style="width:220px;padding:0.55rem 0.7rem;border:1px solid var(--border2);
-                                          border-radius:8px;font-size:0.95rem;font-weight:600;">
-                        </div>
-                    </div>
+                <div style="display:grid;grid-template-columns:1fr;gap:1.5rem;">
 
                     <!-- Closing Count -->
                     <div>
@@ -1227,7 +1222,10 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'UNPAIDS',                'val' => $unpaids_total,        'color' => 'var(--rust)'],
                 ['label' => 'MARKETING EXPENSE',      'val' => $mktg_expense,         'color' => 'var(--rust)'],
                 ['label' => 'ADVANCE PAYMENT',        'val' => $advance_payment_total,'color' => 'var(--rust)'],
-                ['label' => 'MAYA (DP)',              'val' => $maya_dp_total,        'color' => 'var(--rust)'],
+                ['label' => 'GCASH (DP)',              'val' => $gcash_dp_total,       'color' => 'var(--rust)'],
+                ['label' => 'MAYA (DP)',               'val' => $maya_dp_total,        'color' => 'var(--rust)'],
+                ['label' => 'SWIPER (DP)',             'val' => $card_dp_total,        'color' => 'var(--rust)'],
+                ['label' => 'QRPH (DP)',               'val' => $qrph_dp_total,        'color' => 'var(--rust)'],
                 ['label' => 'PRODUCT SOLD',           'val' => $prod_sold_total,      'color' => '#198754'],
                 ['label' => 'EXPENSES',               'val' => $expenses_total,       'color' => 'var(--rust)'],
                 ['label' => 'ADVANCES RECEIVED',      'val' => $advances_received_total, 'color' => '#C96A2C',
@@ -1239,15 +1237,13 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'NET CASH',               'val' => $net_cash,             'color' => '#198754', 'bold' => true,
                  'bg' => 'rgba(25,135,84,0.07)',
                  'note' => 'POS Reading − payments − discounts − unpaids − advance − expenses − mktg ± spreadsheet'],
-                ['label' => 'OPENING COH',            'val' => $opening_denom_total,  'color' => '#6366f1',
-                 'note' => 'Start of day cash in register'],
                 ['label' => 'CLOSING COH (Cash on Hand)', 'val' => $cash_on_hand,     'color' => '#0070f3', 'bold' => true,
                  'id' => 'live-coh',
                  'note' => 'Closing denomination count + advances received'],
                 ['label' => '(SHORT) / OVER',         'val' => $short_over,
                  'color' => $short_over >= 0 ? '#198754' : '#dc3545', 'bold' => true,
                  'bg' => $short_over >= 0 ? 'rgba(25,135,84,0.1)' : 'rgba(220,53,69,0.1)',
-                 'note' => 'Closing COH − (Opening COH + Net Cash)', 'id' => 'live-short-over'],
+                 'note' => 'Closing COH − Net Cash', 'id' => 'live-short-over'],
             ];
             ?>
             <?php foreach ($summary_rows as $sr): ?>
@@ -2697,11 +2693,10 @@ foreach ($_disc_kpis as [$_dl, $_dv, $_dc]):
         return total;
     }
 
-    // Recalculate SHORT / OVER live — reads opening-coh input directly
+    // Recalculate SHORT / OVER live
     function recalcShortOver() {
-        var openingVal   = parseFloat((document.getElementById('opening-coh') || {}).value) || 0;
         var closingTotal = sumDenomInputs('closing');
-        var shortOver    = closingTotal - (openingVal + serverNetCash);
+        var shortOver    = closingTotal - serverNetCash;
         var isOver = shortOver >= 0;
         var soRow = document.getElementById('live-short-over');
         var soVal = document.getElementById('live-short-over-val');

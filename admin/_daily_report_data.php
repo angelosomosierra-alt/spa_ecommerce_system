@@ -19,6 +19,8 @@
         $conn->query("ALTER TABLE appointments ADD COLUMN advance_payment DECIMAL(10,2) NOT NULL DEFAULT 0.00");
     if (!in_array('advance_payment_date', $appt_cols))
         $conn->query("ALTER TABLE appointments ADD COLUMN advance_payment_date DATE DEFAULT NULL");
+    if (!in_array('advance_payment_method', $appt_cols))
+        $conn->query("ALTER TABLE appointments ADD COLUMN advance_payment_method VARCHAR(20) NOT NULL DEFAULT 'cash'");
 
     $svc_cols = [];
     $res2 = $conn->query("SHOW COLUMNS FROM services");
@@ -118,6 +120,7 @@ $_s = $conn->prepare("
         a.charged_price,
         a.celebration_discount,
         a.advance_payment,
+        a.advance_payment_date,
         a.status          AS appt_status,
         GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
         IFNULL(SUM(at2.commission),0) AS total_commission
@@ -205,6 +208,7 @@ $_i->close();
 // regardless of the appointment's completion status or appointment date.
 $adv_q = $conn->prepare("
     SELECT a.id, a.advance_payment, a.advance_payment_date,
+           a.advance_payment_method,
            a.appointment_date, a.service_type,
            s.name AS service_name,
            COALESCE(o.customer_name, u.full_name) AS customer_name
@@ -221,6 +225,18 @@ $adv_q->execute();
 $advances_received = $adv_q->get_result()->fetch_all(MYSQLI_ASSOC);
 $adv_q->close();
 $advances_received_total = array_sum(array_column($advances_received, 'advance_payment'));
+// Per-method DP totals — computed from the same advances_received dataset
+$_dp_by_method = [];
+foreach ($advances_received as $_adv) {
+    $_m = $_adv['advance_payment_method'] ?? 'cash';
+    $_dp_by_method[$_m] = ($_dp_by_method[$_m] ?? 0) + (float)$_adv['advance_payment'];
+}
+$cash_dp_total  = (float)($_dp_by_method['cash']   ?? 0);
+$gcash_dp_total = (float)($_dp_by_method['gcash']  ?? 0);
+$maya_dp_total  = (float)($_dp_by_method['maya']   ?? 0);
+$card_dp_total  = (float)(($_dp_by_method['card']  ?? 0) + ($_dp_by_method['swiper'] ?? 0));
+$qrph_dp_total  = (float)($_dp_by_method['qrph']  ?? 0);
+$noncash_dp_total = $gcash_dp_total + $maya_dp_total + $card_dp_total + $qrph_dp_total;
 
 // ── Upcoming Paid Appointments (paid today, service on a future date) ─────────
 $_up_paid = $conn->prepare("
@@ -343,7 +359,13 @@ $staff_cf              = array_sum(array_column($service_rows, 'total_commission
 $total_discounts       = array_sum(array_column($service_rows, 'discount_amount'))
                        + array_sum(array_column($service_rows, 'completion_discount_amount'));
 $celeb_discount        = array_sum(array_column($service_rows, 'celebration_discount'));
-$advance_payment_total = array_sum(array_column($service_rows, 'advance_payment'));
+// B48: only prior-day advances — same-day advances are already in $noncash_dp_total (B46)
+$advance_payment_total = 0;
+foreach ($service_rows as $_srow) {
+    if (($_srow['advance_payment_date'] ?? '') !== $report_date) {
+        $advance_payment_total += (float)$_srow['advance_payment'];
+    }
+}
 $gc_sold_total         = array_sum(array_column($gc_sold,      'amount'));
 $gc_redeem_total       = array_sum(array_column($gc_redeemed,  'amount'));
 $unpaids_total         = array_sum(array_column($unpaids, 'amount')) + $walkin_unpaid_total;
@@ -385,7 +407,7 @@ $pos_variance         = $pos_reading - $pos_reading_computed;
 // GROSS SALES = POS_READING + SOLD_GC − MARKETING_EXPENSE + SPREADSHEET_NET_SALES
 $gross_sales   = $pos_reading + $gc_sold_total - $mktg_expense + $spreadsheet_net_total;
 $net_sales     = $gross_sales - $staff_cf;
-$maya_dp_total = floatval($rpt['maya_dp'] ?? 0);
+// $maya_dp_total and per-method DP totals are computed above from advances_received
 
 // Payment method totals
 $pm_totals = [];
@@ -431,7 +453,7 @@ $cash_on_hand = $closing_denom_total + $advances_received_total;
 //   $card_total            ← B43  SWIPER
 //   $gcash_total           ← B44  GCASH (SALES)
 //   $maya_total            ← B45  MAYA (SALES)
-//   $maya_dp_total         ← B46  MAYA (DP)
+//   $noncash_dp_total      ← B46  NON-CASH DP (GCash+Maya+Card+QRPH advances; Cash DP intentionally excluded because cash is already in the physical drawer)
 //   $unpaids_total         ← B47  UNPAIDS
 //   $advance_payment_total ← B48  ADVANCE PAYMENT
 //   $expenses_total        ← B49  EXPENSES
@@ -464,7 +486,10 @@ $net_cash = $pos_reading
           - $gcash_total
           - $maya_total
           - $qrph_total
-          - $maya_dp_total
+          - $gcash_dp_total      // GCash (DP) — non-cash, not in physical drawer
+          - $maya_dp_total       // Maya (DP) — non-cash, not in physical drawer
+          - $card_dp_total       // Card/Swiper (DP) — non-cash, not in physical drawer
+          - $qrph_dp_total       // QRPH (DP) — non-cash, not in physical drawer
           - $unpaids_total
           - $advance_payment_total
           - $total_discounts
@@ -507,8 +532,8 @@ if (!empty($appt_ids)) {
 $manual_prod_total   = array_sum(array_column($product_sales, 'amount'));
 $cash_received_today = $cash_from_orders + $cash_from_addons + $manual_prod_total;
 $expected_drawer     = $cash_received_today - $expenses_total;
-// (Short) / Over = Closing COH − (Opening COH + Net Cash)
-$short_over = $closing_denom_total - ($opening_denom_total + $net_cash);
+// (Short) / Over = Closing COH − Net Cash  (opening cash removed per client request)
+$short_over = $closing_denom_total - $net_cash;
 
 // ════════════════════════════════════════════════════════════════════════════
 // ANALYSIS LAYER — all vars prefixed $wow_ or named clearly

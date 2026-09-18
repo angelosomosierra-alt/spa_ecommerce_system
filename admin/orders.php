@@ -117,62 +117,16 @@ if (isset($_GET['reject_order'])) {
     header("Location: orders.php?msg=rejected"); exit();
 }
 
-// ─── DECLINE + REFUND (online) ────────────────────────────────────────────────
+// ─── DECLINE ONLINE ORDER ─────────────────────────────────────────────────────
 if (isset($_GET['decline_online'])) {
     $id = intval($_GET['decline_online']);
 
-    $stmt = $conn->prepare("SELECT paymongo_link_id, total_amount, payment_status, user_id FROM orders WHERE id=?");
+    $stmt = $conn->prepare("SELECT user_id FROM orders WHERE id=?");
     $stmt->bind_param("i",$id); $stmt->execute();
     $order = $stmt->get_result()->fetch_assoc(); $stmt->close();
 
-    $refund_attempted = false;
-    $refund_success   = false;
-    $refund_error     = '';
-
-    if ($order && !empty($order['paymongo_link_id']) && $order['payment_status'] === 'paid') {
-        $refund_attempted = true;
-
-        $ch = curl_init('https://api.paymongo.com/v1/links/' . urlencode($order['paymongo_link_id']));
-        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_HTTPHEADER=>[
-            'Accept: application/json',
-            'Authorization: Basic ' . base64_encode(PAYMONGO_SECRET_KEY . ':'),
-        ]]);
-        $link_res   = json_decode(curl_exec($ch), true); curl_close($ch);
-        $payment_id = $link_res['data']['attributes']['payments'][0]['id'] ?? null;
-
-        if ($payment_id) {
-            $amount_cents   = intval($order['total_amount'] * 100);
-            $refund_payload = json_encode(['data'=>['attributes'=>[
-                'amount'     => $amount_cents,
-                'payment_id' => $payment_id,
-                'reason'     => 'others',
-                'notes'      => 'Declined by Recovery Iloilo admin.',
-            ]]]);
-            $ch = curl_init('https://api.paymongo.com/v1/refunds');
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER=>true, CURLOPT_POST=>true,
-                CURLOPT_POSTFIELDS=>$refund_payload,
-                CURLOPT_HTTPHEADER=>[
-                    'Content-Type: application/json','Accept: application/json',
-                    'Authorization: Basic ' . base64_encode(PAYMONGO_SECRET_KEY . ':'),
-                ],
-            ]);
-            $refund_res  = json_decode(curl_exec($ch), true);
-            $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
-
-            if ($http_status === 200) {
-                $refund_success = true;
-            } else {
-                $refund_error = $refund_res['errors'][0]['detail'] ?? 'Refund API error (HTTP ' . $http_status . ').';
-            }
-        } else {
-            $refund_error = 'Could not retrieve payment ID from PayMongo.';
-        }
-    }
-
-    $new_pay_status = $refund_success ? 'refunded' : $order['payment_status'];
-    $stmt = $conn->prepare("UPDATE orders SET payment_status=?, approval_status='declined' WHERE id=?");
-    $stmt->bind_param("si", $new_pay_status, $id); $stmt->execute(); $stmt->close();
+    $stmt = $conn->prepare("UPDATE orders SET approval_status='declined' WHERE id=?");
+    $stmt->bind_param("i", $id); $stmt->execute(); $stmt->close();
 
     // Restore product stock
     $items = $conn->prepare("SELECT product_id, quantity FROM order_items WHERE order_id=? AND product_id IS NOT NULL");
@@ -188,19 +142,14 @@ if (isset($_GET['decline_online'])) {
 
     if (!empty($order['user_id'])) {
         require_once __DIR__ . '/../notify.php';
-        $notif_msg = $refund_success
-            ? 'Your order #' . $id . ' was declined and ₱' . number_format($order['total_amount'],2) . ' has been refunded.'
-            : 'Your order #' . $id . ' has been declined by the admin.';
         add_notification($conn, $order['user_id'], 'status',
-            $refund_success ? '↩️ Order Declined & Refunded' : '❌ Order Declined',
-            $notif_msg,
+            '❌ Order Declined',
+            'Your order #' . $id . ' has been declined by the admin.',
             'appointments.php#orders'
         );
     }
 
-    if (!$refund_attempted)   { header("Location: orders.php?msg=declined_no_refund"); exit(); }
-    elseif ($refund_success)  { header("Location: orders.php?msg=refunded");           exit(); }
-    else                      { header("Location: orders.php?msg=declined_refund_failed&err=" . urlencode($refund_error)); exit(); }
+    header("Location: orders.php?msg=declined_no_refund"); exit();
 }
 
 // ─── VIEW ORDER ───────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ $conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS deleted_at DATETIME 
 
 $message      = '';
 $message_type = '';
+$field_errors = [];
 
 // ─── FETCH PRODUCT CATEGORIES ─────────────────────────────────────────────────
 $categories = [];
@@ -95,8 +96,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     $stock       = intval($_POST['stock']);
     $category_id = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
 
-    if (empty($name) || empty($description) || $price <= 0 || $stock < 0) {
-        $message      = "All fields are required and price must be positive.";
+    $field_errors = [];
+    if (empty($name))        $field_errors['name']        = "Product name is required.";
+    if (empty($description)) $field_errors['description'] = "Description is required.";
+    if ($price <= 0)         $field_errors['price']       = "Price must be greater than ₱0.";
+    if ($stock < 0)          $field_errors['stock']       = "Stock cannot be negative.";
+
+    if (!empty($field_errors)) {
+        $message      = "Please fix the highlighted fields below.";
         $message_type = "danger";
     } else {
         $image_name = '';
@@ -106,11 +113,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
             if (!in_array($file['type'], $allowed_types)) {
-                $message      = "Only image files (JPEG, PNG, GIF, WebP) are allowed.";
-                $message_type = "danger";
+                $field_errors['image'] = "Only image files (JPEG, PNG, GIF, WebP) are allowed.";
+                $message               = $field_errors['image'];
+                $message_type          = "danger";
             } elseif ($file['size'] > 5 * 1024 * 1024) {
-                $message      = "File size must not exceed 5MB.";
-                $message_type = "danger";
+                $field_errors['image'] = "Image file size must not exceed 5MB.";
+                $message               = $field_errors['image'];
+                $message_type          = "danger";
             } else {
                 $image_name  = 'product_' . time() . '_' . basename($file['name']);
                 $upload_path = UPLOAD_DIR_PRODUCTS . $image_name;
@@ -127,13 +136,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                         }
                     }
                 } else {
-                    $message      = "Error uploading image.";
-                    $message_type = "danger";
+                    $field_errors['image'] = "Error uploading image.";
+                    $message               = $field_errors['image'];
+                    $message_type          = "danger";
                 }
             }
         } elseif (!$id) {
-            $message      = "Image is required for new products.";
-            $message_type = "danger";
+            $field_errors['image'] = "An image is required for new products.";
+            $message               = $field_errors['image'];
+            $message_type          = "danger";
         }
 
         if ($message_type !== "danger") {
@@ -213,7 +224,16 @@ require_once 'admin_header.php';
 ?>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $message_type; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo $message_type; ?>" id="prod-error-alert"><?php echo $message; ?></div>
+<?php if ($message_type === 'danger'): ?>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var fe = document.querySelector('.field-error-msg');
+    if (fe) { fe.scrollIntoView({behavior:'smooth', block:'center'}); }
+    else { var al = document.getElementById('prod-error-alert'); if (al) al.scrollIntoView({behavior:'smooth', block:'center'}); }
+});
+</script>
+<?php endif; ?>
 <?php endif; ?>
 
 <?php if (!$edit_product && !isset($_GET['action'])): ?>
@@ -264,7 +284,9 @@ require_once 'admin_header.php';
                 <div class="form-group">
                     <label>Product Name <span class="required">*</span></label>
                     <input type="text" name="name" required
-                           value="<?php echo htmlspecialchars($edit_product['name'] ?? ''); ?>">
+                           style="<?php echo isset($field_errors['name']) ? 'border-color:#dc3545;' : ''; ?>"
+                           value="<?php echo htmlspecialchars($edit_product['name'] ?? ($_POST['name'] ?? '')); ?>">
+                    <?php if (isset($field_errors['name'])): ?><div class="field-error-msg" style="color:#dc3545;font-size:0.8rem;margin-top:0.25rem;"><?php echo htmlspecialchars($field_errors['name']); ?></div><?php endif; ?>
                 </div>
                 <div class="form-group">
                     <label>Category</label>
@@ -285,12 +307,16 @@ require_once 'admin_header.php';
                 <div class="form-group">
                     <label>Price (₱) <span class="required">*</span></label>
                     <input type="number" name="price" step="0.01" min="0.01" required
-                           value="<?php echo $edit_product['price'] ?? ''; ?>">
+                           style="<?php echo isset($field_errors['price']) ? 'border-color:#dc3545;' : ''; ?>"
+                           value="<?php echo $edit_product['price'] ?? ($_POST['price'] ?? ''); ?>">
+                    <?php if (isset($field_errors['price'])): ?><div class="field-error-msg" style="color:#dc3545;font-size:0.8rem;margin-top:0.25rem;"><?php echo htmlspecialchars($field_errors['price']); ?></div><?php endif; ?>
                 </div>
                 <div class="form-group">
                     <label>Stock Quantity <span class="required">*</span></label>
                     <input type="number" name="stock" min="0" required
-                           value="<?php echo $edit_product['stock'] ?? ''; ?>">
+                           style="<?php echo isset($field_errors['stock']) ? 'border-color:#dc3545;' : ''; ?>"
+                           value="<?php echo $edit_product['stock'] ?? ($_POST['stock'] ?? ''); ?>">
+                    <?php if (isset($field_errors['stock'])): ?><div class="field-error-msg" style="color:#dc3545;font-size:0.8rem;margin-top:0.25rem;"><?php echo htmlspecialchars($field_errors['stock']); ?></div><?php endif; ?>
                 </div>
             </div>
 
@@ -298,6 +324,7 @@ require_once 'admin_header.php';
                 <div class="form-group">
                     <label>Product Image <?php echo !$edit_product ? '<span class="required">*</span>' : ''; ?></label>
                     <input type="file" name="image" accept="image/*"
+                           style="<?php echo isset($field_errors['image']) ? 'outline:2px solid #dc3545;border-radius:4px;' : ''; ?>"
                            <?php echo !$edit_product ? 'required' : ''; ?>>
                     <?php if ($edit_product && $edit_product['image']): ?>
                         <div style="margin-top:0.5rem;display:flex;align-items:center;gap:1rem;">
@@ -306,13 +333,16 @@ require_once 'admin_header.php';
                             <small>Current image — upload new to replace</small>
                         </div>
                     <?php endif; ?>
+                    <?php if (isset($field_errors['image'])): ?><div class="field-error-msg" style="color:#dc3545;font-size:0.8rem;margin-top:0.25rem;"><?php echo htmlspecialchars($field_errors['image']); ?></div><?php endif; ?>
                 </div>
             </div>
 
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label>Description <span class="required">*</span></label>
-                    <textarea name="description" rows="4" required><?php echo htmlspecialchars($edit_product['description'] ?? ''); ?></textarea>
+                    <textarea name="description" rows="4" required
+                              style="<?php echo isset($field_errors['description']) ? 'border-color:#dc3545;' : ''; ?>"><?php echo htmlspecialchars($edit_product['description'] ?? ($_POST['description'] ?? '')); ?></textarea>
+                    <?php if (isset($field_errors['description'])): ?><div class="field-error-msg" style="color:#dc3545;font-size:0.8rem;margin-top:0.25rem;"><?php echo htmlspecialchars($field_errors['description']); ?></div><?php endif; ?>
                 </div>
             </div>
 

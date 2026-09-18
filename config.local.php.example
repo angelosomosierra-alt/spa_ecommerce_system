@@ -1,6 +1,6 @@
 <?php
 /**
- * config.local.php  —  Host-specific database credentials (NEVER commit this file)
+ * config.local.php  —  Host-specific credentials (NEVER commit this file)
  *
  * Copy this file to config.local.php and fill in real values.
  * config.local.php is listed in .gitignore and must NEVER be committed.
@@ -16,7 +16,21 @@
  * the hosting control panel's File Manager.
  */
 
+// ── Database ──────────────────────────────────────────────────────────────────
 $_db_server = 'localhost';
 $_db_user   = 'your_db_username';
 $_db_pass   = 'your_db_password';
 $_db_name   = 'your_db_name';
+
+// ── Mail (SMTP / Gmail) ───────────────────────────────────────────────────────
+// MAIL_PASSWORD must be a 16-character Gmail App Password, NOT your normal
+// Gmail password. Generate one at: https://myaccount.google.com/apppasswords
+// (requires 2-Step Verification to be enabled on the sending account).
+$_mail_user = 'your_gmail_address@gmail.com';
+$_mail_pass = 'xxxx xxxx xxxx xxxx';   // 16-char Gmail App Password
+
+// ── PayMongo (online payments — leave commented out until account is approved) ─
+// Uncomment and fill in ONLY when ONLINE_PAYMENT_ENABLED is set to true.
+// $_pm_secret  = 'sk_live_...';
+// $_pm_public  = 'pk_live_...';
+// $_pm_webhook = 'whsec_...';

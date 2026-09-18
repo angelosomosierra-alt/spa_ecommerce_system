@@ -34,6 +34,7 @@ if ($period_start > $period_end) { $tmp = $period_start; $period_start = $period
 unset($_day, $_ps_default, $_pe_default);
 
 $msg = ''; $msg_type = 'success';
+$can_manage_accounts = in_array(current_admin_role(), ['owner', 'it']);
 
 $conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS is_generalist TINYINT(1) NOT NULL DEFAULT 0");
 
@@ -44,6 +45,7 @@ $conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS is_generalist TINY
 // ── CREATE STAFF ACCOUNT ─────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
     verify_csrf_token();
+    if (!$can_manage_accounts) { $msg = '⚠️ Access denied.'; $msg_type = 'danger'; goto skip_create_cashier; }
     $username      = trim($_POST['username']        ?? '');
     $email         = trim($_POST['email']           ?? '');
     $full_name     = trim($_POST['full_name']       ?? '');
@@ -116,11 +118,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
     } else {
         $msg = implode('<br>', $errors); $msg_type = 'danger';
     }
+    skip_create_cashier:;
 }
 
 // ── SAVE RECEPTIONIST LOGIN SETTINGS ─────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_receptionist_settings'])) {
     verify_csrf_token();
+    if (!$can_manage_accounts) { $msg = '⚠️ Access denied.'; $msg_type = 'danger'; goto skip_receptionist_settings; }
     $r_start = $_POST['r_login_start'] ?? '07:00';
     $r_end   = $_POST['r_login_end']   ?? '23:59';
     if (preg_match('/^\d{2}:\d{2}$/', $r_start) && preg_match('/^\d{2}:\d{2}$/', $r_end)) {
@@ -137,10 +141,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_receptionist_set
     } else {
         $msg = '❌ Invalid time format.'; $msg_type = 'danger';
     }
+    skip_receptionist_settings:;
 }
 
 // ── FORCE LOGOUT RECEPTIONIST SESSION ────────────────────────────────────────
 if (isset($_GET['clear_r_session'])) {
+    if (!$can_manage_accounts) { header("Location: staff.php"); exit(); }
     $rid  = intval($_GET['clear_r_session']);
     $stmt = $conn->prepare("UPDATE users SET session_token=NULL, session_started=NULL WHERE id=? AND admin_role='cashier'");
     $stmt->bind_param("i", $rid); $stmt->execute(); $stmt->close();
@@ -151,6 +157,7 @@ if (isset($_GET['clear_r_session'])) {
 // ── UPDATE CASHIER PIN ────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pin'])) {
     verify_csrf_token();
+    if (!$can_manage_accounts) { $msg = '⚠️ Access denied.'; $msg_type = 'danger'; goto skip_update_pin; }
     $uid = intval($_POST['pin_user_id'] ?? 0);
     $pin = trim($_POST['new_pin'] ?? '');
     if ($uid > 0 && ctype_digit($pin) && strlen($pin) === 4) {
@@ -160,11 +167,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pin'])) {
     } else {
         $msg = 'PIN must be exactly 4 digits.'; $msg_type = 'danger';
     }
+    skip_update_pin:;
 }
 
 // ── RESET STAFF PASSWORD ──────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_password'])) {
     verify_csrf_token();
+    if (!$can_manage_accounts) { $msg = '⚠️ Access denied.'; $msg_type = 'danger'; goto skip_reset_password; }
     $reset_user_id        = intval($_POST['reset_user_id']        ?? 0);
     $new_password         = $_POST['new_password']                ?? '';
     $confirm_new_password = $_POST['confirm_new_password']        ?? '';
@@ -202,10 +211,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_password'])) {
     } else {
         $msg = implode(' ', $rp_errors); $msg_type = 'danger';
     }
+    skip_reset_password:;
 }
 
 // ── DELETE STAFF ACCOUNT ──────────────────────────────────────────────────────
 if (isset($_GET['delete_cashier'])) {
+    if (!$can_manage_accounts) { header("Location: staff.php"); exit(); }
     $del_id      = intval($_GET['delete_cashier']);
     $chk         = $conn->prepare("SELECT admin_role FROM users WHERE id=?");
     $chk->bind_param("i", $del_id); $chk->execute();
@@ -492,17 +503,20 @@ if ($col_check && $col_check->num_rows === 0) {
     $conn->query("ALTER TABLE users ADD COLUMN session_started DATETIME    NULL DEFAULT NULL");
 }
 
-$staff_list = $conn->query("
-    SELECT id, username, email, full_name, phone, admin_role, cashier_pin, created_at
-    FROM users WHERE role='admin'
-    ORDER BY admin_role ASC, created_at ASC
-")->fetch_all(MYSQLI_ASSOC);
-
-$owners     = array_filter($staff_list, fn($s) => $s['admin_role'] === 'owner');
-$cashiers   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'cashier');
-$marketings = array_filter($staff_list, fn($s) => $s['admin_role'] === 'marketing');
-$it_staff   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'it');
-$hr_staff   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'hr');
+if ($can_manage_accounts) {
+    $staff_list = $conn->query("
+        SELECT id, username, email, full_name, phone, admin_role, cashier_pin, created_at
+        FROM users WHERE role='admin'
+        ORDER BY admin_role ASC, created_at ASC
+    ")->fetch_all(MYSQLI_ASSOC);
+    $owners     = array_filter($staff_list, fn($s) => $s['admin_role'] === 'owner');
+    $cashiers   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'cashier');
+    $marketings = array_filter($staff_list, fn($s) => $s['admin_role'] === 'marketing');
+    $it_staff   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'it');
+    $hr_staff   = array_filter($staff_list, fn($s) => $s['admin_role'] === 'hr');
+} else {
+    $staff_list = []; $owners = []; $cashiers = []; $marketings = []; $it_staff = []; $hr_staff = [];
+}
 
 // Receptionist PIN profiles
 $receptionist_pins = $conn->query("SELECT * FROM receptionist_pins ORDER BY full_name ASC")->fetch_all(MYSQLI_ASSOC);
@@ -650,7 +664,7 @@ if (!empty($all_therapists)) {
 }
 
 // ── Determine active tab ──────────────────────────────────────────────────────
-$active_tab = $_GET['tab'] ?? (isset($_GET['edit_therapist']) ? 'therapists' : 'cashiers');
+$active_tab = $_GET['tab'] ?? (isset($_GET['edit_therapist']) ? 'therapists' : ($can_manage_accounts ? 'cashiers' : 'receptionists'));
 
 // ── Ensure specialty tables exist ────────────────────────────────────────────
 $conn->query("CREATE TABLE IF NOT EXISTS therapist_specialties (
@@ -777,6 +791,7 @@ require_once 'admin_header.php';
         'deductions'    => ['💸 CA & Deductions',      null],
     ];
     foreach ($tabs as $tab_key => [$tab_label, $count]):
+        if ($tab_key === 'cashiers' && !$can_manage_accounts) continue;
         $is_active = $active_tab === $tab_key;
     ?>
     <a href="staff.php?tab=<?php echo $tab_key; ?>"
@@ -800,7 +815,7 @@ require_once 'admin_header.php';
 <!-- ══════════════════════════════════════════════════════════════════════════
      TAB: CASHIERS
 ══════════════════════════════════════════════════════════════════════════ -->
-<?php if ($active_tab === 'cashiers'): ?>
+<?php if ($active_tab === 'cashiers' && $can_manage_accounts): ?>
 <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:1.5rem;align-items:start;">
 
     <!-- Create Account Form -->

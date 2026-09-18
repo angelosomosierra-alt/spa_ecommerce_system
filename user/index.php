@@ -336,7 +336,7 @@ $css_version = (file_exists($css_file)) ? filemtime($css_file) : '1';
 
 <section class="hero">
     <p class="hero-eyebrow">Welcome to RECOVERY ILOILO</p>
-    <h1>Massage <em>Therapy</em><br>Pamper</h1>
+    <h1><em>Skin</em> & <em>Wellness</em></h1>
     <p>Experience the ultimate spa and wellness journey — where every treatment is a ritual of renewal.</p>
     <div class="hero-ctas">
         <a href="#services" class="hero-btn-primary">Book a Service</a>

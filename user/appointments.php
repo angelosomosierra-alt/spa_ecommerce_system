@@ -24,111 +24,6 @@ if (isset($_GET['ajax_check_status'])) {
 
 $user_id = $_SESSION['user_id'];
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ACTION: CUSTOMER CANCEL APPOINTMENT
-// ═══════════════════════════════════════════════════════════════════════════
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'customer_cancel') {
-    verify_csrf_token();
-    $appt_id       = intval($_POST['appt_id'] ?? 0);
-    $cancel_reason = trim($_POST['cancel_reason'] ?? '');
-
-    $chk = $conn->prepare("
-        SELECT a.id, a.status, a.order_item_id, s.name AS service_name
-        FROM appointments a
-        JOIN services s ON a.service_id = s.id
-        WHERE a.id = ? AND a.user_id = ?
-        LIMIT 1
-    ");
-    $chk->bind_param("ii", $appt_id, $user_id);
-    $chk->execute();
-    $chk_row = $chk->get_result()->fetch_assoc();
-    $chk->close();
-
-    $allowed_statuses = ['pending', 'approved', 'assigned'];
-
-    if ($chk_row && in_array($chk_row['status'], $allowed_statuses)) {
-        $is_paid_online = false;
-        $order_id       = null;
-        $paid_amount    = 0;
-        $pm_payment_id  = null;
-
-        if (!empty($chk_row['order_item_id'])) {
-            $om = $conn->prepare("
-                SELECT o.id, o.payment_method, o.payment_status,
-                       o.total_amount, o.paymongo_payment_id
-                FROM orders o
-                JOIN order_items oi ON oi.order_id = o.id
-                WHERE oi.id = ? LIMIT 1
-            ");
-            $om->bind_param("i", $chk_row['order_item_id']);
-            $om->execute();
-            $om_row = $om->get_result()->fetch_assoc();
-            $om->close();
-
-            if ($om_row &&
-                $om_row['payment_method'] === 'online' &&
-                $om_row['payment_status'] === 'paid') {
-                $is_paid_online = true;
-                $order_id       = $om_row['id'];
-                $paid_amount    = floatval($om_row['total_amount']);
-                $pm_payment_id  = $om_row['paymongo_payment_id'] ?? null;
-            }
-        }
-
-        require_once '../notify.php';
-
-        if ($is_paid_online) {
-            $ins = $conn->prepare("
-                INSERT INTO refund_requests
-                    (appointment_id, order_id, user_id, amount,
-                     reason, status, paymongo_payment_id)
-                VALUES (?, ?, ?, ?, ?, 'pending', ?)
-            ");
-            $ins->bind_param("iiidss",
-                $appt_id, $order_id, $user_id,
-                $paid_amount, $cancel_reason, $pm_payment_id
-            );
-            $ins->execute();
-            $ins->close();
-
-            $upd = $conn->prepare("
-                UPDATE appointments
-                SET status = 'refund_requested', cancel_reason = ?
-                WHERE id = ? AND user_id = ?
-            ");
-            $upd->bind_param("sii", $cancel_reason, $appt_id, $user_id);
-            $upd->execute(); $upd->close();
-
-            add_notification($conn, $user_id, 'appointment',
-                '⏳ Refund Request Submitted',
-                'Your cancellation and refund request for ' . $chk_row['service_name'] .
-                ' has been submitted. The owner will process your refund shortly.',
-                'appointments.php'
-            );
-            header("Location: appointments.php?refund_requested=1"); exit();
-
-        } else {
-            $upd = $conn->prepare("
-                UPDATE appointments
-                SET status = 'cancelled', cancel_reason = ?
-                WHERE id = ? AND user_id = ?
-            ");
-            $upd->bind_param("sii", $cancel_reason, $appt_id, $user_id);
-            $upd->execute(); $upd->close();
-
-            add_notification($conn, $user_id, 'appointment',
-                '🚫 Appointment Cancelled',
-                'Your ' . $chk_row['service_name'] . ' appointment has been cancelled.' .
-                ($cancel_reason ? ' Reason: ' . $cancel_reason : ''),
-                'appointments.php'
-            );
-            header("Location: appointments.php?cancelled=1"); exit();
-        }
-
-    } else {
-        $cancel_error = "This appointment cannot be cancelled.";
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTION: CUSTOMER CANCEL ORDER
@@ -177,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
 $filter_status = isset($_GET['filter']) ? sanitize_input($_GET['filter']) : '';
 
 // ── Fetch appointments ────────────────────────────────────────────────────────
-$status_options = ['pending', 'approved', 'assigned', 'declined', 'completed', 'cancelled', 'refund_requested'];
+$status_options = ['pending', 'approved', 'assigned', 'declined', 'completed', 'cancelled'];
 $appointments   = [];
 
 if ($filter_status && in_array($filter_status, $status_options)) {
@@ -270,7 +165,7 @@ foreach ($status_options as $status) {
 $upcoming = []; $history = []; $now = new DateTime();
 foreach ($appointments as $appt) {
     $appt_date = new DateTime($appt['appointment_date']);
-    if (in_array($appt['status'], ['completed','declined','cancelled','refund_requested']) || $appt_date < $now)
+    if (in_array($appt['status'], ['completed','declined','cancelled']) || $appt_date < $now)
         $history[] = $appt;
     else
         $upcoming[] = $appt;
@@ -417,7 +312,6 @@ function render_payment_badge(string $pay_method, string $pay_status, string $ap
 .status-declined         { background:#f8d7da; color:#842029; }
 .status-completed        { background:#cff4fc; color:#055160; }
 .status-cancelled        { background:#f3f4f6; color:#374151; }
-.status-refund_requested { background:#fef9c3; color:#854d0e; border:1px solid #fde047; }
 .method-onsite { background:#e2e3e5; color:#41464b; }
 .method-online { background:#cfe2ff; color:#084298; }
 .order-item-row { display:flex; align-items:center; gap:1rem; padding:0.75rem 0; border-bottom:1px solid #EAD8C0; }
@@ -461,17 +355,6 @@ details.card-section summary::-webkit-details-marker { display:none; }
 </div>
 <?php endif; ?>
 
-<?php if (isset($_GET['refund_requested'])): ?>
-<div style="background:#fef9c3;color:#854d0e;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #fde047;">
-    💸 Your cancellation and refund request has been submitted. The owner will review and process your refund shortly.
-</div>
-<?php endif; ?>
-
-<?php if (!empty($cancel_error)): ?>
-<div style="background:#f8d7da;color:#842029;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #f1aeb5;">
-    ❌ <?php echo htmlspecialchars($cancel_error); ?>
-</div>
-<?php endif; ?>
 
 <?php if (!empty($_SESSION['flash_success'])): ?>
 <div style="background:#d1e7dd;color:#0a3622;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #a3cfbb;">
@@ -512,7 +395,6 @@ details.card-section summary::-webkit-details-marker { display:none; }
             'declined'         => ['❌', 'Declined'],
             'completed'        => ['✔', 'Completed'],
             'cancelled'        => ['🚫', 'Cancelled'],
-            'refund_requested' => ['💸', 'Refund Pending'],
         ];
         foreach ($status_options as $status):
             [$icon, $label] = $stat_labels[$status];
@@ -543,7 +425,6 @@ details.card-section summary::-webkit-details-marker { display:none; }
         'declined'         => '❌ Declined',
         'completed'        => '✔ Completed',
         'cancelled'        => '🚫 Cancelled',
-        'refund_requested' => '💸 Refund Pending',
     ];
 
     function render_therapists(array $appt): void {
@@ -720,25 +601,6 @@ details.card-section summary::-webkit-details-marker { display:none; }
                 </div>
                 <?php endif; ?>
 
-                <!-- Cancel Button -->
-                <?php if (in_array($appt['status'], ['pending','approved','assigned'])): ?>
-                <div style="margin-top:0.85rem;padding-top:0.85rem;border-top:1px solid #EAD8C0;">
-                    <?php $is_online_paid = ($pay_method === 'online' && $pay_status === 'paid'); ?>
-                    <button type="button" class="cancel-btn"
-                            onclick="openCancelModal(<?php echo $appt['id']; ?>,'<?php echo htmlspecialchars(addslashes($appt['service_name'])); ?>','<?php echo date('F d, Y h:i A', strtotime($appt['appointment_date'])); ?>',<?php echo $is_online_paid ? 'true' : 'false'; ?>)">
-                        🚫 Cancel Appointment
-                    </button>
-                    <?php if ($is_online_paid): ?>
-                    <span style="font-size:0.75rem;color:#854d0e;margin-left:0.5rem;">💸 A refund request will be submitted for owner approval.</span>
-                    <?php endif; ?>
-                </div>
-                <?php endif; ?>
-
-                <?php if ($appt['status'] === 'refund_requested'): ?>
-                <div style="margin-top:0.75rem;padding:0.65rem 0.9rem;background:#fef9c3;border-radius:8px;border:1px solid #fde047;font-size:0.82rem;color:#854d0e;">
-                    💸 <strong>Refund request submitted.</strong> The owner is reviewing your refund. You'll be notified once it's processed.
-                </div>
-                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -1099,63 +961,8 @@ details.card-section summary::-webkit-details-marker { display:none; }
     </div>
 </div>
 
-<!-- Cancel Modal -->
-<div class="modal-overlay" id="cancelModal">
-    <div class="modal-box">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
-            <h3 style="margin:0;color:#991b1b;font-size:1.1rem;">🚫 Cancel Appointment</h3>
-            <button onclick="closeCancelModal()" style="border:none;background:none;font-size:1.3rem;cursor:pointer;color:#9ca3af;line-height:1;">✕</button>
-        </div>
-        <div style="background:#f9fafb;border-radius:10px;padding:1rem;margin-bottom:1.25rem;border:1px solid #e5e7eb;font-size:0.9rem;color:#374151;">
-            <div style="font-weight:700;color:#3B2A1A;margin-bottom:0.3rem;" id="modal-service-name"></div>
-            <div style="color:#6b7280;" id="modal-appt-date"></div>
-        </div>
-        <div id="modal-warning" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.83rem;color:#991b1b;">
-            ⚠️ <strong>Are you sure?</strong> This action cannot be undone.
-        </div>
-        <form method="POST" id="cancelForm">
-            <?php echo csrf_field(); ?>
-            <input type="hidden" name="action"  value="customer_cancel">
-            <input type="hidden" name="appt_id" id="modal-appt-id" value="">
-            <div style="margin-bottom:1rem;">
-                <label style="display:block;font-size:0.85rem;font-weight:600;color:#374151;margin-bottom:0.4rem;">
-                    Reason <span style="font-weight:400;color:#9ca3af;">(optional)</span>
-                </label>
-                <textarea name="cancel_reason" id="modal-cancel-reason" rows="3"
-                          placeholder="e.g. Change of plans, emergency..."
-                          style="width:100%;padding:0.6rem 0.75rem;border:1px solid #d1d5db;border-radius:8px;font-size:0.88rem;color:#374151;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea>
-            </div>
-            <div style="display:flex;gap:0.75rem;justify-content:flex-end;">
-                <button type="button" onclick="closeCancelModal()" style="padding:0.55rem 1.25rem;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#374151;font-size:0.88rem;font-weight:600;cursor:pointer;">Keep Appointment</button>
-                <button type="submit" style="padding:0.55rem 1.25rem;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:0.88rem;font-weight:600;cursor:pointer;">🚫 Yes, Cancel It</button>
-            </div>
-        </form>
-    </div>
-</div>
 
 <script>
-function openCancelModal(apptId, serviceName, apptDate, isPaidOnline = false) {
-    document.getElementById('modal-appt-id').value            = apptId;
-    document.getElementById('modal-service-name').textContent = serviceName;
-    document.getElementById('modal-appt-date').textContent    = '📅 ' + apptDate;
-    document.getElementById('modal-cancel-reason').value      = '';
-    const warning = document.getElementById('modal-warning');
-    if (isPaidOnline) {
-        warning.innerHTML = '💸 <strong>This appointment was paid online.</strong> Cancelling will submit a refund request to the owner.';
-        warning.style.cssText = 'background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.83rem;color:#854d0e;';
-    } else {
-        warning.innerHTML = '⚠️ <strong>Are you sure?</strong> This action cannot be undone.';
-        warning.style.cssText = 'background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.83rem;color:#991b1b;';
-    }
-    document.getElementById('cancelModal').classList.add('open');
-    document.body.style.overflow = 'hidden';
-}
-function closeCancelModal() {
-    document.getElementById('cancelModal').classList.remove('open');
-    document.body.style.overflow = '';
-}
-document.getElementById('cancelModal').addEventListener('click', function(e) { if (e.target === this) closeCancelModal(); });
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeCancelModal(); });
 
 window.addEventListener('DOMContentLoaded', () => {
     const savedTab = localStorage.getItem('activeTab');

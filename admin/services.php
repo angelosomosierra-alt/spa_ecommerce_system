@@ -175,8 +175,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                 log_activity($conn, 'service_created', "Created service: {$name}", 'service', $svc_logged_id, $_actor_svc);
             }
             // ── Save recipe: delete-then-reinsert ─────────────────────────
-            $r_sids = array_map('intval', (array)($_POST['recipe_supply_id']    ?? []));
-            $r_qtys = (array)($_POST['recipe_qty_per_person'] ?? []);
+            $r_sids      = array_map('intval', (array)($_POST['recipe_supply_id']          ?? []));
+            $r_qtys      = (array)($_POST['recipe_qty_per_person']                          ?? []);
+            $r_arch_sids = array_map('intval', (array)($_POST['recipe_supply_id_archived']  ?? []));
+            $r_arch_qtys = (array)($_POST['recipe_qty_per_person_archived']                 ?? []);
             $del_rr = $conn->prepare("DELETE FROM service_supply_usage WHERE service_id = ?");
             $del_rr->bind_param("i", $svc_logged_id);
             $del_rr->execute(); $del_rr->close();
@@ -185,6 +187,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                 if (!$_rsid || !isset($supply_map_svc[$_rsid])) continue;
                 if (in_array($_rsid, $seen_r, true)) continue;
                 $_rqty = max(0.0001, (float)($r_qtys[$_ri] ?? 0));
+                $ins_rr = $conn->prepare("INSERT INTO service_supply_usage (service_id, supply_id, quantity_per_person) VALUES (?, ?, ?)");
+                $ins_rr->bind_param("iid", $svc_logged_id, $_rsid, $_rqty);
+                $ins_rr->execute(); $ins_rr->close();
+                $seen_r[] = $_rsid;
+            }
+            foreach ($r_arch_sids as $_ri => $_rsid) {
+                if (!$_rsid) continue;
+                if (in_array($_rsid, $seen_r, true)) continue;
+                $_rqty = max(0.0001, (float)($r_arch_qtys[$_ri] ?? 0));
                 $ins_rr = $conn->prepare("INSERT INTO service_supply_usage (service_id, supply_id, quantity_per_person) VALUES (?, ?, ?)");
                 $ins_rr->bind_param("iid", $svc_logged_id, $_rsid, $_rqty);
                 $ins_rr->execute(); $ins_rr->close();
@@ -214,13 +225,26 @@ if (isset($_GET['edit'])) {
 }
 
 // ─── FETCH RECIPE FOR EDITING ─────────────────────────────────────────────────
-$svc_recipe = [];
+$svc_recipe          = [];
+$_archived_in_recipe = [];
 if ($edit_service) {
     $rr_stmt = $conn->prepare("SELECT supply_id, quantity_per_person FROM service_supply_usage WHERE service_id = ? ORDER BY id");
     $rr_stmt->bind_param("i", $edit_service['id']);
     $rr_stmt->execute();
     $svc_recipe = $rr_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $rr_stmt->close();
+    // Detect archived supplies still referenced in this service's recipe
+    if (!empty($svc_recipe)) {
+        $_all_rsids    = array_map('intval', array_column($svc_recipe, 'supply_id'));
+        $_archived_ids = array_values(array_diff($_all_rsids, array_keys($supply_map_svc)));
+        if (!empty($_archived_ids)) {
+            $_in_clause = implode(',', $_archived_ids); // safe: all intval'd
+            $_asr = $conn->query("SELECT id, name, base_unit_label FROM supplies WHERE id IN ({$_in_clause})");
+            foreach ($_asr->fetch_all(MYSQLI_ASSOC) as $_ar) {
+                $_archived_in_recipe[(int)$_ar['id']] = $_ar;
+            }
+        }
+    }
 }
 
 // ─── FETCH ALL SERVICES ───────────────────────────────────────────────────────
@@ -467,7 +491,34 @@ require_once 'admin_header.php';
                             No supplies added yet — click <strong>+ Add Supply</strong> to define which items are consumed per session.
                         </p>
                         <?php foreach ($svc_recipe as $rrow):
-                            $rsid     = (int)$rrow['supply_id'];
+                            $rsid        = (int)$rrow['supply_id'];
+                            $is_archived = !isset($supply_map_svc[$rsid]);
+                            if ($is_archived):
+                                $arch_info = $_archived_in_recipe[$rsid] ?? null;
+                                $arch_name = $arch_info ? htmlspecialchars($arch_info['name']) : '(Unknown supply #' . $rsid . ')';
+                                $arch_bul  = htmlspecialchars($arch_info['base_unit_label'] ?? '');
+                        ?>
+                        <div class="recipe-row" style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.6rem;background:#fff8f8;border:1.5px dashed #fca5a5;border-radius:8px;padding:0.5rem 0.65rem;">
+                            <div style="flex:1;min-width:200px;">
+                                <span style="font-weight:600;color:var(--brown);"><?php echo $arch_name; ?></span>
+                                <span style="display:inline-block;margin-left:0.35rem;padding:0.1rem 0.45rem;font-size:0.68rem;font-weight:700;background:#fee2e2;color:#991b1b;border-radius:4px;text-transform:uppercase;letter-spacing:0.05em;">archived</span>
+                                <input type="hidden" name="recipe_supply_id_archived[]" value="<?php echo $rsid; ?>">
+                                <div style="font-size:0.72rem;color:#b91c1c;margin-top:0.2rem;">This ingredient has been archived. Remove this row or replace it with an active supply.</div>
+                            </div>
+                            <input type="number" name="recipe_qty_per_person_archived[]"
+                                   class="recipe-qty-inp"
+                                   step="0.0001" min="0.0001"
+                                   value="<?php echo htmlspecialchars($rrow['quantity_per_person']); ?>"
+                                   style="width:85px;flex-shrink:0;">
+                            <span class="recipe-unit-label"
+                                  style="width:40px;flex-shrink:0;color:#b91c1c;font-size:0.82rem;">
+                                <?php echo $arch_bul; ?>
+                            </span>
+                            <button type="button" class="btn btn-danger btn-sm"
+                                    onclick="removeRecipeRow(this)"
+                                    style="flex-shrink:0;">×</button>
+                        </div>
+                        <?php else:
                             $row_opts = str_replace(
                                 '<option value="' . $rsid . '" data-unit=',
                                 '<option value="' . $rsid . '" selected data-unit=',
@@ -494,7 +545,7 @@ require_once 'admin_header.php';
                                     onclick="removeRecipeRow(this)"
                                     style="flex-shrink:0;">×</button>
                         </div>
-                        <?php endforeach; ?>
+                        <?php endif; endforeach; ?>
                     </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-top:0.75rem;">

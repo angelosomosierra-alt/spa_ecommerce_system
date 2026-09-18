@@ -103,6 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     $booking_date   = $_POST['booking_date'] ?? null;
     $payment_method  = $_POST['payment_method'] ?? 'cash';
     $advance_payment = max(0.0, floatval($_POST['advance_payment'] ?? 0));
+    $advance_pm      = in_array($_POST['advance_payment_method'] ?? 'cash', ['cash','gcash','maya','qrph','card','swiper']) ? ($_POST['advance_payment_method'] ?? 'cash') : 'cash';
     $rate_type       = $_POST['rate_type']      ?? 'regular';
     $partner_id     = intval($_POST['partner_id'] ?? 0);
     $customer_note  = sanitize_input($_POST['customer_note'] ?? '');
@@ -111,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     // single walk-in therapist handles all people in the booking by default
     $people_handled_svc = max(1, min($people_count, intval($_POST['people_handled'] ?? $people_count)));
 
-    $discount_type  = in_array($_POST['discount_type'] ?? '', ['none','voucher','senior','pwd','employee'])
+    $discount_type  = in_array($_POST['discount_type'] ?? '', ['none','voucher','senior','pwd','employee','celebration'])
                       ? $_POST['discount_type'] : 'none';
     $voucher_type_i = $_POST['voucher_type']   ?? 'cash';
     $voucher_value  = floatval($_POST['voucher_amount'] ?? 0);
@@ -125,6 +126,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
         $walkin_type    = "danger";
     } elseif ($discount_type === 'voucher' && $voucher_value <= 0) {
         $walkin_message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
+        $walkin_type    = "danger";
+    } elseif ($discount_type === 'celebration' && $voucher_value <= 0) {
+        $walkin_message = "Please enter the celebration discount percentage, or select 'None' if no discount is used.";
         $walkin_type    = "danger";
     } else {
         if ($order_type === 'product') {
@@ -154,6 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     $discount_amount_calc = round($total_amount * 0.20, 2);
                 } elseif ($discount_type === 'employee') {
                     $discount_amount_calc = round($total_amount * 0.50, 2);
+                } elseif ($discount_type === 'celebration' && $voucher_value > 0) {
+                    $discount_amount_calc = round($total_amount * ($voucher_value / 100), 2);
                 } elseif ($discount_type === 'voucher' && $voucher_value > 0) {
                     $discount_amount_calc = $voucher_type_i === 'percent'
                         ? round($total_amount * ($voucher_value / 100), 2)
@@ -180,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $conn->commit();
 
                 $disc_suffix = $discount_type !== 'none' && $discount_amount_calc > 0
-                    ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior','pwd'=>'PWD','employee'=>'Employee'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
+                    ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior','pwd'=>'PWD','employee'=>'Employee','celebration'=>'Celebration Discount'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
                     : '';
                 $walkin_message = "✅ Product Order #$order_id for <strong>{$customer_name}</strong> · ₱" . number_format($total_amount,2) . $disc_suffix;
                 $walkin_type = "success";
@@ -213,6 +219,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     $discount_amount_calc = round($total_amount * 0.20, 2);
                 } elseif ($discount_type === 'employee') {
                     $discount_amount_calc = round($total_amount * 0.50, 2);
+                } elseif ($discount_type === 'celebration' && $voucher_value > 0) {
+                    $discount_amount_calc = round($total_amount * ($voucher_value / 100), 2);
                 } elseif ($discount_type === 'voucher' && $voucher_value > 0) {
                     $discount_amount_calc = $voucher_type_i === 'percent'
                         ? round($total_amount * ($voucher_value / 100), 2)
@@ -323,9 +331,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 // so Complete action can safely do charged_price / people_count
                 $appt_charged_total = $charged_price * $people_count;
                 $adv_date     = $advance_payment > 0 ? date('Y-m-d') : null;
-                $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)");
+                $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $svc_type_val = ($rate_type === 'home') ? 'home' : 'onsite';
-                $appt_stmt->bind_param("iiisissidsds", $walkin_user_id, $item_id, $order_item_id, $booking_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $appt_charged_total, $customer_note, $advance_payment, $adv_date);
+                $adv_pm_val = $advance_payment > 0 ? $advance_pm : 'cash';
+                $appt_stmt->bind_param("iiisissidsdss", $walkin_user_id, $item_id, $order_item_id, $booking_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $appt_charged_total, $customer_note, $advance_payment, $adv_date, $adv_pm_val);
                 $appt_stmt->execute();
                 $appointment_id = $appt_stmt->insert_id; // ← actual appointment ID
                 $appt_stmt->close();
@@ -443,7 +452,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $rate_labels = ['regular'=>'Regular','home'=>'Home Service (Fixed Price)','hotel'=>'Hotel/Partner','influencer'=>'Influencer (Free)'];
                 $rate_label = $rate_labels[$rate_type] ?? 'Regular';
                 $disc_suffix = $discount_type !== 'none' && $discount_amount_calc > 0
-                    ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior Citizen','pwd'=>'PWD','employee'=>'Employee'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
+                    ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior Citizen','pwd'=>'PWD','employee'=>'Employee','celebration'=>'Celebration Discount'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
                     : '';
                 $people_suffix = $people_count > 1 ? " · {$people_count} people" : '';
                 $adv_suffix    = $advance_payment > 0 ? ' · 💰 Advance: ₱' . number_format($advance_payment, 2) : '';
@@ -723,9 +732,12 @@ require_once 'admin_header.php';
                 <div class="form-section">
                     <div class="form-section-header">🎟️ Discount / Voucher</div>
                     <div class="form-section-body">
-                        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.4rem;margin-bottom:0.75rem;">
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.4rem;">
                             <button type="button" id="svc-discbtn-none" onclick="setWalkinDiscount('service','none')" style="padding:0.5rem 0.3rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🚫 None</button>
                             <button type="button" id="svc-discbtn-voucher" onclick="setWalkinDiscount('service','voucher')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🎟️ Voucher</button>
+                            <button type="button" id="svc-discbtn-celebration" onclick="setWalkinDiscount('service','celebration')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🎉 Celebration<br><small style="font-weight:400;">% off</small></button>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.75rem;">
                             <button type="button" id="svc-discbtn-senior" onclick="setWalkinDiscount('service','senior')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">👴 Senior<br><small style="font-weight:400;">20% off</small></button>
                             <button type="button" id="svc-discbtn-pwd" onclick="setWalkinDiscount('service','pwd')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">♿ PWD<br><small style="font-weight:400;">20% off</small></button>
                             <button type="button" id="svc-discbtn-employee" onclick="setWalkinDiscount('service','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🪪 Staff<br><small style="font-weight:400;">50% off</small></button>
@@ -743,6 +755,15 @@ require_once 'admin_header.php';
                                     <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;">Amount</label>
                                     <input type="number" id="svc-voucher-amount" name="voucher_amount" min="0" step="0.01" placeholder="0.00" value="0" oninput="updateWalkinPreview('service')" style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--bg3);">
                                 </div>
+                            </div>
+                        </div>
+                        <div id="svc-celeb-inputs" style="display:none;background:#fef0ff;border:1px solid #d946ef;border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;">
+                            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">🎉 Enter discount percentage for this celebration</div>
+                            <div style="display:flex;align-items:center;gap:0.5rem;">
+                                <input type="number" id="svc-celeb-pct" min="0" max="100" step="0.01" placeholder="e.g. 10" value=""
+                                       oninput="updateWalkinPreview('service')"
+                                       style="width:120px;padding:0.45rem 0.6rem;border:1px solid #d946ef;border-radius:7px;font-size:0.9rem;font-weight:700;text-align:center;box-sizing:border-box;">
+                                <span style="font-size:0.85rem;color:#7e22ce;font-weight:600;">% off the total</span>
                             </div>
                         </div>
                         <div id="svc-discount-preview" style="display:none;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.3);border-radius:8px;padding:0.5rem 0.75rem;font-size:0.8rem;color:#15803d;margin-bottom:0.5rem;"></div>
@@ -797,6 +818,31 @@ require_once 'admin_header.php';
                                    oninput="updatePricePreview()"
                                    style="width:100%;padding:0.5rem 0.65rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.85rem;box-sizing:border-box;">
                         </div>
+                        <div style="margin-bottom:0.7rem;">
+                            <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:3px;">
+                                💳 Advance Payment Method
+                            </label>
+                            <div id="svc-adv-pm-container" style="display:flex;flex-wrap:wrap;gap:0.4rem;">
+                                <?php foreach ($pm_wk as $pmv => $pmi):
+                                    if (!ONLINE_PAYMENT_ENABLED && in_array($pmv, $online_pm)) continue;
+                                    if (ONLINE_PAYMENT_ENABLED && in_array($pmv, ['gcash','maya']) && !SHOW_GCASH_MAYA) continue;
+                                ?>
+                                <label style="display:flex;align-items:center;gap:0.4rem;
+                                              padding:0.4rem 0.55rem;border:1.5px solid var(--border2);
+                                              border-radius:8px;cursor:pointer;font-size:0.8rem;
+                                              transition:border-color 0.15s,background 0.15s;"
+                                       id="adv-pm-label-<?php echo $pmv; ?>">
+                                    <input type="radio" name="svc_adv_pm_choice"
+                                           value="<?php echo $pmv; ?>"
+                                           onchange="document.getElementById('service_advance_pm').value=this.value; highlightPM(document.getElementById('svc-adv-pm-container'))"
+                                           <?php echo $pmv === 'cash' ? 'checked' : ''; ?>
+                                           style="accent-color:var(--brown);">
+                                    <?php echo $pmi[0]; ?> <?php echo $pmi[1]; ?>
+                                </label>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                        <input type="hidden" name="advance_payment_method" id="service_advance_pm" value="cash">
                         <button type="button" id="svc-book-now" onclick="proceedBooking('service')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">📋 Book Walk-In</button>
                     </div>
                 </div>
@@ -854,9 +900,12 @@ require_once 'admin_header.php';
                 <div class="form-section">
                     <div class="form-section-header">🎟️ Discount / Voucher</div>
                     <div class="form-section-body">
-                        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.4rem;margin-bottom:0.75rem;">
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.4rem;">
                             <button type="button" id="prod-discbtn-none" onclick="setWalkinDiscount('product','none')" style="padding:0.5rem 0.3rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🚫 None</button>
                             <button type="button" id="prod-discbtn-voucher" onclick="setWalkinDiscount('product','voucher')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🎟️ Voucher</button>
+                            <button type="button" id="prod-discbtn-celebration" onclick="setWalkinDiscount('product','celebration')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🎉 Celebration<br><small style="font-weight:400;">% off</small></button>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.75rem;">
                             <button type="button" id="prod-discbtn-senior" onclick="setWalkinDiscount('product','senior')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">👴 Senior<br><small style="font-weight:400;">20% off</small></button>
                             <button type="button" id="prod-discbtn-pwd" onclick="setWalkinDiscount('product','pwd')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">♿ PWD<br><small style="font-weight:400;">20% off</small></button>
                             <button type="button" id="prod-discbtn-employee" onclick="setWalkinDiscount('product','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🪪 Staff<br><small style="font-weight:400;">50% off</small></button>
@@ -874,6 +923,15 @@ require_once 'admin_header.php';
                                     <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;">Amount</label>
                                     <input type="number" id="prod-voucher-amount" name="voucher_amount" min="0" step="0.01" placeholder="0.00" value="0" oninput="updateWalkinPreview('product')" style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--bg3);">
                                 </div>
+                            </div>
+                        </div>
+                        <div id="prod-celeb-inputs" style="display:none;background:#fef0ff;border:1px solid #d946ef;border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;">
+                            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">🎉 Enter discount percentage for this celebration</div>
+                            <div style="display:flex;align-items:center;gap:0.5rem;">
+                                <input type="number" id="prod-celeb-pct" min="0" max="100" step="0.01" placeholder="e.g. 10" value=""
+                                       oninput="updateWalkinPreview('product')"
+                                       style="width:120px;padding:0.45rem 0.6rem;border:1px solid #d946ef;border-radius:7px;font-size:0.9rem;font-weight:700;text-align:center;box-sizing:border-box;">
+                                <span style="font-size:0.85rem;color:#7e22ce;font-weight:600;">% off the total</span>
                             </div>
                         </div>
                         <div id="prod-discount-preview" style="display:none;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.3);border-radius:8px;padding:0.5rem 0.75rem;font-size:0.8rem;color:#15803d;margin-bottom:0.5rem;"></div>
@@ -1437,10 +1495,13 @@ const now = new Date(); const pad = n => String(n).padStart(2,'0');
 function setWalkinDiscount(form, type) {
     const p = form === 'service' ? 'svc' : 'prod';
     document.getElementById(p + '-discount-type').value = type;
-    ['none','voucher','senior','pwd','employee'].forEach(t => { const btn = document.getElementById(p+'-discbtn-'+t); if (!btn) return; btn.style.borderColor = t===type ? 'var(--gold)' : 'var(--border2)'; btn.style.background = t===type ? '#fff8f2' : 'var(--bg3)'; });
+    ['none','voucher','senior','pwd','employee','celebration'].forEach(t => { const btn = document.getElementById(p+'-discbtn-'+t); if (!btn) return; btn.style.borderColor = t===type ? 'var(--gold)' : 'var(--border2)'; btn.style.background = t===type ? '#fff8f2' : 'var(--bg3)'; });
     const vInputs = document.getElementById(p + '-voucher-inputs');
     if (vInputs) vInputs.style.display = type === 'voucher' ? 'block' : 'none';
     if (type !== 'voucher') { const va = document.getElementById(p+'-voucher-amount'); if (va) va.value = '0'; }
+    const cInputs = document.getElementById(p + '-celeb-inputs');
+    if (cInputs) cInputs.style.display = type === 'celebration' ? 'block' : 'none';
+    if (type !== 'celebration') { const cp = document.getElementById(p+'-celeb-pct'); if (cp) cp.value = ''; }
     updateWalkinPreview(form);
 }
 
@@ -1457,6 +1518,7 @@ function updateWalkinPreview(form) {
     if (type === 'senior') { discountAmt = basePrice * 0.20; label = '👴 Senior Citizen (20%)'; }
     else if (type === 'pwd') { discountAmt = basePrice * 0.20; label = '♿ PWD (20%)'; }
     else if (type === 'employee') { discountAmt = basePrice * 0.50; label = '🪪 Employee (50% off)'; }
+    else if (type === 'celebration') { const cpct = parseFloat(document.getElementById(p+'-celeb-pct')?.value||0); discountAmt = basePrice*(Math.min(100,cpct)/100); label='🎉 Celebration ('+cpct+'% off)'; }
     else if (type === 'voucher') { const vType = document.getElementById(p+'-voucher-type')?.value||'cash'; const vVal = parseFloat(document.getElementById(p+'-voucher-amount')?.value||0); if (vType === 'percent') { discountAmt = basePrice*(vVal/100); label='🎟️ Voucher ('+vVal+'% off)'; } else { discountAmt = Math.min(vVal,basePrice); label='🎟️ Voucher'; } }
     const finalPrice = Math.max(0, basePrice - discountAmt);
     if (discountAmt > 0) { preview.style.display='block'; const fmt = n => n.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}); preview.innerHTML = label+'<br>Original: <strong>₱'+fmt(basePrice)+'</strong> &nbsp;−&nbsp; <strong style="color:var(--rust);">₱'+fmt(discountAmt)+'</strong> &nbsp;=&nbsp; <strong style="color:#15803d;">₱'+fmt(finalPrice)+'</strong>'; }

@@ -248,7 +248,7 @@ $cv('B42', (float)$gc_redeem_total);
 $cv('B43', (float)$card_total);
 $cv('B44', (float)$gcash_total);
 $cv('B45', (float)$maya_total);
-$cv('B46', (float)$maya_dp_total);
+$cv('B46', (float)$noncash_dp_total);  // total non-cash DP: GCash + Maya + Card/Swiper + QRPH
 $cv('B53', (float)$cash_on_hand);
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -99,21 +99,6 @@ $stmt->close();
 
 $is_service = !empty($order_items) && !empty($order_items[0]['service_id']);
 
-// ── Fetch refund record (used to display refund details on the receipt) ───────
-$refund_info = null;
-if (in_array($order['payment_status'], ['refunded', 'partially_refunded'])) {
-    $rq = $conn->prepare("
-        SELECT amount, updated_at AS refund_date, paymongo_refund_id, status, reason, refund_notes
-        FROM   refund_requests
-        WHERE  order_id = ? AND status IN ('refunded', 'manually_refunded')
-        ORDER  BY updated_at DESC
-        LIMIT  1
-    ");
-    $rq->bind_param("i", $order_id);
-    $rq->execute();
-    $refund_info = $rq->get_result()->fetch_assoc();
-    $rq->close();
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 4 — Payment confirmation with idempotency + reference capture
@@ -275,24 +260,17 @@ if ($order['payment_status'] === 'paid') {
         $_SESSION['receipt_sent_' . $order_id] = true;
     }
 
-} elseif (in_array($order['payment_status'], ['refunded', 'partially_refunded'])) {
-    // Branch D — previously paid, now refunded; render receipt in voided state
-    $payment_confirmed = true;
-    $already_paid      = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 5 — Render
 // ─────────────────────────────────────────────────────────────────────────────
-$is_refunded = in_array($order['payment_status'], ['refunded', 'partially_refunded']);
 $page_title  = 'Payment Receipt';
 require_once 'header.php';
 
 $pay_badge = match($order['payment_status']) {
     'paid'               => '<span style="background:#d1e7dd;color:#0a3622;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">✅ Paid</span>',
     'unpaid'             => '<span style="background:#fff3cd;color:#664d03;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">🏪 Pay at Spa</span>',
-    'refunded'           => '<span style="background:#f8d7da;color:#842029;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">↩️ Refunded</span>',
-    'partially_refunded' => '<span style="background:#fff3cd;color:#856404;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">↩️ Partially Refunded</span>',
     default              => '<span style="background:#e2e3e5;color:#41464b;padding:3px 12px;border-radius:20px;font-size:12px;">' . htmlspecialchars($order['payment_status']) . '</span>',
 };
 
@@ -319,40 +297,6 @@ $ref_display = !empty($paymongo_reference)
 
 <?php elseif ($payment_confirmed): ?>
 
-<?php if ($is_refunded): ?>
-    <!-- REFUND ALERT BANNER — replaces the success banner for voided receipts -->
-    <div style="background:repeating-linear-gradient(-45deg,#dc2626,#dc2626 10px,#b91c1c 10px,#b91c1c 20px);
-                color:#fff;border-radius:16px;padding:1.25rem 1.5rem;margin-bottom:1.5rem;
-                display:flex;align-items:flex-start;gap:1rem;box-shadow:0 4px 16px rgba(220,38,38,.35);">
-        <div style="font-size:2rem;flex-shrink:0;line-height:1;">⛔</div>
-        <div>
-            <div style="font-size:1rem;font-weight:800;letter-spacing:.5px;text-shadow:0 1px 2px rgba(0,0,0,.3);">
-                THIS ORDER HAS BEEN <?php echo $order['payment_status'] === 'partially_refunded' ? 'PARTIALLY REFUNDED' : 'REFUNDED'; ?>
-            </div>
-            <div style="font-size:.85rem;margin-top:.3rem;opacity:.92;">
-                This receipt is no longer valid for service or redemption.
-            </div>
-            <?php if ($refund_info): ?>
-            <div style="font-size:.82rem;margin-top:.6rem;background:rgba(0,0,0,.18);
-                        border-radius:8px;padding:.5rem .75rem;line-height:1.8;">
-                <?php if (!empty($refund_info['refund_date'])): ?>
-                Refunded on: <strong><?php echo date('F d, Y \a\t h:i A', strtotime($refund_info['refund_date'])); ?></strong><br>
-                <?php endif; ?>
-                <?php if (!empty($refund_info['amount'])): ?>
-                Refund amount: <strong>₱<?php echo number_format((float)$refund_info['amount'], 2); ?></strong><br>
-                <?php endif; ?>
-                <?php if (!empty($refund_info['paymongo_refund_id'])): ?>
-                Refund ref.: <span style="font-family:monospace;"><?php echo htmlspecialchars($refund_info['paymongo_refund_id']); ?></span>
-                <?php endif; ?>
-                <?php if (!empty($refund_info['refund_notes']) && $refund_info['status'] === 'manually_refunded'): ?>
-                <br>Note: <?php echo htmlspecialchars($refund_info['refund_notes']); ?>
-                <?php endif; ?>
-            </div>
-            <?php endif; ?>
-        </div>
-    </div>
-
-<?php else: ?>
     <!-- SUCCESS BANNER -->
     <div style="background:#fff;border-radius:20px;padding:2rem;text-align:center;
                 box-shadow:0 8px 40px rgba(59,42,26,0.10);border:1px solid #EAD8C0;
@@ -376,23 +320,12 @@ $ref_display = !empty($paymongo_reference)
         </p>
         <?php endif; ?>
     </div>
-<?php endif; ?>
 
     <!-- RECEIPT CARD -->
     <div style="background:#fff;border-radius:20px;overflow:hidden;position:relative;
                 box-shadow:0 8px 40px rgba(59,42,26,0.10);
-                border:<?php echo $is_refunded ? '2px solid #dc2626' : '1px solid #EAD8C0'; ?>;
+                border:1px solid #EAD8C0;
                 margin-bottom:1.5rem;" id="receipt-card">
-
-        <?php if ($is_refunded): ?>
-        <!-- Faint watermark — positioned before card content so it renders behind -->
-        <div style="position:absolute;inset:0;pointer-events:none;
-                    display:flex;align-items:center;justify-content:center;overflow:hidden;">
-            <div style="font-size:5.5rem;font-weight:900;color:rgba(220,38,38,.07);
-                        transform:rotate(-30deg);letter-spacing:.2em;white-space:nowrap;
-                        user-select:none;font-family:Arial,sans-serif;">REFUNDED</div>
-        </div>
-        <?php endif; ?>
 
         <!-- Header bar -->
         <div style="background:linear-gradient(135deg,#3B2A1A,#6B4C30);

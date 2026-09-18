@@ -12,6 +12,10 @@ $supplies = [];
 $_sr = $conn->query("SELECT * FROM supplies WHERE deleted_at IS NULL ORDER BY category, name");
 while ($row = $_sr->fetch_assoc()) $supplies[] = $row;
 $supply_map     = array_column($supplies, null, 'id');
+// Recipe usage map: supply_id => ['cnt' => N, 'names' => 'Svc A, Svc B'] — for archive warning
+$supply_recipe_usage = [];
+$_sru_q = $conn->query("SELECT ssu.supply_id, COUNT(*) AS cnt, GROUP_CONCAT(sv.name ORDER BY sv.name SEPARATOR ', ') AS svc_names FROM service_supply_usage ssu JOIN services sv ON sv.id = ssu.service_id WHERE sv.deleted_at IS NULL GROUP BY ssu.supply_id");
+if ($_sru_q) { while ($row = $_sru_q->fetch_assoc()) { $supply_recipe_usage[(int)$row['supply_id']] = ['cnt' => (int)$row['cnt'], 'names' => $row['svc_names']]; } }
 $total_items    = count($supplies);
 $low_stock_n    = 0; $out_of_stock_n = 0;
 foreach ($supplies as $_s) {
@@ -399,6 +403,10 @@ require_once 'admin_header.php';
                         'inners_per_case' => $s['inners_per_case'],
                         'pieces_per_inner'=> $s['pieces_per_inner'],
                     ]),ENT_QUOTES);
+                    $_sru     = $supply_recipe_usage[(int)$s['id']] ?? null;
+                    $_arc_msg = $_sru
+                        ? 'This supply is used in ' . $_sru['cnt'] . ' service recipe(s): ' . $_sru['names'] . '. After archiving, future appointment completions will skip deducting this ingredient. Continue?'
+                        : 'Archive this supply?';
                 ?>
                 <tr class="inv-supply-row" data-search="<?php echo htmlspecialchars(strtolower($s['name'].' '.$s['category']));?>">
                     <td>
@@ -413,7 +421,7 @@ require_once 'admin_header.php';
                     <td style="white-space:nowrap;">
                         <button type="button" class="btn btn-secondary btn-sm" title="Log delivery" onclick="openDeliveryModal(<?php echo (int)$s['id'];?>)">🚚</button>
                         <button type="button" class="btn btn-info btn-sm" data-supply="<?php echo $sj;?>" onclick="openEditModal(this)">✏️</button>
-                        <form method="POST" style="display:inline;" onsubmit="event.preventDefault();uiConfirm('Archive this supply?').then(function(ok){if(ok)this.submit();}.bind(this));">
+                        <form method="POST" style="display:inline;" onsubmit="event.preventDefault();uiConfirm(<?php echo json_encode($_arc_msg); ?>).then(function(ok){if(ok)this.submit();}.bind(this));">
                             <?php echo csrf_field();?>
                             <input type="hidden" name="action" value="archive_supply">
                             <input type="hidden" name="id" value="<?php echo (int)$s['id'];?>">

@@ -87,15 +87,16 @@ define('DB_PASSWORD', $_db_pass);   unset($_db_pass);
 define('DB_NAME',     $_db_name);   unset($_db_name);
 
 // ─── MAIL ─────────────────────────────────────────────────────────────────────
-// All mail credentials come from .env. No secrets are hardcoded here.
+// Credentials come from config.local.php (preferred on Hostinger) or .env.
+// config.local.php may define $_mail_user and $_mail_pass — if set, they win.
 // Host/port have safe non-secret defaults; username/password do NOT.
 $_mail_host = getenv('MAIL_HOST'); if (empty($_mail_host)) $_mail_host = 'smtp.gmail.com';
 define('MAIL_HOST', $_mail_host); unset($_mail_host);
 
-$_mail_user = getenv('MAIL_USERNAME') ?: '';
+$_mail_user = $_mail_user ?? (getenv('MAIL_USERNAME') ?: '');
 define('MAIL_USERNAME', $_mail_user);
 
-$_mail_pass = getenv('MAIL_PASSWORD') ?: '';
+$_mail_pass = $_mail_pass ?? (getenv('MAIL_PASSWORD') ?: '');
 define('MAIL_PASSWORD', $_mail_pass);
 
 $_mail_port = (int)getenv('MAIL_PORT'); if (empty($_mail_port)) $_mail_port = 587;
@@ -109,26 +110,27 @@ $_mail_name = getenv('MAIL_NAME'); if (empty($_mail_name)) $_mail_name = 'Recove
 define('MAIL_NAME', $_mail_name); unset($_mail_name);
 
 if (MAIL_USERNAME === '' || MAIL_PASSWORD === '') {
-    error_log('[CONFIG WARNING] MAIL_USERNAME / MAIL_PASSWORD are not set in .env. Outgoing email (OTP, receipts) will fail until configured.');
+    error_log('[CONFIG WARNING] MAIL_USERNAME / MAIL_PASSWORD are not set. Outgoing email (OTP, receipts) will fail until configured.');
 }
 unset($_mail_user, $_mail_pass);
 
 // ─── PAYMONGO ─────────────────────────────────────────────────────────────────
-// All PayMongo keys come from .env. No keys are hardcoded here.
-$_pm_secret = getenv('PAYMONGO_SECRET_KEY') ?: '';
+// Keys come from config.local.php (preferred on Hostinger) or .env.
+// config.local.php may define $_pm_secret, $_pm_public, $_pm_webhook — if set, they win.
+$_pm_secret  = $_pm_secret  ?? (getenv('PAYMONGO_SECRET_KEY')      ?: '');
 define('PAYMONGO_SECRET_KEY', $_pm_secret);
 unset($_pm_secret);
 
-$_pm_public = getenv('PAYMONGO_PUBLIC_KEY') ?: '';
+$_pm_public  = $_pm_public  ?? (getenv('PAYMONGO_PUBLIC_KEY')       ?: '');
 define('PAYMONGO_PUBLIC_KEY', $_pm_public);
 unset($_pm_public);
 
-$_pm_webhook = getenv('PAYMONGO_WEBHOOK_SECRET') ?: '';
+$_pm_webhook = $_pm_webhook ?? (getenv('PAYMONGO_WEBHOOK_SECRET')   ?: '');
 define('PAYMONGO_WEBHOOK_SECRET', $_pm_webhook);
 unset($_pm_webhook);
 
 if (PAYMONGO_SECRET_KEY === '') {
-    error_log('[CONFIG WARNING] PAYMONGO_SECRET_KEY is not set in .env. Online payment will fail until configured.');
+    error_log('[CONFIG WARNING] PAYMONGO_SECRET_KEY is not set. Online payment will fail until configured.');
 }
 
 // ─── FEATURE FLAGS ────────────────────────────────────────────────────────────

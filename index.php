@@ -634,7 +634,6 @@ while ($row = $res_prd->fetch_assoc()) {
             <div class="modal-price-row">
                 <span class="modal-price">₱<?php echo number_format($svc['price'],2); ?></span>
                 <span class="modal-meta">⏱ <?php echo $svc['session_time']; ?> minutes</span>
-                <span class="modal-meta">📅 <?php echo $svc['slots']; ?> slots/day</span>
             </div>
             <div class="modal-actions">
                 <?php if (isset($_SESSION['user_id'])): ?>
