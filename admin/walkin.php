@@ -3,6 +3,10 @@ require_once '../config.php';
 redirect_if_not_admin();
 
 $conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS is_generalist TINYINT(1) NOT NULL DEFAULT 0");
+// 2-Session Package linking column — admin/appointments.php and
+// admin/appt_poll.php also self-heal this defensively (in case this file
+// hasn't run yet), but this is the original source of it.
+$conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS session_group_id INT NULL DEFAULT NULL, ADD INDEX IF NOT EXISTS idx_session_group (session_group_id)");
 
 $page_title  = 'Walk-in Kiosk';
 $page_icon   = '🏪';
@@ -96,12 +100,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     verify_csrf_token();
     $customer_name  = sanitize_input($_POST['customer_name']);
     $phone          = sanitize_input($_POST['phone']);
+    // sanitize_input() no longer escapes at save time — this file builds
+    // $walkin_message by interpolating raw values into HTML strings, so
+    // escape once here for reuse at every interpolation site below.
+    $customer_name_html = htmlspecialchars($customer_name, ENT_QUOTES, 'UTF-8');
     $order_type     = $_POST['order_type'];
     $item_id        = intval($_POST['item_id']);
     $quantity       = max(1, intval($_POST['quantity'] ?? 1));
     $people_count   = max(1, intval($_POST['people_count'] ?? 1));
     $booking_date   = $_POST['booking_date'] ?? null;
-    $booking_date_2 = trim($_POST['booking_date_2'] ?? ''); // TEMP guard field — see 2-session block check below (remove once Step 3 dual-appointment creation is built)
+    $booking_date_2 = trim($_POST['booking_date_2'] ?? '');
     $payment_method  = $_POST['payment_method'] ?? 'cash';
     $advance_payment = max(0.0, floatval($_POST['advance_payment'] ?? 0));
     $advance_pm      = in_array($_POST['advance_payment_method'] ?? 'cash', ['cash','gcash','maya','qrph','card','swiper']) ? ($_POST['advance_payment_method'] ?? 'cash') : 'cash';
@@ -131,12 +139,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     } elseif ($discount_type === 'celebration' && $voucher_value <= 0) {
         $walkin_message = "Please enter the celebration discount percentage, or select 'None' if no discount is used.";
         $walkin_type    = "danger";
-    } elseif ($order_type === 'service' && $booking_date_2 !== '') {
-        // TEMP GUARD — remove this branch once 2-session dual-appointment backend creation is built.
-        // Without it, submitting "2 Sessions" mode silently books ONLY Session 1 at services.price,
-        // silently drops Session 2 and undercharges vs. the flat package price (session2_price).
-        $walkin_message = "⚠️ 2-Session booking is not yet available on this system — please book Session 1 only for now (use '1 Session' mode), or contact IT.";
-        $walkin_type    = "danger";
     } else {
         if ($order_type === 'product') {
             $stmt = $conn->prepare("SELECT * FROM products WHERE id = ? AND deleted_at IS NULL");
@@ -149,6 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $walkin_message = "Insufficient stock.";
                 $walkin_type = "danger";
             } else {
+                $item_name_html = htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8');
                 $conn->begin_transaction();
                 $ls = $conn->prepare("SELECT stock FROM products WHERE id = ? FOR UPDATE");
                 $ls->bind_param("i", $item_id); $ls->execute();
@@ -195,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $disc_suffix = $discount_type !== 'none' && $discount_amount_calc > 0
                     ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior','pwd'=>'PWD','employee'=>'Employee','celebration'=>'Celebration Discount'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
                     : '';
-                $walkin_message = "✅ Product Order #$order_id for <strong>{$customer_name}</strong> · ₱" . number_format($total_amount,2) . $disc_suffix;
+                $walkin_message = "✅ Product Order #$order_id for <strong>{$customer_name_html}</strong> · ₱" . number_format($total_amount,2) . $disc_suffix;
                 $walkin_type = "success";
                 }
             }
@@ -208,7 +211,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
             $stmt->close();
 
             if ($item) {
-                $regular_price    = floatval($item['price']);
+                $item_name_html = htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8');
+                $is_two_session_booking = !empty($item['is_two_session']) && $booking_date_2 !== '';
+                if ($is_two_session_booking) {
+                    $rate_type = 'regular'; // 2-session package price is fixed — never rate-adjusted, regardless of what the client sent
+                }
+
+                // ── Duration Variants: if the receptionist picked a specific
+                //    duration option, its price/duration replace the generic
+                //    services.price/session_time for this booking. Services
+                //    with no service_durations rows are completely unaffected —
+                //    $selected_duration stays null and every line below reads
+                //    exactly as it did before this feature existed.
+                $selected_duration_id = intval($_POST['service_duration_id'] ?? 0);
+                $selected_duration    = null;
+                if ($selected_duration_id > 0) {
+                    $sd_q = $conn->prepare("SELECT id, duration_minutes, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations WHERE id = ? AND service_id = ? LIMIT 1");
+                    $sd_q->bind_param("ii", $selected_duration_id, $item_id);
+                    $sd_q->execute();
+                    $selected_duration = $sd_q->get_result()->fetch_assoc();
+                    $sd_q->close();
+                }
+
+                // Whatever get_active_duration_price() says RIGHT NOW (promo
+                // window active or not) is what actually gets charged — never
+                // the raw regular_price/promo_price columns directly.
+                $regular_price    = $selected_duration ? get_active_duration_price($selected_duration)['price'] : floatval($item['price']);
                 $home_service_fee = floatval($item['home_service_fee'] ?? 0); // legacy, kept for reference
                 switch ($rate_type) {
                     case 'home':       $charged_price = floatval($item['home_service_price'] ?? 0); break;
@@ -217,7 +245,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     default:           $charged_price = $regular_price; break;
                 }
 
-                $total_amount    = $charged_price * $people_count;
+                // Session 2's per-person price = flat package price minus Session 1's regular price —
+                // computed once, server-side. Never trust a client-sent split.
+                $session2_per_person  = 0.00;
+                $session2_total_price = 0.00;
+                if ($is_two_session_booking) {
+                    $session2_total_price = floatval($item['session2_price'] ?? 0);
+                    $session2_per_person  = max(0.0, $session2_total_price - $regular_price);
+                }
+
+                $appt1_total  = $charged_price * $people_count;
+                $appt2_total  = $session2_per_person * $people_count;
+                $total_amount = $appt1_total + $appt2_total; // combined (= Session 1's total when not a 2-session booking)
                 $appt_rate_type  = $rate_type;
                 $appt_partner_id = ($rate_type === 'hotel' && $partner_id > 0) ? $partner_id : null;
 
@@ -235,83 +274,104 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 }
                 $final_amount = max(0.00, $total_amount - $discount_amount_calc - $advance_payment);
 
-                // ── Feature A: today + zero qualified on duty → block ─────────────
-                $is_today_booking = (date('Y-m-d') === date('Y-m-d', strtotime($booking_date)));
-                if ($is_today_booking) {
-                    $qc = $conn->prepare("
-                        SELECT COUNT(DISTINCT t.id) AS cnt
-                        FROM therapists t
-                        JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE()
-                        WHERE (ta.time_out IS NULL OR ta.time_out = '')
-                          AND (
-                              t.is_generalist = 1
-                              OR EXISTS(SELECT 1 FROM therapist_specialty_services WHERE therapist_id = t.id AND service_id = ?)
-                              OR EXISTS(SELECT 1 FROM therapist_specialties ts
-                                        JOIN services s ON s.category_id = ts.category_id
-                                        WHERE ts.therapist_id = t.id AND s.id = ?)
-                          )
-                    ");
-                    $qc->bind_param("ii", $item_id, $item_id); $qc->execute();
-                    $qualified_on_duty_count = (int)$qc->get_result()->fetch_assoc()['cnt']; $qc->close();
-                    if ($qualified_on_duty_count === 0) {
-                        $walkin_message = "⛔ No qualified therapist is currently on duty for <strong>{$item['name']}</strong>. Please book a future date or wait until a qualified therapist checks in.";
-                        $walkin_type    = "danger";
-                    }
+                if ($is_two_session_booking && $session2_total_price < $regular_price) {
+                    $walkin_message = "⚠️ This service's 2-Session Package price is not properly configured (it must be at least the regular Session 1 price). Please contact IT or update it in Services.";
+                    $walkin_type    = 'danger';
                 }
 
-                // ── Feature B-1: today + no free qualified therapist at chosen time ──
-                if ($is_today_booking && empty($walkin_message)) {
-                    $svc_session_pre = intval($item['session_time'] ?? 60);
-                    $svc_buffer_pre  = ($rate_type === 'home') ? 30 : 0;
-                    $end_mins_pre    = $svc_session_pre + $svc_buffer_pre;
-                    $fq = $conn->prepare("
-                        SELECT COUNT(DISTINCT t.id) AS free_cnt
-                        FROM therapists t
-                        JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE()
-                        WHERE (ta.time_out IS NULL OR ta.time_out = '')
-                          AND (
-                              t.is_generalist = 1
-                              OR EXISTS(SELECT 1 FROM therapist_specialty_services
-                                        WHERE therapist_id = t.id AND service_id = ?)
-                              OR EXISTS(SELECT 1 FROM therapist_specialties ts
-                                        JOIN services s ON s.category_id = ts.category_id
-                                        WHERE ts.therapist_id = t.id AND s.id = ?)
-                          )
-                          AND NOT EXISTS(
-                              SELECT 1
-                              FROM appointment_therapists at2
-                              JOIN appointments a2 ON at2.appointment_id = a2.id
-                              JOIN services    s2 ON a2.service_id = s2.id
-                              WHERE at2.therapist_id = t.id
-                                AND a2.status IN ('approved','assigned','pending')
-                                AND DATE(a2.appointment_date) = DATE(?)
-                                AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE)
-                                    < (? + INTERVAL ? MINUTE)
-                                AND (a2.appointment_date + INTERVAL (s2.session_time + IF(a2.service_type='home',30,0)) MINUTE)
-                                    > (? - INTERVAL ? MINUTE)
-                          )
-                    ");
-                    $fq->bind_param("iissisi", $item_id, $item_id,
-                                    $booking_date,
-                                    $booking_date, $end_mins_pre, $booking_date, $svc_buffer_pre);
-                    $fq->execute();
-                    $free_count = (int)$fq->get_result()->fetch_assoc()['free_cnt']; $fq->close();
-                    if ($free_count === 0) {
-                        $booked_time = date('h:i A', strtotime($booking_date));
-                        $walkin_message = "⛔ No qualified therapist is free at <strong>{$booked_time}</strong> "
-                                        . "for <strong>{$item['name']}</strong>. Please choose a different time.";
-                        $walkin_type    = "danger";
-                    }
-                }
+                // ── Availability pre-check for Session 1's date/therapist only. Session 2
+                //    (when present) gets NO therapist assigned at booking time — it's created
+                //    pending/unassigned and picked up later via assign_therapist.php, same as
+                //    any other unassigned appointment — so there is nothing to conflict-check
+                //    against yet for Session 2. Any failure here blocks the whole booking —
+                //    the transaction below never starts. ──────────────────────────────────
+                $check_service_slot = function(string $chk_date, string $chk_label) use ($conn, $item_id, $item, $rate_type, $people_count, $therapist_id, $selected_duration) {
+                    // Feature A: today + zero qualified on duty → block
+                    $chk_is_today = (date('Y-m-d') === date('Y-m-d', strtotime($chk_date)));
+                    if ($chk_is_today) {
+                        $qc = $conn->prepare("
+                            SELECT COUNT(DISTINCT t.id) AS cnt
+                            FROM therapists t
+                            JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE()
+                            WHERE (ta.time_out IS NULL OR ta.time_out = '')
+                              AND (
+                                  t.is_generalist = 1
+                                  OR EXISTS(SELECT 1 FROM therapist_specialty_services WHERE therapist_id = t.id AND service_id = ?)
+                                  OR EXISTS(SELECT 1 FROM therapist_specialties ts
+                                            JOIN services s ON s.category_id = ts.category_id
+                                            WHERE ts.therapist_id = t.id AND s.id = ?)
+                              )
+                        ");
+                        $qc->bind_param("ii", $item_id, $item_id); $qc->execute();
+                        $qualified_on_duty_count = (int)$qc->get_result()->fetch_assoc()['cnt']; $qc->close();
+                        if ($qualified_on_duty_count === 0) {
+                            return "⛔ No qualified therapist is currently on duty for <strong>" . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . "</strong>{$chk_label}. Please book a future date or wait until a qualified therapist checks in.";
+                        }
 
-                // ── Tamper guard: reject conflicting specific-therapist bookings ──────
-                if ($therapist_id > 0 && empty($walkin_message)) {
-                    require_once __DIR__ . '/availability.php';
-                    $av_engine = new AvailabilityEngine($conn);
-                    $appt_rate_check = ($rate_type === 'home') ? 'home' : 'regular';
-                    $av_check = $av_engine->checkSlot($item_id, $booking_date, $people_count, $appt_rate_check, 0, $therapist_id);
-                    if (!$av_check['available']) {
-                        $walkin_message = '⛔ ' . ($av_check['reason'] ?? 'Selected therapist is not available at this time.');
+                        // Feature B-1: today + no free qualified therapist at chosen time
+                        $svc_session_pre = $selected_duration ? intval($selected_duration['duration_minutes']) : intval($item['session_time'] ?? 60);
+                        $svc_buffer_pre  = ($rate_type === 'home') ? 30 : 0;
+                        $end_mins_pre    = $svc_session_pre + $svc_buffer_pre;
+                        $fq = $conn->prepare("
+                            SELECT COUNT(DISTINCT t.id) AS free_cnt
+                            FROM therapists t
+                            JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE()
+                            WHERE (ta.time_out IS NULL OR ta.time_out = '')
+                              AND (
+                                  t.is_generalist = 1
+                                  OR EXISTS(SELECT 1 FROM therapist_specialty_services
+                                            WHERE therapist_id = t.id AND service_id = ?)
+                                  OR EXISTS(SELECT 1 FROM therapist_specialties ts
+                                            JOIN services s ON s.category_id = ts.category_id
+                                            WHERE ts.therapist_id = t.id AND s.id = ?)
+                              )
+                              AND NOT EXISTS(
+                                  SELECT 1
+                                  FROM appointment_therapists at2
+                                  JOIN appointments a2 ON at2.appointment_id = a2.id
+                                  JOIN services    s2 ON a2.service_id = s2.id
+                                  WHERE at2.therapist_id = t.id
+                                    AND a2.status IN ('approved','assigned','pending')
+                                    AND DATE(a2.appointment_date) = DATE(?)
+                                    AND (a2.appointment_date - INTERVAL IF(a2.service_type='home',30,0) MINUTE)
+                                        < (? + INTERVAL ? MINUTE)
+                                    AND (a2.appointment_date + INTERVAL (s2.session_time + IF(a2.service_type='home',30,0)) MINUTE)
+                                        > (? - INTERVAL ? MINUTE)
+                              )
+                        ");
+                        $fq->bind_param("iissisi", $item_id, $item_id,
+                                        $chk_date,
+                                        $chk_date, $end_mins_pre, $chk_date, $svc_buffer_pre);
+                        $fq->execute();
+                        $free_count = (int)$fq->get_result()->fetch_assoc()['free_cnt']; $fq->close();
+                        if ($free_count === 0) {
+                            $booked_time = date('h:i A', strtotime($chk_date));
+                            return "⛔ No qualified therapist is free at <strong>{$booked_time}</strong> "
+                                 . "for <strong>" . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . "</strong>{$chk_label}. Please choose a different time.";
+                        }
+                    }
+
+                    // Tamper guard: reject conflicting specific-therapist bookings
+                    if ($therapist_id > 0) {
+                        require_once __DIR__ . '/availability.php';
+                        $av_engine = new AvailabilityEngine($conn);
+                        $appt_rate_check = ($rate_type === 'home') ? 'home' : 'regular';
+                        $av_check = $av_engine->checkSlot($item_id, $chk_date, $people_count, $appt_rate_check, 0, $therapist_id);
+                        if (!$av_check['available']) {
+                            return '⛔ ' . ($av_check['reason'] ?? 'Selected therapist is not available at this time.') . $chk_label;
+                        }
+                    }
+
+                    return null;
+                };
+
+                if (empty($walkin_message)) {
+                    // Session 2's date is intentionally NOT checked here — see comment above
+                    // $check_service_slot: no therapist is assigned to Session 2 at booking
+                    // time, so there is nothing to conflict-check against yet.
+                    $slot_error = $check_service_slot($booking_date, '');
+                    if ($slot_error) {
+                        $walkin_message = $slot_error;
                         $walkin_type    = 'danger';
                     }
                 }
@@ -328,25 +388,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $order_id = $stmt->insert_id;
                 $stmt->close();
 
-                $item_stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)");
-                $item_stmt->bind_param("iiidd", $order_id, $item_id, $people_count, $charged_price, $total_amount);
-                $item_stmt->execute();
-                $order_item_id = $item_stmt->insert_id;
-                $item_stmt->close();
-
-                // charged_price stored as total (per-person × people_count)
-                // so Complete action can safely do charged_price / people_count
-                $appt_charged_total = $charged_price * $people_count;
-                $adv_date     = $advance_payment > 0 ? date('Y-m-d') : null;
-                $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $svc_type_val = ($rate_type === 'home') ? 'home' : 'onsite';
-                $adv_pm_val = $advance_payment > 0 ? $advance_pm : 'cash';
-                $appt_stmt->bind_param("iiisissidsdss", $walkin_user_id, $item_id, $order_item_id, $booking_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $appt_charged_total, $customer_note, $advance_payment, $adv_date, $adv_pm_val);
-                $appt_stmt->execute();
-                $appointment_id = $appt_stmt->insert_id; // ← actual appointment ID
-                $appt_stmt->close();
+                $adv_pm_val   = $advance_payment > 0 ? $advance_pm : 'cash';
+                $adv_date     = $advance_payment > 0 ? date('Y-m-d') : null;
 
-                if ($therapist_id > 0) {
+                // ── Reusable per-session row creation: order_item + appointment ─────────
+                // charged_price stored as total (per-person × people_count) so Complete
+                // action can safely do charged_price / people_count — same as before.
+                $create_session_row = function(float $per_person_price, float $row_total, string $appt_date, float $adv_pay_row, ?string $adv_date_row, string $adv_pm_row)
+                    use ($conn, $order_id, $walkin_user_id, $item_id, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $customer_note) {
+                    $item_stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)");
+                    $item_stmt->bind_param("iiidd", $order_id, $item_id, $people_count, $per_person_price, $row_total);
+                    $item_stmt->execute();
+                    $row_order_item_id = $item_stmt->insert_id;
+                    $item_stmt->close();
+
+                    $appt_stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $appt_stmt->bind_param("iiisissidsdss", $walkin_user_id, $item_id, $row_order_item_id, $appt_date, $people_count, $svc_type_val, $appt_rate_type, $appt_partner_id, $row_total, $customer_note, $adv_pay_row, $adv_date_row, $adv_pm_row);
+                    $appt_stmt->execute();
+                    $row_appt_id = $appt_stmt->insert_id;
+                    $appt_stmt->close();
+
+                    return $row_appt_id;
+                };
+
+                // ── Reusable per-session therapist assignment: specialty + conflict + commission ──
+                $assign_therapist_row = function(int $appt_id, string $appt_date, float $commission_base_price, string $label)
+                    use ($conn, $therapist_id, $item_id, $item, $rate_type, $people_handled_svc, $discount_amount_calc, $total_amount, $selected_duration, &$specialty_error, &$walkin_message) {
+                    if ($therapist_id <= 0) return;
+
                     // ── Feature A: server-side specialty enforcement (generalist-aware) ──
                     $spc = $conn->prepare("
                         SELECT t.is_generalist,
@@ -364,7 +434,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $specialty_error = true; throw new RuntimeException('specialty_fail');
                     }
 
-                    $svc_session = intval($item['session_time'] ?? 60);
+                    $svc_session = $selected_duration ? intval($selected_duration['duration_minutes']) : intval($item['session_time'] ?? 60);
                     $svc_buffer  = ($rate_type === 'home') ? 30 : 0;
                     // FIXED: Bug 3 — new slot duration = session_time × people_handled (back-to-back model)
                     // Also scale existing appointments' end by their people_handled to avoid double-booking
@@ -385,7 +455,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                                 > (? - INTERVAL ? MINUTE)
                         LIMIT 3");
                     $end_mins = ($svc_session * $people_handled_svc) + $svc_buffer;
-                    $cf->bind_param("isisi", $therapist_id, $booking_date, $end_mins, $booking_date, $svc_buffer);
+                    $cf->bind_param("isisi", $therapist_id, $appt_date, $end_mins, $appt_date, $svc_buffer);
                     $cf->execute();
                     $cf_rows = $cf->get_result()->fetch_all(MYSQLI_ASSOC); $cf->close();
                     $cf_count = count($cf_rows);
@@ -405,7 +475,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $cf_tooltip = implode('', $cf_details);
                         $cf_plural  = $cf_count > 1 ? "s ({$cf_count})" : "";
 
-                        $walkin_message .= " ⚠️ Note: Selected therapist has a conflicting appointment — saved without therapist assignment. "
+                        $walkin_message .= " ⚠️ Note: Selected therapist has a conflicting appointment{$label} — saved without therapist assignment. "
                             . "<span style='position:relative;display:inline-block;cursor:help;border-bottom:1px dashed #b45309;color:#b45309;font-weight:600;' "
                             . "onmouseenter=\"this.querySelector('.cf-tip').style.display='block'\" "
                             . "onmouseleave=\"this.querySelector('.cf-tip').style.display='none'\" "
@@ -435,17 +505,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                                 $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                             } else {
                                 $disc_frac  = ($total_amount > 0) ? ($discount_amount_calc / $total_amount) : 0.0;
-                                $commission = round($regular_price * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                                $commission = round($commission_base_price * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                             }
                         }
                         $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
-                        $at->bind_param("iidi", $appointment_id, $therapist_id, $commission, $people_handled_svc); $at->execute(); $at->close();
+                        $at->bind_param("iidi", $appt_id, $therapist_id, $commission, $people_handled_svc); $at->execute(); $at->close();
 
                         // Therapist confirmed — move pending → assigned
                         $upd_assigned = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=? AND status='pending'");
-                        $upd_assigned->bind_param("i", $appointment_id); $upd_assigned->execute(); $upd_assigned->close();
+                        $upd_assigned->bind_param("i", $appt_id); $upd_assigned->execute(); $upd_assigned->close();
 
-                        $is_future = strtotime($booking_date) > (time() + 1800);
+                        $is_future = strtotime($appt_date) > (time() + 1800);
                         if (!$is_future) {
                             $max_rot = $conn->query("SELECT IFNULL(MAX(rotation_order), 0) AS m FROM therapist_attendance WHERE duty_date = CURDATE()")->fetch_assoc()['m'];
                             $new_order = $max_rot + 1;
@@ -453,6 +523,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                             $upd_rot->bind_param("ii", $new_order, $therapist_id); $upd_rot->execute(); $upd_rot->close();
                         }
                     }
+                };
+
+                // ── Session 1 — identical to the pre-2-session single-appointment flow ──
+                $session1_appointment_id = $create_session_row($charged_price, $appt1_total, $booking_date, $advance_payment, $adv_date, $adv_pm_val);
+                $assign_therapist_row($session1_appointment_id, $booking_date, $regular_price, '');
+
+                // ── Duration Variants: record which variant drove this booking's
+                //    duration/price. $create_session_row() doesn't take these
+                //    columns (they don't apply to the 2-session flow it's also
+                //    used for), so set them with a small follow-up UPDATE —
+                //    a no-op for every booking that isn't using a variant.
+                if ($selected_duration) {
+                    $upd_dur = $conn->prepare("UPDATE appointments SET duration_minutes = ?, service_duration_id = ? WHERE id = ?");
+                    $upd_dur->bind_param("iii", $selected_duration['duration_minutes'], $selected_duration['id'], $session1_appointment_id);
+                    $upd_dur->execute(); $upd_dur->close();
+                }
+
+                // ── Session 2 (only for 2-session package bookings) ───────────────────
+                // Intentionally NO therapist assignment here — per the confirmed plan,
+                // Session 2 is always created pending/unassigned; a therapist is assigned
+                // to it later via the normal assign_therapist.php flow, same as any other
+                // unassigned appointment. It stays in the INSERT's default 'pending' status.
+                $session2_appointment_id = null;
+                if ($is_two_session_booking) {
+                    $session2_appointment_id = $create_session_row($session2_per_person, $appt2_total, $booking_date_2, 0.00, null, 'cash');
+
+                    $conn->query("UPDATE appointments SET session_group_id = {$session1_appointment_id} WHERE id IN ({$session1_appointment_id}, {$session2_appointment_id})");
                 }
 
                 $conn->commit();
@@ -461,14 +558,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $disc_suffix = $discount_type !== 'none' && $discount_amount_calc > 0
                     ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior Citizen','pwd'=>'PWD','employee'=>'Employee','celebration'=>'Celebration Discount'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
                     : '';
-                $people_suffix = $people_count > 1 ? " · {$people_count} people" : '';
-                $adv_suffix    = $advance_payment > 0 ? ' · 💰 Advance: ₱' . number_format($advance_payment, 2) : '';
-                $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name}</strong> — {$item['name']} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix . $adv_suffix;
+                $people_suffix  = $people_count > 1 ? " · {$people_count} people" : '';
+                $adv_suffix     = $advance_payment > 0 ? ' · 💰 Advance: ₱' . number_format($advance_payment, 2) : '';
+                $session_suffix = $is_two_session_booking ? ' · 🔁 2-Session Package' : '';
+                $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name_html}</strong> — {$item_name_html}{$session_suffix} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix . $adv_suffix;
                 $walkin_type    = "success";
                 } catch (Throwable $_we) {
                     $conn->rollback();
                     if ($specialty_error) {
-                        $walkin_message = "⚠️ The selected therapist is not qualified for <strong>{$item['name']}</strong>. Please select a qualified therapist.";
+                        $walkin_message = "⚠️ The selected therapist is not qualified for <strong>{$item_name_html}</strong>. Please select a qualified therapist.";
                     } else {
                         error_log('[WALKIN] Service order failed: ' . $_we->getMessage());
                         $walkin_message = "Order failed. Please try again.";
@@ -489,9 +587,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     exit();
 }
 
+$service_durations_map = []; // service_id => [{id, duration_minutes, regular_price, promo_price, active_price, is_promo_active, promo_end_time}, ...]
+$_sdr = $conn->query("SELECT id, service_id, duration_minutes, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations ORDER BY service_id, duration_minutes");
+while ($row = $_sdr->fetch_assoc()) {
+    // "Currently active" as of THIS page load — the authoritative check
+    // happens again server-side at booking-submit time either way.
+    $_active = get_active_duration_price($row);
+    $row['active_price']    = $_active['price'];
+    $row['is_promo_active'] = $_active['is_promo_active'];
+    $service_durations_map[(int)$row['service_id']][] = $row;
+}
+
 $all_services = [];
 $result = $conn->query("SELECT id, name, price, session_time, is_home_service, home_service_fee, home_service_price, is_two_session, session2_price FROM services WHERE deleted_at IS NULL ORDER BY name");
-while ($row = $result->fetch_assoc()) $all_services[] = $row;
+while ($row = $result->fetch_assoc()) {
+    $row['durations'] = $service_durations_map[(int)$row['id']] ?? [];
+    $all_services[] = $row;
+}
 
 // $all_partners and $partner_rates_map already fetched above POST handler
 
@@ -624,6 +736,16 @@ require_once 'admin_header.php';
             </div>
 
             <div>
+                <div class="form-section" id="durationVariantSection" style="display:none;">
+                    <div class="form-section-header">⏱ Choose Duration <span class="required">*</span></div>
+                    <div class="form-section-body">
+                        <div id="durationVariantPicker">
+                            <div id="durationVariantOptions"></div>
+                        </div>
+                        <input type="hidden" name="service_duration_id" id="selectedDurationIdInput" value="">
+                    </div>
+                </div>
+
                 <div class="form-section">
                     <div class="form-section-header" id="therapist-section-header">
                         💆 Select Therapist <span class="required">*</span>
@@ -1237,6 +1359,74 @@ function isTwoSessionCapable(svc) {
     return !!(svc && parseInt(svc.is_two_session) === 1);
 }
 
+// ── Duration Variants ─────────────────────────────────────────────────────
+function formatTimeAmPm(timeStr) {
+    if (!timeStr) return '';
+    const parts = timeStr.split(':');
+    let h = parseInt(parts[0], 10);
+    const m = parts[1] || '00';
+    const suffix = h >= 12 ? 'PM' : 'AM';
+    h = h % 12; if (h === 0) h = 12;
+    return h + ':' + m + ' ' + suffix;
+}
+
+function getSelectedDurationVariant() {
+    const svc = currentServiceId ? serviceData[currentServiceId] : null;
+    if (!svc || !svc.durations || !svc.durations.length) return null;
+    const selId = parseInt(document.getElementById('selectedDurationIdInput')?.value || 0);
+    if (!selId) return null;
+    return svc.durations.find(d => parseInt(d.id) === selId) || null;
+}
+
+let _durationVariantPickerForService = null;
+
+function updateDurationVariantPicker() {
+    const svc         = currentServiceId ? serviceData[currentServiceId] : null;
+    const section     = document.getElementById('durationVariantSection');
+    const options       = document.getElementById('durationVariantOptions');
+    const hiddenInput = document.getElementById('selectedDurationIdInput');
+    if (!section || !options || !hiddenInput) return;
+
+    const durations = (svc && svc.durations) ? svc.durations : [];
+    if (!durations.length) {
+        section.style.display = 'none';
+        options.innerHTML = '';
+        hiddenInput.value = '';
+        _durationVariantPickerForService = null;
+        return;
+    }
+
+    section.style.display = '';
+
+    // Only (re)build the radio list when the selected SERVICE actually
+    // changed — updatePricePreview() calls this on every keystroke/toggle,
+    // and rebuilding every time would reset the receptionist's chosen
+    // duration back to the first option on each refresh.
+    if (_durationVariantPickerForService === currentServiceId) return;
+    _durationVariantPickerForService = currentServiceId;
+
+    options.innerHTML = '';
+    const fmt = n => parseFloat(n).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    durations.forEach(function(d, i) {
+        const wrap = document.createElement('label');
+        wrap.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;margin-bottom:0.4rem;cursor:pointer;background:var(--bg3);';
+        const priceLabel = d.is_promo_active
+            ? ('₱' + fmt(d.active_price) + ' (🏷️ Promo, until ' + formatTimeAmPm(d.promo_end_time) + ')')
+            : ('₱' + fmt(d.active_price));
+        wrap.innerHTML = '<input type="radio" name="duration_variant_radio" value="' + d.id + '" ' + (i === 0 ? 'checked' : '') + '>' +
+            '<span>' + d.duration_minutes + ' mins — ' + priceLabel + '</span>';
+        options.appendChild(wrap);
+    });
+    hiddenInput.value = durations[0].id;
+
+    options.querySelectorAll('input[name="duration_variant_radio"]').forEach(function(radio) {
+        radio.addEventListener('change', function() {
+            hiddenInput.value = this.value;
+            updatePricePreview();
+        });
+    });
+}
+
 // True only when the selected service supports 2-session packages AND the receptionist
 // has switched the mode selector to "2 Sessions" (default mode is always 'single').
 function isTwoSessionModeActive() {
@@ -1476,7 +1666,9 @@ function onPartnerChange(partnerId) { currentPartnerId = parseInt(partnerId) || 
 function updatePricePreview() {
     const svc = serviceData[currentServiceId]; const display = document.getElementById('price-display'); const formula = document.getElementById('price-formula');
     if (!display || !formula) return;
-    if (!svc) { display.textContent = '₱0.00'; formula.textContent = 'Select a service first'; updateTwoSessionUI(); return; }
+    if (!svc) { display.textContent = '₱0.00'; formula.textContent = 'Select a service first'; updateTwoSessionUI(); updateDurationVariantPicker(); return; }
+
+    updateDurationVariantPicker();
 
     let total = 0, formulaTxt = '';
 
@@ -1485,7 +1677,8 @@ function updatePricePreview() {
         formulaTxt = '2-Session Package Price';
         display.style.color = 'var(--gold)';
     } else {
-        const regular = parseFloat(svc.price);
+        const selectedDuration = getSelectedDurationVariant();
+        const regular = selectedDuration ? parseFloat(selectedDuration.active_price) : parseFloat(svc.price);
         const homeFee   = parseFloat(svc.home_service_fee   || 0); // legacy
         const homePrice = parseFloat(svc.home_service_price || 0);
         const peopleCount = parseInt(document.querySelector('[name="people_count"]')?.value || 1) || 1;
@@ -1869,6 +2062,7 @@ function walkinBMLoadBusyWindows(dateStr) {
     const people   = parseInt(document.querySelector('[name="people_count"]')?.value) || 1;
     const rateType = document.getElementById('rate_type_val')?.value || 'regular';
     const thId     = parseInt(document.getElementById('svc_therapist_id')?.value) || 0;
+    const durationId = parseInt(document.getElementById('selectedDurationIdInput')?.value) || 0;
 
     const section   = document.getElementById('walkinBMSlotsSection');
     const loading   = document.getElementById('walkinBMSlotsLoading');
@@ -1884,7 +2078,7 @@ function walkinBMLoadBusyWindows(dateStr) {
     document.getElementById('walkinHourList').innerHTML   = '';
     document.getElementById('walkinMinuteList').innerHTML = '<div style="font-size:0.78rem;color:var(--gray);text-align:center;padding:1rem;">← Select an hour</div>';
 
-    fetch('busy_windows.php?service_id=' + svcId + '&date=' + dateStr + '&people=' + people + '&rate_type=' + rateType + '&therapist_id=' + thId)
+    fetch('busy_windows.php?service_id=' + svcId + '&date=' + dateStr + '&people=' + people + '&rate_type=' + rateType + '&therapist_id=' + thId + '&duration_id=' + durationId)
         .then(r => r.json())
         .then(data => {
             if (loading) loading.style.display = 'none';
