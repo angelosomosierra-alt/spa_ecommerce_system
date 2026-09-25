@@ -370,7 +370,7 @@ while ($row = $res_prd->fetch_assoc()) {
         <?php if (!empty($services_by_cat)): ?>
         <?php foreach ($services_by_cat as $cat_key => $cat_data):
               $cat_items  = $cat_data['items'];
-              $has_slider = count($cat_items) > 3; ?>
+              $has_slider = count($cat_items) > 1; ?>
         <div style="margin-bottom:2.5rem;">
             <h3 class="cat-section-heading">💆 <?php echo htmlspecialchars($cat_data['label']); ?></h3>
             <div class="slider-outer">
