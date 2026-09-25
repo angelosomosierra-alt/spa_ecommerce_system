@@ -82,6 +82,17 @@
         if ($ki) while ($kr = $ki->fetch_assoc()) $conn->query("ALTER TABLE daily_report_denominations DROP INDEX `{$kr['INDEX_NAME']}`");
         $conn->query("ALTER TABLE daily_report_denominations ADD UNIQUE KEY uq_rpt_denom_type (report_id, denomination, `type`)");
     }
+    // Duration Variants — this file JOINs to service_durations unconditionally
+    // below, so make sure it exists regardless of which page ran first.
+    $conn->query("CREATE TABLE IF NOT EXISTS service_durations (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        service_id INT NOT NULL,
+        duration_minutes INT NOT NULL,
+        regular_price DECIMAL(10,2) NOT NULL,
+        promo_price DECIMAL(10,2) NOT NULL,
+        UNIQUE KEY uq_service_duration (service_id, duration_minutes),
+        CONSTRAINT fk_service_durations_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 })();
 
 // ── Report header ─────────────────────────────────────────────────────────────
@@ -110,7 +121,7 @@ $_s = $conn->prepare("
         oi.id             AS oi_id,
         oi.service_id,
         COALESCE(s.name, '[Deleted Service]') AS service_name,
-        s.price           AS regular_price,
+        COALESCE(sd.regular_price, s.price) AS regular_price,
         a.id              AS appt_id,
         a.appointment_date,
         a.duration_minutes,
@@ -130,6 +141,7 @@ $_s = $conn->prepare("
     JOIN appointments a ON a.order_item_id = oi.id
     LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
     LEFT JOIN therapists t ON t.id = at2.therapist_id
+    LEFT JOIN service_durations sd ON sd.service_id = a.service_id AND sd.duration_minutes = a.duration_minutes
     WHERE DATE(a.appointment_date) = ?
       AND a.status     = 'completed'
       AND a.rate_type != 'influencer'
@@ -176,7 +188,7 @@ $_i = $conn->prepare("
         o.created_at,
         oi.id             AS oi_id,
         s.name            AS service_name,
-        s.price           AS regular_price,
+        COALESCE(sd.regular_price, s.price) AS regular_price,
         a.appointment_date,
         a.duration_minutes,
         -- charged_price is stored as total (per_person × people_count)
@@ -192,6 +204,7 @@ $_i = $conn->prepare("
     JOIN appointments a ON a.order_item_id = oi.id
     LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
     LEFT JOIN therapists t ON t.id = at2.therapist_id
+    LEFT JOIN service_durations sd ON sd.service_id = a.service_id AND sd.duration_minutes = a.duration_minutes
     WHERE DATE(a.appointment_date) = ?
       AND a.status    = 'completed'
       AND a.rate_type = 'influencer'
@@ -410,8 +423,22 @@ $net_sales     = $gross_sales - $staff_cf;
 // $maya_dp_total and per-method DP totals are computed above from advances_received
 
 // Payment method totals
+// Rows fully pre-paid via a PRIOR-day advance (e.g. Session 2 of a 2-session package,
+// paid in full at Session 1's check-in) carry a STALE order payment_method that was
+// never refreshed on their own completion day — attributing their charged_price to
+// today's payment-method bucket here would double-count money already deducted via
+// B46 on the day it was actually collected. Mirrors B48's own advance_payment_date
+// check above. A row is skipped only when its advance FULLY covers its charged_price
+// (a partial prior-day advance still has a genuine fresh remainder collected today).
 $pm_totals = [];
 foreach ($service_rows as $row) {
+    $_row_adv      = (float)($row['advance_payment'] ?? 0);
+    $_row_adv_date = $row['advance_payment_date'] ?? '';
+    $_row_prepaid  = $_row_adv > 0
+                   && $_row_adv_date !== '' && $_row_adv_date !== $report_date
+                   && $_row_adv >= ((float)$row['charged_price'] - 0.005);
+    if ($_row_prepaid) continue;
+
     $pm = (!empty($row['paymongo_method']))
         ? $row['paymongo_method']
         : ($row['payment_method'] ?? 'cash');

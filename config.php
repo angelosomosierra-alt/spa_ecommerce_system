@@ -25,6 +25,13 @@ $_APP_ENV = getenv('APP_ENV') ?: 'production';
 define('APP_ENV', $_APP_ENV);
 unset($_APP_ENV);
 
+// ─── TIMEZONE ─────────────────────────────────────────────────────────────────
+// Applies to every role/page so PHP's date()/time() always agree on "today".
+// Role-gated date_default_timezone_set() calls elsewhere (admin_access.php,
+// admin_login.php) reapply the same or an admin-configured zone on top of this
+// for the cashier login-hour restriction feature — harmless.
+date_default_timezone_set('Asia/Manila');
+
 // ─── ERROR HANDLING ───────────────────────────────────────────────────────────
 // Never show raw PHP errors to end users. Always log them securely.
 ini_set('display_errors', APP_ENV === 'development' ? '1' : '0');
@@ -151,6 +158,7 @@ define('ADMIN_GATE_CODE', '2024');
 
 // ─── DATABASE CONNECTION ──────────────────────────────────────────────────────
 $conn = new mysqli(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_NAME);
+$conn->query("SET time_zone = '+08:00'");
 
 if ($conn->connect_error) {
     // Log the real error; show nothing sensitive to the browser
@@ -254,7 +262,41 @@ function verify_csrf_token_ajax(): bool {
 
 // ─── SANITIZE ─────────────────────────────────────────────────────────────────
 function sanitize_input(string $data): string {
-    return htmlspecialchars(stripslashes(trim($data)), ENT_QUOTES, 'UTF-8');
+    return trim(stripslashes($data));
+}
+
+// ─── DURATION VARIANT PRICING ─────────────────────────────────────────────────
+// Resolves which price is currently active for a service_durations row,
+// factoring in the optional promo scheduling window (price_mode /
+// promo_start_time / promo_end_time). Evaluated fresh on every call — no cron
+// job, no stored "is promo active" flag. Reads the current time via the
+// timezone already set globally above (date_default_timezone_set('Asia/Manila')).
+function get_active_duration_price(array $durationRow): array {
+    $regular = (float)($durationRow['regular_price'] ?? 0);
+    $promo   = (float)($durationRow['promo_price']   ?? 0);
+    $mode    = $durationRow['price_mode'] ?? 'regular';
+
+    if ($mode !== 'promo' || empty($durationRow['promo_start_time']) || empty($durationRow['promo_end_time'])) {
+        return ['price' => $regular, 'is_promo_active' => false];
+    }
+
+    $now   = date('H:i:s');
+    $start = date('H:i:s', strtotime($durationRow['promo_start_time']));
+    $end   = date('H:i:s', strtotime($durationRow['promo_end_time']));
+
+    if ($start <= $end) {
+        // Normal same-day window, e.g. 10:00–16:00
+        $active = ($now >= $start && $now < $end);
+    } else {
+        // End earlier than start — overnight window spanning midnight,
+        // e.g. 22:00–02:00. Active from start through midnight, then from
+        // midnight up to (not including) end.
+        $active = ($now >= $start || $now < $end);
+    }
+
+    return $active
+        ? ['price' => $promo,   'is_promo_active' => true]
+        : ['price' => $regular, 'is_promo_active' => false];
 }
 
 // ─── AUTH HELPERS ─────────────────────────────────────────────────────────────

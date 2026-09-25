@@ -429,11 +429,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 // Idempotent — safe on every page load. Skips any appointment already present
 // via source_appointment_id. Never modifies live appointment records.
 (function() use ($conn, $report_date) {
+    // Duration Variants — this function JOINs to service_durations below, so
+    // make sure it exists regardless of page load order (this IIFE runs
+    // before _daily_report_data.php's own self-heal, further down the file).
+    $conn->query("CREATE TABLE IF NOT EXISTS service_durations (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        service_id INT NOT NULL,
+        duration_minutes INT NOT NULL,
+        regular_price DECIMAL(10,2) NOT NULL,
+        promo_price DECIMAL(10,2) NOT NULL,
+        UNIQUE KEY uq_service_duration (service_id, duration_minutes),
+        CONSTRAINT fk_service_durations_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
     // Pre-load commission percents (therapist_id_service_id → percent) for column routing
     $imp_cm = [];
     $cq = $conn->query("SELECT therapist_id, service_id, commission_percent FROM therapist_commission");
     if ($cq) foreach ($cq->fetch_all(MYSQLI_ASSOC) as $_c)
         $imp_cm[(int)$_c['therapist_id'] . '_' . (int)$_c['service_id']] = (float)$_c['commission_percent'];
+
+    // Pre-load which services have 2+ duration options (Duration Variants) —
+    // built once per import run, not queried per row.
+    $imp_multi_duration_svc = [];
+    $dcq = $conn->query("SELECT service_id, COUNT(*) AS cnt FROM service_durations GROUP BY service_id HAVING COUNT(*) >= 2");
+    if ($dcq) foreach ($dcq->fetch_all(MYSQLI_ASSOC) as $_dc)
+        $imp_multi_duration_svc[(int)$_dc['service_id']] = true;
 
     // Fetch completed non-influencer appointments for this date
     $aq = $conn->prepare("
@@ -449,7 +469,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             o.payment_method,
             oi.service_id,
             COALESCE(s.name, '[Deleted Service]') AS service_name,
-            s.price                   AS regular_price,
+            COALESCE(sd.regular_price, s.price) AS regular_price,
             GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
             IFNULL(SUM(at2.commission), 0)        AS total_commission
         FROM orders o
@@ -458,6 +478,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         JOIN appointments a  ON a.order_item_id  = oi.id
         LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
         LEFT JOIN therapists t ON t.id = at2.therapist_id
+        LEFT JOIN service_durations sd ON sd.service_id = a.service_id AND sd.duration_minutes = a.duration_minutes
         WHERE DATE(a.appointment_date) = ?
           AND a.status     = 'completed'
           AND a.rate_type != 'influencer'
@@ -525,6 +546,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $slip_no     = $ap['slip_number']   ?? '';
         $client_name = $ap['customer_name'] ?? '';
         $svc_name    = $ap['service_name']  ?? '';
+        // Duration Variants — freeze the booked duration into the spreadsheet
+        // row's name, but only for services that actually offer more than
+        // one duration option; every other appointment's name is untouched.
+        if (isset($imp_multi_duration_svc[$service_id])) {
+            $svc_name = $svc_name . ' (' . (int)$ap['duration_minutes'] . ' mins)';
+        }
         $stylist     = $ap['therapists']    ?? '';
         $remarks     = '';
         $is_refund   = 0;

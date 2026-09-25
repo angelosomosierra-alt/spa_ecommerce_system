@@ -256,19 +256,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
             $stmt = $conn->prepare("UPDATE therapists SET full_name=?, phone=?, specialties=?, is_generalist=? WHERE id=?");
             $stmt->bind_param("sssii", $full_name, $phone, $specialties_text, $is_generalist, $tid);
             $stmt->execute(); $stmt->close();
-            $msg = "✅ Therapist <strong>{$full_name}</strong> updated.";
+            $msg = "✅ Therapist <strong>" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "</strong> updated.";
             log_activity($conn, 'therapist_updated', "Updated therapist: {$full_name}", 'therapist', $tid);
         } else {
             $chk = $conn->prepare("SELECT id FROM therapists WHERE LOWER(full_name)=LOWER(?)");
             $chk->bind_param("s", $full_name); $chk->execute();
             if ($chk->get_result()->num_rows > 0) {
-                $msg = "⚠️ A therapist named \"{$full_name}\" already exists.";
+                $msg = "⚠️ A therapist named \"" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "\" already exists.";
                 $msg_type = 'danger'; $tid = -1;
             } else {
                 $stmt = $conn->prepare("INSERT INTO therapists (full_name, phone, specialties, is_generalist) VALUES (?,?,?,?)");
                 $stmt->bind_param("sssi", $full_name, $phone, $specialties_text, $is_generalist);
                 $stmt->execute(); $tid = $conn->insert_id; $stmt->close();
-                $msg = "✅ Therapist <strong>{$full_name}</strong> added.";
+                $msg = "✅ Therapist <strong>" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "</strong> added.";
                 log_activity($conn, 'therapist_added', "Added therapist: {$full_name}", 'therapist', (int)$tid);
             }
             $chk->close();
@@ -333,7 +333,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
                 ")->fetch_all(MYSQLI_ASSOC);
 
                 if (!empty($missing_comm)) {
-                    $missing_names = implode(', ', array_column($missing_comm, 'name'));
+                    $missing_names = htmlspecialchars(implode(', ', array_column($missing_comm, 'name')), ENT_QUOTES, 'UTF-8');
                     $msg .= "<br>⚠️ <strong>Commission not set</strong> for: <em>{$missing_names}</em>. "
                           . "Please go to the <a href='staff.php?tab=commission' style='color:var(--gold);font-weight:700;'>Commission Matrix</a> to set rates.";
                     $msg_type = 'warning';

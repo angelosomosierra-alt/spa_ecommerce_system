@@ -1,6 +1,10 @@
 <?php
 require_once '../config.php';
 
+// This endpoint's query references session_group_id directly — self-heal it
+// here too, since this AJAX endpoint can be hit independently of admin/appointments.php.
+$conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS session_group_id INT NULL DEFAULT NULL, ADD INDEX IF NOT EXISTS idx_session_group (session_group_id)");
+
 header('Content-Type: application/json');
 
 if (!is_logged_in() || !is_admin()) {
@@ -33,6 +37,12 @@ $where_parts = [
         JOIN orders o ON oi.order_id = o.id
         WHERE oi.id = a.order_item_id AND o.payment_status != 'pending_payment'
     ))",
+    // 2-session packages: Session 2's row is never its own standalone card on
+    // appointments.php (it's nested inside Session 1's), so it must never be
+    // counted here either — otherwise its id can never be "seen" (no .appt-card
+    // of its own advances lastSeenId) and this popup fires forever. Mirrors the
+    // same exclusion applied to appointments.php's main query and stats loop.
+    "(a.session_group_id IS NULL OR a.id = a.session_group_id)",
     "a.id > ?"
 ];
 $bind_types = 'i';

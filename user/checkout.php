@@ -332,7 +332,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     $stmt->bind_param("i", $item['id']); $stmt->execute();
                     $current_stock = intval($stmt->get_result()->fetch_assoc()['stock']); $stmt->close();
                     if ($item['quantity'] > $current_stock) {
-                        $stock_errors[] = "'{$item['name']}' only has $current_stock left in stock.";
+                        $stock_errors[] = "'" . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . "' only has $current_stock left in stock.";
                     }
                 }
             }
@@ -354,7 +354,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         $live_stock = intval($ls->get_result()->fetch_assoc()['stock'] ?? 0); $ls->close();
                         if ($item['quantity'] > $live_stock) {
                             $conn->rollback();
-                            $message = "'{$item['name']}' only has {$live_stock} left in stock.";
+                            $message = "'" . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . "' only has {$live_stock} left in stock.";
                             $message_type = "danger";
                             $stock_ok = false;
                             break;

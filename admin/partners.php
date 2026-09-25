@@ -51,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_partner'])) {
             $stmt->execute();
             $pid = $stmt->insert_id;
             $stmt->close();
-            $message = "✅ Partner <strong>{$name}</strong> added."; $message_type = "success";
+            $message = "✅ Partner <strong>" . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "</strong> added."; $message_type = "success";
         }
     }
 }

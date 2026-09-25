@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_today'])) {
                 $stmt = $conn->prepare("INSERT INTO therapist_attendance (therapist_id, duty_date, time_in, rotation_order) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE time_in=VALUES(time_in)");
                 $stmt->bind_param("issi", $tid, $date, $time_in, $rot);
                 $ok = $stmt->execute(); $stmt->close();
-                $message      = $ok ? "✅ {$row['full_name']} checked in." : "Error checking in.";
+                $message      = $ok ? "✅ " . htmlspecialchars($row['full_name'], ENT_QUOTES, 'UTF-8') . " checked in." : "Error checking in.";
                 $message_type = $ok ? "success" : "danger";
                 if ($ok) log_activity($conn, 'therapist_login',
                     "{$row['full_name']} clocked in for duty",
@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reorder'])) {
         $aid   = intval($aid);
         $order = intval($order) + 1;
         if ($aid <= 0) continue;
-        $stmt = $conn->prepare("UPDATE therapist_attendance SET rotation_order=? WHERE id=? AND duty_date=CURDATE()");
+        $stmt = $conn->prepare("UPDATE therapist_attendance SET rotation_order=? WHERE id=?");
         $stmt->bind_param("ii", $order, $aid); $stmt->execute(); $stmt->close();
     }
     header("Location: therapists.php?reordered=1"); exit();
@@ -210,7 +210,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'approved'
+           AND ap.status = 'assigned'
         ) AS is_assigned,
 
         -- Current appointment: service name
@@ -220,7 +220,7 @@ $today_roster = $conn->query("
          JOIN services s ON ap.service_id = s.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'approved'
+           AND ap.status = 'assigned'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_service,
@@ -231,7 +231,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'approved'
+           AND ap.status = 'assigned'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_appt_time,
@@ -243,7 +243,7 @@ $today_roster = $conn->query("
          JOIN users u ON ap.user_id = u.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'approved'
+           AND ap.status = 'assigned'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_customer,
@@ -254,7 +254,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'approved'
+           AND ap.status = 'assigned'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_people,
@@ -265,7 +265,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'approved'
+           AND ap.status = 'assigned'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_appt_id,
@@ -754,7 +754,9 @@ function saveCommEdit(btn, atId) {
 <div class="panel">
     <div class="panel-header">
         <span class="panel-title">🔄 Today's Rotation — <?php echo date('F d, Y (l)'); ?></span>
+        <?php if (count($today_roster) > 1): ?>
         <small style="color:var(--gray);font-size:0.73rem;">Drag to reorder · Resets daily</small>
+        <?php endif; ?>
     </div>
     <div class="panel-body" style="padding:1rem;">
 
@@ -772,8 +774,6 @@ function saveCommEdit(btn, atId) {
             Drag cards to reorder.
         </div>
 
-        <form method="POST" id="rotationForm">
-        <?php echo csrf_field(); ?>
         <div id="rotationList">
         <?php foreach ($today_roster as $i => $r):
 
@@ -826,6 +826,18 @@ function saveCommEdit(btn, atId) {
                             flex-shrink:0;">
                     <?php echo $i + 1; ?>
                 </div>
+
+                <?php if (count($today_roster) > 1): ?>
+                <!-- Touch-friendly reorder buttons (mirrors drag-and-drop for touchscreens) -->
+                <div style="display:flex;flex-direction:column;gap:0.15rem;flex-shrink:0;">
+                    <button type="button" class="btn btn-secondary btn-sm move-up-btn"
+                            style="font-size:0.6rem;padding:0.1rem 0.4rem;line-height:1;"
+                            title="Move up">▲</button>
+                    <button type="button" class="btn btn-secondary btn-sm move-down-btn"
+                            style="font-size:0.6rem;padding:0.1rem 0.4rem;line-height:1;"
+                            title="Move down">▼</button>
+                </div>
+                <?php endif; ?>
 
                 <!-- Avatar -->
                 <div style="width:36px;height:36px;border-radius:50%;
@@ -969,12 +981,16 @@ function saveCommEdit(btn, atId) {
         <?php endforeach; ?>
         </div>
 
+        <form method="POST" id="rotationForm">
+        <?php echo csrf_field(); ?>
         <!-- Hidden rotation inputs -->
         <div id="rotationInputs"></div>
+        <?php if (count($today_roster) > 1): ?>
         <button type="submit" name="reorder" id="saveRotationBtn"
-                class="btn btn-primary btn-sm" style="display:none;margin-top:0.75rem;width:100%;">
+                class="btn btn-primary btn-sm" style="margin-top:0.75rem;width:100%;">
             💾 Save New Rotation Order
         </button>
+        <?php endif; ?>
         </form>
         <?php endif; ?>
     </div>
@@ -1107,7 +1123,7 @@ if (list) {
         if (dragging) dragging.style.opacity = '';
         dragging = null;
         updateRotationInputs();
-        if (saveBtn) saveBtn.style.display = 'block';
+        refreshMoveButtons();
     });
     list.addEventListener('dragover', e => {
         e.preventDefault();
@@ -1122,10 +1138,29 @@ if (list) {
     document.querySelectorAll('.rotation-card').forEach(card => {
         card.setAttribute('draggable', true);
     });
+
+    // Touch-friendly alternative: ▲/▼ buttons swap a card with its neighbor
+    list.addEventListener('click', e => {
+        const upBtn   = e.target.closest('.move-up-btn');
+        const downBtn = e.target.closest('.move-down-btn');
+        if (!upBtn && !downBtn) return;
+        const card = e.target.closest('.rotation-card');
+        if (!card) return;
+        if (upBtn) {
+            const prev = card.previousElementSibling;
+            if (prev) list.insertBefore(card, prev);
+        } else {
+            const next = card.nextElementSibling;
+            if (next) list.insertBefore(next, card);
+        }
+        updateRotationInputs();
+        refreshMoveButtons();
+    });
 }
 
 // Populate hidden inputs on page load so Save always works
 updateRotationInputs();
+refreshMoveButtons();
 
 function updateRotationInputs() {
     if (!inputs) return;
@@ -1139,6 +1174,16 @@ function updateRotationInputs() {
         // Update visible queue number
         const num = card.querySelector('[data-queue-num]');
         if (num) num.textContent = i + 1;
+    });
+}
+
+function refreshMoveButtons() {
+    const cards = document.querySelectorAll('.rotation-card');
+    cards.forEach((card, i) => {
+        const up   = card.querySelector('.move-up-btn');
+        const down = card.querySelector('.move-down-btn');
+        if (up)   up.disabled   = (i === 0);
+        if (down) down.disabled = (i === cards.length - 1);
     });
 }
 </script>

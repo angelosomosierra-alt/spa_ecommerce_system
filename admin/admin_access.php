@@ -41,6 +41,7 @@ function admin_page_roles(): array {
         'feedback'              => ['owner','it','hr','marketing'],
         'export_sales'          => ['owner','it','hr','marketing'],
         'receptionist_settings' => ['owner'],
+        'fix_double_encoded_text' => ['owner','it'],
     ];
 }
 

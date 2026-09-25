@@ -3,6 +3,11 @@ require_once '../config.php';
 redirect_if_not_admin();
 require_once __DIR__ . '/../notify.php';
 
+// ── 2-Session Package linking column — this file references session_group_id
+//    directly in SQL (cancel/check-in handlers), so it must self-heal it
+//    regardless of whether walkin.php's own copy of this line has run yet.
+$conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS session_group_id INT NULL DEFAULT NULL, ADD INDEX IF NOT EXISTS idx_session_group (session_group_id)");
+
 // ── Ensure PayMongo columns exist on appointment_extra_services ───────────────
 foreach ([
     "paymongo_reference VARCHAR(100) NULL DEFAULT NULL",
@@ -801,7 +806,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
     $appt_id      = intval($_POST['appt_id'] ?? 0);
     $cancel_reason = sanitize_input($_POST['cancel_reason'] ?? '');
 
-    $chk = $conn->prepare("SELECT a.user_id, a.status, s.name AS service_name FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.id=?");
+    $chk = $conn->prepare("SELECT a.user_id, a.status, a.session_group_id, s.name AS service_name FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.id=?");
     $chk->bind_param("i", $appt_id); $chk->execute();
     $chk_row = $chk->get_result()->fetch_assoc(); $chk->close();
 
@@ -810,22 +815,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
         $cn_name = (is_cashier() && !empty($pr_cn['full_name']))
             ? $pr_cn['full_name']
             : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
-        $upd = $conn->prepare("UPDATE appointments SET status='cancelled', cancel_reason=?, cancelled_by=?, cancelled_by_name=? WHERE id=?");
-        $upd->bind_param("sisi", $cancel_reason, $cn_by, $cn_name, $appt_id); $upd->execute(); $upd->close();
+
+        // No-Show posts this exact, hidden (non-editable) reason string — this is how it's
+        // distinguished from "Cancel Booking" (free-text admin-correction reason), which
+        // never cascades. Only a No-Show on Session 1 of a 2-session package cascades to
+        // cancel Session 2 too — a missed Session 1 forfeits the whole (non-refundable)
+        // package, per confirmed client policy.
+        $is_no_show  = ($cancel_reason === 'No-show — customer did not arrive');
+        $is_session1 = !empty($chk_row['session_group_id']) && (int)$chk_row['session_group_id'] === $appt_id;
+        $s2_cascaded_id = null;
+
+        $conn->begin_transaction();
+        try {
+            $upd = $conn->prepare("UPDATE appointments SET status='cancelled', cancel_reason=?, cancelled_by=?, cancelled_by_name=? WHERE id=?");
+            $upd->bind_param("sisi", $cancel_reason, $cn_by, $cn_name, $appt_id); $upd->execute(); $upd->close();
+
+            if ($is_no_show && $is_session1) {
+                $s2_chk = $conn->prepare("SELECT id, user_id, status FROM appointments WHERE session_group_id = ? AND id != ? LIMIT 1");
+                $s2_chk->bind_param("ii", $appt_id, $appt_id);
+                $s2_chk->execute();
+                $s2_row = $s2_chk->get_result()->fetch_assoc();
+                $s2_chk->close();
+
+                if ($s2_row && !in_array($s2_row['status'], ['completed', 'declined', 'cancelled'])) {
+                    $s2_cancel_reason = 'Package cancelled — Session 1 no-show';
+                    $s2_upd = $conn->prepare("UPDATE appointments SET status='cancelled', cancel_reason=?, cancelled_by=?, cancelled_by_name=? WHERE id=?");
+                    $s2_upd->bind_param("sisi", $s2_cancel_reason, $cn_by, $cn_name, $s2_row['id']);
+                    $s2_upd->execute(); $s2_upd->close();
+                    $s2_cascaded_id = (int)$s2_row['id'];
+                }
+            }
+
+            $conn->commit();
+        } catch (Throwable $e) {
+            $conn->rollback();
+            $message = "❌ Failed to cancel appointment: " . htmlspecialchars($e->getMessage());
+            $message_type = "danger";
+            goto skip_cancel;
+        }
 
         add_notification($conn, $chk_row['user_id'], 'appointment',
             '🚫 Appointment Cancelled',
             'Your ' . $chk_row['service_name'] . ' appointment has been cancelled.' . ($cancel_reason ? ' Reason: ' . $cancel_reason : ''),
             'appointments.php'
         );
-        $message = "🚫 Appointment #$appt_id marked as cancelled.";
-        $message_type = "success";
         $_actor_cn = (is_cashier() && !empty($pr_cn['full_name']))
             ? ['id' => null, 'name' => $pr_cn['full_name'], 'role' => 'receptionist']
             : null;
         log_activity($conn, 'appointment_cancelled',
             "Cancelled appointment #{$appt_id} — {$chk_row['service_name']}",
             'appointment', $appt_id, $_actor_cn);
+
+        if ($s2_cascaded_id) {
+            add_notification($conn, $chk_row['user_id'], 'appointment',
+                '🚫 2-Session Package Cancelled',
+                'Session 2 of your ' . $chk_row['service_name'] . ' package has also been cancelled because Session 1 was a no-show.',
+                'appointments.php'
+            );
+            log_activity($conn, 'appointment_cancelled',
+                "Cascaded cancellation to appointment #{$s2_cascaded_id} (Session 2) — Session 1 (#{$appt_id}) was a no-show",
+                'appointment', $s2_cascaded_id, $_actor_cn);
+            $message = "🚫 Appointment #$appt_id marked as no-show — Session 2 (#$s2_cascaded_id) was also cancelled.";
+        } else {
+            $message = "🚫 Appointment #$appt_id marked as cancelled.";
+        }
+        $message_type = "success";
     } else {
         $message = "Cannot cancel — appointment not found or already completed/declined.";
         $message_type = "danger";
@@ -1068,55 +1122,107 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $message = '❌ Please choose Pay Now or Pay Later.'; $message_type = 'danger';
                 goto end_action;
             }
-            if ($pay_choice === 'now' && !empty($appt['order_item_id'])) {
-                $ci_pm = sanitize_input($_POST['pay_method'] ?? 'cash');
-                $ci_allowed_pm = ['cash','gcash','maya','qrph','card','swiper'];
-                if (!in_array($ci_pm, $ci_allowed_pm)) $ci_pm = 'cash';
 
-                $ci_disc_type = sanitize_input($_POST['discount_type'] ?? 'none');
-                if (!in_array($ci_disc_type, ['none','pwd','senior','employee','voucher'])) $ci_disc_type = 'none';
+            // ── Check-in + payment + Session 2 advance attribution — atomic transaction ──
+            $conn->begin_transaction();
+            try {
+                if ($pay_choice === 'now' && !empty($appt['order_item_id'])) {
+                    $ci_pm = sanitize_input($_POST['pay_method'] ?? 'cash');
+                    $ci_allowed_pm = ['cash','gcash','maya','qrph','card','swiper'];
+                    if (!in_array($ci_pm, $ci_allowed_pm)) $ci_pm = 'cash';
 
-                $po = $conn->prepare("SELECT o.id, o.total_amount FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
-                $po->bind_param("i", $appt['order_item_id']); $po->execute();
-                $po_row = $po->get_result()->fetch_assoc(); $po->close();
+                    $ci_disc_type = sanitize_input($_POST['discount_type'] ?? 'none');
+                    if (!in_array($ci_disc_type, ['none','pwd','senior','employee','voucher'])) $ci_disc_type = 'none';
 
-                if ($po_row) {
-                    $ci_base = floatval($po_row['total_amount']);
-                    $ci_disc_amt = 0.00;
-                    if ($ci_disc_type === 'pwd' || $ci_disc_type === 'senior') {
-                        $ci_disc_amt = round($ci_base * 0.20, 2);
-                    } elseif ($ci_disc_type === 'employee') {
-                        $ci_disc_amt = round($ci_base * 0.50, 2);
-                    } elseif ($ci_disc_type === 'voucher') {
-                        $ci_vchr_type  = sanitize_input($_POST['voucher_type']  ?? 'percent');
-                        if (!in_array($ci_vchr_type, ['percent', 'fixed'])) $ci_vchr_type = 'percent';
-                        $ci_vchr_value = floatval($_POST['voucher_value'] ?? 0);
-                        if ($ci_vchr_value > 0) {
-                            if ($ci_vchr_type === 'percent') {
-                                $ci_disc_amt = round($ci_base * (min($ci_vchr_value, 100) / 100), 2);
+                    $po = $conn->prepare("SELECT o.id, o.total_amount FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
+                    $po->bind_param("i", $appt['order_item_id']); $po->execute();
+                    $po_row = $po->get_result()->fetch_assoc(); $po->close();
+
+                    if ($po_row) {
+                        $ci_base = floatval($po_row['total_amount']);
+                        $ci_disc_amt = 0.00;
+                        if ($ci_disc_type === 'pwd' || $ci_disc_type === 'senior') {
+                            $ci_disc_amt = round($ci_base * 0.20, 2);
+                        } elseif ($ci_disc_type === 'employee') {
+                            $ci_disc_amt = round($ci_base * 0.50, 2);
+                        } elseif ($ci_disc_type === 'voucher') {
+                            $ci_vchr_type  = sanitize_input($_POST['voucher_type']  ?? 'percent');
+                            if (!in_array($ci_vchr_type, ['percent', 'fixed'])) $ci_vchr_type = 'percent';
+                            $ci_vchr_value = floatval($_POST['voucher_value'] ?? 0);
+                            if ($ci_vchr_value > 0) {
+                                if ($ci_vchr_type === 'percent') {
+                                    $ci_disc_amt = round($ci_base * (min($ci_vchr_value, 100) / 100), 2);
+                                } else {
+                                    $ci_disc_amt = round(min($ci_vchr_value, $ci_base), 2);
+                                }
                             } else {
-                                $ci_disc_amt = round(min($ci_vchr_value, $ci_base), 2);
+                                $message .= ($message ? ' ' : '') . '⚠️ Voucher amount not entered — no discount applied.';
+                                $ci_disc_type = 'none';
                             }
-                        } else {
-                            $message .= ($message ? ' ' : '') . '⚠️ Voucher amount not entered — no discount applied.';
-                            $ci_disc_type = 'none';
+                        }
+                        $ci_final = max(0.00, $ci_base - $ci_disc_amt);
+
+                        $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
+                        $u->bind_param("ssddi", $ci_pm, $ci_disc_type, $ci_disc_amt, $ci_final, $po_row['id']);
+                        $u->execute(); $u->close();
+                    }
+                }
+
+                // ── 2-Session Package: attribute Session 2's portion as an advance ──
+                // Only when this check-in is for Session 1 (id = session_group_id) AND
+                // the shared order is now actually paid in full (just now via Pay Now
+                // above, or already paid earlier some other way) — never trust
+                // $pay_choice alone, re-check the order's real current state.
+                if (!empty($appt['session_group_id']) && (int)$appt['session_group_id'] === (int)$appt['id']
+                    && !empty($appt['order_item_id'])) {
+                    $s2ord = $conn->prepare("SELECT o.payment_status, o.payment_method, o.paymongo_method
+                                              FROM orders o JOIN order_items oi ON oi.order_id=o.id
+                                              WHERE oi.id=? LIMIT 1");
+                    $s2ord->bind_param("i", $appt['order_item_id']);
+                    $s2ord->execute();
+                    $s2ord_row = $s2ord->get_result()->fetch_assoc();
+                    $s2ord->close();
+
+                    if ($s2ord_row && $s2ord_row['payment_status'] === 'paid') {
+                        $s2row = $conn->prepare("SELECT id, charged_price FROM appointments WHERE session_group_id = ? AND id != ? LIMIT 1");
+                        $s2row->bind_param("ii", $appt_id, $appt_id);
+                        $s2row->execute();
+                        $s2_appt = $s2row->get_result()->fetch_assoc();
+                        $s2row->close();
+
+                        if ($s2_appt) {
+                            // Prefer paymongo_method (actual online channel) over the generic
+                            // payment_method, same precedence the Daily Report itself uses.
+                            $s2_adv_pm = $s2ord_row['paymongo_method'] ?: $s2ord_row['payment_method'];
+                            $s2_allowed_pm = ['cash','gcash','maya','qrph','card','swiper'];
+                            if (!in_array($s2_adv_pm, $s2_allowed_pm)) $s2_adv_pm = 'cash';
+
+                            // Session 2's OWN stored charged_price (locked in at booking time —
+                            // never session2_price minus the service's CURRENT price, which may
+                            // have since been edited in Services).
+                            $s2_adv_upd = $conn->prepare("UPDATE appointments SET advance_payment = ?, advance_payment_date = CURDATE(), advance_payment_method = ? WHERE id = ?");
+                            $s2_adv_upd->bind_param("dsi", $s2_appt['charged_price'], $s2_adv_pm, $s2_appt['id']);
+                            $s2_adv_upd->execute(); $s2_adv_upd->close();
                         }
                     }
-                    $ci_final = max(0.00, $ci_base - $ci_disc_amt);
-
-                    $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
-                    $u->bind_param("ssddi", $ci_pm, $ci_disc_type, $ci_disc_amt, $ci_final, $po_row['id']);
-                    $u->execute(); $u->close();
                 }
-            }
 
-            $ci_by   = (int)$_SESSION['user_id'];
-            $ci_name = (is_cashier() && !empty($pr_ci['full_name']))
-                ? $pr_ci['full_name']
-                : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
-            $ci_stmt = $conn->prepare("UPDATE appointments SET status='approved', approved_by=?, approved_by_name=? WHERE id=? AND status='assigned'");
-            $ci_stmt->bind_param("isi", $ci_by, $ci_name, $appt_id);
-            $ci_stmt->execute(); $ci_stmt->close();
+                $ci_by   = (int)$_SESSION['user_id'];
+                $ci_name = (is_cashier() && !empty($pr_ci['full_name']))
+                    ? $pr_ci['full_name']
+                    : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
+                $ci_stmt = $conn->prepare("UPDATE appointments SET status='approved', approved_by=?, approved_by_name=? WHERE id=? AND status='assigned'");
+                $ci_stmt->bind_param("isi", $ci_by, $ci_name, $appt_id);
+                $ci_stmt->execute(); $ci_stmt->close();
+
+                $conn->commit();
+            } catch (Throwable $e) {
+                $conn->rollback();
+                $message = "❌ Failed to check in appointment: " . htmlspecialchars($e->getMessage());
+                $message_type = "danger";
+                goto end_action;
+            }
+            // ── End atomic transaction ────────────────────────────────────────────
 
             add_notification($conn, $appt['user_id'], 'appointment', '✅ You\'ve been checked in!',
                 'You have been checked in for your '.$appt['service_name'].' appointment. Your session will begin shortly.',
@@ -1263,8 +1369,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     $oi_stmt->bind_param("i", $appt['order_item_id']); $oi_stmt->execute();
                     $oi_row = $oi_stmt->get_result()->fetch_assoc(); $oi_stmt->close();
                     if ($oi_row && $oi_row['order_id']) {
-                        $upd_ord = $conn->prepare("UPDATE orders SET approval_status='completed' WHERE id=?");
-                        $upd_ord->bind_param("i", $oi_row['order_id']); $upd_ord->execute(); $upd_ord->close();
+                        // Only mark the shared order 'completed' once EVERY appointment tied
+                        // to it (across all its order_items — e.g. both sessions of a
+                        // 2-session package) has itself reached 'completed'. A normal
+                        // single-appointment order always has exactly one order_item, so
+                        // this is trivially true the moment that one appointment completes
+                        // (the UPDATE above already ran in this same transaction) — unchanged
+                        // behavior for non-2-session bookings.
+                        $_ord_done_chk = $conn->prepare("
+                            SELECT COUNT(*) AS c
+                            FROM order_items oi
+                            JOIN appointments a2 ON a2.order_item_id = oi.id
+                            WHERE oi.order_id = ? AND a2.status != 'completed'
+                        ");
+                        $_ord_done_chk->bind_param("i", $oi_row['order_id']);
+                        $_ord_done_chk->execute();
+                        $_ord_still_pending = (int)$_ord_done_chk->get_result()->fetch_assoc()['c'];
+                        $_ord_done_chk->close();
+
+                        if ($_ord_still_pending === 0) {
+                            $upd_ord = $conn->prepare("UPDATE orders SET approval_status='completed' WHERE id=?");
+                            $upd_ord->bind_param("i", $oi_row['order_id']); $upd_ord->execute(); $upd_ord->close();
+                        }
                     }
                 }
 
@@ -1774,13 +1900,23 @@ $where_parts = ["(a.order_item_id IS NULL OR EXISTS (
     JOIN orders o ON oi.order_id = o.id
     WHERE oi.id = a.order_item_id AND o.payment_status != 'pending_payment'
 ))"];
+// 2-session packages: only Session 1's row (id = session_group_id) is ever a top-level
+// card. Session 2's row (session_group_id set but id != session_group_id) is excluded
+// here and fetched separately, nested inside Session 1's card — see $render_card.
+$where_parts[] = "(a.session_group_id IS NULL OR a.id = a.session_group_id)";
 $bind_types = '';
 $bind_vals  = [];
 
 
 if (!empty($filter_date)) {
-    $where_parts[] = "DATE(a.appointment_date) = ?";
-    $bind_types   .= 's';
+    // Match if EITHER this row's own date, OR its paired Session 2's date, falls on
+    // the filtered day — a customer arriving for Session 2 must not be missed.
+    $where_parts[] = "(DATE(a.appointment_date) = ? OR EXISTS (
+        SELECT 1 FROM appointments a2
+        WHERE a2.session_group_id = a.id AND DATE(a2.appointment_date) = ?
+    ))";
+    $bind_types   .= 'ss';
+    $bind_vals[]   = $filter_date;
     $bind_vals[]   = $filter_date;
 }
 
@@ -1793,7 +1929,8 @@ $appt_sql = "
            a.approved_by_name, a.completed_by_name, a.declined_by_name,
            a.cancelled_by_name, a.rescheduled_by_name, a.rescheduled_at,
            (SELECT COUNT(DISTINCT at3.person_slot) FROM appointment_therapists at3 WHERE at3.appointment_id=a.id AND at3.therapist_id IS NOT NULL) AS therapist_count,
-           (SELECT oi.order_id FROM order_items oi WHERE oi.id = a.order_item_id LIMIT 1) AS order_id
+           (SELECT oi.order_id FROM order_items oi WHERE oi.id = a.order_item_id LIMIT 1) AS order_id,
+           (SELECT a4.status FROM appointments a4 WHERE a4.session_group_id = a.id AND a4.id != a.id LIMIT 1) AS session2_status
     FROM appointments a
     JOIN services s  ON a.service_id  = s.id
     JOIN users u     ON a.user_id     = u.id
@@ -1815,20 +1952,56 @@ if (!empty($bind_vals)) {
     $appointments = $conn->query($appt_sql)->fetch_all(MYSQLI_ASSOC);
 }
 
-// Stats — use prepared statements
-$stats = [];
-foreach (['pending','assigned','approved','completed','declined','cancelled'] as $st) {
-    $s = $conn->prepare("
-        SELECT COUNT(*) AS c FROM appointments a
-        WHERE a.status = ?
-          AND (a.order_item_id IS NULL OR EXISTS (
+// ── Effective status (2-session packages) ──────────────────────────────────────
+// A combined card's tab/History placement follows whichever session is LEAST
+// advanced: if Session 1 isn't completed yet, its own status drives placement as
+// always. Once Session 1 completes, the card stays on the active board under
+// Session 2's own status until Session 2 also completes — only then does it move
+// to History. Normal (non-2-session) rows have no session2_status, so this is a
+// no-op for them — effective_status always just equals their own status.
+// Shared by BOTH the Kanban rows below AND the global $stats counts further down
+// so the two can never diverge.
+function two_session_effective_status(string $own_status, ?string $session2_status): string {
+    $terminal = ['completed', 'declined', 'cancelled'];
+    if ($own_status === 'completed' && !empty($session2_status)) {
+        if (!in_array($session2_status, $terminal)) {
+            // Session 1 is done but Session 2 still has work ahead of it (pending/
+            // assigned/approved). Anchor the combined card in "Approved" — a fixed,
+            // predictable parking spot — instead of bouncing across Pending/
+            // Assigned/Approved as Session 2 works through its own sub-workflow.
+            // Session 2's REAL current state is still fully visible and actionable
+            // inside the nested section, so nothing here is hidden or misleading —
+            // only which top-level tab the card sits under is fixed.
+            return 'approved';
+        }
+        // Session 2 has also reached a terminal state — the whole pair is done.
+        return 'completed';
+    }
+    return $own_status;
+}
+foreach ($appointments as &$_appt_ref) {
+    $_appt_ref['effective_status'] = two_session_effective_status($_appt_ref['status'], $_appt_ref['session2_status'] ?? null);
+}
+unset($_appt_ref);
+
+// Stats — global (non-date-filtered) counts, resolved through the SAME
+// effective_status rule as the Kanban board so tab badges never diverge from
+// what's actually displayed there. One query + in-PHP counting, replacing the
+// previous 6 separate per-status COUNT(*) statements.
+$stats = ['pending'=>0,'assigned'=>0,'approved'=>0,'completed'=>0,'declined'=>0,'cancelled'=>0];
+$_stats_rows = $conn->query("
+    SELECT a.status,
+           (SELECT a4.status FROM appointments a4 WHERE a4.session_group_id = a.id AND a4.id != a.id LIMIT 1) AS session2_status
+    FROM appointments a
+    WHERE (a.order_item_id IS NULL OR EXISTS (
               SELECT 1 FROM order_items oi JOIN orders o ON oi.order_id=o.id
               WHERE oi.id=a.order_item_id AND o.payment_status != 'pending_payment'
           ))
-    ");
-    $s->bind_param("s", $st); $s->execute();
-    $stats[$st] = (int)$s->get_result()->fetch_assoc()['c'];
-    $s->close();
+      AND (a.session_group_id IS NULL OR a.id = a.session_group_id)
+")->fetch_all(MYSQLI_ASSOC);
+foreach ($_stats_rows as $_sr) {
+    $_eff = two_session_effective_status($_sr['status'], $_sr['session2_status'] ?? null);
+    if (isset($stats[$_eff])) $stats[$_eff]++;
 }
 
 // Time conflict detection
@@ -1980,10 +2153,10 @@ foreach ($tabs as $val=>$label): ?>
 
 <?php
 // ── Split fetched appointments into kanban groups ─────────────────────────────
-$pending_rows  = array_values(array_filter($appointments, fn($a) => $a['status'] === 'pending'));
-$assigned_rows = array_values(array_filter($appointments, fn($a) => $a['status'] === 'assigned'));
-$approved_rows = array_values(array_filter($appointments, fn($a) => $a['status'] === 'approved'));
-$history_rows  = array_values(array_filter($appointments, fn($a) => in_array($a['status'], ['completed','declined','cancelled'])));
+$pending_rows  = array_values(array_filter($appointments, fn($a) => $a['effective_status'] === 'pending'));
+$assigned_rows = array_values(array_filter($appointments, fn($a) => $a['effective_status'] === 'assigned'));
+$approved_rows = array_values(array_filter($appointments, fn($a) => $a['effective_status'] === 'approved'));
+$history_rows  = array_values(array_filter($appointments, fn($a) => in_array($a['effective_status'], ['completed','declined','cancelled'])));
 
 // ── Card renderer closure ─────────────────────────────────────────────────────
 $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_cat, $get_qualified, $filter, $conflict_appt_ids): void {
@@ -2011,6 +2184,13 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         $pm->bind_param("i",$a['order_item_id']); $pm->execute();
         $pm_row=$pm->get_result()->fetch_assoc()??$pm_row; $pm->close();
     }
+
+    // ── Duration Variants: only append "— N mins" when this appointment was
+    //    actually booked through a duration picker (service_duration_id set) —
+    //    ordinary services (the vast majority) get no suffix, unchanged label.
+    $_duration_suffix = (!empty($a['service_duration_id']) && !empty($a['duration_minutes']))
+        ? ' — ' . (int)$a['duration_minutes'] . ' mins'
+        : '';
 
     // ── Pre-compute discount label for header badge ───────────────────────────
     $_disc_type_h   = $pm_row['discount_type'] ?? 'none';
@@ -2040,6 +2220,67 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     foreach ($extra_services as $_ce) {
         $_search_extras .= ' ' . strtolower($_ce['svc_name'] . ' ' . ($_ce['therapist_name'] ?? ''));
     }
+
+    // ── 2-Session Package: fetch the paired Session 2 row, if any ──────────────
+    // $a here is always Session 1's row (the main query excludes Session 2 rows),
+    // so any non-null session_group_id means this card has a Session 2 to nest.
+    $_session2 = null;
+    $_session2_assigned_therapists = [];
+    $_session2_raw_slot_tid = [];
+    $_session2_inline_therapists = [];
+    if (!empty($a['session_group_id'])) {
+        $s2q = $conn->prepare("
+            SELECT a2.*,
+                   (SELECT COUNT(DISTINCT at3.person_slot) FROM appointment_therapists at3
+                    WHERE at3.appointment_id = a2.id AND at3.therapist_id IS NOT NULL) AS therapist_count
+            FROM appointments a2
+            WHERE a2.session_group_id = ? AND a2.id != ?
+            LIMIT 1
+        ");
+        $s2q->bind_param("ii", $a['id'], $a['id']);
+        $s2q->execute();
+        $_session2 = $s2q->get_result()->fetch_assoc();
+        $s2q->close();
+
+        if ($_session2) {
+            $_s2_id = (int)$_session2['id'];
+
+            $_s2ts = $conn->prepare("SELECT at2.id AS at_id, at2.person_slot, at2.commission, at2.notes, t.id AS therapist_id, t.full_name, t.specialties FROM appointment_therapists at2 JOIN therapists t ON at2.therapist_id = t.id WHERE at2.appointment_id = ? ORDER BY at2.person_slot ASC, at2.id ASC");
+            $_s2ts->bind_param("i", $_s2_id); $_s2ts->execute();
+            $_session2_assigned_therapists = $_s2ts->get_result()->fetch_all(MYSQLI_ASSOC); $_s2ts->close();
+
+            $_s2rsr = $conn->prepare("SELECT person_slot, therapist_id FROM appointment_therapists WHERE appointment_id = ? ORDER BY person_slot ASC");
+            $_s2rsr->bind_param("i", $_s2_id); $_s2rsr->execute();
+            foreach ($_s2rsr->get_result()->fetch_all(MYSQLI_ASSOC) as $_s2rsr_row) {
+                $_session2_raw_slot_tid[(int)$_s2rsr_row['person_slot']] = $_s2rsr_row['therapist_id'];
+            }
+            $_s2rsr->close();
+
+            // Qualified therapist list for Session 2's own dropdown — MUST use Session 2's
+            // OWN appointment_date (critical after a reschedule; never Session 1's date).
+            if (in_array($_session2['status'], ['pending', 'assigned'])) {
+                $_s2_date_esc = $conn->real_escape_string($_session2['appointment_date']);
+                $_s2_svc_id   = (int)$_session2['service_id'];
+                $_s2itr = $conn->query("
+                    SELECT t.id, t.full_name, IFNULL(t.specialties,'General') AS specialties,
+                        (SELECT COUNT(*) FROM therapist_specialty_services
+                         WHERE therapist_id=t.id AND service_id={$_s2_svc_id}) +
+                        (SELECT COUNT(*) FROM therapist_specialties ts2
+                         JOIN services s2 ON s2.category_id=ts2.category_id
+                         WHERE ts2.therapist_id=t.id AND s2.id={$_s2_svc_id}) AS has_specialty,
+                        (SELECT COUNT(*) FROM therapist_attendance ta
+                         WHERE ta.therapist_id=t.id
+                           AND ta.duty_date=DATE('{$_s2_date_esc}')
+                           AND ta.time_out IS NULL) AS on_duty
+                    FROM therapists t
+                    ORDER BY has_specialty DESC, t.full_name ASC
+                ");
+                $_session2_inline_therapists = $_s2itr ? $_s2itr->fetch_all(MYSQLI_ASSOC) : [];
+            }
+        }
+    }
+    $is_two_session_card = !empty($_session2);
+    $_search_session2 = $is_two_session_card ? (' ' . strtolower(date('M j Y g:i a', strtotime($_session2['appointment_date'])))) : '';
 
     // UI flag: disable Check In if any required primary slot or extra service has no therapist.
     $_has_unassigned_therapist = false;
@@ -2076,7 +2317,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
 <div class="appt-card"
      data-appt-id="<?php echo $appt_id; ?>"
-     data-search="<?php echo htmlspecialchars(strtolower($display_name.' '.$a['service_name'].' '.date('M j Y g:i a', strtotime($a['appointment_date']))).$_search_extras); ?>"
+     data-search="<?php echo htmlspecialchars(strtolower($display_name.' '.$a['service_name'].' '.date('M j Y g:i a', strtotime($a['appointment_date']))).$_search_extras.$_search_session2); ?>"
      style="border-left:3.5px solid <?php echo $bdr; ?>;">
 
     <!-- ── CARD HEADER (always visible, click to expand) ─────────────────── -->
@@ -2085,13 +2326,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <p class="appt-name">
                 <?php echo htmlspecialchars($display_name); ?>
                 <span style="background:<?php echo $bbg;?>;color:<?php echo $bfg;?>;padding:0.15rem 0.5rem;border-radius:20px;font-size:0.67rem;font-weight:700;vertical-align:middle;margin-left:0.35rem;"><?php echo $blabel; ?></span>
+                <?php if ($is_two_session_card): ?><span style="background:rgba(217,70,239,0.1);color:#a21caf;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #e9a4f1;margin-left:0.2rem;" title="Session 2 is nested below — placement follows Session 1's status">🔁 2-Session Package</span><?php endif; ?>
                 <?php if ($_has_discount_h): ?><span style="background:#fffbeb;color:#b45309;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fcd34d;margin-left:0.2rem;" title="Customer requested <?php echo htmlspecialchars($_dlbl_h); ?> discount — verify ID/voucher at check-in"><?php echo $_dico_h . ' ' . htmlspecialchars($_dlbl_h); ?></span><?php endif; ?>
                 <?php if (isset($conflict_appt_ids[$appt_id])): ?><span style="background:#fef3c7;color:#92400e;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fbbf24;margin-left:0.2rem;animation:pulse 2s infinite;">⚠️ Conflict</span><?php endif; ?>
                 <?php if (floatval($a['advance_payment'] ?? 0) > 0): ?><span style="background:rgba(201,106,44,0.12);color:#C96A2C;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;margin-left:0.2rem;">💰 Advance: ₱<?php echo number_format(floatval($a['advance_payment']), 2); ?></span><?php endif; ?>
                 <?php if (!empty($a['has_therapist_conflict'])): $_cf_list = json_decode($a['therapist_conflict_details'] ?? '[]', true) ?: []; $_cf_tooltip = htmlspecialchars(implode("\n", array_map(function($_c){ return $_c['customer_name'] . ' — ' . $_c['service_name'] . ' at ' . date('g:i A', strtotime($_c['appointment_date'])); }, $_cf_list))); ?><span title="<?php echo $_cf_tooltip; ?>" style="display:inline-flex;align-items:center;gap:3px;padding:0.1rem 0.4rem;border-radius:20px;background:rgba(220,53,69,0.12);color:#dc3545;font-size:0.64rem;font-weight:600;margin-left:0.2rem;cursor:help;">⚠️ Therapist Conflict</span><?php endif; ?>
             </p>
             <p class="appt-svc">
-                <?php echo htmlspecialchars($a['service_name']); ?>
+                <?php echo htmlspecialchars($a['service_name']) . htmlspecialchars($_duration_suffix); ?>
                 <?php if ($is_multi_service_card): ?>
                     <span style="color:var(--gray);font-size:0.82em;"> + <?php echo count($extra_services); ?> more</span>
                     <span style="margin-left:0.3rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:0.08rem 0.45rem;border-radius:20px;font-size:0.63rem;font-weight:700;vertical-align:middle;">🧾 Multi-Service (<?php echo count($extra_services) + 1; ?>)</span>
@@ -2116,7 +2358,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.45rem;">🧾 Services</div>
             <div style="display:flex;flex-direction:column;gap:0.28rem;margin-bottom:0.4rem;">
                 <div style="font-size:0.88rem;font-weight:700;color:var(--gold);">
-                    <?php echo htmlspecialchars($a['service_name']); ?>
+                    <?php echo htmlspecialchars($a['service_name']) . htmlspecialchars($_duration_suffix); ?>
                     <?php if (!empty($assigned_therapists[0]['full_name'])): ?><span style="font-size:0.74rem;color:var(--gray);font-weight:400;"> &middot; 💆 <?php echo htmlspecialchars($assigned_therapists[0]['full_name']); ?></span><?php endif; ?>
                     <span style="font-size:0.63rem;background:rgba(13,110,253,0.08);color:#0d6efd;padding:0.04rem 0.35rem;border-radius:20px;margin-left:0.2rem;font-weight:700;">Primary</span>
                 </div>
@@ -2129,7 +2371,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php endforeach; ?>
             </div>
             <?php else: ?>
-            <div style="font-size:1.05rem;font-weight:800;color:var(--gold);"><?php echo htmlspecialchars($a['service_name']); ?></div>
+            <div style="font-size:1.05rem;font-weight:800;color:var(--gold);"><?php echo htmlspecialchars($a['service_name']) . htmlspecialchars($_duration_suffix); ?></div>
             <?php endif; ?>
             <div style="font-size:0.74rem;color:var(--gray);margin-top:0.18rem;">
                 Booked <?php echo date('M d, Y — h:i A',strtotime($a['created_at'])); ?>
@@ -2186,7 +2428,16 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         [$_dico, $_dlbl] = $_disc_labels[$_disc_type] ?? ['🎟️', ucfirst($_disc_type)];
         ?>
         <div>
-            <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">💰 Price</div>
+            <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">
+                💰 Price<?php if ($is_two_session_card): ?> <span style="color:#a21caf;">— 2-Session Package Total</span><?php endif; ?>
+            </div>
+            <?php
+            // NOTE: for a 2-session card, $_orig_price/$_final_amt below already reflect the
+            // FULL combined package total — Session 1 + Session 2 share one order, and Step 3
+            // stores orders.total_amount as the combined figure by construction. Nothing to
+            // recompute here; this block only adds the label above so it reads as a package
+            // price rather than a normal single-session price.
+            ?>
             <?php if ($_has_discount): ?>
                 <?php if ($_show_final): ?>
                 <!-- Has discount with known amount -->
@@ -2691,16 +2942,25 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
         <?php elseif ($status === 'assigned'): ?>
             <?php
-            // Bill lines for Check-In modal (main service + extras)
-            $_bill_lines = [['name' => $a['service_name'], 'price' => floatval($a['charged_price'] ?? 0)]];
+            // Bill lines for Check-In modal (main service + extras). For Session 1 of a
+            // 2-session package, the customer pays the FULL combined package total here
+            // (charged_price on this row is only Session 1's own split, e.g. ₱459 of a
+            // ₱899 package) — $pm_row['total_amount'] already equals the combined total
+            // by construction (Step 3), same figure the card's own "💰 Price" box shows.
+            // Normal appointments, and a 2-session service booked in "1 Session" mode,
+            // are completely unaffected — still their own charged_price, as always.
+            $_bill_lines = $is_two_session_card
+                ? [['name' => $a['service_name'] . ' (2-Session Package)', 'price' => floatval($pm_row['total_amount'] ?? 0)]]
+                : [['name' => $a['service_name'], 'price' => floatval($a['charged_price'] ?? 0)]];
             foreach ($extra_services as $_be) { $_bill_lines[] = ['name' => $_be['svc_name'], 'price' => floatval($_be['charged_price'])]; }
+            $_checkin_bill_title = $is_two_session_card ? '🧾 Buong Bill (2-Session Package)' : '🧾 Buong Bill';
             ?>
             <script>
             (window._apptExtras = window._apptExtras || {})[<?php echo $appt_id; ?>] = <?php echo json_encode(array_map(function($e){ return ['id'=>(int)$e['id'],'name'=>$e['svc_name'],'price'=>(float)$e['charged_price']]; }, $extra_services)); ?>;
             </script>
             <button type="button" class="btn btn-success btn-sm" data-checkin-btn
                     data-bill-json='<?php echo htmlspecialchars(json_encode($_bill_lines), ENT_QUOTES); ?>'
-                    onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>')"
+                    onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>', null, '<?php echo htmlspecialchars(addslashes($_checkin_bill_title)); ?>')"
                     <?php if ($_has_unassigned_therapist): ?>
                     disabled title="Assign a specific therapist to all services first"
                     style="opacity:0.5;cursor:not-allowed;"
@@ -2785,8 +3045,8 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     '<?php echo $a['appointment_date']; ?>',
                     '<?php echo $a['service_type']; ?>',
                     <?php echo $a['people_count']??1; ?>,
-                    '<?php echo addslashes($a['customer_note']??''); ?>',
-                    '<?php echo addslashes(implode(', ', array_column($assigned_therapists, 'full_name'))); ?>'
+                    '<?php echo htmlspecialchars(addslashes($a['customer_note']??''), ENT_QUOTES, 'UTF-8'); ?>',
+                    '<?php echo htmlspecialchars(addslashes(implode(', ', array_column($assigned_therapists, 'full_name'))), ENT_QUOTES, 'UTF-8'); ?>'
                 )"
                 class="btn btn-secondary btn-sm">✏️ Edit</button>
         <button type="button"
@@ -2863,6 +3123,220 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <?php if ($status === 'cancelled' && !empty($a['cancel_reason'])): ?>
     <div style="margin-top:0.75rem;padding:0.6rem 0.85rem;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;font-size:0.8rem;color:#374151;">
         🚫 <strong>Cancellation reason:</strong> <?php echo htmlspecialchars($a['cancel_reason']); ?>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($is_two_session_card): $s2_id = (int)$_session2['id']; $s2_status = $_session2['status'];
+        [$_s2bbg,$_s2bfg,$_s2blabel] = $badge[$s2_status] ?? ['#e2e3e5','#41464b',ucfirst($s2_status)];
+        $_s2_people  = max(1, intval($_session2['people_count'] ?? 1));
+        $_s2_t_count = (int)($_session2['therapist_count'] ?? 0);
+        $_s2_slot_therapist_map = [];
+        foreach ($_session2_assigned_therapists as $_s2sm) {
+            $_s2_slot_therapist_map[(int)($_s2sm['person_slot'] ?? 0)] = $_s2sm;
+        }
+    ?>
+    <!-- ══ NESTED SESSION 2 ═══════════════════════════════════════════════ -->
+    <div class="nested-session-block" data-appt-id="<?php echo $s2_id; ?>"
+         style="margin-top:0.9rem;padding:0.95rem 1.05rem;background:#fdf4ff;border:1.5px dashed #e9a4f1;border-radius:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.65rem;flex-wrap:wrap;">
+            <span style="font-size:0.78rem;font-weight:700;color:#a21caf;text-transform:uppercase;letter-spacing:0.05em;">🔁 Session 2</span>
+            <span style="background:<?php echo $_s2bbg; ?>;color:<?php echo $_s2bfg; ?>;padding:0.2rem 0.7rem;border-radius:20px;font-size:0.72rem;font-weight:700;"><?php echo $_s2blabel; ?></span>
+        </div>
+        <div style="font-size:0.88rem;color:var(--brown);font-weight:600;margin-bottom:0.15rem;">
+            📅 <?php echo date('F d, Y — h:i A', strtotime($_session2['appointment_date'])); ?>
+        </div>
+        <?php if ($s2_status === 'pending'): ?>
+        <div style="font-size:0.76rem;color:#92400e;margin-bottom:0.6rem;">⏳ No therapist assigned yet</div>
+        <?php endif; ?>
+
+        <?php if (in_array($s2_status, ['pending','assigned'])): ?>
+        <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:0.85rem 0.95rem;margin-bottom:0.6rem;">
+            <div style="font-size:0.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
+                <span>💆 Therapist Assignment
+                    <span data-filled-counter data-total-required="<?php echo $_s2_people; ?>"
+                          style="font-weight:400;color:<?php echo $_s2_t_count>=$_s2_people?'var(--green)':'var(--gold)'; ?>;">
+                        — <?php echo $_s2_t_count; ?>/<?php echo $_s2_people; ?> filled
+                    </span>
+                </span>
+                <?php if ($_s2_t_count < $_s2_people): ?>
+                <span style="font-size:0.66rem;background:#fff3cd;color:#664d03;padding:0.12rem 0.45rem;border-radius:20px;font-weight:700;">
+                    <?php echo $s2_status==='assigned' ? 'Edit assignment' : 'Required before approving'; ?>
+                </span>
+                <?php elseif ($s2_status === 'assigned'): ?>
+                <span style="font-size:0.66rem;background:#d1fae5;color:#065f46;padding:0.12rem 0.45rem;border-radius:20px;font-weight:700;">✓ All covered</span>
+                <?php endif; ?>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:0.4rem;margin-bottom:0.55rem;">
+            <?php for ($_s2p = 1; $_s2p <= $_s2_people; $_s2p++):
+                $_s2_st = $_s2_slot_therapist_map[$_s2p] ?? null;
+            ?>
+                <div class="therapist-slot-row" data-person-slot="<?php echo $_s2p; ?>" style="display:flex;align-items:center;gap:0.5rem;">
+                    <span style="font-size:0.76rem;font-weight:600;color:var(--gray);white-space:nowrap;">👤 Person <?php echo $_s2p; ?></span>
+                    <select data-person-slot="<?php echo $_s2p; ?>"
+                            onchange="autoSaveSlot(this, <?php echo $s2_id; ?>)"
+                            style="flex:1;padding:0.35rem 0.55rem;border:1px solid #c8a46e;border-radius:7px;background:#fff;color:#1a1a1a;font-size:0.8rem;">
+                        <option value="" style="color:#1a1a1a;">— Select therapist —</option>
+                        <option value="__any__" style="color:#1a1a1a;font-weight:600;"
+                                <?php echo (array_key_exists($_s2p, $_session2_raw_slot_tid) && $_session2_raw_slot_tid[$_s2p] === null) ? 'selected' : ''; ?>>
+                            — Any Available —
+                        </option>
+                        <?php foreach ($_session2_inline_therapists as $_s2topt):
+                            $_s2_is_current = (!empty($_s2_st) && (int)$_s2_st['therapist_id'] === (int)$_s2topt['id']);
+                            if ($_s2topt['has_specialty'] <= 0 && !$_s2_is_current) continue;
+                            $_s2_lbl = htmlspecialchars($_s2topt['full_name']);
+                            if (!$_s2topt['on_duty']) $_s2_lbl .= ' — Off duty';
+                            if ($_s2topt['has_specialty'] <= 0) $_s2_lbl .= ' ⚠️ No longer qualified';
+                            $_s2_selected = $_s2_is_current;
+                        ?>
+                        <option value="<?php echo $_s2topt['id']; ?>" <?php echo $_s2_selected ? 'selected' : ''; ?>>
+                            <?php echo $_s2_lbl; ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <span class="slot-saved-indicator" style="font-size:0.7rem;color:#2d8a4e;font-weight:600;min-width:3.5rem;"></span>
+                </div>
+            <?php endfor; ?>
+            </div>
+
+            <a href="assign_therapist.php?appt_id=<?php echo $s2_id; ?>"
+               style="display:block;font-size:0.72rem;color:var(--gold);text-align:center;text-decoration:none;margin-bottom:0.5rem;">
+                ↗ Advanced assignment (separate page)
+            </a>
+
+            <?php if ($s2_status === 'pending'): ?>
+            <button type="button" class="btn btn-success btn-sm" data-approve-btn
+                    onclick="submitApprove(<?php echo $s2_id; ?>)"
+                    style="width:100%;<?php echo $_s2_t_count < $_s2_people ? 'opacity:0.5;cursor:not-allowed;' : ''; ?>"
+                    <?php if ($_s2_t_count < $_s2_people): ?>
+                    disabled title="Select a therapist (or Any Available) for all <?php echo $_s2_people; ?> slot(s) first"
+                    <?php endif; ?>>✅ Approve / Assign</button>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+        <?php if ($s2_status === 'approved'): ?>
+            <!-- Hidden form submitted by the shared Complete Payment modal -->
+            <form id="complete-form-<?php echo $s2_id; ?>" method="POST" style="display:none;">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="action"              value="complete">
+                <input type="hidden" name="appt_id"             value="<?php echo $s2_id; ?>">
+                <input type="hidden" name="complete_pay_method"  id="cp-method-<?php echo $s2_id; ?>"  value="cash">
+                <input type="hidden" name="celebration_discount" id="cp-celeb-<?php echo $s2_id; ?>"   value="0">
+                <input type="hidden" name="advance_payment"      id="cp-advance-<?php echo $s2_id; ?>" value="0">
+                <input type="hidden" name="complete_disc_type"   id="cp-cdtype-<?php echo $s2_id; ?>"  value="none">
+                <input type="hidden" name="complete_voucher_type" id="cp-cvtype-<?php echo $s2_id; ?>" value="cash">
+                <input type="hidden" name="complete_voucher_value" id="cp-cvvalue-<?php echo $s2_id; ?>" value="0">
+                <?php if (is_cashier()): ?>
+                <input type="hidden" name="pin" id="cp-pin-<?php echo $s2_id; ?>" value="">
+                <?php endif; ?>
+            </form>
+            <?php
+            // Session 2 shares Session 1's order ($pm_row) — 2-session packages are paid as
+            // one combined total, so by the time Session 2 completes the order is typically
+            // already 'paid' (settled at Session 1's completion) and this becomes a simple
+            // "mark done" confirmation rather than a new payment collection. The bill-line
+            // "Original session" amount below is Session 2's OWN split charged_price (not
+            // the combined order total) so the breakdown reads correctly — display only,
+            // never read by the backend complete handler.
+            ?>
+            <script>
+            (window.cmData = window.cmData || {})[<?php echo $s2_id; ?>] = {
+                name:           '<?php echo htmlspecialchars(addslashes($display_name)); ?>',
+                originalTotal:  <?php echo floatval($_session2['charged_price'] ?? 0); ?>,
+                bookingDisc:    <?php echo floatval($pm_row['discount_amount'] ?? 0); ?>,
+                bookingDiscType:'<?php echo htmlspecialchars(addslashes($pm_row['discount_type'] ?? 'none')); ?>',
+                extrasTotal:    0,
+                alreadyPaid:    <?php echo ($pm_row['payment_status'] === 'paid') ? floatval($pm_row['final_amount'] ?? 0) : 0.0; ?>,
+                paymentStatus:  '<?php echo htmlspecialchars($pm_row['payment_status'] ?? 'unpaid'); ?>',
+                advancePayment: <?php echo floatval($_session2['advance_payment'] ?? 0); ?>
+            };
+            </script>
+            <button type="button" class="btn btn-primary btn-sm" onclick="openCompleteModal(<?php echo $s2_id; ?>)">🎉 Mark Complete</button>
+        <?php endif; ?>
+
+        <?php if ($s2_status === 'assigned'): ?>
+            <button type="button" class="btn btn-success btn-sm"
+                    onclick="openCheckinModal(<?php echo $s2_id; ?>, '<?php echo htmlspecialchars(addslashes($display_name)); ?>', <?php echo json_encode([['name' => $a['service_name'] . ' (Session 2)', 'price' => floatval($_session2['charged_price'] ?? 0)]]); ?>)">
+                ✅ Check In
+            </button>
+            <form method="POST" style="margin:0;display:inline;">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="action"        value="cancel">
+                <input type="hidden" name="appt_id"       value="<?php echo $s2_id; ?>">
+                <input type="hidden" name="cancel_reason" value="No-show — customer did not arrive">
+                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
+                        style="padding:0.35rem 0.8rem;border-radius:7px;border:1px solid #d97706;background:transparent;color:#d97706;font-size:0.82rem;font-weight:600;cursor:pointer;"
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Mark Session 2 as a no-show?\n\nThe appointment will be cancelled and the customer will be notified. This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Mark No-Show',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Mark Session 2 as a no-show?\n\nThe appointment will be cancelled and the customer will be notified. This cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>
+                    ⚠️ No-Show
+                </button>
+            </form>
+        <?php endif; ?>
+
+        <?php if (in_array($s2_status, ['pending','assigned'])): ?>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $s2_id; ?>)">📅 Reschedule</button>
+            <button type="button"
+                    onclick="toggleCancel(<?php echo $s2_id; ?>)"
+                    style="padding:0.35rem 0.8rem;border-radius:7px;border:1px solid #6b7280;background:transparent;color:#6b7280;font-size:0.82rem;font-weight:600;cursor:pointer;">
+                ✏️ Cancel Booking
+            </button>
+        <?php endif; ?>
+        </div>
+
+        <?php if (in_array($s2_status, ['pending','assigned'])): ?>
+        <!-- Session 2 reschedule inline form -->
+        <div id="reschedule-<?php echo $s2_id; ?>" style="display:none;margin-top:0.75rem;padding:0.85rem 0.95rem;background:var(--bg2);border-radius:10px;border:1px solid var(--border2);">
+            <div style="font-size:0.75rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.55rem;">📅 Reschedule Session 2</div>
+            <form method="POST" style="display:flex;gap:0.65rem;flex-wrap:wrap;align-items:flex-end;">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="action"  value="reschedule">
+                <input type="hidden" name="appt_id" value="<?php echo $s2_id; ?>">
+                <div>
+                    <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;">New Date</label>
+                    <input type="date" name="new_date" required value="<?php echo date('Y-m-d', strtotime($_session2['appointment_date'])); ?>" min="<?php echo date('Y-m-d'); ?>"
+                           style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:#fff;color:var(--brown);font-size:0.82rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;">New Time</label>
+                    <input type="time" name="new_time" required value="<?php echo date('H:i', strtotime($_session2['appointment_date'])); ?>"
+                           style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:#fff;color:var(--brown);font-size:0.82rem;">
+                </div>
+                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary btn-sm"
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Reschedule Session 2?').then(ok=>{if(!ok)return;openPinGate('Reschedule Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Reschedule Session 2?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>💾 Confirm Reschedule</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $s2_id; ?>)">Cancel</button>
+            </form>
+        </div>
+
+        <!-- Session 2 cancel inline form -->
+        <div id="cancel-<?php echo $s2_id; ?>" style="display:none;margin-top:0.75rem;padding:0.85rem 0.95rem;background:#fef2f2;border-radius:10px;border:1px solid #fecaca;">
+            <div style="font-size:0.75rem;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.55rem;">✏️ Cancel Session 2 — Admin Correction</div>
+            <form method="POST" style="display:flex;flex-direction:column;gap:0.5rem;">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="action"  value="cancel">
+                <input type="hidden" name="appt_id" value="<?php echo $s2_id; ?>">
+                <div>
+                    <label style="font-size:0.72rem;color:#991b1b;display:block;margin-bottom:3px;">Reason for cancellation <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                    <input type="text" name="cancel_reason" placeholder="e.g. Customer called to cancel, personal reason..."
+                           style="width:100%;padding:0.4rem 0.65rem;border:1px solid #fecaca;border-radius:7px;background:#fff;color:var(--brown);font-size:0.82rem;box-sizing:border-box;">
+                </div>
+                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
+                <div style="display:flex;gap:0.5rem;">
+                    <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
+                            <?php if (is_cashier()): ?>onclick="uiConfirm('Cancel Session 2 as an admin correction?\n\nThis cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Cancel Booking',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Cancel Session 2 as an admin correction?\n\nThis cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>✏️ Confirm Cancellation</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCancel(<?php echo $s2_id; ?>)">Back</button>
+                </div>
+            </form>
+        </div>
+        <?php endif; ?>
+
+        <?php if (!empty($_session2['cancel_reason']) && in_array($s2_status, ['cancelled','declined'])): ?>
+        <div style="margin-top:0.65rem;padding:0.5rem 0.75rem;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;font-size:0.78rem;color:#374151;">
+            🚫 <strong>Cancellation reason:</strong> <?php echo htmlspecialchars($_session2['cancel_reason']); ?>
+        </div>
+        <?php endif; ?>
     </div>
     <?php endif; ?>
 
@@ -2973,6 +3447,11 @@ document.addEventListener('DOMContentLoaded', () => {
 const style = document.createElement('style');
 style.textContent = `@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }`;
 document.head.appendChild(style);
+
+function toggleAssignSession(apptId, sessionNumber) {
+    const el = document.getElementById('assign-session-form-' + apptId + '-' + sessionNumber);
+    if (el) el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+}
 
 function toggleReschedule(apptId) {
     const el = document.getElementById('reschedule-' + apptId);
@@ -3645,7 +4124,7 @@ function submitComplete() {
 
         <!-- Bill summary -->
         <div id="checkin-bill-summary" style="margin-bottom:1rem;padding:0.8rem;background:var(--bg3);border-radius:10px;">
-            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">🧾 Buong Bill</div>
+            <div id="checkin-bill-title" style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">🧾 Buong Bill</div>
             <div id="checkin-bill-lines"></div>
             <div id="checkin-discount-line" style="display:none;justify-content:space-between;font-size:0.8rem;color:#dc3545;margin-top:0.25rem;">
                 <span>Discount</span><span class="disc-amt">−₱0.00</span>
@@ -4207,17 +4686,27 @@ document.addEventListener('keydown', e => {
 var _ciApptId = 0;
 var _ciVoucherType = 'percent';
 
-function openCheckinModal(apptId, customerName) {
+function openCheckinModal(apptId, customerName, billLines, billTitle) {
     _ciApptId = apptId;
     document.getElementById('ciCustomerName').textContent = customerName || '';
     document.getElementById('ci-appt-id').value  = apptId;
     document.getElementById('ci-pay-choice').value = '';
 
-    // Populate bill summary from data-bill-json on the Check-In button
-    var card = document.querySelector('.appt-card[data-appt-id="' + apptId + '"]');
-    var checkinBtn = card ? card.querySelector('[data-checkin-btn]') : null;
-    window._ciBillLines = [];
-    try { window._ciBillLines = JSON.parse((checkinBtn && checkinBtn.dataset.billJson) || '[]'); } catch(e) {}
+    var titleEl = document.getElementById('checkin-bill-title');
+    if (titleEl) titleEl.textContent = billTitle || '🧾 Buong Bill';
+
+    if (billLines) {
+        // Nested Session 2 view passes its bill line(s) directly — it has no
+        // .appt-card[data-appt-id] wrapper of its own to look up (by design, so it
+        // never renders/searches as a standalone top-level card).
+        window._ciBillLines = billLines;
+    } else {
+        // Populate bill summary from data-bill-json on the Check-In button
+        var card = document.querySelector('.appt-card[data-appt-id="' + apptId + '"]');
+        var checkinBtn = card ? card.querySelector('[data-checkin-btn]') : null;
+        window._ciBillLines = [];
+        try { window._ciBillLines = JSON.parse((checkinBtn && checkinBtn.dataset.billJson) || '[]'); } catch(e) {}
+    }
     var linesEl = document.getElementById('checkin-bill-lines');
     if (linesEl) {
         linesEl.innerHTML = window._ciBillLines.map(function(line) {
@@ -4341,10 +4830,13 @@ function submitCheckin() {
 }
 
 // ── AUTO-SAVE THERAPIST ASSIGNMENT ───────────────────────────────────────────
-function autoSaveSlot(selectEl) {
+// overrideApptId: used by the nested Session 2 view, which has no .appt-card
+// wrapper of its own (by design — it must never become a standalone, globally
+// scannable card). When provided, it is used directly instead of DOM traversal.
+function autoSaveSlot(selectEl, overrideApptId) {
     if (!selectEl.value) return;
-    var card = selectEl.closest('.appt-card');
-    var apptId = card ? card.dataset.apptId : null;
+    var card = selectEl.closest('.appt-card, .nested-session-block');
+    var apptId = overrideApptId || (card ? card.dataset.apptId : null);
     if (!apptId) return;
     var personSlot = selectEl.dataset.personSlot;
     selectEl.disabled = true;
@@ -4411,30 +4903,52 @@ function showInlineSaved(el) {
     setTimeout(function() { badge.remove(); }, 1800);
 }
 
+// A 2-session card nests Session 2's own therapist-assignment controls (its own
+// [data-filled-counter]/[data-person-slot]/[data-approve-btn]) inside a child
+// .nested-session-block, which lives INSIDE the outer .appt-card. Plain
+// querySelector(All) does not stop at that boundary, so Session 1's counters/
+// buttons would otherwise silently pick up Session 2's elements (and vice
+// versa is moot since nothing nests further inside .nested-session-block).
+// These helpers scope matches to elements whose NEAREST .appt-card or
+// .nested-session-block ancestor is exactly the cardEl being evaluated.
+function apptOwnScope(el) { return el.closest('.appt-card, .nested-session-block'); }
+function apptOwnQueryAll(cardEl, selector) {
+    return Array.from(cardEl.querySelectorAll(selector)).filter(function(el) {
+        return apptOwnScope(el) === cardEl;
+    });
+}
+function apptOwnQuery(cardEl, selector) {
+    var all = cardEl.querySelectorAll(selector);
+    for (var i = 0; i < all.length; i++) {
+        if (apptOwnScope(all[i]) === cardEl) return all[i];
+    }
+    return null;
+}
+
 function updateFilledCounter(cardEl) {
-    var counterEl = cardEl.querySelector('[data-filled-counter]');
+    var counterEl = apptOwnQuery(cardEl, '[data-filled-counter]');
     if (!counterEl) return;
-    var primarySels = cardEl.querySelectorAll('select[data-person-slot]');
+    var primarySels = apptOwnQueryAll(cardEl, 'select[data-person-slot]');
     var total  = primarySels.length;
-    var filled = Array.from(primarySels).filter(function(s) { return s.value !== ''; }).length;
+    var filled = primarySels.filter(function(s) { return s.value !== ''; }).length;
     counterEl.textContent = '— ' + filled + '/' + total + ' filled';
     counterEl.style.color = filled >= total ? 'var(--green)' : 'var(--gold)';
 }
 
 // ── LIVE CHECK-IN BUTTON VALIDATION ──────────────────────────────────────────
 function refreshCheckinButton(cardEl) {
-    var primarySels = cardEl.querySelectorAll('select[data-person-slot]');
-    var extraSels   = cardEl.querySelectorAll('select[data-extra-therapist-select]');
+    var primarySels = apptOwnQueryAll(cardEl, 'select[data-person-slot]');
+    var extraSels   = apptOwnQueryAll(cardEl, 'select[data-extra-therapist-select]');
 
-    var primaryOk = primarySels.length > 0 && Array.from(primarySels).every(
+    var primaryOk = primarySels.length > 0 && primarySels.every(
         function(s) { return !!s.value && s.value !== '__any__'; }
     );
-    var extraOk = Array.from(extraSels).every(
+    var extraOk = extraSels.every(
         function(s) { return !!s.value && s.value !== '__any__'; }
     );
     var allOk   = primaryOk && extraOk;
 
-    var checkinBtn = cardEl.querySelector('[data-checkin-btn]');
+    var checkinBtn = apptOwnQuery(cardEl, '[data-checkin-btn]');
     if (checkinBtn) {
         checkinBtn.disabled      = !allOk;
         checkinBtn.title         = allOk ? '' : 'Assign a specific therapist to every service first';
@@ -4446,11 +4960,11 @@ document.querySelectorAll('.appt-card').forEach(refreshCheckinButton);
 
 // ── APPROVE / ASSIGN BUTTON (pending cards only) ──────────────────────────────
 function refreshApproveButton(cardEl) {
-    var approveBtn = cardEl.querySelector('[data-approve-btn]');
+    var approveBtn = apptOwnQuery(cardEl, '[data-approve-btn]');
     if (!approveBtn) return; // not a pending card
-    var primarySels = cardEl.querySelectorAll('select[data-person-slot]');
-    var extraSels   = cardEl.querySelectorAll('select[data-extra-therapist-select]');
-    var allSels     = Array.from(primarySels).concat(Array.from(extraSels));
+    var primarySels = apptOwnQueryAll(cardEl, 'select[data-person-slot]');
+    var extraSels   = apptOwnQueryAll(cardEl, 'select[data-extra-therapist-select]');
+    var allSels     = primarySels.concat(extraSels);
     var allFilled   = allSels.length > 0 && allSels.every(function(s) { return !!s.value; });
     approveBtn.disabled      = !allFilled;
     approveBtn.style.opacity = allFilled ? '1' : '0.5';
@@ -4458,6 +4972,7 @@ function refreshApproveButton(cardEl) {
     approveBtn.title         = allFilled ? '' : 'Select a therapist (or Any Available) for every slot first';
 }
 document.querySelectorAll('.appt-card').forEach(refreshApproveButton);
+document.querySelectorAll('.nested-session-block').forEach(refreshApproveButton);
 
 function submitApprove(apptId) {
     var fd = new FormData();

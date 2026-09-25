@@ -16,6 +16,7 @@ $rate_type    = in_array($_GET['rate_type'] ?? '', ['regular','home','hotel','in
                     ? $_GET['rate_type'] : 'regular';
 $therapist_id = intval($_GET['therapist_id'] ?? 0);
 $people       = max(1, intval($_GET['people'] ?? 1));
+$duration_id  = intval($_GET['duration_id'] ?? 0);
 
 // Validate date format
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
@@ -38,6 +39,14 @@ if (!$svc) {
 }
 
 $session_time = intval($svc['session_time']);
+if ($duration_id > 0) {
+    // Duration Variants — a specific option was picked; its duration drives
+    // the slot/availability check, not the service's generic session_time.
+    $sd = $conn->prepare("SELECT duration_minutes FROM service_durations WHERE id = ? AND service_id = ? LIMIT 1");
+    $sd->bind_param("ii", $duration_id, $service_id); $sd->execute();
+    $sd_row = $sd->get_result()->fetch_assoc(); $sd->close();
+    if ($sd_row) $session_time = intval($sd_row['duration_minutes']);
+}
 $buffer       = ($rate_type === 'home') ? 30 : 0;
 $open_hour    = AvailabilityEngine::OPEN_HOUR;
 $close_hour   = AvailabilityEngine::CLOSE_HOUR;
