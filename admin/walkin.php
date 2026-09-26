@@ -8,6 +8,47 @@ $conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS is_generalist TINY
 // hasn't run yet), but this is the original source of it.
 $conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS session_group_id INT NULL DEFAULT NULL, ADD INDEX IF NOT EXISTS idx_session_group (session_group_id)");
 
+// ── Session-Count Packages: N-session package support, layered on top of
+//    Duration Options (session_count=1 is an ordinary duration variant,
+//    unchanged behavior; >1 is a fixed-price N-session package booked here
+//    for Session 1 only). Completely independent of session_group_id above.
+$conn->query("CREATE TABLE IF NOT EXISTS service_durations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    service_id INT NOT NULL,
+    duration_minutes INT NOT NULL,
+    regular_price DECIMAL(10,2) NOT NULL,
+    promo_price DECIMAL(10,2) NOT NULL,
+    UNIQUE KEY uq_service_duration (service_id, duration_minutes),
+    CONSTRAINT fk_service_durations_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS price_mode ENUM('regular','promo') NOT NULL DEFAULT 'regular' AFTER promo_price");
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS promo_start_time TIME NULL AFTER price_mode");
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS promo_end_time TIME NULL AFTER promo_start_time");
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS session_count INT NOT NULL DEFAULT 1 AFTER duration_minutes");
+$_scu_idx  = $conn->query("SHOW INDEX FROM service_durations WHERE Key_name = 'uq_service_duration'");
+$_scu_cols = $_scu_idx ? array_column($_scu_idx->fetch_all(MYSQLI_ASSOC), 'Column_name') : [];
+if ($_scu_cols && !in_array('session_count', $_scu_cols)) {
+    $conn->query("ALTER TABLE service_durations DROP INDEX uq_service_duration, ADD UNIQUE KEY uq_service_duration (service_id, duration_minutes, session_count)");
+}
+unset($_scu_idx, $_scu_cols);
+$conn->query("CREATE TABLE IF NOT EXISTS appointment_sessions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    appointment_id INT NOT NULL,
+    session_number INT NOT NULL,
+    session_date DATETIME NULL,
+    therapist_id INT NULL,
+    duration_minutes INT NOT NULL,
+    status ENUM('not_scheduled','scheduled','checked_in','completed') NOT NULL DEFAULT 'not_scheduled',
+    commission DECIMAL(10,2) NULL,
+    checked_in_at DATETIME NULL,
+    completed_at DATETIME NULL,
+    completed_by INT NULL,
+    completed_by_name VARCHAR(120) NULL,
+    UNIQUE KEY uq_appt_session (appointment_id, session_number),
+    CONSTRAINT fk_appt_sessions_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+    CONSTRAINT fk_appt_sessions_therapist FOREIGN KEY (therapist_id) REFERENCES therapists(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
 $page_title  = 'Walk-in Kiosk';
 $page_icon   = '🏪';
 $active_page = 'walkin';
@@ -226,7 +267,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $selected_duration_id = intval($_POST['service_duration_id'] ?? 0);
                 $selected_duration    = null;
                 if ($selected_duration_id > 0) {
-                    $sd_q = $conn->prepare("SELECT id, duration_minutes, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations WHERE id = ? AND service_id = ? LIMIT 1");
+                    $sd_q = $conn->prepare("SELECT id, duration_minutes, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations WHERE id = ? AND service_id = ? LIMIT 1");
                     $sd_q->bind_param("ii", $selected_duration_id, $item_id);
                     $sd_q->execute();
                     $selected_duration = $sd_q->get_result()->fetch_assoc();
@@ -236,7 +277,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 // Whatever get_active_duration_price() says RIGHT NOW (promo
                 // window active or not) is what actually gets charged — never
                 // the raw regular_price/promo_price columns directly.
+                // Every service has ≥1 service_durations row — the price always comes
+                // from the selected row. If none was posted (stale form), default to
+                // the service's first row (lowest duration/session_count) rather than
+                // any raw services.price column.
+                if (!$selected_duration) {
+                    $sd_f = $conn->prepare("SELECT id, duration_minutes, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations WHERE service_id = ? ORDER BY duration_minutes, session_count LIMIT 1");
+                    $sd_f->bind_param("i", $item_id);
+                    $sd_f->execute();
+                    $selected_duration = $sd_f->get_result()->fetch_assoc();
+                    $sd_f->close();
+                }
                 $regular_price    = $selected_duration ? get_active_duration_price($selected_duration)['price'] : floatval($item['price']);
+                // Session-Count Packages: $regular_price above is the FULL package
+                // total for a session_count > 1 variant, not one session's worth —
+                // computed early here (before $assign_therapist_row is defined below)
+                // so that closure can correctly skip writing a commission preview at
+                // booking time for packages (Session 1's real commission is only
+                // ever set later, when it's actually completed via complete_session).
+                $svc_session_count = $selected_duration ? max(1, intval($selected_duration['session_count'])) : 1;
                 $home_service_fee = floatval($item['home_service_fee'] ?? 0); // legacy, kept for reference
                 switch ($rate_type) {
                     case 'home':       $charged_price = floatval($item['home_service_price'] ?? 0); break;
@@ -414,7 +473,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
 
                 // ── Reusable per-session therapist assignment: specialty + conflict + commission ──
                 $assign_therapist_row = function(int $appt_id, string $appt_date, float $commission_base_price, string $label)
-                    use ($conn, $therapist_id, $item_id, $item, $rate_type, $people_handled_svc, $discount_amount_calc, $total_amount, $selected_duration, &$specialty_error, &$walkin_message) {
+                    use ($conn, $therapist_id, $item_id, $item, $rate_type, $people_handled_svc, $discount_amount_calc, $total_amount, $selected_duration, $svc_session_count, &$specialty_error, &$walkin_message) {
                     if ($therapist_id <= 0) return;
 
                     // ── Feature A: server-side specialty enforcement (generalist-aware) ──
@@ -490,22 +549,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                             . $cf_tooltip
                             . "</div></span>";
                     } else {
-                        $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
-                        $cm->bind_param("ii", $therapist_id, $item_id); $cm->execute();
-                        $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
+                        // Session-Count Packages: $commission_base_price here would be
+                        // the FULL package total, not one session's worth — computing a
+                        // commission from it now would double-count once
+                        // admin/appointments.php's complete_session action starts
+                        // accumulating each session's own commission into this same row
+                        // as they're completed (possibly over many separate visits).
+                        // Skip it entirely here; that action is the sole source of truth
+                        // for a package's commission, building up from zero.
                         $commission = 0.00;
-                        if ($cm_row) {
-                            // commission = per-person price × people_handled × rate
-                            if ($rate_type === 'influencer') {
-                                $commission = floatval($cm_row['influencer_flat_rate']) * $people_handled_svc;
-                            } elseif ($rate_type === 'hotel') {
-                                $reg_q = $conn->prepare("SELECT price FROM services WHERE id=? LIMIT 1");
-                                $reg_q->bind_param("i", $item_id); $reg_q->execute();
-                                $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
-                                $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
-                            } else {
-                                $disc_frac  = ($total_amount > 0) ? ($discount_amount_calc / $total_amount) : 0.0;
-                                $commission = round($commission_base_price * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                        if ($svc_session_count <= 1) {
+                            $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+                            $cm->bind_param("ii", $therapist_id, $item_id); $cm->execute();
+                            $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
+                            if ($cm_row) {
+                                // commission = per-person price × people_handled × rate
+                                if ($rate_type === 'influencer') {
+                                    $commission = floatval($cm_row['influencer_flat_rate']) * $people_handled_svc;
+                                } elseif ($rate_type === 'hotel') {
+                                    $reg_q = $conn->prepare("SELECT price FROM services WHERE id=? LIMIT 1");
+                                    $reg_q->bind_param("i", $item_id); $reg_q->execute();
+                                    $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
+                                    $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                                } else {
+                                    $disc_frac  = ($total_amount > 0) ? ($discount_amount_calc / $total_amount) : 0.0;
+                                    $commission = round($commission_base_price * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                                }
                             }
                         }
                         $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
@@ -540,6 +609,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     $upd_dur->execute(); $upd_dur->close();
                 }
 
+                // ── Session-Count Packages: if the selected duration variant is an
+                //    N-session package, create the appointment_sessions rows now —
+                //    Session 1 filled in with today's booking date/therapist (mirrors
+                //    this same appointment row), Sessions 2..N left not_scheduled for
+                //    staff to assign later from the Appointments page. Ordinary
+                //    single-session variants (session_count=1, the vast majority) and
+                //    services without duration variants at all are unaffected — this
+                //    whole block is a no-op for them. ($svc_session_count computed
+                //    earlier, alongside $regular_price.)
+                if ($svc_session_count > 1) {
+                    $sess_dur_mins = intval($selected_duration['duration_minutes']);
+                    $sess1_tid     = $therapist_id > 0 ? $therapist_id : null;
+                    $ins_sess1 = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, session_date, therapist_id, duration_minutes, status) VALUES (?, 1, ?, ?, ?, 'scheduled')");
+                    $ins_sess1->bind_param("isii", $session1_appointment_id, $booking_date, $sess1_tid, $sess_dur_mins);
+                    $ins_sess1->execute(); $ins_sess1->close();
+                    for ($_sn = 2; $_sn <= $svc_session_count; $_sn++) {
+                        $ins_sess_n = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, duration_minutes, status) VALUES (?, ?, ?, 'not_scheduled')");
+                        $ins_sess_n->bind_param("iii", $session1_appointment_id, $_sn, $sess_dur_mins);
+                        $ins_sess_n->execute(); $ins_sess_n->close();
+                    }
+                }
+
                 // ── Session 2 (only for 2-session package bookings) ───────────────────
                 // Intentionally NO therapist assignment here — per the confirmed plan,
                 // Session 2 is always created pending/unassigned; a therapist is assigned
@@ -560,7 +651,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     : '';
                 $people_suffix  = $people_count > 1 ? " · {$people_count} people" : '';
                 $adv_suffix     = $advance_payment > 0 ? ' · 💰 Advance: ₱' . number_format($advance_payment, 2) : '';
-                $session_suffix = $is_two_session_booking ? ' · 🔁 2-Session Package' : '';
+                $session_suffix = $is_two_session_booking
+                    ? ' · 🔁 2-Session Package'
+                    : ($svc_session_count > 1 ? " · 🔁 {$svc_session_count}-Session Package (Session 1 booked now)" : '');
                 $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name_html}</strong> — {$item_name_html}{$session_suffix} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix . $adv_suffix;
                 $walkin_type    = "success";
                 } catch (Throwable $_we) {
@@ -587,8 +680,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     exit();
 }
 
-$service_durations_map = []; // service_id => [{id, duration_minutes, regular_price, promo_price, active_price, is_promo_active, promo_end_time}, ...]
-$_sdr = $conn->query("SELECT id, service_id, duration_minutes, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations ORDER BY service_id, duration_minutes");
+$service_durations_map = []; // service_id => [{id, duration_minutes, session_count, regular_price, promo_price, active_price, is_promo_active, promo_end_time}, ...]
+$_sdr = $conn->query("SELECT id, service_id, duration_minutes, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations ORDER BY service_id, duration_minutes, session_count");
 while ($row = $_sdr->fetch_assoc()) {
     // "Currently active" as of THIS page load — the authoritative check
     // happens again server-side at booking-submit time either way.
@@ -725,7 +818,21 @@ require_once 'admin_header.php';
                             <?php foreach ($all_services as $svc): ?>
                             <div class="item-card" onclick="selectItem('service', <?php echo $svc['id']; ?>, this)" data-id="<?php echo $svc['id']; ?>">
                                 <div class="item-name"><?php echo htmlspecialchars($svc['name']); ?></div>
-                                <div class="item-price">₱<?php echo number_format($svc['price'], 2); ?></div>
+                                <?php
+                                // Card shows the first (lowest-duration) row's active price;
+                                // "from" hint when the service has more than one option.
+                                $_card_d = $svc['durations'][0] ?? null;
+                                $_card_price = $_card_d ? $_card_d['active_price'] : $svc['price'];
+                                ?>
+                                <div class="item-price">
+                                    <?php if ($_card_d && !empty($_card_d['is_promo_active'])): ?>
+                                    <span style="text-decoration:line-through;color:var(--gray);font-size:0.78em;">₱<?php echo number_format($_card_d['regular_price'], 2); ?></span>
+                                    <?php endif; ?>
+                                    <?php echo count($svc['durations']) > 1 ? 'from ' : ''; ?>₱<?php echo number_format($_card_price, 2); ?>
+                                    <?php if ($_card_d && !empty($_card_d['is_promo_active'])): ?>
+                                    <span style="font-size:0.68rem;background:#fdf4ff;color:#a21caf;padding:0.05rem 0.4rem;border-radius:20px;border:1px solid #d946ef;">🏷️ Promo</span>
+                                    <?php endif; ?>
+                                </div>
                                 <div class="item-meta">⏱ <?php echo $svc['session_time']; ?> min</div>
                             </div>
                             <?php endforeach; ?>
@@ -742,6 +849,7 @@ require_once 'admin_header.php';
                         <div id="durationVariantPicker">
                             <div id="durationVariantOptions"></div>
                         </div>
+                        <div id="sessionPackageNotice" style="display:none;margin-top:0.6rem;padding:0.55rem 0.75rem;background:#fdf4ff;border:1px solid #d946ef;border-radius:8px;font-size:0.78rem;color:#a21caf;"></div>
                         <input type="hidden" name="service_duration_id" id="selectedDurationIdInput" value="">
                     </div>
                 </div>
@@ -1413,8 +1521,9 @@ function updateDurationVariantPicker() {
         const priceLabel = d.is_promo_active
             ? ('₱' + fmt(d.active_price) + ' (🏷️ Promo, until ' + formatTimeAmPm(d.promo_end_time) + ')')
             : ('₱' + fmt(d.active_price));
+        const sessionLabel = parseInt(d.session_count) > 1 ? (' × ' + d.session_count + ' sessions') : '';
         wrap.innerHTML = '<input type="radio" name="duration_variant_radio" value="' + d.id + '" ' + (i === 0 ? 'checked' : '') + '>' +
-            '<span>' + d.duration_minutes + ' mins — ' + priceLabel + '</span>';
+            '<span>' + d.duration_minutes + ' mins' + sessionLabel + ' — ' + priceLabel + '</span>';
         options.appendChild(wrap);
     });
     hiddenInput.value = durations[0].id;
@@ -1678,20 +1787,40 @@ function updatePricePreview() {
         display.style.color = 'var(--gold)';
     } else {
         const selectedDuration = getSelectedDurationVariant();
+        // Every service has ≥1 duration row; price is always the selected row's
+        // active_price (regular or promo per get_active_duration_price()).
         const regular = selectedDuration ? parseFloat(selectedDuration.active_price) : parseFloat(svc.price);
         const homeFee   = parseFloat(svc.home_service_fee   || 0); // legacy
         const homePrice = parseFloat(svc.home_service_price || 0);
         const peopleCount = parseInt(document.querySelector('[name="people_count"]')?.value || 1) || 1;
         let perPerson = regular;
         switch (currentRateType) {
-            case 'regular':    perPerson = regular;    formulaTxt = 'Regular price'; break;
+            case 'regular':
+                perPerson = regular;
+                formulaTxt = (selectedDuration && selectedDuration.is_promo_active)
+                    ? ('🏷️ Promo price' + (selectedDuration.promo_end_time ? (', until ' + formatTimeAmPm(selectedDuration.promo_end_time)) : ''))
+                    : 'Regular price';
+                break;
             case 'home':       perPerson = homePrice;  formulaTxt = `Home Service — Fixed price (₱${homePrice.toFixed(2)})`; break;
             case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
             case 'influencer': perPerson = 0; formulaTxt = 'Complimentary — ₱0'; break;
         }
         if (peopleCount > 1 && currentRateType !== 'influencer') formulaTxt += ` × ${peopleCount} people`;
+        if (selectedDuration && parseInt(selectedDuration.session_count) > 1) {
+            formulaTxt += ` — full ${selectedDuration.session_count}-session package total`;
+        }
         total = perPerson * peopleCount;
         display.style.color = currentRateType === 'influencer' ? 'var(--green)' : 'var(--gold)';
+    }
+
+    const sessionPkgNotice = document.getElementById('sessionPackageNotice');
+    if (sessionPkgNotice) {
+        const selDur = getSelectedDurationVariant();
+        const isPkg  = selDur && parseInt(selDur.session_count) > 1;
+        sessionPkgNotice.style.display = isPkg ? '' : 'none';
+        if (isPkg) {
+            sessionPkgNotice.innerHTML = `🔁 <strong>${selDur.session_count}-Session Package</strong> — only Session 1 is scheduled now, at the date/time you pick below. Sessions 2–${selDur.session_count} are scheduled later from the Appointments page.`;
+        }
     }
 
     display.textContent = '₱' + total.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});

@@ -8,6 +8,63 @@ require_once __DIR__ . '/../notify.php';
 //    regardless of whether walkin.php's own copy of this line has run yet.
 $conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS session_group_id INT NULL DEFAULT NULL, ADD INDEX IF NOT EXISTS idx_session_group (session_group_id)");
 
+// ── Session-Count Packages: N-session package support, layered on top of
+//    Duration Options. This file reads service_durations.session_count and
+//    reads/writes appointment_sessions / daily_report_session_commission_rows
+//    directly, so self-heal all three regardless of load order. Completely
+//    independent of session_group_id above — that feature stays as-is.
+$conn->query("CREATE TABLE IF NOT EXISTS service_durations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    service_id INT NOT NULL,
+    duration_minutes INT NOT NULL,
+    regular_price DECIMAL(10,2) NOT NULL,
+    promo_price DECIMAL(10,2) NOT NULL,
+    UNIQUE KEY uq_service_duration (service_id, duration_minutes),
+    CONSTRAINT fk_service_durations_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS price_mode ENUM('regular','promo') NOT NULL DEFAULT 'regular' AFTER promo_price");
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS promo_start_time TIME NULL AFTER price_mode");
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS promo_end_time TIME NULL AFTER promo_start_time");
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS session_count INT NOT NULL DEFAULT 1 AFTER duration_minutes");
+$_scu_idx  = $conn->query("SHOW INDEX FROM service_durations WHERE Key_name = 'uq_service_duration'");
+$_scu_cols = $_scu_idx ? array_column($_scu_idx->fetch_all(MYSQLI_ASSOC), 'Column_name') : [];
+if ($_scu_cols && !in_array('session_count', $_scu_cols)) {
+    $conn->query("ALTER TABLE service_durations DROP INDEX uq_service_duration, ADD UNIQUE KEY uq_service_duration (service_id, duration_minutes, session_count)");
+}
+unset($_scu_idx, $_scu_cols);
+$conn->query("CREATE TABLE IF NOT EXISTS appointment_sessions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    appointment_id INT NOT NULL,
+    session_number INT NOT NULL,
+    session_date DATETIME NULL,
+    therapist_id INT NULL,
+    duration_minutes INT NOT NULL,
+    status ENUM('not_scheduled','scheduled','checked_in','completed') NOT NULL DEFAULT 'not_scheduled',
+    commission DECIMAL(10,2) NULL,
+    checked_in_at DATETIME NULL,
+    completed_at DATETIME NULL,
+    completed_by INT NULL,
+    completed_by_name VARCHAR(120) NULL,
+    UNIQUE KEY uq_appt_session (appointment_id, session_number),
+    CONSTRAINT fk_appt_sessions_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+    CONSTRAINT fk_appt_sessions_therapist FOREIGN KEY (therapist_id) REFERENCES therapists(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+$conn->query("CREATE TABLE IF NOT EXISTS daily_report_session_commission_rows (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    appointment_id INT NOT NULL,
+    appointment_session_id INT NOT NULL,
+    report_date DATE NOT NULL,
+    therapist_id INT NULL,
+    therapist_name VARCHAR(120) NULL,
+    service_label VARCHAR(255) NOT NULL,
+    customer_name VARCHAR(120) NULL,
+    commission DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_drscr_date (report_date),
+    CONSTRAINT fk_drscr_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+    CONSTRAINT fk_drscr_sess FOREIGN KEY (appointment_session_id) REFERENCES appointment_sessions(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
 // ── Ensure PayMongo columns exist on appointment_extra_services ───────────────
 foreach ([
     "paymongo_reference VARCHAR(100) NULL DEFAULT NULL",
@@ -1833,6 +1890,206 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
     end_action:;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SESSION-COUNT PACKAGES — per-session actions on appointment_sessions rows.
+// Independent of the big dispatch above; the UI only exposes these for
+// appointments linked to a session_count > 1 duration variant. Ordinary
+// appointments (including is_two_session ones) never see these buttons and
+// this code never runs for them.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── ASSIGN SESSION (date + therapist for a not_scheduled/scheduled session) ──
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assign_session') {
+    verify_csrf_token();
+    $as_appt_id = intval($_POST['appt_id'] ?? 0);
+    $as_sess_id = intval($_POST['session_id'] ?? 0);
+    $as_date    = str_replace('T', ' ', sanitize_input($_POST['session_date'] ?? ''));
+    if ($as_date !== '' && strlen($as_date) === 16) $as_date .= ':00'; // datetime-local input omits seconds
+    $as_tid_raw = $_POST['session_therapist_id'] ?? '';
+    $as_tid     = ($as_tid_raw === '' || $as_tid_raw === '0') ? null : intval($as_tid_raw);
+
+    $as_s = $conn->prepare("SELECT id, session_number, status FROM appointment_sessions WHERE id=? AND appointment_id=?");
+    $as_s->bind_param("ii", $as_sess_id, $as_appt_id); $as_s->execute();
+    $as_row = $as_s->get_result()->fetch_assoc(); $as_s->close();
+
+    if (!$as_row) {
+        $message = "Session not found."; $message_type = "danger";
+    } elseif (in_array($as_row['status'], ['checked_in', 'completed'])) {
+        $message = "Cannot reassign — this session is already {$as_row['status']}."; $message_type = "danger";
+    } elseif ($as_date === '') {
+        $message = "Please pick a date and time for this session."; $message_type = "danger";
+    } else {
+        $as_upd = $conn->prepare("UPDATE appointment_sessions SET session_date=?, therapist_id=?, status='scheduled' WHERE id=?");
+        $as_upd->bind_param("sii", $as_date, $as_tid, $as_sess_id);
+        $as_upd->execute(); $as_upd->close();
+        $message = "✅ Session {$as_row['session_number']} scheduled."; $message_type = "success";
+        log_activity($conn, 'session_assigned', "Assigned date/therapist for session {$as_row['session_number']} of appointment #{$as_appt_id}", 'appointment', $as_appt_id, null);
+    }
+}
+
+// ── CHECK IN SESSION (scheduled → checked_in) ────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'checkin_session') {
+    verify_csrf_token();
+    $cis_appt_id = intval($_POST['appt_id'] ?? 0);
+    $cis_sess_id = intval($_POST['session_id'] ?? 0);
+
+    $cis_s = $conn->prepare("SELECT id, session_number, status FROM appointment_sessions WHERE id=? AND appointment_id=?");
+    $cis_s->bind_param("ii", $cis_sess_id, $cis_appt_id); $cis_s->execute();
+    $cis_row = $cis_s->get_result()->fetch_assoc(); $cis_s->close();
+
+    if (!$cis_row) {
+        $message = "Session not found."; $message_type = "danger";
+    } elseif ($cis_row['status'] !== 'scheduled') {
+        $message = "This session must be scheduled (date + therapist assigned) before check-in."; $message_type = "danger";
+    } else {
+        $cis_upd = $conn->prepare("UPDATE appointment_sessions SET status='checked_in', checked_in_at=NOW() WHERE id=?");
+        $cis_upd->bind_param("i", $cis_sess_id); $cis_upd->execute(); $cis_upd->close();
+        $message = "✅ Session {$cis_row['session_number']} checked in."; $message_type = "success";
+        log_activity($conn, 'session_checked_in', "Checked in session {$cis_row['session_number']} of appointment #{$cis_appt_id}", 'appointment', $cis_appt_id, null);
+    }
+}
+
+// ── COMPLETE SESSION (checked_in → completed; commission accumulation) ──────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'complete_session') {
+    verify_csrf_token();
+    $cs_appt_id = intval($_POST['appt_id'] ?? 0);
+    $cs_sess_id = intval($_POST['session_id'] ?? 0);
+
+    $cs_pr = null;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $cs_pr = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$cs_pr) {
+            $message = "⚠️ Incorrect PIN. Complete Session cancelled."; $message_type = "danger";
+            goto skip_complete_session;
+        }
+    }
+
+    $cs_s = $conn->prepare("
+        SELECT aps.id, aps.session_number, aps.status, aps.therapist_id,
+               a.id AS appt_id, a.charged_price, a.service_id, a.rate_type,
+               COALESCE(o.customer_name, u.full_name) AS customer_name,
+               s.name AS service_name, sd.duration_minutes AS sd_duration, sd.session_count
+        FROM appointment_sessions aps
+        JOIN appointments a  ON a.id = aps.appointment_id
+        JOIN services s      ON s.id = a.service_id
+        LEFT JOIN service_durations sd ON sd.id = a.service_duration_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders o       ON o.id = oi.order_id
+        LEFT JOIN users u        ON u.id = a.user_id
+        WHERE aps.id = ? AND aps.appointment_id = ?
+    ");
+    $cs_s->bind_param("ii", $cs_sess_id, $cs_appt_id); $cs_s->execute();
+    $cs_row = $cs_s->get_result()->fetch_assoc(); $cs_s->close();
+
+    if (!$cs_row) {
+        $message = "Session not found."; $message_type = "danger";
+    } elseif ($cs_row['status'] !== 'checked_in') {
+        $message = "⚠️ Session {$cs_row['session_number']} can't be completed yet — it is " . str_replace('_', ' ', $cs_row['status']) . ". Check it in first."; $message_type = "danger";
+    } elseif (empty($cs_row['session_count']) || (int)$cs_row['session_count'] <= 1) {
+        $message = "This appointment is not linked to a session-count package."; $message_type = "danger";
+    } else {
+        $session_count_total = (int)$cs_row['session_count'];
+        $session_price       = round(floatval($cs_row['charged_price']) / $session_count_total, 2);
+
+        $cs_by   = (int)$_SESSION['user_id'];
+        $cs_name = (is_cashier() && !empty($cs_pr['full_name']))
+            ? $cs_pr['full_name']
+            : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
+
+        $cs_tid = $cs_row['therapist_id'] ? (int)$cs_row['therapist_id'] : null;
+        $commission_amt = 0.00;
+        if ($cs_tid) {
+            $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id=? AND service_id=? LIMIT 1");
+            $cm->bind_param("ii", $cs_tid, $cs_row['service_id']); $cm->execute();
+            $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
+            if ($cm_row) {
+                $commission_amt = ($cs_row['rate_type'] === 'influencer')
+                    ? floatval($cm_row['influencer_flat_rate'])
+                    : round($session_price * floatval($cm_row['commission_percent']) / 100, 2);
+            }
+        }
+
+        $conn->begin_transaction();
+        try {
+            $upd_sess = $conn->prepare("UPDATE appointment_sessions SET status='completed', completed_at=NOW(), completed_by=?, completed_by_name=?, commission=? WHERE id=?");
+            $upd_sess->bind_param("isdi", $cs_by, $cs_name, $commission_amt, $cs_sess_id);
+            $upd_sess->execute(); $upd_sess->close();
+
+            // Accumulate into appointment_therapists — the running source of truth
+            // for total commission per therapist per appointment (feeds the Daily
+            // Report's existing SUM(commission) logic for the booking date's row).
+            if ($cs_tid) {
+                $at_chk = $conn->prepare("SELECT id, commission, notes FROM appointment_therapists WHERE appointment_id=? AND therapist_id=? LIMIT 1");
+                $at_chk->bind_param("ii", $cs_appt_id, $cs_tid); $at_chk->execute();
+                $at_existing = $at_chk->get_result()->fetch_assoc(); $at_chk->close();
+
+                $note_add = "Session {$cs_row['session_number']}: ₱" . number_format($commission_amt, 2);
+                if ($at_existing) {
+                    $new_comm  = floatval($at_existing['commission']) + $commission_amt;
+                    $new_notes = trim(($at_existing['notes'] ? $at_existing['notes'] . '; ' : '') . $note_add);
+                    $at_upd = $conn->prepare("UPDATE appointment_therapists SET commission=?, notes=? WHERE id=?");
+                    $at_upd->bind_param("dsi", $new_comm, $new_notes, $at_existing['id']);
+                    $at_upd->execute(); $at_upd->close();
+                } else {
+                    $at_ins = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, ?)");
+                    $at_ins->bind_param("iids", $cs_appt_id, $cs_tid, $commission_amt, $note_add);
+                    $at_ins->execute(); $at_ins->close();
+                }
+            }
+
+            // Daily Report: this session's commission is already correctly folded
+            // into the booking date's "full sale" row via the accumulation above
+            // when completed same-day. Only when completed on a LATER calendar
+            // date does it need its own separate commission-only report row.
+            $cs_today = date('Y-m-d');
+            $cs_bd_q = $conn->prepare("SELECT DATE(created_at) AS booking_date FROM appointments WHERE id=?");
+            $cs_bd_q->bind_param("i", $cs_appt_id); $cs_bd_q->execute();
+            $cs_booking_date = $cs_bd_q->get_result()->fetch_assoc()['booking_date'] ?? $cs_today;
+            $cs_bd_q->close();
+
+            if ($cs_today !== $cs_booking_date) {
+                $cs_th_name = null;
+                if ($cs_tid) {
+                    $thq = $conn->prepare("SELECT full_name FROM therapists WHERE id=? LIMIT 1");
+                    $thq->bind_param("i", $cs_tid); $thq->execute();
+                    $cs_th_name = $thq->get_result()->fetch_assoc()['full_name'] ?? null; $thq->close();
+                }
+                $cs_label = $cs_row['service_name'] . ' (' . (int)$cs_row['sd_duration'] . ' mins × ' . $session_count_total . ' sessions) — Session ' . $cs_row['session_number'] . ' of ' . $session_count_total;
+                $ins_drscr = $conn->prepare("INSERT INTO daily_report_session_commission_rows (appointment_id, appointment_session_id, report_date, therapist_id, therapist_name, service_label, customer_name, commission) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $ins_drscr->bind_param("iisisssd", $cs_appt_id, $cs_sess_id, $cs_today, $cs_tid, $cs_th_name, $cs_label, $cs_row['customer_name'], $commission_amt);
+                $ins_drscr->execute(); $ins_drscr->close();
+            }
+
+            // If this was the LAST remaining session, flip the appointment itself
+            // to completed (Kanban/operational status only — Daily Report revenue
+            // recognition does not depend on this, see _daily_report_data.php).
+            $rem = $conn->prepare("SELECT COUNT(*) AS c FROM appointment_sessions WHERE appointment_id=? AND status != 'completed'");
+            $rem->bind_param("i", $cs_appt_id); $rem->execute();
+            $remaining = (int)$rem->get_result()->fetch_assoc()['c']; $rem->close();
+            if ($remaining === 0) {
+                $upd_final = $conn->prepare("UPDATE appointments SET status='completed', completed_by=?, completed_by_name=? WHERE id=?");
+                $upd_final->bind_param("isi", $cs_by, $cs_name, $cs_appt_id);
+                $upd_final->execute(); $upd_final->close();
+            }
+
+            $conn->commit();
+            $message = "🎉 Session {$cs_row['session_number']} of {$session_count_total} completed." . ($remaining === 0 ? ' All sessions done — appointment marked Completed.' : '');
+            $message_type = "success";
+            log_activity($conn, 'session_completed',
+                "Completed session {$cs_row['session_number']} of {$session_count_total} for appointment #{$cs_appt_id} — {$cs_row['service_name']}",
+                'appointment', $cs_appt_id, null);
+        } catch (Throwable $e) {
+            $conn->rollback();
+            $message = "❌ Failed to complete session: " . htmlspecialchars($e->getMessage());
+            $message_type = "danger";
+        }
+    }
+    skip_complete_session:;
+}
+
 // ── AJAX response for auto-save actions (skip PRG redirect) ──────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['ajax'])
         && in_array($_POST['action'] ?? '', ['save_per_person_inline', 'assign_extra_therapist'])) {
@@ -2282,6 +2539,24 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     $is_two_session_card = !empty($_session2);
     $_search_session2 = $is_two_session_card ? (' ' . strtolower(date('M j Y g:i a', strtotime($_session2['appointment_date'])))) : '';
 
+    // ── Session-Count Packages: fetch this appointment's session list, if any.
+    //    Only appointments booked through a session_count > 1 duration variant
+    //    have rows here — completely separate from the is_two_session card
+    //    above (session_group_id / $_session2), which never sets these.
+    $_session_pkg_count = 0;
+    if (!empty($a['service_duration_id'])) {
+        $_spq = $conn->prepare("SELECT session_count FROM service_durations WHERE id = ? LIMIT 1");
+        $_spq->bind_param("i", $a['service_duration_id']); $_spq->execute();
+        $_session_pkg_count = (int)($_spq->get_result()->fetch_assoc()['session_count'] ?? 0); $_spq->close();
+    }
+    $is_session_pkg_card = $_session_pkg_count > 1;
+    $_pkg_sessions = [];
+    if ($is_session_pkg_card) {
+        $_pkgq = $conn->prepare("SELECT * FROM appointment_sessions WHERE appointment_id = ? ORDER BY session_number ASC");
+        $_pkgq->bind_param("i", $appt_id); $_pkgq->execute();
+        $_pkg_sessions = $_pkgq->get_result()->fetch_all(MYSQLI_ASSOC); $_pkgq->close();
+    }
+
     // UI flag: disable Check In if any required primary slot or extra service has no therapist.
     $_has_unassigned_therapist = false;
     if ($status === 'assigned') {
@@ -2648,6 +2923,161 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     </div>
     <?php endif; ?>
 
+    <!-- ══ SESSION-COUNT PACKAGE ═════════════════════════════════════════════
+         Only for appointments booked through a session_count > 1 duration
+         variant. Session 1 already lives on this card's own row/status above
+         (identical to any ordinary appointment); this panel tracks Sessions
+         1..N's individual progress. Never shown for is_two_session cards or
+         ordinary bookings. -->
+    <?php if ($is_session_pkg_card): ?>
+    <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:1rem 1.1rem;margin-bottom:1rem;">
+        <?php
+        $_pkg_total    = count($_pkg_sessions);
+        $_pkg_done     = count(array_filter($_pkg_sessions, fn($s) => $s['status'] === 'completed'));
+        $_pkg_next_idx = null;
+        foreach ($_pkg_sessions as $_pi => $_ps) { if ($_ps['status'] !== 'completed') { $_pkg_next_idx = $_pi; break; } }
+        $_pkg_default_tid = $_pkg_sessions[0]['therapist_id'] ?? null;
+        $_pkg_qualified   = $get_qualified((int)$a['service_id']);
+        ?>
+        <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">
+            🔁 Session Package — <?php echo $_pkg_done; ?>/<?php echo $_pkg_total; ?> sessions completed
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.6rem;">
+        <?php foreach ($_pkg_sessions as $_pi => $_ps):
+            $_is_next = ($_pi === $_pkg_next_idx);
+            $_sess_therapist_name = null;
+            if (!empty($_ps['therapist_id'])) {
+                $_thn = $conn->prepare("SELECT full_name FROM therapists WHERE id=? LIMIT 1");
+                $_thn->bind_param("i", $_ps['therapist_id']); $_thn->execute();
+                $_sess_therapist_name = $_thn->get_result()->fetch_assoc()['full_name'] ?? null; $_thn->close();
+            }
+            $_status_style = match($_ps['status']) {
+                'completed'  => 'background:#D1FAE5;color:#065F46;',
+                'checked_in' => 'background:#cfe2ff;color:#084298;',
+                'scheduled'  => 'background:#FEF3C7;color:#92400E;',
+                default      => 'background:#F3F4F6;color:#374151;',
+            };
+        ?>
+            <div style="padding:0.65rem 0.85rem;background:var(--bg2);border-radius:8px;border:1.5px solid <?php echo $_is_next ? 'var(--gold)' : 'var(--border)'; ?>;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.4rem;">
+                    <span style="font-size:0.85rem;font-weight:700;color:var(--brown);">
+                        Session <?php echo (int)$_ps['session_number']; ?> of <?php echo $_pkg_total; ?>
+                        <?php if ($_is_next): ?><span style="font-size:0.65rem;background:var(--gold);color:#fff;padding:0.1rem 0.45rem;border-radius:20px;margin-left:0.4rem;">NEXT</span><?php endif; ?>
+                    </span>
+                    <span style="font-size:0.7rem;font-weight:700;padding:0.12rem 0.5rem;border-radius:20px;<?php echo $_status_style; ?>">
+                        <?php echo ucfirst(str_replace('_', ' ', $_ps['status'])); ?>
+                    </span>
+                </div>
+
+                <?php if ($_ps['status'] === 'completed'): ?>
+                <div style="font-size:0.78rem;color:var(--gray);">
+                    <?php echo $_ps['session_date'] ? date('M j, Y g:i A', strtotime($_ps['session_date'])) : '—'; ?>
+                    <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php endif; ?>
+                    · Commission: ₱<?php echo number_format(floatval($_ps['commission']), 2); ?>
+                    · Completed by <?php echo htmlspecialchars($_ps['completed_by_name'] ?? '—'); ?><?php if ($_ps['completed_at']): ?> on <?php echo date('M j, g:i A', strtotime($_ps['completed_at'])); ?><?php endif; ?>
+                </div>
+
+                <?php elseif ($_ps['status'] === 'not_scheduled'): ?>
+                <form method="POST" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:end;">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="action" value="assign_session">
+                    <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                    <input type="hidden" name="session_id" value="<?php echo $_ps['id']; ?>">
+                    <div>
+                        <label style="font-size:0.7rem;color:var(--gray);display:block;margin-bottom:2px;">Date &amp; Time</label>
+                        <input type="datetime-local" name="session_date" required
+                               style="padding:0.35rem 0.5rem;border:1px solid var(--border2);border-radius:6px;background:#fff;color:#1a1a1a;font-size:0.78rem;">
+                    </div>
+                    <div>
+                        <label style="font-size:0.7rem;color:var(--gray);display:block;margin-bottom:2px;">Therapist</label>
+                        <select name="session_therapist_id" style="padding:0.35rem 0.5rem;border:1px solid var(--border2);border-radius:6px;background:#fff;color:#1a1a1a;font-size:0.78rem;">
+                            <option value="">— Unassigned —</option>
+                            <?php foreach ($_pkg_qualified as $_qt): ?>
+                            <option value="<?php echo (int)$_qt['id']; ?>" <?php echo ((int)$_qt['id'] === (int)$_pkg_default_tid) ? 'selected' : ''; ?>><?php echo htmlspecialchars($_qt['full_name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm">📅 Assign Date &amp; Therapist</button>
+                </form>
+                <div style="margin-top:0.4rem;display:flex;align-items:center;gap:0.5rem;">
+                    <button type="button" class="btn btn-primary btn-sm" disabled title="Check in first" style="opacity:0.5;cursor:not-allowed;">🎉 Complete Session</button>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Check in first</span>
+                </div>
+
+                <?php elseif ($_ps['status'] === 'scheduled'): ?>
+                <div style="font-size:0.78rem;color:var(--gray);margin-bottom:0.5rem;">
+                    <?php echo $_ps['session_date'] ? date('M j, Y g:i A', strtotime($_ps['session_date'])) : '—'; ?>
+                    <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php else: ?> · <span style="font-style:italic;">Unassigned therapist</span><?php endif; ?>
+                </div>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                    <form method="POST" style="margin:0;">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="checkin_session">
+                        <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                        <input type="hidden" name="session_id" value="<?php echo $_ps['id']; ?>">
+                        <button type="submit" class="btn btn-success btn-sm">✅ Check In</button>
+                    </form>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleSessionReassign(<?php echo $_ps['id']; ?>)">✏️ Edit</button>
+                </div>
+                <div style="margin-top:0.4rem;display:flex;align-items:center;gap:0.5rem;">
+                    <button type="button" class="btn btn-primary btn-sm" disabled title="Check in first" style="opacity:0.5;cursor:not-allowed;">🎉 Complete Session</button>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Check in first</span>
+                </div>
+                <div id="session-reassign-<?php echo $_ps['id']; ?>" style="display:none;margin-top:0.5rem;">
+                    <form method="POST" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:end;">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="assign_session">
+                        <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                        <input type="hidden" name="session_id" value="<?php echo $_ps['id']; ?>">
+                        <div>
+                            <label style="font-size:0.7rem;color:var(--gray);display:block;margin-bottom:2px;">Date &amp; Time</label>
+                            <input type="datetime-local" name="session_date" required
+                                   value="<?php echo $_ps['session_date'] ? date('Y-m-d\TH:i', strtotime($_ps['session_date'])) : ''; ?>"
+                                   style="padding:0.35rem 0.5rem;border:1px solid var(--border2);border-radius:6px;background:#fff;color:#1a1a1a;font-size:0.78rem;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.7rem;color:var(--gray);display:block;margin-bottom:2px;">Therapist</label>
+                            <select name="session_therapist_id" style="padding:0.35rem 0.5rem;border:1px solid var(--border2);border-radius:6px;background:#fff;color:#1a1a1a;font-size:0.78rem;">
+                                <option value="">— Unassigned —</option>
+                                <?php foreach ($_pkg_qualified as $_qt): ?>
+                                <option value="<?php echo (int)$_qt['id']; ?>" <?php echo ((int)$_qt['id'] === (int)$_ps['therapist_id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($_qt['full_name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                    </form>
+                </div>
+
+                <?php elseif ($_ps['status'] === 'checked_in'): ?>
+                <div style="font-size:0.78rem;color:var(--gray);margin-bottom:0.5rem;">
+                    <?php echo $_ps['session_date'] ? date('M j, Y g:i A', strtotime($_ps['session_date'])) : '—'; ?>
+                    <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php endif; ?>
+                    <?php if ($_ps['checked_in_at']): ?> · Checked in <?php echo date('g:i A', strtotime($_ps['checked_in_at'])); ?><?php endif; ?>
+                </div>
+                <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="action" value="complete_session">
+                    <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
+                    <input type="hidden" name="session_id" value="<?php echo $_ps['id']; ?>">
+                    <?php if (is_cashier()): ?>
+                    <input type="password" name="pin" maxlength="4" placeholder="PIN" required
+                           style="width:70px;padding:0.3rem 0.4rem;border:1px solid var(--border2);border-radius:6px;font-size:0.78rem;letter-spacing:0.2em;text-align:center;">
+                    <?php endif; ?>
+                    <button type="submit" class="btn btn-primary btn-sm">🎉 Complete Session</button>
+                </form>
+                <?php endif; ?>
+            </div>
+        <?php endforeach; ?>
+        </div>
+    </div>
+    <script>
+    function toggleSessionReassign(sid) {
+        var el = document.getElementById('session-reassign-' + sid);
+        if (el) el.style.display = (el.style.display === 'none' || !el.style.display) ? '' : 'none';
+    }
+    </script>
+    <?php endif; ?>
+
     <?php if (in_array($status, ['completed','declined']) && !empty($assigned_therapists)): ?>
     <div style="margin-bottom:1rem;padding:0.85rem 1rem;background:var(--bg3);border-radius:10px;border:1px solid var(--border2);">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
@@ -3012,8 +3442,12 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 advancePayment: <?php echo floatval($a['advance_payment'] ?? 0); ?>
             };
             </script>
+            <?php if (!$is_session_pkg_card): ?>
             <button type="button" class="btn btn-primary btn-sm"
                     onclick="openCompleteModal(<?php echo $appt_id; ?>)">🎉 Mark Complete</button>
+            <?php else: ?>
+            <span style="font-size:0.78rem;color:var(--gray);font-style:italic;">Use "Complete Session" above to progress this package.</span>
+            <?php endif; ?>
             <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">

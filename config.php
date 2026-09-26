@@ -265,24 +265,21 @@ function sanitize_input(string $data): string {
     return trim(stripslashes($data));
 }
 
-// ─── DURATION VARIANT PRICING ─────────────────────────────────────────────────
-// Resolves which price is currently active for a service_durations row,
-// factoring in the optional promo scheduling window (price_mode /
-// promo_start_time / promo_end_time). Evaluated fresh on every call — no cron
-// job, no stored "is promo active" flag. Reads the current time via the
-// timezone already set globally above (date_default_timezone_set('Asia/Manila')).
-function get_active_duration_price(array $durationRow): array {
-    $regular = (float)($durationRow['regular_price'] ?? 0);
-    $promo   = (float)($durationRow['promo_price']   ?? 0);
-    $mode    = $durationRow['price_mode'] ?? 'regular';
-
-    if ($mode !== 'promo' || empty($durationRow['promo_start_time']) || empty($durationRow['promo_end_time'])) {
+// ─── ACTIVE PRICE RESOLUTION ────────────────────────────────────────────────
+// Core "what's active right now" resolver, shared by every price-with-
+// scheduled-promo feature (Duration Options' service_durations rows, and
+// classic single-price services' own promo columns). Evaluated fresh on
+// every call — no cron job, no stored "is promo active" flag. Reads the
+// current time via the timezone already set globally above
+// (date_default_timezone_set('Asia/Manila')).
+function _resolve_active_price(float $regular, float $promo, string $mode, ?string $promoStart, ?string $promoEnd): array {
+    if ($mode !== 'promo' || empty($promoStart) || empty($promoEnd)) {
         return ['price' => $regular, 'is_promo_active' => false];
     }
 
     $now   = date('H:i:s');
-    $start = date('H:i:s', strtotime($durationRow['promo_start_time']));
-    $end   = date('H:i:s', strtotime($durationRow['promo_end_time']));
+    $start = date('H:i:s', strtotime($promoStart));
+    $end   = date('H:i:s', strtotime($promoEnd));
 
     if ($start <= $end) {
         // Normal same-day window, e.g. 10:00–16:00
@@ -297,6 +294,17 @@ function get_active_duration_price(array $durationRow): array {
     return $active
         ? ['price' => $promo,   'is_promo_active' => true]
         : ['price' => $regular, 'is_promo_active' => false];
+}
+
+// ─── DURATION VARIANT PRICING ─────────────────────────────────────────────────
+function get_active_duration_price(array $durationRow): array {
+    return _resolve_active_price(
+        (float)($durationRow['regular_price'] ?? 0),
+        (float)($durationRow['promo_price']   ?? 0),
+        $durationRow['price_mode'] ?? 'regular',
+        $durationRow['promo_start_time'] ?? null,
+        $durationRow['promo_end_time']   ?? null
+    );
 }
 
 // ─── AUTH HELPERS ─────────────────────────────────────────────────────────────

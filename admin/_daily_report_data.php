@@ -93,6 +93,48 @@
         UNIQUE KEY uq_service_duration (service_id, duration_minutes),
         CONSTRAINT fk_service_durations_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
+    // Session-Count Packages: this file reads session_count off service_durations
+    // and reads daily_report_session_commission_rows directly, so self-heal both
+    // regardless of load order. Independent of the is_two_session feature.
+    $conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS session_count INT NOT NULL DEFAULT 1 AFTER duration_minutes");
+    $_scu_idx  = $conn->query("SHOW INDEX FROM service_durations WHERE Key_name = 'uq_service_duration'");
+    $_scu_cols = $_scu_idx ? array_column($_scu_idx->fetch_all(MYSQLI_ASSOC), 'Column_name') : [];
+    if ($_scu_cols && !in_array('session_count', $_scu_cols)) {
+        $conn->query("ALTER TABLE service_durations DROP INDEX uq_service_duration, ADD UNIQUE KEY uq_service_duration (service_id, duration_minutes, session_count)");
+    }
+    $conn->query("CREATE TABLE IF NOT EXISTS appointment_sessions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        appointment_id INT NOT NULL,
+        session_number INT NOT NULL,
+        session_date DATETIME NULL,
+        therapist_id INT NULL,
+        duration_minutes INT NOT NULL,
+        status ENUM('not_scheduled','scheduled','checked_in','completed') NOT NULL DEFAULT 'not_scheduled',
+        commission DECIMAL(10,2) NULL,
+        checked_in_at DATETIME NULL,
+        completed_at DATETIME NULL,
+        completed_by INT NULL,
+        completed_by_name VARCHAR(120) NULL,
+        UNIQUE KEY uq_appt_session (appointment_id, session_number),
+        CONSTRAINT fk_appt_sessions_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+        CONSTRAINT fk_appt_sessions_therapist FOREIGN KEY (therapist_id) REFERENCES therapists(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $conn->query("CREATE TABLE IF NOT EXISTS daily_report_session_commission_rows (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        appointment_id INT NOT NULL,
+        appointment_session_id INT NOT NULL,
+        report_date DATE NOT NULL,
+        therapist_id INT NULL,
+        therapist_name VARCHAR(120) NULL,
+        service_label VARCHAR(255) NOT NULL,
+        customer_name VARCHAR(120) NULL,
+        commission DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_drscr_date (report_date),
+        CONSTRAINT fk_drscr_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+        CONSTRAINT fk_drscr_sess FOREIGN KEY (appointment_session_id) REFERENCES appointment_sessions(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 })();
 
 // ── Report header ─────────────────────────────────────────────────────────────
@@ -141,7 +183,7 @@ $_s = $conn->prepare("
     JOIN appointments a ON a.order_item_id = oi.id
     LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
     LEFT JOIN therapists t ON t.id = at2.therapist_id
-    LEFT JOIN service_durations sd ON sd.service_id = a.service_id AND sd.duration_minutes = a.duration_minutes
+    LEFT JOIN service_durations sd ON sd.id = a.service_duration_id
     WHERE DATE(a.appointment_date) = ?
       AND a.status     = 'completed'
       AND a.rate_type != 'influencer'
@@ -204,7 +246,7 @@ $_i = $conn->prepare("
     JOIN appointments a ON a.order_item_id = oi.id
     LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
     LEFT JOIN therapists t ON t.id = at2.therapist_id
-    LEFT JOIN service_durations sd ON sd.service_id = a.service_id AND sd.duration_minutes = a.duration_minutes
+    LEFT JOIN service_durations sd ON sd.id = a.service_duration_id
     WHERE DATE(a.appointment_date) = ?
       AND a.status    = 'completed'
       AND a.rate_type = 'influencer'
@@ -367,8 +409,30 @@ $_ss = $conn->prepare("SELECT * FROM daily_report_spreadsheet_rows WHERE report_
 $_ss->bind_param("s", $report_date); $_ss->execute();
 $spreadsheet_rows = $_ss->get_result()->fetch_all(MYSQLI_ASSOC); $_ss->close();
 
+// ── Session-Count Packages: commission-only rows for later sessions of a
+//    package that complete on a DIFFERENT calendar date than the package's
+//    booking date (see admin/appointments.php's complete_session action).
+//    Read-only, never part of $spreadsheet_rows / the editable Spreadsheet
+//    grid — rendered as their own rows in daily_report.php's Spreadsheet tab.
+$_sc = $conn->prepare("
+    SELECT drscr.*, a.service_id
+    FROM daily_report_session_commission_rows drscr
+    JOIN appointments a ON a.id = drscr.appointment_id
+    WHERE drscr.report_date = ?
+    ORDER BY drscr.id ASC
+");
+$_sc->bind_param("s", $report_date); $_sc->execute();
+$session_commission_rows = $_sc->get_result()->fetch_all(MYSQLI_ASSOC); $_sc->close();
+$session_commission_total = array_sum(array_column($session_commission_rows, 'commission'));
+
 // ── Compute Summary ───────────────────────────────────────────────────────────
 $staff_cf              = array_sum(array_column($service_rows, 'total_commission'));
+// Commission total = both sources together: live completed-appointment
+// commissions for THIS date (above) + session-commission-only rows recorded
+// against this date (a later session of a package, completed today). Net
+// Sales / Regular / Promo Price totals elsewhere are untouched by this and
+// stay based solely on their existing sources (spreadsheet_rows / service_rows).
+$staff_cf              += $session_commission_total;
 $total_discounts       = array_sum(array_column($service_rows, 'discount_amount'))
                        + array_sum(array_column($service_rows, 'completion_discount_amount'));
 $celeb_discount        = array_sum(array_column($service_rows, 'celebration_discount'));

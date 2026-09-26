@@ -441,6 +441,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         UNIQUE KEY uq_service_duration (service_id, duration_minutes),
         CONSTRAINT fk_service_durations_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    // Session-Count Packages — this import query reads session_count below and
+    // runs before _daily_report_data.php's own self-heal further down the file.
+    $conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS session_count INT NOT NULL DEFAULT 1 AFTER duration_minutes");
 
     // Pre-load commission percents (therapist_id_service_id → percent) for column routing
     $imp_cm = [];
@@ -455,7 +458,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
     if ($dcq) foreach ($dcq->fetch_all(MYSQLI_ASSOC) as $_dc)
         $imp_multi_duration_svc[(int)$_dc['service_id']] = true;
 
-    // Fetch completed non-influencer appointments for this date
+    // Fetch appointments eligible for import on this date. Ordinary (and
+    // is_two_session) appointments: unchanged rule — must be 'completed' AND
+    // dated on this day. Session-Count Packages (session_count > 1): revenue
+    // is recognized in full at BOOKING time regardless of how many of the N
+    // sessions have completed so far, so they import based on their booking
+    // date (created_at) instead, independent of the appointment's current
+    // status (which may still be 'assigned'/'approved' with sessions left).
     $aq = $conn->prepare("
         SELECT
             a.id                      AS appt_id,
@@ -470,6 +479,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             oi.service_id,
             COALESCE(s.name, '[Deleted Service]') AS service_name,
             COALESCE(sd.regular_price, s.price) AS regular_price,
+            IFNULL(sd.session_count, 1) AS session_count,
             GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
             IFNULL(SUM(at2.commission), 0)        AS total_commission
         FROM orders o
@@ -478,14 +488,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         JOIN appointments a  ON a.order_item_id  = oi.id
         LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
         LEFT JOIN therapists t ON t.id = at2.therapist_id
-        LEFT JOIN service_durations sd ON sd.service_id = a.service_id AND sd.duration_minutes = a.duration_minutes
-        WHERE DATE(a.appointment_date) = ?
-          AND a.status     = 'completed'
-          AND a.rate_type != 'influencer'
+        LEFT JOIN service_durations sd ON sd.id = a.service_duration_id
+        WHERE a.rate_type != 'influencer'
+          AND (
+                (IFNULL(sd.session_count, 1) <= 1 AND DATE(a.appointment_date) = ? AND a.status = 'completed')
+                OR
+                (sd.session_count > 1 AND DATE(a.created_at) = ?)
+              )
         GROUP BY a.id
         ORDER BY a.appointment_date ASC
     ");
-    $aq->bind_param("s", $report_date); $aq->execute();
+    $aq->bind_param("ss", $report_date, $report_date); $aq->execute();
     $imp_appts = $aq->get_result()->fetch_all(MYSQLI_ASSOC); $aq->close();
     if (empty($imp_appts)) return;
 
@@ -546,11 +559,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $slip_no     = $ap['slip_number']   ?? '';
         $client_name = $ap['customer_name'] ?? '';
         $svc_name    = $ap['service_name']  ?? '';
-        // Duration Variants — freeze the booked duration into the spreadsheet
-        // row's name, but only for services that actually offer more than
-        // one duration option; every other appointment's name is untouched.
-        if (isset($imp_multi_duration_svc[$service_id])) {
-            $svc_name = $svc_name . ' (' . (int)$ap['duration_minutes'] . ' mins)';
+        // Duration Variants — freeze the booked duration (and, for a
+        // session-count package, the session count) into the spreadsheet
+        // row's name. Shown whenever the service offers more than one
+        // duration option, OR this booking used a session-count > 1 variant
+        // (worth labeling even if it's the service's only duration option).
+        // Every other appointment's name is untouched.
+        $_sess_ct = (int)($ap['session_count'] ?? 1);
+        if (isset($imp_multi_duration_svc[$service_id]) || $_sess_ct > 1) {
+            $svc_name = $svc_name . ' (' . (int)$ap['duration_minutes'] . ' mins'
+                      . ($_sess_ct > 1 ? ' × ' . $_sess_ct . ' sessions' : '') . ')';
         }
         $stylist     = $ap['therapists']    ?? '';
         $remarks     = '';
@@ -1813,6 +1831,44 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 <td style="padding:0.3rem 0.5rem;text-align:center;"><?php echo $_ssr['is_refund'] ? '✓' : ''; ?></td>
             </tr>
             <?php endforeach; endif; ?>
+            <?php foreach ($session_commission_rows as $_scr):
+                // Route into the same tier column the import step uses, purely for
+                // visual consistency with normal rows — these are never summed into
+                // any per-column total, only into $staff_cf (see _daily_report_data.php).
+                $_scr_pct = $ss_commissions[(int)$_scr['therapist_id'] . '_' . (int)$_scr['service_id']] ?? 0;
+                $_scr_c30 = $_scr_c20 = $_scr_c15 = $_scr_c25 = 0.0;
+                $_scr_amt = (float)$_scr['commission'];
+                if      ($_scr_pct >= 28 && $_scr_pct <= 32) $_scr_c30 = $_scr_amt;
+                elseif  ($_scr_pct >= 23 && $_scr_pct <= 27) $_scr_c25 = $_scr_amt;
+                elseif  ($_scr_pct >= 18 && $_scr_pct <= 22) $_scr_c20 = $_scr_amt;
+                elseif  ($_scr_pct >= 13 && $_scr_pct <= 17) $_scr_c15 = $_scr_amt;
+                else                                          $_scr_c30 = $_scr_amt;
+            ?>
+            <tr style="background:rgba(217,70,239,0.05);border-bottom:1px solid var(--border2);" title="Read-only — commission for a session of a package completed on this date; not part of the editable Spreadsheet grid.">
+                <?php if (!$locked): ?><td style="padding:2px 4px;text-align:center;" title="Not editable">🔒</td><?php endif; ?>
+                <td style="padding:0.3rem 0.5rem;"></td>
+                <td style="padding:0.3rem 0.5rem;"></td>
+                <td style="padding:0.3rem 0.5rem;"></td>
+                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_scr['customer_name'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_scr['service_label'] ?? ''); ?>
+                    <span style="font-size:0.62rem;background:rgba(217,70,239,0.12);color:#a21caf;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;">🔁 session</span>
+                </td>
+                <td style="padding:0.3rem 0.5rem;color:var(--gray);"><?php echo htmlspecialchars($_scr['therapist_name'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);">—</td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);">—</td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);"></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);"></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_scr_c30 ? '₱'.number_format($_scr_c30,2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_scr_c20 ? '₱'.number_format($_scr_c20,2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_scr_c15 ? '₱'.number_format($_scr_c15,2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--rust);"><?php echo $_scr_c25 ? '₱'.number_format($_scr_c25,2) : ''; ?></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);"></td>
+                <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);">—</td>
+                <td style="padding:0.3rem 0.5rem;"></td>
+                <td style="padding:0.3rem 0.5rem;color:var(--gray);font-style:italic;">Session commission (later date)</td>
+                <td style="padding:0.3rem 0.5rem;text-align:center;"></td>
+            </tr>
+            <?php endforeach; ?>
             </tbody>
             <?php if ($can_edit): ?>
             <tbody id="ss-entry-body">

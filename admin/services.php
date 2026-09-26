@@ -9,6 +9,14 @@ $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS deleted_at DATETIME 
 $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS home_service_price DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER home_service_fee");
 $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS is_two_session TINYINT(1) NOT NULL DEFAULT 0");
 $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS session2_price DECIMAL(10,2) NULL DEFAULT NULL");
+// ── Classic (single-duration) Promo Price — mirrors service_durations' own
+//    promo scheduling columns for services that don't use Duration Options.
+//    Independent of service_durations; a service uses one system or the other.
+$conn->query("ALTER TABLE services
+    ADD COLUMN IF NOT EXISTS promo_price       DECIMAL(10,2) NULL AFTER price,
+    ADD COLUMN IF NOT EXISTS price_mode        ENUM('regular','promo') NOT NULL DEFAULT 'regular' AFTER promo_price,
+    ADD COLUMN IF NOT EXISTS promo_start_time  TIME NULL AFTER price_mode,
+    ADD COLUMN IF NOT EXISTS promo_end_time    TIME NULL AFTER promo_start_time");
 $conn->query("CREATE TABLE IF NOT EXISTS service_durations (
     id INT AUTO_INCREMENT PRIMARY KEY,
     service_id INT NOT NULL,
@@ -21,6 +29,19 @@ $conn->query("CREATE TABLE IF NOT EXISTS service_durations (
 $conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS price_mode ENUM('regular','promo') NOT NULL DEFAULT 'regular' AFTER promo_price");
 $conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS promo_start_time TIME NULL AFTER price_mode");
 $conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS promo_end_time TIME NULL AFTER promo_start_time");
+// ── Session-Count Packages: N-session package support, layered on top of
+//    Duration Options (session_count=1 is an ordinary duration variant,
+//    unchanged behavior; >1 is a fixed-price N-session package). Completely
+//    independent of the separate is_two_session/session2_price feature above.
+$conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS session_count INT NOT NULL DEFAULT 1 AFTER duration_minutes");
+$_scu_idx  = $conn->query("SHOW INDEX FROM service_durations WHERE Key_name = 'uq_service_duration'");
+$_scu_cols = $_scu_idx ? array_column($_scu_idx->fetch_all(MYSQLI_ASSOC), 'Column_name') : [];
+if ($_scu_cols && !in_array('session_count', $_scu_cols)) {
+    // DROP + ADD must be one ALTER TABLE statement — service_id's FK needs a
+    // supporting index at all times, which two separate ALTERs can't guarantee.
+    $conn->query("ALTER TABLE service_durations DROP INDEX uq_service_duration, ADD UNIQUE KEY uq_service_duration (service_id, duration_minutes, session_count)");
+}
+unset($_scu_idx, $_scu_cols);
 $_sd_col_chk = $conn->query("SHOW COLUMNS FROM appointments LIKE 'service_duration_id'");
 if ($_sd_col_chk && $_sd_col_chk->num_rows === 0) {
     $conn->query("ALTER TABLE appointments ADD COLUMN service_duration_id INT NULL DEFAULT NULL AFTER duration_minutes");
@@ -135,61 +156,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     $id               = isset($_POST['id']) ? intval($_POST['id']) : null;
     $name             = sanitize_input($_POST['name']);
     $description      = sanitize_input($_POST['description']);
-    $price            = floatval($_POST['price']);
-    $session_time     = intval($_POST['session_time']);
     $category_id      = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
     $is_home_service    = isset($_POST['is_home_service']) ? 1 : 0;
     $home_service_price = $is_home_service ? floatval($_POST['home_service_price'] ?? 0) : 0.00;
     $at_cost            = max(0.0, floatval($_POST['at_cost'] ?? 0));
-    $is_two_session     = isset($_POST['is_two_session']) ? 1 : 0;
-    $session2_price     = $is_two_session ? floatval($_POST['session2_price'] ?? 0) : null;
 
-    // ── Duration Variants (e.g. 60 min / 90 min, each with its own price) ──
-    $has_duration_variants = isset($_POST['has_duration_variants']) ? 1 : 0;
+    // ── Duration Options rows — the ONLY pricing UI now. Every service has
+    //    at least one row; services.price/session_time/promo_price/price_mode/
+    //    promo_start_time/promo_end_time are set further below purely as a
+    //    read-only sync mirror of row 1, for other code that hasn't been
+    //    migrated to read service_durations directly (out of scope here).
     $duration_variants = [];
-    if ($has_duration_variants) {
-        $_vd_list = (array)($_POST['variant_duration']      ?? []);
-        $_vr_list = (array)($_POST['variant_regular_price'] ?? []);
-        $_vp_list = (array)($_POST['variant_promo_price']   ?? []);
-        $_pm_list = (array)($_POST['variant_price_mode']    ?? []);
-        $_ps_list = (array)($_POST['variant_promo_start']   ?? []);
-        $_pe_list = (array)($_POST['variant_promo_end']     ?? []);
-        foreach ($_vd_list as $_vi => $_vd) {
-            $_vd = intval($_vd);
-            $_vr = floatval($_vr_list[$_vi] ?? 0);
-            $_vp = floatval($_vp_list[$_vi] ?? 0);
-            if ($_vd <= 0 || $_vr <= 0) continue; // skip incomplete rows
+    $_vd_list = (array)($_POST['variant_duration']      ?? []);
+    $_vr_list = (array)($_POST['variant_regular_price'] ?? []);
+    $_vp_list = (array)($_POST['variant_promo_price']   ?? []);
+    $_pm_list = (array)($_POST['variant_price_mode']    ?? []);
+    $_ps_list = (array)($_POST['variant_promo_start']   ?? []);
+    $_pe_list = (array)($_POST['variant_promo_end']     ?? []);
+    $_sc_list = (array)($_POST['variant_session_count'] ?? []);
+    foreach ($_vd_list as $_vi => $_vd) {
+        $_vd = intval($_vd);
+        $_vr = floatval($_vr_list[$_vi] ?? 0);
+        $_vp = floatval($_vp_list[$_vi] ?? 0);
+        $_sc = max(1, intval($_sc_list[$_vi] ?? 1));
+        if ($_vd <= 0 || $_vr <= 0) continue; // skip incomplete rows
 
-            $_pm = (($_pm_list[$_vi] ?? 'regular') === 'promo') ? 'promo' : 'regular';
-            $_ps = trim($_ps_list[$_vi] ?? '');
-            $_pe = trim($_pe_list[$_vi] ?? '');
-            if ($_pm === 'promo') {
-                if ($_ps === '' || $_pe === '') {
-                    $message = "Please set both a start and end time for every duration option using Promo Price (or switch it back to Regular Price).";
-                    $message_type = "danger";
-                    break;
-                }
-            } else {
-                // price_mode='regular' — times are ignored/cleared regardless
-                // of whatever the (hidden) fields happen to contain.
-                $_ps = null; $_pe = null;
+        $_pm = (($_pm_list[$_vi] ?? 'regular') === 'promo') ? 'promo' : 'regular';
+        $_ps = trim($_ps_list[$_vi] ?? '');
+        $_pe = trim($_pe_list[$_vi] ?? '');
+        if ($_pm === 'promo') {
+            if ($_ps === '' || $_pe === '') {
+                $message = "Please set both a start and end time for every duration option using Promo Price (or switch it back to Regular Price).";
+                $message_type = "danger";
+                break;
             }
-
-            $duration_variants[] = ['duration' => $_vd, 'regular' => $_vr, 'promo' => $_vp, 'price_mode' => $_pm, 'promo_start' => $_ps, 'promo_end' => $_pe];
-        }
-        if (count($duration_variants) >= 2) {
-            usort($duration_variants, fn($a, $b) => $a['duration'] <=> $b['duration']);
-            // Keep services.price/session_time as a sane fallback for any
-            // code outside this feature's scope that still reads them
-            // directly — the lowest-duration variant's values.
-            $price        = $duration_variants[0]['regular'];
-            $session_time = $duration_variants[0]['duration'];
         } else {
-            // Fewer than 2 valid rows — not really "variants"; fall back to
-            // ordinary single-price behavior.
-            $has_duration_variants = 0;
-            $duration_variants = [];
+            // price_mode='regular' — times are ignored/cleared regardless
+            // of whatever the (hidden) fields happen to contain.
+            $_ps = null; $_pe = null;
         }
+
+        $duration_variants[] = ['duration' => $_vd, 'regular' => $_vr, 'promo' => $_vp, 'price_mode' => $_pm, 'promo_start' => $_ps, 'promo_end' => $_pe, 'session_count' => $_sc];
+    }
+
+    if ($message_type !== 'danger' && empty($duration_variants)) {
+        $message = "Add at least one Duration Option (Duration + Regular Price are required).";
+        $message_type = "danger";
+    }
+
+    $price = $session_time = $promo_price = $price_mode = $promo_start_time = $promo_end_time = null;
+    if ($message_type !== 'danger') {
+        // Lowest duration first, lowest session_count as tiebreak — row 1 is
+        // what gets mirrored into services' own columns.
+        usort($duration_variants, fn($a, $b) => ($a['duration'] <=> $b['duration']) ?: ($a['session_count'] <=> $b['session_count']));
+        $price            = $duration_variants[0]['regular'];
+        $session_time     = $duration_variants[0]['duration'];
+        $promo_price      = $duration_variants[0]['promo'];
+        $price_mode       = $duration_variants[0]['price_mode'];
+        $promo_start_time = $duration_variants[0]['promo_start'];
+        $promo_end_time   = $duration_variants[0]['promo_end'];
     }
 
     $image_name = '';
@@ -221,17 +246,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     if ($message_type !== 'danger') {
         if ($id) {
             // EDITING
+            // is_two_session / session2_price are intentionally omitted here — that
+            // checkbox has been retired from this form (Phase 0), but existing
+            // services that already have it set keep their value untouched.
             if ($image_name !== '') {
-                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=?, is_two_session=?, session2_price=? WHERE id=?");
-                $stmt->bind_param("ssdisiiddidi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost, $is_two_session, $session2_price, $id);
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, image=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=?, promo_price=?, price_mode=?, promo_start_time=?, promo_end_time=? WHERE id=?");
+                $stmt->bind_param("ssdisiidddsssi", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost, $promo_price, $price_mode, $promo_start_time, $promo_end_time, $id);
             } else {
-                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=?, is_two_session=?, session2_price=? WHERE id=?");
-                $stmt->bind_param("ssdiiiddidi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_price, $at_cost, $is_two_session, $session2_price, $id);
+                $stmt = $conn->prepare("UPDATE services SET name=?, description=?, price=?, session_time=?, category_id=?, is_home_service=?, home_service_price=?, at_cost=?, promo_price=?, price_mode=?, promo_start_time=?, promo_end_time=? WHERE id=?");
+                $stmt->bind_param("ssdiiidddsssi", $name, $description, $price, $session_time, $category_id, $is_home_service, $home_service_price, $at_cost, $promo_price, $price_mode, $promo_start_time, $promo_end_time, $id);
             }
         } else {
-            // NEW SERVICE
-            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_price, at_cost, is_two_session, session2_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("ssdisiiddid", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost, $is_two_session, $session2_price);
+            // NEW SERVICE — is_two_session/session2_price keep their column defaults (0/NULL)
+            $stmt = $conn->prepare("INSERT INTO services (name, description, price, session_time, image, category_id, is_home_service, home_service_price, at_cost, promo_price, price_mode, promo_start_time, promo_end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("ssdisiidddsss", $name, $description, $price, $session_time, $image_name, $category_id, $is_home_service, $home_service_price, $at_cost, $promo_price, $price_mode, $promo_start_time, $promo_end_time);
         }
 
         if ($stmt->execute()) {
@@ -279,8 +307,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             $del_sd->bind_param("i", $svc_logged_id);
             $del_sd->execute(); $del_sd->close();
             foreach ($duration_variants as $_dv) {
-                $ins_sd = $conn->prepare("INSERT INTO service_durations (service_id, duration_minutes, regular_price, promo_price, price_mode, promo_start_time, promo_end_time) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $ins_sd->bind_param("iiddsss", $svc_logged_id, $_dv['duration'], $_dv['regular'], $_dv['promo'], $_dv['price_mode'], $_dv['promo_start'], $_dv['promo_end']);
+                $ins_sd = $conn->prepare("INSERT INTO service_durations (service_id, duration_minutes, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $ins_sd->bind_param("iiiddsss", $svc_logged_id, $_dv['duration'], $_dv['session_count'], $_dv['regular'], $_dv['promo'], $_dv['price_mode'], $_dv['promo_start'], $_dv['promo_end']);
                 $ins_sd->execute(); $ins_sd->close();
             }
             // ──────────────────────────────────────────────────────────────
@@ -332,7 +360,7 @@ if ($edit_service) {
 // ─── FETCH DURATION VARIANTS FOR EDITING ─────────────────────────────────────
 $svc_durations_list = [];
 if ($edit_service) {
-    $sd_stmt = $conn->prepare("SELECT duration_minutes, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations WHERE service_id = ? ORDER BY duration_minutes");
+    $sd_stmt = $conn->prepare("SELECT duration_minutes, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time FROM service_durations WHERE service_id = ? ORDER BY duration_minutes, session_count");
     $sd_stmt->bind_param("i", $edit_service['id']);
     $sd_stmt->execute();
     $svc_durations_list = $sd_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -363,9 +391,9 @@ $_rcq = $conn->query("SELECT service_id, COUNT(*) AS cnt FROM service_supply_usa
 while ($row = $_rcq->fetch_assoc()) $svc_recipe_counts[(int)$row['service_id']] = (int)$row['cnt'];
 
 // ─── DURATION VARIANTS (for list badge) ──────────────────────────────────────
-$svc_durations_by_service = []; // service_id => [duration_minutes, ...]
-$_sdq = $conn->query("SELECT service_id, duration_minutes FROM service_durations ORDER BY service_id, duration_minutes");
-while ($row = $_sdq->fetch_assoc()) $svc_durations_by_service[(int)$row['service_id']][] = (int)$row['duration_minutes'];
+$svc_durations_by_service = []; // service_id => [['duration_minutes'=>.., 'session_count'=>..], ...]
+$_sdq = $conn->query("SELECT service_id, duration_minutes, session_count FROM service_durations ORDER BY service_id, duration_minutes, session_count");
+while ($row = $_sdq->fetch_assoc()) $svc_durations_by_service[(int)$row['service_id']][] = ['duration_minutes' => (int)$row['duration_minutes'], 'session_count' => (int)$row['session_count']];
 
 // ─── STATS ────────────────────────────────────────────────────────────────────
 $total_services    = count($services);
@@ -451,20 +479,18 @@ require_once 'admin_header.php';
             </div>
 
             <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm">💰 Pricing Duration</span>
+                <span class="section-label-sm">💰 Pricing &amp; Duration</span>
             </div>
+
+            <div id="durationVariantsContainer" style="margin-bottom:1.25rem;">
+                <small style="color:var(--gray);display:block;margin-bottom:0.5rem;">
+                    Every service has at least one Duration Option. Add more rows for extra durations or multi-session packages — each has its own Regular/Promo price. Receptionists pick one at booking time.
+                </small>
+                <div id="durationVariantsRows"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="addDurationVariantRow()" style="margin-top:0.5rem;">+ Add Duration Option</button>
+            </div>
+
             <div class="form-grid form-grid-3" style="margin-bottom:1.25rem;">
-                <div class="form-group" id="classicPriceRow">
-                    <label>Price (₱) <span class="required">*</span></label>
-                    <input type="number" name="price" id="classicPrice" step="0.01" min="0.01" required
-                           value="<?php echo $edit_service['price'] ?? ''; ?>">
-                    <small style="color:var(--gray);">Total package price regardless of number of sessions.</small>
-                </div>
-                <div class="form-group" id="classicSessionTimeRow">
-                    <label>Session Time (mins) <span class="required">*</span></label>
-                    <input type="number" name="session_time" id="classicSessionTime" min="1" required
-                           value="<?php echo $edit_service['session_time'] ?? ''; ?>">
-                </div>
                 <div class="form-group">
                     <label>At Cost (₱) <span style="font-size:0.72rem;color:var(--gray);font-weight:400;">— Influencer / Marketing</span></label>
                     <input type="number" name="at_cost" step="0.01" min="0"
@@ -474,32 +500,12 @@ require_once 'admin_header.php';
                 </div>
             </div>
 
-            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
-                <div class="form-group">
-                    <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;user-select:none;">
-                        <input type="checkbox" name="has_duration_variants" value="1"
-                               id="durationVariantsToggle" style="width:18px;height:18px;cursor:pointer;"
-                               <?php echo !empty($svc_durations_list) ? 'checked' : ''; ?>>
-                        <span>⏱ This service has <strong>multiple duration options</strong> (e.g. 60 min / 90 min, each with its own price)</span>
-                    </label>
-                    <small style="color:var(--gray);margin-top:0.3rem;display:block;">
-                        Customers/receptionists pick a duration at booking time — each option has its own Regular and Promo price.
-                    </small>
-                </div>
-            </div>
-
-            <div id="durationVariantsContainer" style="margin-bottom:1.25rem;<?php echo empty($svc_durations_list) ? 'display:none;' : ''; ?>">
-                <span class="section-label-sm" style="display:block;margin-bottom:0.5rem;">⏱ Duration Options</span>
-                <div id="durationVariantsRows"></div>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="addDurationVariantRow()" style="margin-top:0.5rem;">+ Add Duration Option</button>
-            </div>
-
             <script>
             var svcDurationVariants = <?php echo json_encode(array_values($svc_durations_list)); ?>;
 
             var _dvRowSeq = 0;
 
-            function addDurationVariantRow(duration, regular, promo, priceMode, promoStart, promoEnd) {
+            function addDurationVariantRow(duration, regular, promo, priceMode, promoStart, promoEnd, sessionCount) {
                 var rows   = document.getElementById('durationVariantsRows');
                 var rowId  = 'dvrow' + (_dvRowSeq++);
                 var isPromo = (priceMode === 'promo');
@@ -516,11 +522,13 @@ require_once 'admin_header.php';
                 grid.innerHTML =
                     '<div class="form-group"><label>Duration (minutes) <span class="required">*</span></label>' +
                     '<input type="number" name="variant_duration[]" min="1" required value="' + (duration || '') + '"></div>' +
-                    '<div class="form-group"><label>Regular Price (₱) <span class="required">*</span></label>' +
+                    '<div class="form-group"><label>Sessions <span style="font-size:0.68rem;color:var(--gray);font-weight:400;">(1 = regular)</span></label>' +
+                    '<input type="number" name="variant_session_count[]" min="1" value="' + (sessionCount || '1') + '"></div>' +
+                    '<div class="form-group"><label>Regular Price (₱) <span style="font-size:0.68rem;color:var(--gray);font-weight:400;">(full package total if Sessions &gt; 1)</span> <span class="required">*</span></label>' +
                     '<input type="number" name="variant_regular_price[]" step="0.01" min="0.01" required value="' + (regular || '') + '"></div>' +
                     '<div class="form-group"><label>Promo Price (₱)</label>' +
                     '<input type="number" name="variant_promo_price[]" step="0.01" min="0" value="' + (promo || '') + '"></div>' +
-                    '<div class="form-group"><button type="button" class="btn btn-danger btn-sm" onclick="this.closest(\'.duration-variant-option\').remove(); updateClassicFieldsVisibility();">✕ Remove</button></div>';
+                    '<div class="form-group"><button type="button" class="btn btn-danger btn-sm dv-remove-btn" onclick="removeDurationVariantRow(this)">✕ Remove</button></div>';
                 wrap.appendChild(grid);
 
                 var sched = document.createElement('div');
@@ -555,51 +563,29 @@ require_once 'admin_header.php';
                     });
                 });
 
-                // A newly added row must immediately carry the correct
-                // required state for its Duration/Regular Price inputs —
-                // don't wait for a separate checkbox-toggle event.
-                updateClassicFieldsVisibility();
+                refreshDurationRemoveButtons();
             }
 
-            function updateClassicFieldsVisibility() {
-                var variantsOn     = !!document.getElementById('durationVariantsToggle')?.checked;
-
-                var priceRow   = document.getElementById('classicPriceRow');
-                var priceInput = document.getElementById('classicPrice');
-                if (priceRow)   priceRow.style.display = variantsOn ? 'none' : '';
-                if (priceInput) priceInput.required    = !variantsOn;
-
-                var container = document.getElementById('durationVariantsContainer');
-                if (container) container.style.display = variantsOn ? '' : 'none';
-
-                // Session Time stays hidden while Duration Options is active —
-                // it replaces the single classic field with per-row inputs.
-                var sessionRow   = document.getElementById('classicSessionTimeRow');
-                var sessionInput = document.getElementById('classicSessionTime');
-                if (sessionRow)   sessionRow.style.display = variantsOn ? 'none' : '';
-                if (sessionInput) sessionInput.required    = !variantsOn;
-
-                // Duration Options rows: Duration/Regular Price are only
-                // required while the container is actually visible (checkbox
-                // checked). Otherwise they'd sit hidden-but-required, and
-                // native HTML5 constraint validation silently blocks the
-                // whole form with no visible error. Promo Price is left
-                // alone — it's optional either way, per the original spec.
-                document.querySelectorAll('#durationVariantsRows .duration-variant-option').forEach(function(row) {
-                    var durationInput = row.querySelector('input[name="variant_duration[]"]');
-                    var regularInput  = row.querySelector('input[name="variant_regular_price[]"]');
-                    if (durationInput) durationInput.required = variantsOn;
-                    if (regularInput)  regularInput.required  = variantsOn;
+            // A service can never have zero rows — hide Remove while only one is left.
+            function refreshDurationRemoveButtons() {
+                var rows = document.querySelectorAll('#durationVariantsRows > .duration-variant-option');
+                rows.forEach(function(r) {
+                    var b = r.querySelector('.dv-remove-btn');
+                    if (b) b.style.display = rows.length <= 1 ? 'none' : '';
                 });
             }
 
-            document.getElementById('durationVariantsToggle').addEventListener('change', updateClassicFieldsVisibility);
+            function removeDurationVariantRow(btn) {
+                var row = btn.closest('.duration-variant-option');
+                if (row && document.querySelectorAll('#durationVariantsRows > .duration-variant-option').length > 1) {
+                    row.remove();
+                    refreshDurationRemoveButtons();
+                }
+            }
 
             function validateDurationVariantsOnSubmit() {
-                if (!document.getElementById('durationVariantsToggle')?.checked) return true;
-                var rowCount = document.querySelectorAll('#durationVariantsRows > .duration-variant-option').length;
-                if (rowCount < 2) {
-                    alert('Add at least 2 duration options, or uncheck "multiple duration options" for a regular single-price service.');
+                if (document.querySelectorAll('#durationVariantsRows > .duration-variant-option').length < 1) {
+                    alert('Add at least one Duration Option.');
                     return false;
                 }
                 return true;
@@ -608,13 +594,11 @@ require_once 'admin_header.php';
             (function() {
                 if (svcDurationVariants.length > 0) {
                     svcDurationVariants.forEach(function(v) {
-                        addDurationVariantRow(v.duration_minutes, v.regular_price, v.promo_price, v.price_mode, v.promo_start_time, v.promo_end_time);
+                        addDurationVariantRow(v.duration_minutes, v.regular_price, v.promo_price, v.price_mode, v.promo_start_time, v.promo_end_time, v.session_count);
                     });
                 } else {
                     addDurationVariantRow();
-                    addDurationVariantRow();
                 }
-                updateClassicFieldsVisibility();
             })();
             </script>
 
@@ -673,56 +657,15 @@ require_once 'admin_header.php';
             })();
             </script>
 
+            <?php if (!empty($edit_service['is_two_session'])): ?>
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
-                    <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;user-select:none;">
-                        <input type="checkbox" name="is_two_session" value="1"
-                               id="twoSessionToggle"
-                               style="width:18px;height:18px;cursor:pointer;"
-                               <?php echo !empty($edit_service['is_two_session']) ? 'checked' : ''; ?>>
-                        <span>🔁 This service can also be booked as a <strong>2-Session Package</strong></span>
-                    </label>
-                    <small style="color:var(--gray);margin-top:0.3rem;display:block;">
-                        Customers/receptionists choose 1 Session (regular price) or 2 Sessions (flat package price) at booking time.
-                    </small>
+                    <div style="padding:0.75rem 1rem;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;font-size:0.85rem;color:var(--brown);">
+                        🔁 This service still has the legacy <strong>2-Session Package</strong> enabled (Price for 2 Sessions: ₱<?php echo number_format(floatval($edit_service['session2_price'] ?? 0), 2); ?>). New services can no longer add this — it's retired in favor of Duration Options' Sessions field above. Existing bookings and this service's setting are unaffected.
+                    </div>
                 </div>
             </div>
-
-            <div class="form-grid form-grid-2"
-                 id="session2PriceRow"
-                 style="margin-bottom:1.25rem;<?php echo empty($edit_service['is_two_session']) ? 'display:none;' : ''; ?>">
-                <div class="form-group">
-                    <label>🔁 Price for 2 Sessions (Total) (₱) <span class="required">*</span></label>
-                    <input type="number" name="session2_price" id="session2Price"
-                           step="0.01" min="0"
-                           value="<?php echo isset($edit_service['session2_price']) && $edit_service['session2_price'] !== null ? floatval($edit_service['session2_price']) : ''; ?>"
-                           placeholder="e.g. 599.00">
-                    <small style="color:var(--gray);">
-                        The flat, combined price for booking BOTH sessions together (e.g. ₱599) — not Session 1's price plus a Session 2 add-on. Manually entered, independent of Session 1's regular price.
-                    </small>
-                </div>
-            </div>
-
-            <script>
-            document.getElementById('twoSessionToggle').addEventListener('change', function() {
-                const row   = document.getElementById('session2PriceRow');
-                const price = document.getElementById('session2Price');
-                if (this.checked) {
-                    row.style.display = '';
-                    if (price) price.required = true;
-                } else {
-                    row.style.display = 'none';
-                    if (price) { price.required = false; price.value = ''; }
-                }
-            });
-            (function(){
-                const chk   = document.getElementById('twoSessionToggle');
-                const row   = document.getElementById('session2PriceRow');
-                const price = document.getElementById('session2Price');
-                if (row)   row.style.display = chk.checked ? '' : 'none';
-                if (price) price.required = chk.checked;
-            })();
-            </script>
+            <?php endif; ?>
 
             <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
                 <span class="section-label-sm">🖼️ Media</span>
@@ -1060,7 +1003,8 @@ require_once 'admin_header.php';
                         <td style="color:var(--gray);">
                             <?php $_svc_durs = $svc_durations_by_service[$service['id']] ?? []; ?>
                             <?php if (!empty($_svc_durs)): ?>
-                                <span style="background:rgba(13,110,253,0.1);color:#0d6efd;padding:0.1rem 0.45rem;border-radius:20px;font-size:0.68rem;font-weight:700;border:1px solid #9ec5fe;display:inline-block;">⏱ <?php echo implode(' / ', $_svc_durs); ?> mins</span>
+                                <?php $_svc_durs_lbl = implode(' / ', array_map(fn($d) => $d['duration_minutes'] . ($d['session_count'] > 1 ? '×' . $d['session_count'] : ''), $_svc_durs)); ?>
+                                <span style="background:rgba(13,110,253,0.1);color:#0d6efd;padding:0.1rem 0.45rem;border-radius:20px;font-size:0.68rem;font-weight:700;border:1px solid #9ec5fe;display:inline-block;">⏱ <?php echo $_svc_durs_lbl; ?> mins</span>
                             <?php else: ?>
                                 ⏱ <?php echo $service['session_time']; ?> mins
                             <?php endif; ?>
