@@ -10,6 +10,7 @@ enforce_page_access();
 redirect_if_not_admin();
 redirect_if_not_owner(); // owners + full-access staff only
 require_once __DIR__ . '/../notify.php';
+ensure_commission_events_view($conn);
 
 $comm_from = $_GET['comm_from'] ?? date('Y-m-d');
 $comm_to   = $_GET['comm_to']   ?? date('Y-m-d');
@@ -527,12 +528,10 @@ $_at = $conn->prepare("
            IFNULL(AVG(tr.rating), 0) AS avg_rating,
            COUNT(tr.id)              AS total_ratings,
            IFNULL((
-               SELECT SUM(at2.commission)
-               FROM appointment_therapists at2
-               JOIN appointments ap ON at2.appointment_id = ap.id
-               WHERE at2.therapist_id = t.id
-                 AND ap.status = 'completed'
-                 AND DATE(ap.appointment_date) BETWEEN ? AND ?
+               SELECT SUM(ev.commission)
+               FROM v_therapist_commission_events ev
+               WHERE ev.therapist_id = t.id
+                 AND ev.event_date BETWEEN ? AND ?
            ), 0) AS base_commission,
            IFNULL((
                SELECT SUM(aes.commission)
@@ -602,13 +601,11 @@ if (!empty($all_therapists)) {
     $tids_for_comm = implode(',', array_map(fn($t) => intval($t['id']), $all_therapists));
 
     $_bc = $conn->prepare("
-        SELECT at2.therapist_id, IFNULL(SUM(at2.commission), 0) AS base_comm
-        FROM appointment_therapists at2
-        JOIN appointments ap ON at2.appointment_id = ap.id
-        WHERE at2.therapist_id IN ($tids_for_comm)
-          AND ap.status = 'completed'
-          AND DATE(ap.appointment_date) BETWEEN ? AND ?
-        GROUP BY at2.therapist_id
+        SELECT ev.therapist_id, IFNULL(SUM(ev.commission), 0) AS base_comm
+        FROM v_therapist_commission_events ev
+        WHERE ev.therapist_id IN ($tids_for_comm)
+          AND ev.event_date BETWEEN ? AND ?
+        GROUP BY ev.therapist_id
     ");
     $_bc->bind_param("ss", $period_start, $period_end);
     $_bc->execute();

@@ -4,6 +4,7 @@ require_once __DIR__ . '/admin_access.php';
 enforce_page_access();
 redirect_if_not_admin();
 require_once __DIR__ . '/../notify.php';
+ensure_commission_events_view($conn);
 
 $message = ''; $message_type = '';
 
@@ -270,13 +271,13 @@ $today_roster = $conn->query("
          LIMIT 1
         ) AS current_appt_id,
 
-        -- TODAY'S COMMISSION: sum from appointment_therapists (set in appointments.php after completion)
-        (SELECT IFNULL(SUM(at2.commission), 0)
-         FROM appointment_therapists at2
-         JOIN appointments ap ON at2.appointment_id = ap.id
-         WHERE at2.therapist_id = t.id
-           AND DATE(ap.appointment_date) = ta.duty_date
-           AND ap.status = 'completed'
+        -- TODAY'S COMMISSION: v_therapist_commission_events — ordinary completed
+        -- appointments by appointment_date, package sessions by their own real
+        -- completion date (see 2026_09_27_create_therapist_commission_events_view.sql)
+        (SELECT IFNULL(SUM(ev.commission), 0)
+         FROM v_therapist_commission_events ev
+         WHERE ev.therapist_id = t.id
+           AND ev.event_date = ta.duty_date
         ) AS today_commission
 
     FROM therapist_attendance ta
@@ -391,6 +392,7 @@ if (isset($_GET['history'])) {
                 ON tr.therapist_id   = at2.therapist_id
                AND tr.appointment_id = ap.id
             WHERE at2.therapist_id = ?
+              AND NOT EXISTS (SELECT 1 FROM appointment_sessions aps2 WHERE aps2.appointment_id = ap.id)
             $status_filter_sql
             $date_filter_sql
             ORDER BY ap.appointment_date DESC
@@ -401,6 +403,49 @@ if (isset($_GET['history'])) {
         $stmt->bind_param($bind_types, ...$bind_values);
         $stmt->execute();
         $history_records = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
+
+        // ── Session-Count Package sessions: one row per COMPLETED session this
+        //    therapist did, dated by that session's own completion. A session is
+        //    only ever 'completed' as far as this list goes, so it appears under
+        //    every status tab (worked / completed_only / all). Same hist_from/hist_to
+        //    range semantics as ordinary rows, applied to the session's own date.
+        $sess_date_sql = ''; $sess_params = [$hist_id]; $sess_types = 'i';
+        if ($hist_from) { $sess_date_sql .= " AND DATE(COALESCE(aps.completed_at, aps.session_date)) >= ? "; $sess_params[] = $hist_from; $sess_types .= 's'; }
+        if ($hist_to)   { $sess_date_sql .= " AND DATE(COALESCE(aps.completed_at, aps.session_date)) <= ? "; $sess_params[] = $hist_to;   $sess_types .= 's'; }
+        $sess_stmt = $conn->prepare("
+            SELECT
+                ap.id AS appt_id,
+                NULL AS at_id,
+                COALESCE(aps.completed_at, aps.session_date) AS appointment_date,
+                'completed' AS status,
+                ap.people_count,
+                ap.service_type,
+                s.name AS service_name,
+                aps.duration_minutes AS session_time,
+                aps.commission,
+                NULL AS therapist_notes,
+                u.full_name AS customer_name,
+                NULL AS rating,
+                NULL AS feedback_comment,
+                'package_session' AS source,
+                aps.session_number,
+                (SELECT COUNT(*) FROM appointment_sessions aps3 WHERE aps3.appointment_id = ap.id) AS session_total
+            FROM appointment_sessions aps
+            JOIN appointments ap ON ap.id = aps.appointment_id
+            JOIN services s ON s.id = ap.service_id
+            JOIN users u ON u.id = ap.user_id
+            WHERE aps.therapist_id = ?
+              AND aps.status = 'completed'
+              AND aps.commission IS NOT NULL
+              $sess_date_sql
+        ");
+        $sess_stmt->bind_param($sess_types, ...$sess_params);
+        $sess_stmt->execute();
+        $sess_rows = $sess_stmt->get_result()->fetch_all(MYSQLI_ASSOC); $sess_stmt->close();
+        if ($sess_rows) {
+            $history_records = array_merge($history_records, $sess_rows);
+            usort($history_records, fn($a, $b) => strcmp($b['appointment_date'], $a['appointment_date']));
+        }
     }
 }
 
@@ -413,6 +458,9 @@ require_once 'admin_header.php';
 
 <?php if ($history_therapist):
     $total_sessions = count($history_records);
+    // Sum of the visible rows (ordinary rows + package-session rows) so the table
+    // and the total always agree. For completed work this equals
+    // SUM(v_therapist_commission_events) over the same range (verified in testing).
     $total_earned   = array_sum(array_column($history_records, 'commission'));
 
     // Cash advance / deductions for the same period
@@ -547,7 +595,7 @@ require_once 'admin_header.php';
             ?>
             <tr>
                 <td>
-                    <div style="font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($rec['service_name']); ?></div>
+                    <div style="font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($rec['service_name']); ?><?php if (($rec['source'] ?? '') === 'package_session'): ?> — Session <?php echo (int)$rec['session_number']; ?> of <?php echo (int)$rec['session_total']; ?> <span style="font-size:0.65rem;background:#fdf4ff;color:#a21caf;border:1px solid #d946ef;padding:0.05rem 0.4rem;border-radius:20px;white-space:nowrap;">🔁 Session Package</span><?php endif; ?></div>
                     <?php if ($rec['therapist_notes']): ?>
                     <div style="font-size:0.72rem;color:var(--gray);">📝 <?php echo htmlspecialchars($rec['therapist_notes']); ?></div>
                     <?php endif; ?>
@@ -565,6 +613,7 @@ require_once 'admin_header.php';
                         <?php echo ucfirst($rec['status']); ?>
                     </span>
                 </td>
+                <?php $_is_pkg_row = (($rec['source'] ?? '') === 'package_session'); ?>
                 <td data-at-id="<?php echo $rec['at_id']; ?>">
                     <?php echo csrf_field(); ?>
                     <span class="comm-display" style="font-weight:700;color:<?php echo $rec['commission'] > 0 ? '#2d8a4e' : 'var(--gray)'; ?>;">
@@ -573,7 +622,7 @@ require_once 'admin_header.php';
                     <input type="number" class="comm-edit-input" step="0.01"
                            value="<?php echo (float)$rec['commission']; ?>"
                            style="display:none;width:90px;padding:0.3rem;border:1px solid var(--border2);border-radius:6px;">
-                    <?php if (is_full_access()): ?>
+                    <?php if (is_full_access() && !$_is_pkg_row): ?>
                     <button type="button" class="comm-edit-btn" onclick="toggleCommEdit(this)"
                             style="margin-left:4px;background:none;border:none;cursor:pointer;font-size:0.85rem;"
                             title="I-edit ang commission">✏️</button>
@@ -587,7 +636,9 @@ require_once 'admin_header.php';
                     <?php endif; ?>
                 </td>
                 <td>
-                    <?php if ($rec['rating']): ?>
+                    <?php if ($_is_pkg_row): ?>
+                    <span style="color:var(--gray);" title="Ratings are collected once per whole package, not per session">—</span>
+                    <?php elseif ($rec['rating']): ?>
                     <div><?php for($s=1;$s<=5;$s++) echo '<span style="color:'.($s<=$rec['rating']?'#f59e0b':'#ccc').';">★</span>'; ?></div>
                     <?php if ($rec['feedback_comment']): ?>
                     <div style="font-size:0.7rem;color:var(--gray);max-width:150px;

@@ -136,6 +136,7 @@
         CONSTRAINT fk_drscr_sess FOREIGN KEY (appointment_session_id) REFERENCES appointment_sessions(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 })();
+ensure_commission_events_view($conn);
 
 // ── Report header ─────────────────────────────────────────────────────────────
 if (!isset($rpt)) {
@@ -640,7 +641,7 @@ $wow_date = date('Y-m-d', strtotime($report_date . ' -7 days'));
 $_wq = $conn->prepare("
     SELECT
         COALESCE(SUM(a.charged_price), 0)   AS gross_sales,
-        COALESCE(SUM(at2.commission), 0)    AS staff_cf,
+        0                                   AS staff_cf,
         COALESCE(SUM(o.discount_amount), 0) AS total_discounts,
         COUNT(DISTINCT a.id)                AS transaction_count,
         COUNT(DISTINCT o.customer_name)     AS guests_served
@@ -656,6 +657,20 @@ $_wq->bind_param("s", $wow_date);
 $_wq->execute();
 $wow = $_wq->get_result()->fetch_assoc() ?? [];
 $_wq->close();
+// staff_cf for the comparison date comes from v_therapist_commission_events so it
+// matches today's $staff_cf semantics: ordinary completed appointments by their
+// date (non-influencer, order-linked — same filters as the query above) PLUS
+// package sessions completed on that date.
+$_wcf = $conn->prepare("
+    SELECT COALESCE(SUM(ev.commission), 0) AS c
+    FROM v_therapist_commission_events ev
+    JOIN appointments a2 ON a2.id = ev.appointment_id
+    WHERE ev.event_date = ?
+      AND a2.rate_type != 'influencer'
+      AND EXISTS (SELECT 1 FROM order_items oi2 JOIN orders o2 ON o2.id = oi2.order_id WHERE oi2.id = a2.order_item_id)
+");
+$_wcf->bind_param("s", $wow_date); $_wcf->execute();
+$wow['staff_cf'] = (float)$_wcf->get_result()->fetch_assoc()['c']; $_wcf->close();
 $wow['gross_sales']       = floatval($wow['gross_sales']       ?? 0);
 $wow['staff_cf']          = floatval($wow['staff_cf']          ?? 0);
 $wow['total_discounts']   = floatval($wow['total_discounts']   ?? 0);
@@ -724,9 +739,8 @@ $_ts->close();
 // revenue = proportional share: (charged_price / people_count) × people_handled
 // avoids double-counting when multiple therapists share one appointment row
 $_tp = $conn->prepare("
-    SELECT t.full_name,
+    SELECT at2.therapist_id, t.full_name,
            COUNT(DISTINCT a.id) AS svc_count,
-           SUM(at2.commission)  AS commission,
            SUM(
                (a.charged_price / GREATEST(IFNULL(a.people_count, 1), 1))
                * IFNULL(at2.people_handled, 1)
@@ -736,13 +750,45 @@ $_tp = $conn->prepare("
     JOIN appointments a ON a.id  = at2.appointment_id
     WHERE DATE(a.appointment_date) = ?
       AND a.status = 'completed'
+      AND NOT EXISTS (SELECT 1 FROM appointment_sessions aps0 WHERE aps0.appointment_id = a.id)
     GROUP BY at2.therapist_id
-    ORDER BY revenue DESC
 ");
 $_tp->bind_param("s", $report_date);
 $_tp->execute();
-$therapist_stats = $_tp->get_result()->fetch_all(MYSQLI_ASSOC);
+$_tp_rows = []; foreach ($_tp->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) $_tp_rows[(int)$_r['therapist_id']] = $_r;
 $_tp->close();
+
+// Package sessions completed on this date: each is one service rendered, worth
+// its share of the package price (charged_price / total sessions).
+$_tps = $conn->prepare("
+    SELECT aps.therapist_id, t.full_name,
+           COUNT(*) AS svc_count,
+           SUM(a.charged_price / GREATEST((SELECT COUNT(*) FROM appointment_sessions x WHERE x.appointment_id = a.id), 1)) AS revenue
+    FROM appointment_sessions aps
+    JOIN therapists   t ON t.id = aps.therapist_id
+    JOIN appointments a ON a.id = aps.appointment_id
+    WHERE aps.status = 'completed' AND aps.therapist_id IS NOT NULL
+      AND DATE(COALESCE(aps.completed_at, aps.session_date)) = ?
+    GROUP BY aps.therapist_id
+");
+$_tps->bind_param("s", $report_date); $_tps->execute();
+foreach ($_tps->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) {
+    $tid = (int)$_r['therapist_id'];
+    if (isset($_tp_rows[$tid])) { $_tp_rows[$tid]['svc_count'] += $_r['svc_count']; $_tp_rows[$tid]['revenue'] += $_r['revenue']; }
+    else $_tp_rows[$tid] = $_r;
+}
+$_tps->close();
+
+// Commission per therapist for this date from the shared view (ordinary completed
+// appointments + package sessions completed today), so it matches every other view.
+$_tpc = $conn->prepare("SELECT therapist_id, SUM(commission) AS c FROM v_therapist_commission_events WHERE event_date = ? GROUP BY therapist_id");
+$_tpc->bind_param("s", $report_date); $_tpc->execute();
+$_tp_comm = []; foreach ($_tpc->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) $_tp_comm[(int)$_r['therapist_id']] = $_r['c'];
+$_tpc->close();
+foreach ($_tp_rows as $tid => &$_r) $_r['commission'] = $_tp_comm[$tid] ?? 0;
+unset($_r);
+$therapist_stats = array_values($_tp_rows);
+usort($therapist_stats, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
 
 // Discount Impact
 $discount_pct_of_gross = $gross_sales > 0

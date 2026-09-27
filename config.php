@@ -307,6 +307,40 @@ function get_active_duration_price(array $durationRow): array {
     );
 }
 
+// ─── THERAPIST COMMISSION EVENTS VIEW ───────────────────────────────────────
+// Self-heals appointment_sessions + v_therapist_commission_events (see
+// database/migrations/2026_09_27_create_therapist_commission_events_view.sql).
+function ensure_commission_events_view($conn): void {
+    $conn->query("CREATE TABLE IF NOT EXISTS appointment_sessions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        appointment_id INT NOT NULL,
+        session_number INT NOT NULL,
+        session_date DATETIME NULL,
+        therapist_id INT NULL,
+        duration_minutes INT NOT NULL,
+        status ENUM('not_scheduled','scheduled','checked_in','completed') NOT NULL DEFAULT 'not_scheduled',
+        commission DECIMAL(10,2) NULL,
+        checked_in_at DATETIME NULL,
+        completed_at DATETIME NULL,
+        completed_by INT NULL,
+        completed_by_name VARCHAR(120) NULL,
+        UNIQUE KEY uq_appt_session (appointment_id, session_number),
+        CONSTRAINT fk_appt_sessions_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+        CONSTRAINT fk_appt_sessions_therapist FOREIGN KEY (therapist_id) REFERENCES therapists(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $conn->query("CREATE OR REPLACE VIEW v_therapist_commission_events AS
+        SELECT at2.id AS event_id, at2.therapist_id AS therapist_id, at2.commission AS commission,
+               DATE(ap.appointment_date) AS event_date, ap.id AS appointment_id, 'regular' AS source
+        FROM appointment_therapists at2 JOIN appointments ap ON at2.appointment_id = ap.id
+        WHERE ap.status = 'completed'
+          AND NOT EXISTS (SELECT 1 FROM appointment_sessions aps2 WHERE aps2.appointment_id = ap.id)
+        UNION ALL
+        SELECT aps.id, aps.therapist_id, aps.commission,
+               DATE(COALESCE(aps.completed_at, aps.session_date)), aps.appointment_id, 'package_session'
+        FROM appointment_sessions aps
+        WHERE aps.status = 'completed' AND aps.commission IS NOT NULL AND aps.therapist_id IS NOT NULL");
+}
+
 // ─── AUTH HELPERS ─────────────────────────────────────────────────────────────
 function is_logged_in(): bool {
     return isset($_SESSION['user_id']);
