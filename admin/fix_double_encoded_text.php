@@ -17,6 +17,7 @@
  */
 require_once '../config.php';
 require_once __DIR__ . '/admin_access.php';
+require_once __DIR__ . '/../notify.php';
 enforce_page_access();
 redirect_if_not_admin();
 
