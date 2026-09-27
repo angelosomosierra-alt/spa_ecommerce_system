@@ -963,7 +963,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
     $action  = $_POST['action'];
     $appt_id = intval($_POST['appt_id'] ?? 0);
 
-    $stmt = $conn->prepare("SELECT a.*, s.name AS service_name FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.id=?");
+    $stmt = $conn->prepare("SELECT a.*, s.name AS service_name, s.session_time AS service_session_time FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.id=?");
     $stmt->bind_param("i",$appt_id); $stmt->execute();
     $appt = $stmt->get_result()->fetch_assoc(); $stmt->close();
 
@@ -1855,6 +1855,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 exit();
             }
 
+            // ── Slotting and Rotation — resource assignment gate ────────────────
+            // Skip entirely if a resource is already set. Otherwise: walk-in-sourced
+            // appointments require the admin's picker choice (validated client-side
+            // and re-checked here); online-sourced ones are auto-assigned silently
+            // from the first available resource of the suggested type.
+            $ap_warning = null;
+            if (empty($appt['resource_id'])) {
+                $ap_duration = (int)($appt['duration_minutes'] ?: $appt['service_session_time'] ?: 60);
+                $ap_is_walkin = ((int)$appt['user_id'] === get_walkin_customer_id());
+
+                if ($ap_is_walkin) {
+                    $ap_posted_resource_id = intval($_POST['resource_id'] ?? 0);
+                    if ($ap_posted_resource_id <= 0 || !is_resource_available($ap_posted_resource_id, $appt['appointment_date'], $ap_duration, $appt_id)) {
+                        header('Content-Type: application/json');
+                        echo json_encode(['success' => false, 'message' => 'Please assign a Room / Chair / Head Spa before approving this walk-in appointment.']);
+                        exit();
+                    }
+                    $ap_res_upd = $conn->prepare("UPDATE appointments SET resource_id = ? WHERE id = ?");
+                    $ap_res_upd->bind_param("ii", $ap_posted_resource_id, $appt_id);
+                    $ap_res_upd->execute(); $ap_res_upd->close();
+                } else {
+                    $ap_suggested_type = suggest_resource_type_for_service((int)$appt['service_id']);
+                    $ap_candidates = get_available_resources($ap_suggested_type, $appt['appointment_date'], $ap_duration);
+                    if (!empty($ap_candidates)) {
+                        $ap_auto_resource_id = (int)$ap_candidates[0]['id'];
+                        $ap_res_upd = $conn->prepare("UPDATE appointments SET resource_id = ? WHERE id = ?");
+                        $ap_res_upd->bind_param("ii", $ap_auto_resource_id, $appt_id);
+                        $ap_res_upd->execute(); $ap_res_upd->close();
+                    } else {
+                        $ap_warning = "⚠️ Approved, but no {$ap_suggested_type} was available to auto-assign — please assign a resource manually.";
+                    }
+                }
+            }
+
             // Promote pending → assigned.
             $ap_upd = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=? AND status='pending'");
             $ap_upd->bind_param("i", $appt_id); $ap_upd->execute();
@@ -1880,7 +1914,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             }
 
             header('Content-Type: application/json');
-            echo json_encode(['success' => true]);
+            $ap_response = ['success' => true];
+            if ($ap_warning) $ap_response['warning'] = $ap_warning;
+            echo json_encode($ap_response);
             exit();
 
         } else {
@@ -2342,6 +2378,8 @@ $active_page = 'appointments';
 require_once 'admin_header.php';
 ?>
 
+<?php include __DIR__ . '/_resource_picker_js.php'; ?>
+
 <?php if ($message): ?>
 <div class="alert alert-<?php echo $message_type; ?>" id="flash-msg" style="margin-bottom:1.5rem;">
     <?php echo htmlspecialchars($message); ?>
@@ -2415,8 +2453,11 @@ $assigned_rows = array_values(array_filter($appointments, fn($a) => $a['effectiv
 $approved_rows = array_values(array_filter($appointments, fn($a) => $a['effective_status'] === 'approved'));
 $history_rows  = array_values(array_filter($appointments, fn($a) => in_array($a['effective_status'], ['completed','declined','cancelled'])));
 
+// Slotting and Rotation — used by the pending-card resource picker below.
+$_slotting_walkin_customer_id = get_walkin_customer_id();
+
 // ── Card renderer closure ─────────────────────────────────────────────────────
-$render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_cat, $get_qualified, $filter, $conflict_appt_ids): void {
+$render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_cat, $get_qualified, $filter, $conflict_appt_ids, $_slotting_walkin_customer_id): void {
     $status  = $a['status'];
     $people  = max(1,intval($a['people_count']));
     $appt_id = $a['id'];
@@ -3347,6 +3388,29 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         </div>
         <?php endif; ?>
     </div>
+    <?php endif; ?>
+
+    <?php
+    // Slotting and Rotation — a pending, walk-in-sourced appointment with no
+    // resource yet must have one assigned before it can be approved. Online-sourced
+    // ones are auto-assigned silently server-side at approve_pending time instead,
+    // so no picker is shown for them here.
+    $_slot_needs_picker = ($status === 'pending' && empty($a['resource_id']) && (int)$a['user_id'] === $_slotting_walkin_customer_id);
+    if ($_slot_needs_picker):
+        $rp_prefix     = 'res' . $appt_id;
+        $rp_field_name = 'resource_id_' . $appt_id;
+        $rp_required   = true;
+    ?>
+    <div style="margin-bottom:0.75rem;padding:0.75rem;background:var(--bg3);border-radius:10px;border:1px solid var(--border2);">
+        <?php include __DIR__ . '/_resource_picker.php'; ?>
+    </div>
+    <script>
+    rpInit('<?php echo $rp_prefix; ?>',
+           <?php echo json_encode(suggest_resource_type_for_service((int)$a['service_id'])); ?>, 0);
+    rpSetWindow('<?php echo $rp_prefix; ?>',
+                <?php echo json_encode($a['appointment_date']); ?>,
+                <?php echo (int)($a['duration_minutes'] ?: $a['session_time'] ?: 60); ?>);
+    </script>
     <?php endif; ?>
 
     <!-- ══ ACTION BUTTONS ═════════════════════════════════════════════════ -->
@@ -5409,14 +5473,28 @@ document.querySelectorAll('.appt-card').forEach(refreshApproveButton);
 document.querySelectorAll('.nested-session-block').forEach(refreshApproveButton);
 
 function submitApprove(apptId) {
+    // Slotting and Rotation — a walk-in-sourced pending appointment with no
+    // resource yet shows a required picker (prefix "res<id>"); block submit
+    // until one is chosen. Online-sourced / already-assigned appointments have
+    // no picker on the page, so rpGetSelected returns null and this is a no-op.
+    var rpPrefix = 'res' + apptId;
+    var hasPicker = document.getElementById('rp-input-' + rpPrefix) !== null;
+    var resourceId = null;
+    if (hasPicker) {
+        if (!rpValidateRequired(rpPrefix)) return;
+        resourceId = rpGetSelected(rpPrefix);
+    }
+
     var fd = new FormData();
     fd.append('action',     'approve_pending');
     fd.append('appt_id',   apptId);
+    if (resourceId) fd.append('resource_id', resourceId);
     fd.append('csrf_token', pmGetCsrf());
     fetch(window.location.pathname, { method: 'POST', body: fd, credentials: 'same-origin' })
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.success) {
+                if (data.warning) alert(data.warning);
                 window.location.reload();
             } else {
                 alert(data.message || 'Hindi na-approve.');

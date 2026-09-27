@@ -161,6 +161,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     $therapist_id       = intval($_POST['therapist_id']   ?? 0);
     // single walk-in therapist handles all people in the booking by default
     $people_handled_svc = max(1, min($people_count, intval($_POST['people_handled'] ?? $people_count)));
+    // Slotting and Rotation — optional at walk-in booking time; NULL is fine,
+    // it's assigned later (required at approval) if left unset here.
+    $resource_id_posted = intval($_POST['resource_id'] ?? 0);
 
     $discount_type  = in_array($_POST['discount_type'] ?? '', ['none','voucher','senior','pwd','employee','celebration'])
                       ? $_POST['discount_type'] : 'none';
@@ -435,6 +438,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     }
                 }
 
+                // Slotting and Rotation — optional at walk-in time; only validate
+                // when the admin actually picked a resource. Duration mirrors the
+                // same fallback $assign_therapist_row uses below (selected duration
+                // variant, else the service's own session_time).
+                if (empty($walkin_message) && $resource_id_posted > 0) {
+                    $resource_check_duration = $selected_duration ? intval($selected_duration['duration_minutes']) : intval($item['session_time'] ?? 60);
+                    if (!is_resource_available($resource_id_posted, $booking_date, $resource_check_duration)) {
+                        $walkin_message = '⛔ Selected Room/Chair/Head Spa is no longer available at this time. Please pick another.';
+                        $walkin_type    = 'danger';
+                    }
+                }
+
                 if (empty($walkin_message)) {
                 $svc_pay_method = 'onsite';
                 $svc_pay_status = 'unpaid';
@@ -472,8 +487,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 };
 
                 // ── Reusable per-session therapist assignment: specialty + conflict + commission ──
+                $resource_gate_blocked_promotion = false;
                 $assign_therapist_row = function(int $appt_id, string $appt_date, float $commission_base_price, string $label)
-                    use ($conn, $therapist_id, $item_id, $item, $rate_type, $people_handled_svc, $discount_amount_calc, $total_amount, $selected_duration, $svc_session_count, &$specialty_error, &$walkin_message) {
+                    use ($conn, $therapist_id, $item_id, $item, $rate_type, $people_handled_svc, $discount_amount_calc, $total_amount, $selected_duration, $svc_session_count, $resource_id_posted, &$specialty_error, &$walkin_message, &$resource_gate_blocked_promotion) {
                     if ($therapist_id <= 0) return;
 
                     // ── Feature A: server-side specialty enforcement (generalist-aware) ──
@@ -580,16 +596,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
                         $at->bind_param("iidi", $appt_id, $therapist_id, $commission, $people_handled_svc); $at->execute(); $at->close();
 
-                        // Therapist confirmed — move pending → assigned
-                        $upd_assigned = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=? AND status='pending'");
-                        $upd_assigned->bind_param("i", $appt_id); $upd_assigned->execute(); $upd_assigned->close();
+                        // Slotting and Rotation — a conflict-free therapist alone must NOT be
+                        // enough to silently skip past 'pending' anymore. Without a resource
+                        // assigned at booking time, the appointment stays 'pending' so it's
+                        // forced through the Kanban board's Approve button, where the
+                        // required-resource gate (admin/appointments.php's approve_pending)
+                        // can actually do its job — that gate never runs on appointments this
+                        // closure already auto-promoted straight past 'pending'.
+                        if ($resource_id_posted > 0) {
+                            // Therapist confirmed AND a resource is already assigned — move pending → assigned
+                            $upd_assigned = $conn->prepare("UPDATE appointments SET status='assigned' WHERE id=? AND status='pending'");
+                            $upd_assigned->bind_param("i", $appt_id); $upd_assigned->execute(); $upd_assigned->close();
 
-                        $is_future = strtotime($appt_date) > (time() + 1800);
-                        if (!$is_future) {
-                            $max_rot = $conn->query("SELECT IFNULL(MAX(rotation_order), 0) AS m FROM therapist_attendance WHERE duty_date = CURDATE()")->fetch_assoc()['m'];
-                            $new_order = $max_rot + 1;
-                            $upd_rot = $conn->prepare("UPDATE therapist_attendance SET rotation_order = ? WHERE therapist_id = ? AND duty_date = CURDATE()");
-                            $upd_rot->bind_param("ii", $new_order, $therapist_id); $upd_rot->execute(); $upd_rot->close();
+                            $is_future = strtotime($appt_date) > (time() + 1800);
+                            if (!$is_future) {
+                                $max_rot = $conn->query("SELECT IFNULL(MAX(rotation_order), 0) AS m FROM therapist_attendance WHERE duty_date = CURDATE()")->fetch_assoc()['m'];
+                                $new_order = $max_rot + 1;
+                                $upd_rot = $conn->prepare("UPDATE therapist_attendance SET rotation_order = ? WHERE therapist_id = ? AND duty_date = CURDATE()");
+                                $upd_rot->bind_param("ii", $new_order, $therapist_id); $upd_rot->execute(); $upd_rot->close();
+                            }
+                        } else {
+                            $resource_gate_blocked_promotion = true;
                         }
                     }
                 };
@@ -607,6 +634,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     $upd_dur = $conn->prepare("UPDATE appointments SET duration_minutes = ?, service_duration_id = ? WHERE id = ?");
                     $upd_dur->bind_param("iii", $selected_duration['duration_minutes'], $selected_duration['id'], $session1_appointment_id);
                     $upd_dur->execute(); $upd_dur->close();
+                }
+
+                // Slotting and Rotation — optional at walk-in time; scoped to Session 1
+                // only (a 2-session package's Session 2 row is a separate future visit
+                // and gets its own resource, if any, when it's actually scheduled).
+                if ($resource_id_posted > 0) {
+                    $upd_res = $conn->prepare("UPDATE appointments SET resource_id = ? WHERE id = ?");
+                    $upd_res->bind_param("ii", $resource_id_posted, $session1_appointment_id);
+                    $upd_res->execute(); $upd_res->close();
                 }
 
                 // ── Session-Count Packages: if the selected duration variant is an
@@ -655,6 +691,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                     ? ' · 🔁 2-Session Package'
                     : ($svc_session_count > 1 ? " · 🔁 {$svc_session_count}-Session Package (Session 1 booked now)" : '');
                 $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name_html}</strong> — {$item_name_html}{$session_suffix} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix . $adv_suffix;
+                if ($resource_gate_blocked_promotion) {
+                    $walkin_message .= " ⏳ Booked — pending resource assignment. Approve from the Appointments board to assign a Room/Chair/Head Spa.";
+                }
                 $walkin_type    = "success";
                 } catch (Throwable $_we) {
                     $conn->rollback();
@@ -714,6 +753,10 @@ while ($row = $result->fetch_assoc()) $all_therapists_list[] = $row;
 
 $services_session_map = [];
 foreach ($all_services as $svc) $services_session_map[$svc['id']] = intval($svc['session_time'] ?? 60);
+
+// Slotting and Rotation — suggested resource type per service, for the optional picker.
+$service_resource_type_map = [];
+foreach ($all_services as $svc) $service_resource_type_map[$svc['id']] = suggest_resource_type_for_service((int)$svc['id']);
 
 // Therapist specialty map for JS — therapist_id => array of service_ids they can do
 $therapist_specialty_svc_map = [];
@@ -854,6 +897,8 @@ require_once 'admin_header.php';
                     </div>
                 </div>
 
+                <?php include __DIR__ . '/_resource_picker_js.php'; ?>
+
                 <div class="form-section">
                     <div class="form-section-header" id="therapist-section-header">
                         💆 Select Therapist <span class="required">*</span>
@@ -967,6 +1012,14 @@ require_once 'admin_header.php';
                             <label>Number of People <span class="required">*</span></label>
                             <input type="number" name="people_count" value="1" min="1" required>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Fix 3: below Booking Date & Time so the picker's availability check
+                     already has a real date/time to check against as soon as it appears. -->
+                <div class="form-section">
+                    <div class="form-section-body">
+                        <?php $rp_prefix = 'walkin'; $rp_field_name = 'resource_id'; $rp_required = false; include __DIR__ . '/_resource_picker.php'; ?>
                     </div>
                 </div>
 
@@ -1370,6 +1423,7 @@ const serviceData    = <?php echo json_encode(array_column($all_services, null, 
 const partnerRates   = <?php echo json_encode($partner_rates_map); ?>;
 const therapistBusySlots   = <?php echo json_encode($therapist_busy_slots); ?>;
 const servicesSessionMap   = <?php echo json_encode($services_session_map); ?>;
+const serviceResourceTypeMap = <?php echo json_encode($service_resource_type_map); ?>;
 const therapistSpecialtySvcMap = <?php echo json_encode($therapist_specialty_svc_map); ?>;
 const therapistIsGeneralist    = <?php echo json_encode((object)$therapist_generalist_map); ?>;
 
@@ -1415,6 +1469,7 @@ function selectItem(type, id, el) {
     if (type === 'service') {
         currentServiceId = id;
         currentSessionMode = 'single'; // default mode whenever a (new) service is picked
+        rpInit('walkin', serviceResourceTypeMap[id] || 'room', 0);
         selectWalkinTherapist(0); // resets therapist + clears date + calls updatePickDateBtn
         const hint = document.getElementById('walkinSelectedDateTime');
         if (hint) hint.textContent = 'Select a therapist above to pick a date';
@@ -2329,6 +2384,11 @@ function confirmWalkinBM() {
         if (pickBtn) { pickBtn.textContent = displayText; pickBtn.classList.add('has-value'); }
         const hint = document.getElementById('walkinSelectedDateTime');
         if (hint) hint.textContent = '';
+
+        // Slotting and Rotation — resource applies to Session 1 only.
+        const _rpVariant = getSelectedDurationVariant();
+        const _rpDuration = _rpVariant ? parseInt(_rpVariant.duration_minutes) : (servicesSessionMap[currentServiceId] || 60);
+        rpSetWindow('walkin', fullValue, _rpDuration);
 
         // Session 1's date changed — Session 2's previously picked date may now be invalid
         // (it must fall on/after Session 1's date), so it must be re-picked.

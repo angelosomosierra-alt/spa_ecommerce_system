@@ -341,6 +341,116 @@ function ensure_commission_events_view($conn): void {
         WHERE aps.status = 'completed' AND aps.commission IS NOT NULL AND aps.therapist_id IS NOT NULL");
 }
 
+// ─── SLOTTING & ROTATION: PHYSICAL RESOURCES ─────────────────────────────────
+// Occupying statuses: an appointment holds its resource from the moment it's
+// booked (pending — a walk-in may optionally pick a resource before a
+// therapist is even assigned) through being staffed (assigned) and checked in
+// (approved — this codebase's "checked in" state; see admin/appointments.php's
+// checkin_appointment action). completed/declined/cancelled free it up.
+// Scoped to the parent appointment's own appointment_date/duration_minutes —
+// a session_count>1 package's later sessions (their own dates, tracked in
+// appointment_sessions) are not individually resource-tracked in this pass.
+const RESOURCE_OCCUPYING_STATUSES = ['pending', 'assigned', 'approved'];
+
+/**
+ * Is $resource_id free for the given [start, start+duration) window?
+ * Mirrors the interval-overlap pattern already used for therapist conflict
+ * checks (admin/walkin.php, admin/appointments.php): an existing occupant
+ * conflicts when its start is before the new window's end AND its own end
+ * is after the new window's start. duration_minutes falls back to the
+ * service's session_time when NULL — online (checkout.php) bookings never
+ * set appointments.duration_minutes directly, only walk-in bookings do.
+ */
+function is_resource_available(int $resource_id, string $start_datetime, int $duration_minutes, ?int $exclude_appointment_id = null): bool {
+    global $conn;
+    if ($resource_id <= 0 || $duration_minutes <= 0) return false;
+
+    $statuses = "'" . implode("','", RESOURCE_OCCUPYING_STATUSES) . "'";
+    $sql = "
+        SELECT a.id
+        FROM appointments a
+        LEFT JOIN services s ON s.id = a.service_id
+        WHERE a.resource_id = ?
+          AND a.status IN ($statuses)
+          AND a.appointment_date < DATE_ADD(?, INTERVAL ? MINUTE)
+          AND DATE_ADD(a.appointment_date, INTERVAL COALESCE(a.duration_minutes, s.session_time, 60) MINUTE) > ?
+    ";
+    $types  = "isis";
+    $params = [$resource_id, $start_datetime, $duration_minutes, $start_datetime];
+    if ($exclude_appointment_id) {
+        $sql   .= " AND a.id != ?";
+        $types .= "i";
+        $params[] = $exclude_appointment_id;
+    }
+    $sql .= " LIMIT 1";
+
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $conflict = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $conflict === null;
+}
+
+/**
+ * Active resources of $type with no conflicting occupant in the given window.
+ * Returns full service_resources rows, ordered by sort_order.
+ */
+function get_available_resources(string $type, string $start_datetime, int $duration_minutes): array {
+    global $conn;
+    $stmt = $conn->prepare("SELECT * FROM service_resources WHERE type = ? AND is_active = 1 ORDER BY sort_order");
+    $stmt->bind_param("s", $type);
+    $stmt->execute();
+    $all = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    return array_values(array_filter(
+        $all,
+        fn($r) => is_resource_available((int)$r['id'], $start_datetime, $duration_minutes)
+    ));
+}
+
+/**
+ * Suggest which resource type a service's category most likely needs.
+ * Checked against this database's real category names (no literal "Facial"
+ * or "Aesthetic" category exists here) — mapped by keyword, defaulting to
+ * 'room' for anything unmatched (Massage Service, Body Scrub, Waxing
+ * Service, Other Services, Packages, and uncategorized services). This is a
+ * suggestion only; the picker (Phase 4/5) always lets staff pick any type.
+ */
+function suggest_resource_type_for_service(int $service_id): string {
+    global $conn;
+    $stmt = $conn->prepare("SELECT c.name FROM services s LEFT JOIN categories c ON c.id = s.category_id WHERE s.id = ?");
+    $stmt->bind_param("i", $service_id);
+    $stmt->execute();
+    $cat = strtolower($stmt->get_result()->fetch_assoc()['name'] ?? '');
+    $stmt->close();
+
+    if (str_contains($cat, 'head spa')) return 'head_spa';
+    if (str_contains($cat, 'nail') || str_contains($cat, 'lash')
+        || str_contains($cat, 'brow') || str_contains($cat, 'foot')) return 'chair';
+    return 'room';
+}
+
+// Walk-in-sourced appointments are attributed to this account (see admin/walkin.php);
+// online-sourced ones use the real customer's own user_id from user/checkout.php.
+// Slotting and Rotation's approval flow (admin/appointments.php) uses this to tell
+// the two origins apart. Lookup-or-create mirrors walkin.php's own inline logic.
+function get_walkin_customer_id(): int {
+    global $conn;
+    $stmt = $conn->prepare("SELECT id FROM users WHERE username = 'walkin_customer' LIMIT 1");
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if ($row) return (int)$row['id'];
+
+    $stmt = $conn->prepare("INSERT INTO users (username, password, email, full_name, phone, address, role) VALUES ('walkin_customer','N/A','walkin@spa.com','Walk-in Customer','N/A','Walk-in Customer','user')");
+    $stmt->execute();
+    $id = $stmt->insert_id;
+    $stmt->close();
+    return (int)$id;
+}
+
 // ─── AUTH HELPERS ─────────────────────────────────────────────────────────────
 function is_logged_in(): bool {
     return isset($_SESSION['user_id']);

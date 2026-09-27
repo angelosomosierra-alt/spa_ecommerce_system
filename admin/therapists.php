@@ -1158,6 +1158,9 @@ function saveCommEdit(btn, atId) {
 </div><!-- end right column -->
 </div><!-- end grid -->
 
+<div id="resourceGridContainer" style="margin-bottom:1.5rem;"><?php require_once __DIR__ . '/_resource_grid.php'; echo render_resource_grid_html($conn); ?></div>
+<?php include __DIR__ . '/_resource_grid_js.php'; ?>
+
 <script>
 // ── Drag to reorder rotation ──────────────────────────────────────────────────
 const list    = document.getElementById('rotationList');

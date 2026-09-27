@@ -272,6 +272,9 @@ require_once 'admin_header.php';
     </a>
 </div>
 
+<div id="resourceGridContainer" style="margin-bottom:1.5rem;"><?php require_once __DIR__ . '/_resource_grid.php'; echo render_resource_grid_html($conn); ?></div>
+<?php include __DIR__ . '/_resource_grid_js.php'; ?>
+
 <style>
 .live-panels-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1.5rem; margin-bottom:1.5rem; }
 @media (max-width:1100px) { .live-panels-grid { grid-template-columns:1fr 1fr; } }
