@@ -493,7 +493,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
           AND (
                 (IFNULL(sd.session_count, 1) <= 1 AND DATE(a.appointment_date) = ? AND a.status = 'completed')
                 OR
-                (sd.session_count > 1 AND DATE(a.created_at) = ?)
+                -- Finding B fix: a package's revenue is recognized at booking
+                -- REGARDLESS of session-completion status, but only once it's
+                -- actually PAID — otherwise it's still sitting in $walkin_unpaids
+                -- (admin/_daily_report_data.php) and importing it here too would
+                -- double-touch the same order (once as recognized revenue, once
+                -- as unpaid). An unpaid package simply doesn't import yet; the
+                -- next time this booking date's report is opened after the order
+                -- clears payment, this same WHERE now matches and it's picked up
+                -- automatically, dated on its original booking date.
+                (sd.session_count > 1 AND DATE(a.created_at) = ? AND o.payment_status = 'paid')
               )
         GROUP BY a.id
         ORDER BY a.appointment_date ASC
