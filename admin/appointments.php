@@ -3311,7 +3311,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         </div>
         <?php endif; ?>
 
-        <?php if ($status === 'approved'): ?>
+        <?php if (in_array($status, ['approved', 'assigned'])): ?>
         <button type="button" onclick="toggleAddService(<?php echo $appt_id; ?>)"
                 style="padding:0.38rem 0.9rem;border-radius:7px;border:1.5px dashed var(--gold);background:rgba(201,106,44,0.06);color:var(--gold);font-size:0.82rem;font-weight:700;cursor:pointer;transition:all .15s;"
                 onmouseover="this.style.background='rgba(201,106,44,0.12)'"
@@ -3544,7 +3544,8 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     '<?php echo $a['service_type']; ?>',
                     <?php echo $a['people_count']??1; ?>,
                     '<?php echo htmlspecialchars(addslashes($a['customer_note']??''), ENT_QUOTES, 'UTF-8'); ?>',
-                    '<?php echo htmlspecialchars(addslashes(implode(', ', array_column($assigned_therapists, 'full_name'))), ENT_QUOTES, 'UTF-8'); ?>'
+                    '<?php echo htmlspecialchars(addslashes(implode(', ', array_column($assigned_therapists, 'full_name'))), ENT_QUOTES, 'UTF-8'); ?>',
+                    '<?php echo $status; ?>'
                 )"
                 class="btn btn-secondary btn-sm">✏️ Edit</button>
         <button type="button"
@@ -5504,7 +5505,7 @@ function submitApprove(apptId) {
 }
 
 // ── FULL EDIT APPOINTMENT ─────────────────────────────────────────────────────
-function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount, notes, currentTherapistNames) {
+function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount, notes, currentTherapistNames, apptStatus) {
     document.getElementById('edit_appt_id').value           = apptId;
     document.getElementById('edit_new_service_id').value    = serviceId;
     document.getElementById('edit_date_picker').value       = currentDate ? currentDate.substring(0,10) : '';
@@ -5525,6 +5526,12 @@ function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount,
 
     // Populate extra services list
     document.getElementById('edit-add-extra-wrap').style.display = 'none';
+    // Assigned appointments now have the full Add Service form directly on the
+    // card (same as approved), so hide this limited duplicate (no therapist
+    // picker) here to avoid two different "add service" paths on one card.
+    // Pending appointments have no card-level Add Service yet, so keep it there.
+    const addExtraBtn = document.getElementById('edit-add-extra-btn');
+    if (addExtraBtn) addExtraBtn.style.display = (apptStatus === 'assigned') ? 'none' : 'block';
     const listEl = document.getElementById('edit-extra-services-list');
     const extras = (window._apptExtras || {})[apptId] || [];
     if (extras.length === 0) {
@@ -5722,7 +5729,7 @@ function loadAddSvcSlots() {
         <div style="margin-bottom:1rem;padding:0.7rem;background:var(--bg3);border-radius:10px;">
             <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">➕ Extra Services</div>
             <div id="edit-extra-services-list"></div>
-            <button type="button" onclick="openAddExtraServiceInEdit()"
+            <button type="button" id="edit-add-extra-btn" onclick="openAddExtraServiceInEdit()"
                     style="margin-top:0.5rem;width:100%;padding:0.5rem;background:transparent;border:1px dashed var(--gold);border-radius:8px;color:var(--gold);font-weight:600;font-size:0.8rem;cursor:pointer;">
                 ➕ Magdagdag ng Serbisyo
             </button>
