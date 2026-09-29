@@ -1326,7 +1326,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 ? $pr['full_name']
                 : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
             $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
-            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper'])) $cp_pay_method = 'cash';
+            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','unpaid'])) $cp_pay_method = 'cash';
+            $cp_unpaid_billto = trim(sanitize_input($_POST['complete_unpaid_billto'] ?? ''));
 
             // ── Completion discount — server-side recompute (never trust client totals) ──
             $cd_type  = sanitize_input($_POST['complete_disc_type'] ?? 'none');
@@ -1339,7 +1340,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $order_already_paid = false;
             $oi_r2 = null;
             if (!empty($appt['order_item_id'])) {
-                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status, o.total_amount, o.discount_amount FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
+                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status, o.total_amount, o.discount_amount, o.customer_name FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
                 $oi_s2->bind_param("i", $appt['order_item_id']); $oi_s2->execute();
                 $oi_r2 = $oi_s2->get_result()->fetch_assoc(); $oi_s2->close();
                 $order_already_paid = ($oi_r2 && $oi_r2['payment_status'] === 'paid');
@@ -1388,16 +1389,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     $cd_amount = max(0.0, min($cd_amount, max(0.0, $sv_gross - $sv_bdisc)));
                     $new_final = max(0.0, $sv_orig + $sv_extras - $sv_bdisc - $cd_amount);
 
-                    $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
-                    $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
-                    $upd_ord->execute(); $upd_ord->close();
+                    if ($cp_pay_method === 'unpaid') {
+                        // Charged to account (e.g. corporate/hotel billing) — the sale
+                        // is still recognized (completed appointment, final_amount set),
+                        // but no payment is collected now. Bridge it into Unpaids Corp
+                        // so it's tracked as a receivable instead of silently vanishing.
+                        $upd_ord = $conn->prepare("UPDATE orders SET payment_status='unpaid', final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
+                        $upd_ord->bind_param("dsdsdi", $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
+                        $upd_ord->execute(); $upd_ord->close();
+
+                        $unpaid_amount = max(0.0, $new_final - floatval($appt['advance_payment'] ?? 0));
+                        if ($unpaid_amount > 0) {
+                            $unpaid_name = $cp_unpaid_billto !== '' ? $cp_unpaid_billto
+                                : ($oi_r2['customer_name'] ?: ($appt['full_name'] ?? 'Unknown'));
+
+                            // Self-heal: unpaids_corp predates any appointment/order linkage.
+                            $_upc_cols = array_column($conn->query("SHOW COLUMNS FROM unpaids_corp")->fetch_all(MYSQLI_ASSOC), 'Field');
+                            if (!in_array('appointment_id', $_upc_cols)) {
+                                $conn->query("ALTER TABLE unpaids_corp ADD COLUMN appointment_id INT NULL, ADD COLUMN order_id INT NULL");
+                            }
+
+                            $up_by  = (int)$_SESSION['user_id'];
+                            $up_ins = $conn->prepare("INSERT INTO unpaids_corp (report_date, client_name, amount, series, created_by, appointment_id, order_id) VALUES (CURDATE(), ?, ?, ?, ?, ?, ?)");
+                            $up_series = 'APT-' . $appt_id;
+                            $up_ins->bind_param("sdsiii", $unpaid_name, $unpaid_amount, $up_series, $up_by, $appt_id, $oi_r2['id']);
+                            $up_ins->execute(); $up_ins->close();
+                        }
+                    } else {
+                        $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
+                        $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
+                        $upd_ord->execute(); $upd_ord->close();
+                    }
                 }
 
             }
 
-            // Mark unpaid extras paid — runs unconditionally so extras added after check-in are settled even when the main order was already paid
-            $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
-            $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
+            // Mark unpaid extras paid — skipped when charging the whole visit to an
+            // account, since those extras haven't actually been paid either.
+            // Runs unconditionally otherwise so extras added after check-in are
+            // settled even when the main order was already paid.
+            if ($cp_pay_method !== 'unpaid') {
+                $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
+                $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
+            }
 
             // ── Appointment status + supply deduction — atomic transaction ────────
             $conn->begin_transaction();
@@ -3536,6 +3570,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="action"              value="complete">
                 <input type="hidden" name="appt_id"             value="<?php echo $appt_id; ?>">
                 <input type="hidden" name="complete_pay_method"  id="cp-method-<?php echo $appt_id; ?>"  value="cash">
+                <input type="hidden" name="complete_unpaid_billto" id="cp-unpaid-billto-<?php echo $appt_id; ?>" value="">
                 <input type="hidden" name="celebration_discount" id="cp-celeb-<?php echo $appt_id; ?>"   value="0">
                 <input type="hidden" name="advance_payment"      id="cp-advance-<?php echo $appt_id; ?>" value="0">
                 <input type="hidden" name="complete_disc_type"   id="cp-cdtype-<?php echo $appt_id; ?>"  value="none">
@@ -3796,6 +3831,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="action"              value="complete">
                 <input type="hidden" name="appt_id"             value="<?php echo $s2_id; ?>">
                 <input type="hidden" name="complete_pay_method"  id="cp-method-<?php echo $s2_id; ?>"  value="cash">
+                <input type="hidden" name="complete_unpaid_billto" id="cp-unpaid-billto-<?php echo $s2_id; ?>" value="">
                 <input type="hidden" name="celebration_discount" id="cp-celeb-<?php echo $s2_id; ?>"   value="0">
                 <input type="hidden" name="advance_payment"      id="cp-advance-<?php echo $s2_id; ?>" value="0">
                 <input type="hidden" name="complete_disc_type"   id="cp-cdtype-<?php echo $s2_id; ?>"  value="none">
@@ -4428,6 +4464,10 @@ function openCompleteModal(apptId) {
     cmState.apptId         = apptId;
     cmState.payMethod      = 'cash';
     cmState.discType       = 'none';
+    var unpaidBillto = document.getElementById('cm-unpaid-billto');
+    if (unpaidBillto) unpaidBillto.value = '';
+    var unpaidNameWrap = document.getElementById('cm-unpaid-name-wrap');
+    if (unpaidNameWrap) unpaidNameWrap.style.display = 'none';
     cmState.originalTotal  = data.originalTotal;
     cmState.bookingDisc    = data.bookingDisc;
     cmState.bookingDiscType= data.bookingDiscType;
@@ -4482,12 +4522,14 @@ function closeCompleteModal() {
 
 function cmSelectPayment(method) {
     cmState.payMethod = method;
-    ['cash','swiper','qrph','bank'].forEach(function(m) {
+    ['cash','swiper','qrph','bank','unpaid'].forEach(function(m) {
         var btn = document.getElementById('cm-pay-' + m);
         if (!btn) return;
         btn.style.borderColor = m === method ? '#C96A2C' : '#e5e7eb';
         btn.style.background  = m === method ? '#fff8f2' : '';
     });
+    var nameWrap = document.getElementById('cm-unpaid-name-wrap');
+    if (nameWrap) nameWrap.style.display = (method === 'unpaid') ? 'block' : 'none';
 }
 
 function submitComplete() {
@@ -4510,6 +4552,8 @@ function submitComplete() {
     var hiddenCvType  = document.getElementById('cp-cvtype-'  + cmState.apptId);
     var hiddenCvVal   = document.getElementById('cp-cvvalue-' + cmState.apptId);
     var hiddenAdv     = document.getElementById('cp-advance-' + cmState.apptId);
+    var hiddenBillto  = document.getElementById('cp-unpaid-billto-' + cmState.apptId);
+    if (hiddenBillto)  hiddenBillto.value  = document.getElementById('cm-unpaid-billto')?.value || '';
     if (hiddenMethod)  hiddenMethod.value  = cmState.payMethod;
     if (hiddenCdType)  hiddenCdType.value  = cmState.discType;
     if (cmState.discType === 'celebration') {
@@ -4933,6 +4977,16 @@ function submitComplete() {
                     <div style="font-size:1rem;">🏦</div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
                 </div>
+            </div>
+            <div id="cm-pay-unpaid" onclick="cmSelectPayment('unpaid')"
+                 style="margin-top:0.5rem;padding:0.6rem 0.75rem;border:2px dashed #e5e7eb;border-radius:10px;cursor:pointer;transition:all .15s;">
+                <div style="font-size:0.82rem;font-weight:700;color:#92400e;">🧾 Unpaid — Charge to Account</div>
+                <div style="font-size:0.7rem;color:var(--gray);margin-top:2px;">Corporate/hotel billing — records this as a receivable in Unpaids Corp instead of collecting payment now.</div>
+            </div>
+            <div id="cm-unpaid-name-wrap" style="display:none;margin-top:0.6rem;">
+                <label style="font-size:0.75rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">Bill To (Company / Client Name)</label>
+                <input type="text" id="cm-unpaid-billto" placeholder="e.g. Iloilo Grand Hotel — leave blank to use customer name"
+                       style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.83rem;box-sizing:border-box;">
             </div>
         </div>
 
