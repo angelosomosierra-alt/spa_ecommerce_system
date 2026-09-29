@@ -1969,12 +1969,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
     $cis_appt_id = intval($_POST['appt_id'] ?? 0);
     $cis_sess_id = intval($_POST['session_id'] ?? 0);
 
-    $cis_s = $conn->prepare("SELECT id, session_number, status FROM appointment_sessions WHERE id=? AND appointment_id=?");
+    $cis_s = $conn->prepare("
+        SELECT aps.id, aps.session_number, aps.status, a.status AS appt_status
+        FROM appointment_sessions aps
+        JOIN appointments a ON a.id = aps.appointment_id
+        WHERE aps.id=? AND aps.appointment_id=?
+    ");
     $cis_s->bind_param("ii", $cis_sess_id, $cis_appt_id); $cis_s->execute();
     $cis_row = $cis_s->get_result()->fetch_assoc(); $cis_s->close();
 
+    // Sequential guard: session N (N>1) requires session N-1 to already be completed.
+    $cis_prev_ok = true;
+    if ($cis_row && (int)$cis_row['session_number'] > 1) {
+        $cis_prev_num = (int)$cis_row['session_number'] - 1;
+        $cis_prevq = $conn->prepare("SELECT status FROM appointment_sessions WHERE appointment_id=? AND session_number=? LIMIT 1");
+        $cis_prevq->bind_param("ii", $cis_appt_id, $cis_prev_num); $cis_prevq->execute();
+        $cis_prev_status = $cis_prevq->get_result()->fetch_assoc()['status'] ?? null; $cis_prevq->close();
+        $cis_prev_ok = ($cis_prev_status === 'completed');
+    }
+
     if (!$cis_row) {
         $message = "Session not found."; $message_type = "danger";
+    } elseif ($cis_row['appt_status'] !== 'approved') {
+        $message = "⚠️ Check in the appointment itself first before checking in individual sessions."; $message_type = "danger";
+    } elseif (!$cis_prev_ok) {
+        $message = "⚠️ Session " . ((int)$cis_row['session_number'] - 1) . " must be completed before checking in Session {$cis_row['session_number']}."; $message_type = "danger";
     } elseif ($cis_row['status'] !== 'scheduled') {
         $message = "This session must be scheduled (date + therapist assigned) before check-in."; $message_type = "danger";
     } else {
@@ -2979,12 +2998,23 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         foreach ($_pkg_sessions as $_pi => $_ps) { if ($_ps['status'] !== 'completed') { $_pkg_next_idx = $_pi; break; } }
         $_pkg_default_tid = $_pkg_sessions[0]['therapist_id'] ?? null;
         $_pkg_qualified   = $get_qualified((int)$a['service_id']);
+        // Sessions can only be checked in / completed once the customer has
+        // actually been checked in for the appointment itself (top-level
+        // status 'approved'). Before that, this is planning-only.
+        $_pkg_appt_checked_in = ($status === 'approved');
         ?>
         <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">
             🔁 Session Package — <?php echo $_pkg_done; ?>/<?php echo $_pkg_total; ?> sessions completed
         </div>
+        <?php if (!$_pkg_appt_checked_in): ?>
+        <div style="font-size:0.75rem;color:#92400e;background:#fef9f0;border:1px solid #fcd34d;border-radius:8px;padding:0.5rem 0.7rem;margin-bottom:0.75rem;">
+            ⚠️ Check in the appointment itself (below) before any session can be checked in or completed.
+        </div>
+        <?php endif; ?>
         <div style="display:flex;flex-direction:column;gap:0.6rem;">
         <?php foreach ($_pkg_sessions as $_pi => $_ps):
+            $_pkg_prev_done  = ($_pi === 0) || ($_pkg_sessions[$_pi - 1]['status'] === 'completed');
+            $_pkg_can_checkin = $_pkg_appt_checked_in && $_pkg_prev_done;
             $_is_next = ($_pi === $_pkg_next_idx);
             $_sess_therapist_name = null;
             if (!empty($_ps['therapist_id'])) {
@@ -3051,6 +3081,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php else: ?> · <span style="font-style:italic;">Unassigned therapist</span><?php endif; ?>
                 </div>
                 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                    <?php if ($_pkg_can_checkin): ?>
                     <form method="POST" style="margin:0;">
                         <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="checkin_session">
@@ -3058,6 +3089,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                         <input type="hidden" name="session_id" value="<?php echo $_ps['id']; ?>">
                         <button type="submit" class="btn btn-success btn-sm">✅ Check In</button>
                     </form>
+                    <?php else: ?>
+                    <button type="button" class="btn btn-success btn-sm" disabled
+                            title="<?php echo !$_pkg_appt_checked_in ? 'Check in the appointment first' : 'Complete Session ' . ((int)$_ps['session_number'] - 1) . ' first'; ?>"
+                            style="opacity:0.5;cursor:not-allowed;">✅ Check In</button>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">
+                        <?php echo !$_pkg_appt_checked_in ? 'Check in the appointment first' : 'Session ' . ((int)$_ps['session_number'] - 1) . ' must be completed first'; ?>
+                    </span>
+                    <?php endif; ?>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="toggleSessionReassign(<?php echo $_ps['id']; ?>)">✏️ Edit</button>
                 </div>
                 <div style="margin-top:0.4rem;display:flex;align-items:center;gap:0.5rem;">
