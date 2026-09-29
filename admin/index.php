@@ -5,6 +5,11 @@ require_once '../config.php';
 function run_live_queries($conn): array {
 
     // A: On-duty therapists with real-time status
+    // Note: is_assigned checks ap.status = 'approved' -- that's the app's
+    // "customer actually checked in / session under way" status. 'assigned'
+    // means a therapist was picked but the customer hasn't arrived yet, so
+    // checking for it here would show a therapist as busy/available backwards
+    // (same bug already fixed in admin/therapists.php's roster query).
     $rs = $conn->query("
         SELECT
             ta.rotation_order,
@@ -12,12 +17,18 @@ function run_live_queries($conn): array {
             ta.time_out,
             t.id,
             t.full_name,
+            t.is_generalist,
+            (SELECT GROUP_CONCAT(DISTINCT c.name SEPARATOR '|')
+             FROM   therapist_specialties tsp
+             JOIN   categories c ON c.id = tsp.category_id
+             WHERE  tsp.therapist_id = t.id
+            ) AS specialty_names,
             (SELECT COUNT(*)
              FROM   appointment_therapists at2
              JOIN   appointments ap ON at2.appointment_id = ap.id
              JOIN   services     s2 ON s2.id = ap.service_id
              WHERE  at2.therapist_id = t.id
-               AND  ap.status = 'assigned'
+               AND  ap.status = 'approved'
                AND  NOW() >= ap.appointment_date
                AND  NOW() <  DATE_ADD(ap.appointment_date,
                                 INTERVAL (s2.session_time + IF(ap.service_type = 'home', 30, 0)) MINUTE)
@@ -28,6 +39,33 @@ function run_live_queries($conn): array {
         ORDER  BY ta.rotation_order ASC, ta.time_in ASC
     ");
     $today_roster = $rs ? $rs->fetch_all(MYSQLI_ASSOC) : [];
+
+    // Classify each therapist into one or more rotation groups, so the
+    // Dashboard can show a separate "next up" per specialty. Keyword-based
+    // (not hardcoded category IDs) so new categories named the same way
+    // auto-classify correctly without code changes.
+    $classify_category = function (string $name): string {
+        $n = strtolower($name);
+        if (preg_match('/aesthetic|laser|\brf\b|hifu|drip|pico|carbon glow/', $n)) return 'aesthetic';
+        if (str_contains($n, 'facial')) return 'facial';
+        if (str_contains($n, 'nail') || str_contains($n, 'lash')) return 'nail_lash';
+        return 'therapist';
+    };
+    foreach ($today_roster as &$r) {
+        if (!empty($r['is_generalist'])) {
+            $r['groups'] = ['therapist', 'facial', 'nail_lash', 'aesthetic'];
+            continue;
+        }
+        $groups = [];
+        if (!empty($r['specialty_names'])) {
+            foreach (explode('|', $r['specialty_names']) as $cat_name) {
+                $groups[] = $classify_category($cat_name);
+            }
+            $groups = array_values(array_unique($groups));
+        }
+        $r['groups'] = $groups ?: ['therapist']; // no specialties recorded yet -- default bucket
+    }
+    unset($r);
 
     // B: First available therapist in rotation (identical logic to Therapists.php)
     $next_up = null;
@@ -111,7 +149,7 @@ function render_live_panels(array $d): void {
     ?>
 <div class="live-panels-grid">
 
-<!-- ── Panel 1: Therapist Rotation ────────────────────────────────────────── -->
+<!-- ── Panel 1: Therapist Rotation, split by specialty group ───────────────── -->
 <div class="panel">
     <div class="panel-header">
         <span class="panel-title">🔄 Therapist Rotation</span>
@@ -119,25 +157,38 @@ function render_live_panels(array $d): void {
         <span style="font-size:0.72rem;color:var(--gray);"><?php echo count($roster); ?> on duty</span>
         <?php endif; ?>
     </div>
-    <div class="panel-body" style="padding:0.75rem;">
-        <div style="background:<?php echo $next_up ? 'rgba(25,135,84,0.08)' : 'rgba(220,53,69,0.06)'; ?>;
-                    border:1px solid <?php echo $next_up ? 'rgba(25,135,84,0.2)' : 'rgba(220,53,69,0.15)'; ?>;
-                    border-radius:8px;padding:0.6rem 0.9rem;margin-bottom:0.75rem;text-align:center;">
-            <div style="font-size:0.62rem;font-weight:700;color:var(--gray);text-transform:uppercase;
-                        letter-spacing:0.06em;margin-bottom:0.2rem;">Next Up</div>
-            <div style="font-weight:700;font-size:0.92rem;
-                        color:<?php echo $next_up ? 'var(--green)' : '#dc3545'; ?>;">
-                <?php echo $next_up ? htmlspecialchars($next_up['full_name']) : '&mdash; All Busy &mdash;'; ?>
-            </div>
-        </div>
+    <div class="panel-body" style="padding:0.75rem;max-height:520px;overflow-y:auto;">
         <?php if (empty($roster)): ?>
         <p style="text-align:center;color:var(--gray);font-size:0.82rem;padding:1rem 0;">No therapists on duty today.</p>
-        <?php else: ?>
-        <?php foreach ($roster as $r): ?>
-        <div style="display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0;border-bottom:1px solid var(--border2);">
-            <span style="font-size:0.7rem;color:var(--gray);width:1.2rem;text-align:right;flex-shrink:0;font-weight:600;"><?php echo (int)$r['rotation_order']; ?></span>
-            <span style="flex:1;font-size:0.82rem;color:var(--brown);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($r['full_name']); ?></span>
-            <?php echo $pill($r); ?>
+        <?php else:
+            $group_defs = [
+                'therapist' => ['💆', 'Therapist'],
+                'facial'    => ['🧖', 'Facial'],
+                'nail_lash' => ['💅', 'Nail and Lashes'],
+                'aesthetic' => ['✨', 'Aesthetic'],
+            ];
+            foreach ($group_defs as $gkey => [$gicon, $glabel]):
+                $g_roster = array_values(array_filter($roster, fn($r) => in_array($gkey, $r['groups'], true)));
+                if (empty($g_roster)) continue;
+                $g_next = null;
+                foreach ($g_roster as $r) {
+                    if (!$r['is_on_break'] && !$r['is_assigned'] && empty($r['time_out'])) { $g_next = $r; break; }
+                }
+        ?>
+        <div style="margin-bottom:1rem;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
+                <span style="font-size:0.78rem;font-weight:700;color:var(--brown);"><?php echo $gicon; ?> <?php echo $glabel; ?></span>
+                <span style="font-size:0.72rem;font-weight:700;color:<?php echo $g_next ? 'var(--green)' : '#dc3545'; ?>;">
+                    <?php echo $g_next ? 'Next: ' . htmlspecialchars($g_next['full_name']) : 'All Busy'; ?>
+                </span>
+            </div>
+            <?php foreach ($g_roster as $r): ?>
+            <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid var(--border2);">
+                <span style="font-size:0.7rem;color:var(--gray);width:1.2rem;text-align:right;flex-shrink:0;font-weight:600;"><?php echo (int)$r['rotation_order']; ?></span>
+                <span style="flex:1;font-size:0.8rem;color:var(--brown);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($r['full_name']); ?></span>
+                <?php echo $pill($r); ?>
+            </div>
+            <?php endforeach; ?>
         </div>
         <?php endforeach; endif; ?>
     </div>
