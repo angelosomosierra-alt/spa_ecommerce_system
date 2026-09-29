@@ -87,6 +87,75 @@ if (isset($_GET['export']) && $_GET['export'] === 'supplies') {
     exit;
 }
 
+// ─── GET: EXPORT ONE PHYSICAL COUNT (Actual Count / Variance / Amount) ────────
+if (isset($_GET['export']) && $_GET['export'] === 'count' && !empty($_GET['date'])) {
+    $exp_date = trim($_GET['date']);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp_date) || !strtotime($exp_date)) {
+        $exp_date = date('Y-m-d');
+    }
+    require_once dirname(__DIR__) . '/vendor/autoload.php';
+
+    $crs = $conn->prepare("SELECT sc.*, s.name AS supply_name, s.category, s.uom_label, s.base_unit_label, s.supplier_price, s.content_per_unit FROM supply_counts sc JOIN supplies s ON s.id=sc.supply_id WHERE sc.count_date=? ORDER BY s.category, s.name");
+    $crs->bind_param("s", $exp_date); $crs->execute();
+    $exp_rows = $crs->get_result()->fetch_all(MYSQLI_ASSOC); $crs->close();
+
+    $wb = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+    $ws = $wb->getActiveSheet();
+    $ws->setTitle('Count ' . $exp_date);
+
+    $ws->setCellValue('A1', 'RECOVERY ILOILO SPA — PHYSICAL COUNT');
+    $ws->setCellValue('A2', 'Count Date: ' . date('F j, Y', strtotime($exp_date)));
+    $ws->mergeCells('A1:H1');
+    $ws->mergeCells('A2:H2');
+    $ws->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+    $ws->getStyle('A2')->getFont()->setItalic(true)->setSize(9);
+
+    $headers = ['Category','Product','Unit','Unit Cost (₱)','Expected Stock','Actual Count','Variance','Amount (₱)'];
+    $ws->fromArray($headers, null, 'A4');
+    $ws->getStyle('A4:H4')->getFont()->setBold(true)->getColor()->setRGB('FFFFFF');
+    $ws->getStyle('A4:H4')->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)->getStartColor()->setRGB('3B2A1A');
+
+    $row = 5;
+    $grand_total = 0.0;
+    foreach ($exp_rows as $cr) {
+        $cpu      = max(0.0001, (float)$cr['content_per_unit']);
+        $uc       = (float)$cr['supplier_price'] > 0 ? $cr['supplier_price'] / $cpu : 0.0;
+        $variance = (float)$cr['variance'];
+        $amount   = $variance * $uc;
+        $grand_total += $amount;
+
+        $ws->setCellValue('A' . $row, $cr['category']);
+        $ws->setCellValue('B' . $row, $cr['supply_name']);
+        $ws->setCellValue('C' . $row, $cr['base_unit_label']);
+        $ws->setCellValue('D' . $row, round($uc, 4));
+        $ws->setCellValue('E' . $row, round((float)$cr['expected_stock'], 2));
+        $ws->setCellValue('F' . $row, round((float)$cr['total_base_counted'], 2));
+        $ws->setCellValue('G' . $row, round($variance, 2));
+        $ws->setCellValue('H' . $row, round($amount, 2));
+        $row++;
+    }
+
+    $ws->setCellValue('G' . $row, 'NET TOTAL');
+    $ws->getStyle('G' . $row)->getFont()->setBold(true);
+    $ws->setCellValue('H' . $row, round($grand_total, 2));
+    $ws->getStyle('H' . $row)->getFont()->setBold(true);
+
+    foreach (range('A', 'H') as $col) {
+        $ws->getColumnDimension($col)->setAutoSize(true);
+    }
+    $ws->getStyle(['D5:D' . $row, 'H5:H' . $row])->getNumberFormat()->setFormatCode('#,##0.00');
+    $ws->getStyle('G5:G' . $row)->getNumberFormat()->setFormatCode('+#,##0.00;-#,##0.00;0.00');
+
+    $filename = 'Recovery_Spa_Count_' . $exp_date . '.xlsx';
+    if (ob_get_length()) ob_end_clean();
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: max-age=0');
+    header('Pragma: no-cache');
+    (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($wb))->save('php://output');
+    exit;
+}
+
 // ─── POST: ARCHIVE SUPPLY ─────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'archive_supply') {
     verify_csrf_token();
@@ -763,6 +832,9 @@ require_once 'admin_header.php';
             <tr class="cnt-hist-detail" data-cdate="<?php echo $safe_date;?>" style="display:none;">
                 <td colspan="5" style="padding:0;">
                     <div style="background:var(--bg3);border-bottom:2px solid var(--border2);">
+                        <div style="padding:.5rem .75rem;text-align:right;">
+                            <a href="inventory.php?export=count&date=<?php echo urlencode($date); ?>" class="btn btn-secondary btn-sm">📊 Export this count (Actual Count / Variance / Amount)</a>
+                        </div>
                         <table style="width:100%;font-size:.82rem;">
                             <thead><tr style="background:var(--surface);">
                                 <th style="padding:.4rem .75rem;">Supply</th>
