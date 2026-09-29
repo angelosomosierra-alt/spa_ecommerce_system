@@ -147,20 +147,21 @@ function render_live_panels(array $d): void {
         return '<span style="background:rgba(25,135,84,0.12);color:#146c43;font-size:0.68rem;padding:0.15rem 0.55rem;border-radius:20px;font-weight:600;">Available</span>';
     };
     ?>
-<div class="live-panels-grid">
 
-<!-- ── Panel 1: Therapist Rotation, split by specialty group ───────────────── -->
-<div class="panel">
+<!-- ── Row 1: Therapist Rotation, full width, split by specialty group ─────── -->
+<div class="panel" style="margin-bottom:1.5rem;">
     <div class="panel-header">
         <span class="panel-title">🔄 Therapist Rotation</span>
         <?php if (!empty($roster)): ?>
         <span style="font-size:0.72rem;color:var(--gray);"><?php echo count($roster); ?> on duty</span>
         <?php endif; ?>
     </div>
-    <div class="panel-body" style="padding:0.75rem;max-height:520px;overflow-y:auto;">
+    <div class="panel-body" style="padding:0.75rem;">
         <?php if (empty($roster)): ?>
         <p style="text-align:center;color:var(--gray);font-size:0.82rem;padding:1rem 0;">No therapists on duty today.</p>
-        <?php else:
+        <?php else: ?>
+        <div class="rotation-groups-grid">
+            <?php
             $group_defs = [
                 'therapist' => ['💆', 'Therapist'],
                 'facial'    => ['🧖', 'Facial'],
@@ -174,27 +175,31 @@ function render_live_panels(array $d): void {
                 foreach ($g_roster as $r) {
                     if (!$r['is_on_break'] && !$r['is_assigned'] && empty($r['time_out'])) { $g_next = $r; break; }
                 }
-        ?>
-        <div style="margin-bottom:1rem;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
-                <span style="font-size:0.78rem;font-weight:700;color:var(--brown);"><?php echo $gicon; ?> <?php echo $glabel; ?></span>
-                <span style="font-size:0.72rem;font-weight:700;color:<?php echo $g_next ? 'var(--green)' : '#dc3545'; ?>;">
-                    <?php echo $g_next ? 'Next: ' . htmlspecialchars($g_next['full_name']) : 'All Busy'; ?>
-                </span>
-            </div>
-            <?php foreach ($g_roster as $r): ?>
-            <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid var(--border2);">
-                <span style="font-size:0.7rem;color:var(--gray);width:1.2rem;text-align:right;flex-shrink:0;font-weight:600;"><?php echo (int)$r['rotation_order']; ?></span>
-                <span style="flex:1;font-size:0.8rem;color:var(--brown);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($r['full_name']); ?></span>
-                <?php echo $pill($r); ?>
+            ?>
+            <div style="background:var(--bg3);border-radius:8px;padding:0.75rem;">
+                <div style="display:flex;flex-direction:column;gap:0.15rem;margin-bottom:0.5rem;">
+                    <span style="font-size:0.8rem;font-weight:700;color:var(--brown);"><?php echo $gicon; ?> <?php echo $glabel; ?></span>
+                    <span style="font-size:0.72rem;font-weight:700;color:<?php echo $g_next ? 'var(--green)' : '#dc3545'; ?>;">
+                        <?php echo $g_next ? 'Next: ' . htmlspecialchars($g_next['full_name']) : 'All Busy'; ?>
+                    </span>
+                </div>
+                <?php foreach ($g_roster as $r): ?>
+                <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:1px solid var(--border2);">
+                    <span style="font-size:0.7rem;color:var(--gray);width:1.2rem;text-align:right;flex-shrink:0;font-weight:600;"><?php echo (int)$r['rotation_order']; ?></span>
+                    <span style="flex:1;font-size:0.8rem;color:var(--brown);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($r['full_name']); ?></span>
+                    <?php echo $pill($r); ?>
+                </div>
+                <?php endforeach; ?>
             </div>
             <?php endforeach; ?>
         </div>
-        <?php endforeach; endif; ?>
+        <?php endif; ?>
     </div>
 </div>
 
-<!-- ── Panel 2: Ongoing Sessions ──────────────────────────────────────────── -->
+<!-- ── Row 2: Ongoing Sessions + Upcoming, side by side ─────────────────────── -->
+<div class="live-panels-grid-2col">
+
 <div class="panel">
     <div class="panel-header">
         <span class="panel-title">▶️ Ongoing Sessions</span>
@@ -221,7 +226,6 @@ function render_live_panels(array $d): void {
     </div>
 </div>
 
-<!-- ── Panel 3: Upcoming Sessions ─────────────────────────────────────────── -->
 <div class="panel">
     <div class="panel-header">
         <span class="panel-title">⏭️ Upcoming (today)</span>
@@ -248,7 +252,7 @@ function render_live_panels(array $d): void {
     </div>
 </div>
 
-</div><!-- /.live-panels-grid -->
+</div><!-- /.live-panels-grid-2col -->
     <?php
 }
 
@@ -327,9 +331,11 @@ require_once 'admin_header.php';
 <?php include __DIR__ . '/_resource_grid_js.php'; ?>
 
 <style>
-.live-panels-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1.5rem; margin-bottom:1.5rem; }
-@media (max-width:1100px) { .live-panels-grid { grid-template-columns:1fr 1fr; } }
-@media (max-width:700px)  { .live-panels-grid { grid-template-columns:1fr; } }
+.rotation-groups-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; }
+@media (max-width:1100px) { .rotation-groups-grid { grid-template-columns:1fr 1fr; } }
+@media (max-width:600px)  { .rotation-groups-grid { grid-template-columns:1fr; } }
+.live-panels-grid-2col { display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; margin-bottom:1.5rem; }
+@media (max-width:700px)  { .live-panels-grid-2col { grid-template-columns:1fr; } }
 .stats-grid-5 { margin-bottom:1.5rem; }
 @media (max-width:1100px) { .stats-grid-5 { grid-template-columns:repeat(3,1fr) !important; } }
 @media (max-width:700px)  { .stats-grid-5 { grid-template-columns:repeat(2,1fr) !important; } }
