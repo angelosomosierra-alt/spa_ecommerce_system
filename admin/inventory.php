@@ -25,6 +25,68 @@ foreach ($supplies as $_s) {
 $grouped = [];
 foreach ($supplies as $_s) $grouped[$_s['category']][] = $_s;
 
+// ─── GET: EXPORT SUPPLIES TO EXCEL ────────────────────────────────────────────
+if (isset($_GET['export']) && $_GET['export'] === 'supplies') {
+    require_once dirname(__DIR__) . '/vendor/autoload.php';
+
+    $wb = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+    $ws = $wb->getActiveSheet();
+    $ws->setTitle('Inventory');
+
+    $ws->setCellValue('A1', 'RECOVERY ILOILO SPA — INVENTORY');
+    $ws->setCellValue('A2', 'As of ' . date('F j, Y g:i A'));
+    $ws->mergeCells('A1:H1');
+    $ws->mergeCells('A2:H2');
+    $ws->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+    $ws->getStyle('A2')->getFont()->setItalic(true)->setSize(9);
+
+    $headers = ['Category','Product','UOM','Unit Cost (₱)','Stock (UOM units)','Stock (base units)','Base Unit','Stock Value (₱)'];
+    $ws->fromArray($headers, null, 'A4');
+    $ws->getStyle('A4:H4')->getFont()->setBold(true)->getColor()->setRGB('FFFFFF');
+    $ws->getStyle('A4:H4')->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)->getStartColor()->setRGB('3B2A1A');
+
+    $row = 5;
+    $grand_total = 0.0;
+    foreach ($grouped as $cat => $rows) {
+        foreach ($rows as $s) {
+            $cpu   = max(0.0001, (float)$s['content_per_unit']);
+            $stock = (float)$s['current_stock'];
+            $uc    = (float)$s['supplier_price'] > 0 ? $s['supplier_price'] / $cpu : 0.0;
+            $value = $stock * $uc;
+            $grand_total += $value;
+
+            $ws->setCellValue('A' . $row, $cat);
+            $ws->setCellValue('B' . $row, $s['name']);
+            $ws->setCellValue('C' . $row, $s['uom_label']);
+            $ws->setCellValue('D' . $row, round($uc, 4));
+            $ws->setCellValue('E' . $row, round($stock / $cpu, 2));
+            $ws->setCellValue('F' . $row, round($stock, 2));
+            $ws->setCellValue('G' . $row, $s['base_unit_label']);
+            $ws->setCellValue('H' . $row, round($value, 2));
+            $row++;
+        }
+    }
+
+    $ws->setCellValue('G' . $row, 'TOTAL');
+    $ws->getStyle('G' . $row)->getFont()->setBold(true);
+    $ws->setCellValue('H' . $row, round($grand_total, 2));
+    $ws->getStyle('H' . $row)->getFont()->setBold(true);
+
+    foreach (range('A', 'H') as $col) {
+        $ws->getColumnDimension($col)->setAutoSize(true);
+    }
+    $ws->getStyle(['D5:D' . $row, 'H5:H' . $row])->getNumberFormat()->setFormatCode('#,##0.00');
+
+    $filename = 'Recovery_Spa_Inventory_' . date('Y-m-d') . '.xlsx';
+    if (ob_get_length()) ob_end_clean();
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: max-age=0');
+    header('Pragma: no-cache');
+    (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($wb))->save('php://output');
+    exit;
+}
+
 // ─── POST: ARCHIVE SUPPLY ─────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'archive_supply') {
     verify_csrf_token();
@@ -353,6 +415,7 @@ require_once 'admin_header.php';
     <div class="panel-header">
         <span class="panel-title">🧴 Supplies</span>
         <div style="display:flex;gap:0.5rem;">
+            <a href="inventory.php?export=supplies" class="btn btn-secondary btn-sm">📊 Export to Excel</a>
             <button type="button" class="btn btn-secondary btn-sm" onclick="openDeliveryModal(null)">🚚 Log Delivery</button>
             <button type="button" class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Supply</button>
         </div>
