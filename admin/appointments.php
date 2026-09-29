@@ -1441,30 +1441,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $upd->execute(); $upd->close();
 
                 // ── Supply deduction (Phase 2) ────────────────────────────────────
-                $_ppl   = max(1, intval($appt['people_count'] ?? 1));
-                $_svc_d = (int)$appt['service_id'];
-                $_rs    = $conn->prepare("SELECT supply_id, quantity_per_person FROM service_supply_usage WHERE service_id = ?");
-                $_rs->bind_param("i", $_svc_d); $_rs->execute();
-                $_rrows = $_rs->get_result()->fetch_all(MYSQLI_ASSOC); $_rs->close();
-                foreach ($_rrows as $_rr) {
-                    $_sid    = (int)$_rr['supply_id'];
-                    $_qty    = floatval($_rr['quantity_per_person']) * $_ppl;
-                    $_sb_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
-                    $_sb_s->bind_param("i", $_sid); $_sb_s->execute();
-                    $_sb_row  = $_sb_s->get_result()->fetch_assoc(); $_sb_s->close();
-                    if ($_sb_row === null) {
-                        // Supply is archived — log the skip with stock_before/after = 0; do not deduct
-                        $_sbefore = 0.0; $_safter = 0.0;
-                    } else {
-                        $_sbefore = (float)$_sb_row['current_stock'];
-                        $_ud     = $conn->prepare("UPDATE supplies SET current_stock = GREATEST(0, current_stock - ?) WHERE id = ? AND deleted_at IS NULL");
-                        $_ud->bind_param("di", $_qty, $_sid); $_ud->execute(); $_ud->close();
-                        $_sa_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
-                        $_sa_s->bind_param("i", $_sid); $_sa_s->execute();
-                        $_safter  = (float)($_sa_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sa_s->close();
+                // Gated off by default (see AUTO_SUPPLY_DEDUCTION_ENABLED in config.php):
+                // inventory currently relies on Deliveries + Physical Count variance
+                // instead of guessed per-appointment recipes. Flip that flag once real
+                // service_supply_usage recipes are confirmed accurate.
+                if (AUTO_SUPPLY_DEDUCTION_ENABLED) {
+                    $_ppl   = max(1, intval($appt['people_count'] ?? 1));
+                    $_svc_d = (int)$appt['service_id'];
+                    $_rs    = $conn->prepare("SELECT supply_id, quantity_per_person FROM service_supply_usage WHERE service_id = ?");
+                    $_rs->bind_param("i", $_svc_d); $_rs->execute();
+                    $_rrows = $_rs->get_result()->fetch_all(MYSQLI_ASSOC); $_rs->close();
+                    foreach ($_rrows as $_rr) {
+                        $_sid    = (int)$_rr['supply_id'];
+                        $_qty    = floatval($_rr['quantity_per_person']) * $_ppl;
+                        $_sb_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
+                        $_sb_s->bind_param("i", $_sid); $_sb_s->execute();
+                        $_sb_row  = $_sb_s->get_result()->fetch_assoc(); $_sb_s->close();
+                        if ($_sb_row === null) {
+                            // Supply is archived — log the skip with stock_before/after = 0; do not deduct
+                            $_sbefore = 0.0; $_safter = 0.0;
+                        } else {
+                            $_sbefore = (float)$_sb_row['current_stock'];
+                            $_ud     = $conn->prepare("UPDATE supplies SET current_stock = GREATEST(0, current_stock - ?) WHERE id = ? AND deleted_at IS NULL");
+                            $_ud->bind_param("di", $_qty, $_sid); $_ud->execute(); $_ud->close();
+                            $_sa_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
+                            $_sa_s->bind_param("i", $_sid); $_sa_s->execute();
+                            $_safter  = (float)($_sa_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sa_s->close();
+                        }
+                        $_sul    = $conn->prepare("INSERT INTO supply_usage_log (appointment_id, supply_id, quantity_deducted, stock_before, stock_after) VALUES (?, ?, ?, ?, ?)");
+                        $_sul->bind_param("iiddd", $appt_id, $_sid, $_qty, $_sbefore, $_safter); $_sul->execute(); $_sul->close();
                     }
-                    $_sul    = $conn->prepare("INSERT INTO supply_usage_log (appointment_id, supply_id, quantity_deducted, stock_before, stock_after) VALUES (?, ?, ?, ?, ?)");
-                    $_sul->bind_param("iiddd", $appt_id, $_sid, $_qty, $_sbefore, $_safter); $_sul->execute(); $_sul->close();
                 }
                 // ── End supply deduction ──────────────────────────────────────────
 

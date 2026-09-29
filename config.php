@@ -153,6 +153,14 @@ define('ONLINE_PAYMENT_ENABLED', false);
 // and linked.
 define('SHOW_GCASH_MAYA', false);
 
+// Automatic per-appointment stock deduction (service_supply_usage "recipes",
+// admin/appointments.php completion handler). Off because exact per-appointment
+// usage formulas aren't known yet — inventory tracking relies on Deliveries
+// (stock in) + Physical Count (variance vs. actual) instead, so guessed recipes
+// don't silently corrupt that baseline. Flip to true once real recipes (set in
+// admin/services.php) are confirmed accurate — no other code changes needed.
+define('AUTO_SUPPLY_DEDUCTION_ENABLED', false);
+
 // ── Secret gate code for reaching the admin login page ───────────────────────
 define('ADMIN_GATE_CODE', '2024');
 
