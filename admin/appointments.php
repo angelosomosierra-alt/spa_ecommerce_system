@@ -3454,7 +3454,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </script>
             <button type="button" class="btn btn-success btn-sm" data-checkin-btn
                     data-bill-json='<?php echo htmlspecialchars(json_encode($_bill_lines), ENT_QUOTES); ?>'
-                    onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>', null, '<?php echo htmlspecialchars(addslashes($_checkin_bill_title)); ?>')"
+                    onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>', null, '<?php echo htmlspecialchars(addslashes($_checkin_bill_title)); ?>', <?php echo floatval($a['advance_payment'] ?? 0); ?>)"
                     <?php if ($_has_unassigned_therapist): ?>
                     disabled title="Assign a specific therapist to all services first"
                     style="opacity:0.5;cursor:not-allowed;"
@@ -3757,7 +3757,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
         <?php if ($s2_status === 'assigned'): ?>
             <button type="button" class="btn btn-success btn-sm"
-                    onclick="openCheckinModal(<?php echo $s2_id; ?>, '<?php echo htmlspecialchars(addslashes($display_name)); ?>', <?php echo json_encode([['name' => $a['service_name'] . ' (Session 2)', 'price' => floatval($_session2['charged_price'] ?? 0)]]); ?>)">
+                    onclick="openCheckinModal(<?php echo $s2_id; ?>, '<?php echo htmlspecialchars(addslashes($display_name)); ?>', <?php echo json_encode([['name' => $a['service_name'] . ' (Session 2)', 'price' => floatval($_session2['charged_price'] ?? 0)]]); ?>, null, <?php echo floatval($_session2['advance_payment'] ?? 0); ?>)">
                 ✅ Check In
             </button>
             <form method="POST" style="margin:0;display:inline;">
@@ -4290,7 +4290,11 @@ function cmRecompute() {
     }
     cdAmt = Math.max(0, Math.min(cdAmt, Math.max(0, gross - bDisc)));
 
-    var advPay   = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
+    // When `already` > 0 (e.g. Pay Now was used at check-in), the advance was
+    // necessarily already folded into that fully-paid amount -- subtracting it
+    // again here would double-count the same money. Only apply it standalone
+    // when the order hasn't been paid yet (Pay Later path).
+    var advPay   = already > 0 ? 0 : (parseFloat(document.getElementById('cm-advance-pay')?.value) || 0);
     var totalDue = Math.max(0, gross - bDisc - cdAmt - advPay - already);
 
     // Build breakdown
@@ -4628,8 +4632,11 @@ function submitComplete() {
             <div id="checkin-discount-line" style="display:none;justify-content:space-between;font-size:0.8rem;color:#dc3545;margin-top:0.25rem;">
                 <span>Discount</span><span class="disc-amt">−₱0.00</span>
             </div>
+            <div id="checkin-advance-line" style="display:none;justify-content:space-between;font-size:0.8rem;color:#C96A2C;margin-top:0.25rem;">
+                <span>💰 Advance (pre-recorded)</span><span class="adv-amt">−₱0.00</span>
+            </div>
             <div style="display:flex;justify-content:space-between;font-weight:800;padding-top:0.5rem;border-top:1px solid var(--border2);margin-top:0.4rem;font-size:0.88rem;">
-                <span>Total</span>
+                <span>Total<span id="checkin-total-label" style="font-weight:400;font-size:0.7rem;color:var(--gray);display:none;"> (remaining to collect)</span></span>
                 <span id="checkin-bill-total">₱0.00</span>
             </div>
         </div>
@@ -5185,7 +5192,7 @@ document.addEventListener('keydown', e => {
 var _ciApptId = 0;
 var _ciVoucherType = 'percent';
 
-function openCheckinModal(apptId, customerName, billLines, billTitle) {
+function openCheckinModal(apptId, customerName, billLines, billTitle, advanceAmount) {
     _ciApptId = apptId;
     document.getElementById('ciCustomerName').textContent = customerName || '';
     document.getElementById('ci-appt-id').value  = apptId;
@@ -5193,6 +5200,16 @@ function openCheckinModal(apptId, customerName, billLines, billTitle) {
 
     var titleEl = document.getElementById('checkin-bill-title');
     if (titleEl) titleEl.textContent = billTitle || '🧾 Buong Bill';
+
+    window._ciAdvance = parseFloat(advanceAmount) || 0;
+    var advLineEl = document.getElementById('checkin-advance-line');
+    var totalLabelEl = document.getElementById('checkin-total-label');
+    if (advLineEl) {
+        advLineEl.style.display = window._ciAdvance > 0 ? 'flex' : 'none';
+        var advAmtSpan = advLineEl.querySelector('.adv-amt');
+        if (advAmtSpan) advAmtSpan.textContent = '−₱' + window._ciAdvance.toFixed(2);
+    }
+    if (totalLabelEl) totalLabelEl.style.display = window._ciAdvance > 0 ? 'inline' : 'none';
 
     if (billLines) {
         // Nested Session 2 view passes its bill line(s) directly — it has no
@@ -5296,7 +5313,8 @@ function ciRecomputeTotal() {
             discAmt = Math.min(vVal, subtotal);
         }
     }
-    var total = Math.max(0, subtotal - discAmt);
+    var advance = window._ciAdvance || 0;
+    var total = Math.max(0, subtotal - discAmt - advance);
     var totalEl = document.getElementById('checkin-bill-total');
     if (totalEl) totalEl.textContent = '₱' + total.toFixed(2);
     var discLineEl = document.getElementById('checkin-discount-line');
