@@ -157,6 +157,7 @@ $_s = $conn->prepare("
         o.paymongo_method,
         o.discount_type,
         o.discount_amount,
+        o.completion_discount_type,
         IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
         o.final_amount,
         o.total_amount,
@@ -436,7 +437,15 @@ $staff_cf              = array_sum(array_column($service_rows, 'total_commission
 $staff_cf              += $session_commission_total;
 $total_discounts       = array_sum(array_column($service_rows, 'discount_amount'))
                        + array_sum(array_column($service_rows, 'completion_discount_amount'));
-$celeb_discount        = array_sum(array_column($service_rows, 'celebration_discount'));
+// The real celebration-discount amount lives on the order (booking-time
+// discount_type/discount_amount, or completion-time completion_discount_type/
+// completion_discount_amount) -- appointments.celebration_discount is never
+// actually populated, so it can't be used here.
+$celeb_discount = 0.0;
+foreach ($service_rows as $_cr) {
+    if (($_cr['discount_type'] ?? '') === 'celebration') $celeb_discount += (float)$_cr['discount_amount'];
+    if (($_cr['completion_discount_type'] ?? '') === 'celebration') $celeb_discount += (float)$_cr['completion_discount_amount'];
+}
 // B48: only prior-day advances — same-day advances are already in $noncash_dp_total (B46)
 $advance_payment_total = 0;
 foreach ($service_rows as $_srow) {
