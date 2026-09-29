@@ -1308,6 +1308,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     goto end_action;
                 }
             }
+            // ── Guard: every assigned person-slot must have a real therapist
+            // before completion, so commission can actually be calculated.
+            // "Any Available" (NULL) is fine at booking/approval time, but
+            // must be resolved to a specific therapist by completion.
+            $cp_unresolved = $conn->prepare("SELECT COUNT(*) AS c FROM appointment_therapists WHERE appointment_id=? AND therapist_id IS NULL");
+            $cp_unresolved->bind_param("i", $appt_id); $cp_unresolved->execute();
+            $cp_unresolved_count = (int)$cp_unresolved->get_result()->fetch_assoc()['c']; $cp_unresolved->close();
+            if ($cp_unresolved_count > 0) {
+                $message = "⚠️ Assign a specific therapist (not \"Any Available\") to every person slot before completing — commission can't be calculated otherwise.";
+                $message_type = "danger";
+                goto end_action;
+            }
+
             $cp_by   = (int)$_SESSION['user_id'];
             $cp_name = (is_cashier() && !empty($pr['full_name']))
                 ? $pr['full_name']
@@ -2045,6 +2058,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
         $message = "⚠️ Session {$cs_row['session_number']} can't be completed yet — it is " . str_replace('_', ' ', $cs_row['status']) . ". Check it in first."; $message_type = "danger";
     } elseif (empty($cs_row['session_count']) || (int)$cs_row['session_count'] <= 1) {
         $message = "This appointment is not linked to a session-count package."; $message_type = "danger";
+    } elseif (empty($cs_row['therapist_id'])) {
+        $message = "⚠️ Assign a specific therapist to Session {$cs_row['session_number']} before completing it — commission can't be calculated otherwise."; $message_type = "danger";
     } else {
         $session_count_total = (int)$cs_row['session_count'];
         $session_price       = round(floatval($cs_row['charged_price']) / $session_count_total, 2);
@@ -3134,6 +3149,12 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php endif; ?>
                     <?php if ($_ps['checked_in_at']): ?> · Checked in <?php echo date('g:i A', strtotime($_ps['checked_in_at'])); ?><?php endif; ?>
                 </div>
+                <?php if (empty($_ps['therapist_id'])): ?>
+                <div style="display:flex;align-items:center;gap:0.5rem;">
+                    <button type="button" class="btn btn-primary btn-sm" disabled title="Assign a specific therapist first" style="opacity:0.5;cursor:not-allowed;">🎉 Complete Session</button>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
+                </div>
+                <?php else: ?>
                 <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="complete_session">
@@ -3145,6 +3166,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php endif; ?>
                     <button type="submit" class="btn btn-primary btn-sm">🎉 Complete Session</button>
                 </form>
+                <?php endif; ?>
                 <?php endif; ?>
             </div>
         <?php endforeach; ?>
@@ -3545,9 +3567,22 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 advancePayment: <?php echo floatval($a['advance_payment'] ?? 0); ?>
             };
             </script>
+            <?php
+            $_cp_unassigned = false;
+            foreach ($assigned_therapists as $_cp_at) {
+                if ($_cp_at['therapist_id'] === null) { $_cp_unassigned = true; break; }
+            }
+            ?>
             <?php if (!$is_session_pkg_card): ?>
-            <button type="button" class="btn btn-primary btn-sm"
-                    onclick="openCompleteModal(<?php echo $appt_id; ?>)">🎉 Mark Complete</button>
+                <?php if ($_cp_unassigned): ?>
+                <button type="button" class="btn btn-primary btn-sm" disabled
+                        title="Assign a specific therapist (not &quot;Any Available&quot;) first"
+                        style="opacity:0.5;cursor:not-allowed;">🎉 Mark Complete</button>
+                <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
+                <?php else: ?>
+                <button type="button" class="btn btn-primary btn-sm"
+                        onclick="openCompleteModal(<?php echo $appt_id; ?>)">🎉 Mark Complete</button>
+                <?php endif; ?>
             <?php else: ?>
             <span style="font-size:0.78rem;color:var(--gray);font-style:italic;">Use "Complete Session" above to progress this package.</span>
             <?php endif; ?>
@@ -3791,7 +3826,20 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 advancePayment: <?php echo floatval($_session2['advance_payment'] ?? 0); ?>
             };
             </script>
+            <?php
+            $_s2_cp_unassigned = false;
+            foreach ($_session2_assigned_therapists as $_s2_cp_at) {
+                if ($_s2_cp_at['therapist_id'] === null) { $_s2_cp_unassigned = true; break; }
+            }
+            ?>
+            <?php if ($_s2_cp_unassigned): ?>
+            <button type="button" class="btn btn-primary btn-sm" disabled
+                    title="Assign a specific therapist (not &quot;Any Available&quot;) first"
+                    style="opacity:0.5;cursor:not-allowed;">🎉 Mark Complete</button>
+            <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
+            <?php else: ?>
             <button type="button" class="btn btn-primary btn-sm" onclick="openCompleteModal(<?php echo $s2_id; ?>)">🎉 Mark Complete</button>
+            <?php endif; ?>
         <?php endif; ?>
 
         <?php if ($s2_status === 'assigned'): ?>
