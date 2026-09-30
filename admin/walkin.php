@@ -171,7 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     $voucher_value  = floatval($_POST['voucher_amount'] ?? 0);
 
     $online_methods = ['gcash', 'maya', 'card', 'qrph'];
-    if (empty($customer_name) || empty($phone) || empty($item_id)) {
+    if (empty($customer_name) || empty($item_id)) {
         $walkin_message = "Please fill in all required fields and select an item.";
         $walkin_type    = "danger";
     } elseif (!ONLINE_PAYMENT_ENABLED && in_array($payment_method, $online_methods)) {
@@ -845,8 +845,8 @@ require_once 'admin_header.php';
                                 <input type="text" name="customer_name" placeholder="Enter full name" required>
                             </div>
                             <div class="form-group">
-                                <label>Phone Number <span class="required">*</span></label>
-                                <input type="tel" name="phone" placeholder="09XXXXXXXXX" required>
+                                <label>Phone Number</label>
+                                <input type="tel" name="phone" placeholder="09XXXXXXXXX">
                             </div>
                         </div>
                         <div class="form-group" style="margin-top:0.5rem;">
@@ -1202,7 +1202,7 @@ require_once 'admin_header.php';
                     <div class="form-section-body">
                         <div class="form-grid-2">
                             <div class="form-group"><label>Full Name <span class="required">*</span></label><input type="text" name="customer_name" placeholder="Enter full name" required></div>
-                            <div class="form-group"><label>Phone Number <span class="required">*</span></label><input type="tel" name="phone" placeholder="09XXXXXXXXX" required></div>
+                            <div class="form-group"><label>Phone Number</label><input type="tel" name="phone" placeholder="09XXXXXXXXX"></div>
                         </div>
                         <div class="form-group" style="margin-top:0.5rem;">
                             <label>Service Slip No.</label>
@@ -1955,7 +1955,7 @@ function openPaymongoPopup(formType, method) {
     if (!itemId) { uiAlert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
     const name  = form.querySelector('[name="customer_name"]')?.value?.trim();
     const phone = form.querySelector('[name="phone"]')?.value?.trim();
-    if (!name || !phone) { uiAlert('Please fill in customer name and phone number first.'); return; }
+    if (!name) { uiAlert('Please fill in customer name first.'); return; }
     if (formType === 'service') {
         if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
         if (isTwoSessionModeActive() && !form.querySelector('[name="booking_date_2"]')?.value) { uiAlert("Please select Session 2's booking date first."); return; }
@@ -2788,8 +2788,7 @@ function openQrphFlow(formType) {
     var itemId = form.querySelector('[name="item_id"]')?.value;
     if (!itemId) { uiAlert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
     var name  = (form.querySelector('[name="customer_name"]')?.value || '').trim();
-    var phone = (form.querySelector('[name="phone"]')?.value || '').trim();
-    if (!name || !phone) { uiAlert('Please fill in customer name and phone number first.'); return; }
+    if (!name) { uiAlert('Please fill in customer name first.'); return; }
     if (formType === 'service') {
         if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
         if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
