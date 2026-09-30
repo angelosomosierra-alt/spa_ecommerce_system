@@ -633,7 +633,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
             $engine = new AvailabilityEngine($conn);
             $check  = $engine->checkSlot(
                 $use_service_id, $booking_date,
-                $people_count, $service_type, $appt_id
+                $people_count, $service_type, $appt_id,
+                0, AvailabilityEngine::ADMIN_CLOSE_HOUR
             );
             if (!$check['available']) {
                 $message = '❌ Cannot edit: ' . ($check['reason'] ?? 'Slot not available.');

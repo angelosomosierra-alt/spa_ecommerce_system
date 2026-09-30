@@ -4,7 +4,10 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Core availability engine for Recovery Spa booking system.
  *
- * Operating hours: 10:00 AM – 10:00 PM (Asia/Manila)
+ * Operating hours: 10:00 AM – 8:00 PM (Asia/Manila) for online/customer
+ * booking. Admin-side booking (walk-in, admin reschedule) runs later, until
+ * 12:00 AM midnight (last bookable start 11:00 PM) via ADMIN_CLOSE_HOUR,
+ * passed explicitly by admin call sites.
  * Slot interval:   Based on service session_time
  * Pre-open window: 2 hours before open (8:00 AM) = future booking rules apply
  *
@@ -27,7 +30,8 @@ class AvailabilityEngine {
 
     // Operating hours
     const OPEN_HOUR      = 10; // 10:00 AM
-    const CLOSE_HOUR     = 20; // 8:00 PM
+    const CLOSE_HOUR       = 20; // 8:00 PM — last bookable start for online/customer booking
+    const ADMIN_CLOSE_HOUR = 23; // 11:00 PM — last bookable start for admin (walk-in / reschedule); business runs until 12AM
     const PRE_OPEN_HOURS = 2;  // 2hrs before open = future booking rules
 
     public function __construct($conn) {
@@ -149,11 +153,13 @@ class AvailabilityEngine {
         int    $people_count = 1,
         string $rate_type    = 'regular',
         int    $exclude_appt_id = 0,
-        int    $preferred_therapist_id = 0
+        int    $preferred_therapist_id = 0,
+        ?int   $close_hour = null
     ): array {
         $svc = $this->getService($service_id);
         if (!$svc) return ['available' => false, 'reason' => 'Service not found'];
 
+        $close_hour   = $close_hour ?? self::CLOSE_HOUR;
         $session_time = intval($svc['session_time'] ?? 60);
         $now          = new DateTime('now', $this->tz);
         $slot_dt      = new DateTime($datetime, $this->tz);
@@ -162,15 +168,16 @@ class AvailabilityEngine {
         $is_today     = ($slot_date === $today_str);
 
         // ── Check if within operating hours ──────────────────────────────────
-        // CLOSE_HOUR is the last allowed START hour; sessions may run past it.
-        // At exactly CLOSE_HOUR, only minute :00 is valid (matches the picker rule).
+        // $close_hour is the last allowed START hour; sessions may run past it.
+        // At exactly $close_hour, only minute :00 is valid (matches the picker rule).
         $slot_hour = (int)$slot_dt->format('H');
         $slot_min  = (int)$slot_dt->format('i');
-        if ($slot_hour < self::OPEN_HOUR || $slot_hour > self::CLOSE_HOUR) {
-            return ['available' => false, 'reason' => 'Outside operating hours (10AM–8PM)'];
+        $close_label = date('g:i A', mktime($close_hour, 0, 0));
+        if ($slot_hour < self::OPEN_HOUR || $slot_hour > $close_hour) {
+            return ['available' => false, 'reason' => "Outside operating hours (10AM–{$close_label})"];
         }
-        if ($slot_hour === self::CLOSE_HOUR && $slot_min > 0) {
-            return ['available' => false, 'reason' => 'Last bookable start time is 8:00 PM'];
+        if ($slot_hour === $close_hour && $slot_min > 0) {
+            return ['available' => false, 'reason' => "Last bookable start time is {$close_label}"];
         }
 
         // ── Past time check (same day) ────────────────────────────────────────
@@ -244,17 +251,19 @@ class AvailabilityEngine {
         string $date,
         int    $people_count  = 1,
         string $rate_type     = 'regular',
-        int    $preferred_therapist_id = 0
+        int    $preferred_therapist_id = 0,
+        ?int   $close_hour = null
     ): array {
         $svc = $this->getService($service_id);
         if (!$svc) return [];
 
+        $close_hour   = $close_hour ?? self::CLOSE_HOUR;
         $session_time = intval($svc['session_time'] ?? 60);
         $slots = [];
 
-        // Generate slots from 10AM to 10PM based on session_time interval
+        // Generate slots from open to close (last start) based on session_time interval
         $open  = new DateTime("{$date} " . sprintf('%02d:00', self::OPEN_HOUR), $this->tz);
-        $close = new DateTime("{$date} " . sprintf('%02d:00', self::CLOSE_HOUR), $this->tz);
+        $close = new DateTime("{$date} " . sprintf('%02d:00', $close_hour), $this->tz);
 
         $current = clone $open;
         while ($current < $close) {
@@ -264,7 +273,7 @@ class AvailabilityEngine {
             if ($end > $close) break;
 
             $slot_str = $current->format('Y-m-d H:i:s');
-            $check    = $this->checkSlot($service_id, $slot_str, $people_count, $rate_type, 0, $preferred_therapist_id);
+            $check    = $this->checkSlot($service_id, $slot_str, $people_count, $rate_type, 0, $preferred_therapist_id, $close_hour);
 
             $slots[] = [
                 'time'      => $current->format('H:i'),
@@ -350,12 +359,13 @@ class AvailabilityEngine {
         array  $therapist_ids,
         string $date,
         int    $session_time,
-        int    $buffer
+        int    $buffer,
+        ?int   $close_hour = null
     ): array {
         if (empty($therapist_ids)) return [];
 
-        $open_m  = self::OPEN_HOUR  * 60;
-        $close_m = self::CLOSE_HOUR * 60;
+        $open_m  = self::OPEN_HOUR * 60;
+        $close_m = ($close_hour ?? self::CLOSE_HOUR) * 60;
         $D       = $session_time;   // total duration (session_time × people)
 
         $all_valid = [];

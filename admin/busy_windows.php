@@ -49,7 +49,7 @@ if ($duration_id > 0) {
 }
 $buffer       = ($rate_type === 'home') ? 30 : 0;
 $open_hour    = AvailabilityEngine::OPEN_HOUR;
-$close_hour   = AvailabilityEngine::CLOSE_HOUR;
+$close_hour   = AvailabilityEngine::ADMIN_CLOSE_HOUR; // walk-in (admin) runs later than online booking
 
 // Determine today / now_minutes in Manila timezone
 $tz         = new DateTimeZone('Asia/Manila');
@@ -121,7 +121,7 @@ if ($therapist_id > 0) {
     if (!empty($therapist_ids)) {
         // Returns valid-start ranges; picker checks membership directly (not overlap)
         $valid_starts = $av->getBusyWindowsAnyAvailable(
-            $therapist_ids, $date, $session_time * $people, $buffer
+            $therapist_ids, $date, $session_time * $people, $buffer, $close_hour
         );
         // $busy stays [] — the JS picker uses valid_starts instead
     }
