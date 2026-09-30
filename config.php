@@ -539,6 +539,13 @@ function logout($conn = null): void {
     if ($conn && isset($_SESSION['user_id']) && !empty($_SESSION['cart'])) {
         save_cart_to_db($conn, $_SESSION['user_id'], $_SESSION['cart']);
     }
+    // Clear the single-active-session token so the account can log in again
+    // elsewhere right away, instead of waiting out the stale-session timeout.
+    if ($conn && isset($_SESSION['user_id'], $_SESSION['session_token'])) {
+        $clr = $conn->prepare("UPDATE users SET session_token=NULL, session_started=NULL WHERE id=? AND session_token=?");
+        $clr->bind_param("is", $_SESSION['user_id'], $_SESSION['session_token']);
+        $clr->execute(); $clr->close();
+    }
     $is_admin = isset($_SESSION['role']) && $_SESSION['role'] === 'admin';
     session_unset();
     session_destroy();

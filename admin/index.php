@@ -265,7 +265,7 @@ if (($_GET['ajax'] ?? '') === 'live_panels') {
     exit;
 }
 
-if (isset($_GET['logout'])) { logout(); }
+if (isset($_GET['logout'])) { logout($conn); }
 redirect_if_not_admin();
 
 // Card 1: How busy is today
