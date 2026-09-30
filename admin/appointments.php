@@ -1313,6 +1313,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $ci_stmt->bind_param("isi", $ci_by, $ci_name, $appt_id);
                 $ci_stmt->execute(); $ci_stmt->close();
 
+                // Session Package: checking in the appointment itself also checks in
+                // Session 1 — its own separate Check In control is hidden in the UI
+                // (render_card) since this makes it redundant. No-op for appointments
+                // with no session package rows.
+                $ci_s1 = $conn->prepare("UPDATE appointment_sessions SET status='checked_in', checked_in_at=NOW() WHERE appointment_id=? AND session_number=1 AND status='scheduled'");
+                $ci_s1->bind_param("i", $appt_id); $ci_s1->execute(); $ci_s1->close();
+
                 $conn->commit();
             } catch (Throwable $e) {
                 $conn->rollback();
@@ -3182,8 +3189,10 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php echo $_ps['session_date'] ? date('M j, Y g:i A', strtotime($_ps['session_date'])) : '—'; ?>
                     <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php else: ?> · <span style="font-style:italic;">Unassigned therapist</span><?php endif; ?>
                 </div>
-                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                    <?php if ($_pkg_can_checkin): ?>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+                    <?php if ($_pi === 0): ?>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">✅ Checked in together with the appointment — use the main Check In button below.</span>
+                    <?php elseif ($_pkg_can_checkin): ?>
                     <form method="POST" style="margin:0;">
                         <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="checkin_session">
