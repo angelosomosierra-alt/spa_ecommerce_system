@@ -1610,7 +1610,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                             $reg_q->bind_param("i", $svc_id); $reg_q->execute();
                             $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
                             $bdisc_frac = (isset($sv_orig) && $sv_orig > 0) ? (($sv_bdisc ?? 0.0) / $sv_orig) : 0.0;
-                            $commission_amt = round($reg_price * (1 - $bdisc_frac) * $ph * floatval($cm_row['commission_percent']) / 100, 2);
+                            $comm_base  = get_commission_base_price((int)$svc_id, $appt['service_duration_id'] ?? null, $reg_price);
+                            $commission_amt = round($comm_base * (1 - $bdisc_frac) * $ph * floatval($cm_row['commission_percent']) / 100, 2);
                         }
                     }
                 }
@@ -2125,7 +2126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
 
     $cs_s = $conn->prepare("
         SELECT aps.id, aps.session_number, aps.status, aps.therapist_id,
-               a.id AS appt_id, a.charged_price, a.service_id, a.rate_type,
+               a.id AS appt_id, a.charged_price, a.service_id, a.rate_type, a.service_duration_id,
                COALESCE(o.customer_name, u.full_name) AS customer_name,
                s.name AS service_name, sd.duration_minutes AS sd_duration, sd.session_count
         FROM appointment_sessions aps
@@ -2164,9 +2165,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
             $cm->bind_param("ii", $cs_tid, $cs_row['service_id']); $cm->execute();
             $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
             if ($cm_row) {
+                // service_durations.promo_price for a session_count>1 row is the whole
+                // package's promo total, same basis as charged_price -- divide by
+                // session_count the same way $session_price does, so the two stay comparable.
+                $comm_base_total = get_commission_base_price((int)$cs_row['service_id'], $cs_row['service_duration_id'] ?? null, floatval($cs_row['charged_price']));
+                $comm_session_price = round($comm_base_total / $session_count_total, 2);
                 $commission_amt = ($cs_row['rate_type'] === 'influencer')
                     ? floatval($cm_row['influencer_flat_rate'])
-                    : round($session_price * floatval($cm_row['commission_percent']) / 100, 2);
+                    : round($comm_session_price * floatval($cm_row['commission_percent']) / 100, 2);
             }
         }
 
