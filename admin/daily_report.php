@@ -489,6 +489,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             oi.service_id,
             COALESCE(s.name, '[Deleted Service]') AS service_name,
             COALESCE(sd.regular_price, s.price) AS regular_price,
+            sd.promo_price AS sd_promo_price,
             IFNULL(sd.session_count, 1) AS session_count,
             GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
             IFNULL(SUM(at2.commission), 0)        AS total_commission
@@ -556,7 +557,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $service_id    = (int)$ap['service_id'];
         $therapist_id  = (int)($ap['appt_therapist_id'] ?? 0);
         $regular_price = (float)($ap['regular_price'] ?? 0);
-        $promo_price   = (float)($ap['charged_price']  ?? 0);
+        $charged_amount = (float)($ap['charged_price'] ?? 0);
+        // "Promo Price" column shows the SERVICE's actual defined promo price
+        // (what commission is now based on), not what the customer happened
+        // to be charged -- those can differ when a promo exists but the
+        // customer paid regular. Falls back to regular_price when no promo
+        // is defined, same as before for services without one.
+        $sd_promo    = (float)($ap['sd_promo_price'] ?? 0);
+        $promo_price = $sd_promo > 0 ? $sd_promo : $regular_price;
         // Celebration discount can come from booking-time OR completion-time
         // discount fields -- appointments.celebration_discount is never populated.
         $celeb_10 = 0.0;
@@ -575,7 +583,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         elseif ($pct >= 13 && $pct <= 17) $comm_15 = $total_comm;
         else                               $comm_30 = $total_comm; // fallback
 
-        $net_sales   = $promo_price - $total_comm;
+        $net_sales   = $charged_amount - $total_comm;
         $raw_mop     = strtolower(trim($ap['payment_method'] ?? ''));
         $mode_of_pay = $mop_map[$raw_mop] ?? 'Cash';
         $row_order   = 0;
@@ -877,9 +885,14 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     if (($row['discount_type'] ?? '') === 'celebration') $disc_celeb += (float)$row['discount_amount'];
                     if (($row['completion_discount_type'] ?? '') === 'celebration') $disc_celeb += (float)$row['completion_discount_amount'];
                     $net       = (float)$row['charged_price'] - (float)$row['total_commission'];
+                    // "Promo Price" shows the service's actual defined promo price
+                    // (falls back to regular price when none is set), not what the
+                    // customer was actually charged -- see $net above for that.
+                    $_sd_promo   = (float)($row['sd_promo_price'] ?? 0);
+                    $_true_promo = $_sd_promo > 0 ? $_sd_promo : (float)$row['regular_price'];
                     // Accumulate totals
                     $t_reg   += (float)$row['regular_price'];
-                    $t_promo += (float)$row['charged_price'];
+                    $t_promo += $_true_promo;
                     $t_celeb += $disc_celeb;
                     $t_dpwd  += $disc_pwd; $t_c30 += $c30; $t_c20 += $c20; $t_c15 += $c15;
                     $t_d50   += $disc_50;  $t_net += $net;
@@ -903,7 +916,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td><?php echo htmlspecialchars($row['service_name']); ?></td>
                     <td style="color:var(--gray);white-space:nowrap;"><?php echo htmlspecialchars($row['therapists'] ?? '—'); ?></td>
                     <td style="text-align:right;color:var(--gray);">₱<?php echo number_format($row['regular_price'], 2); ?></td>
-                    <td style="text-align:right;font-weight:700;color:var(--brown);">₱<?php echo number_format($row['charged_price'], 2); ?></td>
+                    <td style="text-align:right;font-weight:700;color:var(--brown);">₱<?php echo number_format($_true_promo, 2); ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $disc_celeb > 0 ? '₱'.number_format($disc_celeb, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $disc_pwd > 0 ? '₱'.number_format($disc_pwd, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $c30 > 0 ? '₱'.number_format($c30, 2) : '—'; ?></td>
@@ -919,10 +932,13 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 </tr>
                 <?php if (!empty($addons_by_appt[$row['appt_id']])): ?>
                 <?php foreach ($addons_by_appt[$row['appt_id']] as $addon):
-                    $a_tier = match($addon['rate_type'] ?? 'regular') { 'home'=>20,'hotel'=>15,default=>30 };
-                    $a_c30  = ($a_tier===30) ? (float)$addon['commission'] : 0;
-                    $a_c20  = ($a_tier===20) ? (float)$addon['commission'] : 0;
-                    $a_c15  = ($a_tier===15) ? (float)$addon['commission'] : 0;
+                    // Same fix as the main row above: route by the therapist's actual
+                    // configured rate, not rate_type (the customer's pricing tier).
+                    $a_pct  = $disp_cm[(int)($addon['therapist_id'] ?? 0) . '_' . (int)$addon['service_id']] ?? 0;
+                    $a_c30 = $a_c20 = $a_c15 = 0.0;
+                    if      ($a_pct >= 18 && $a_pct <= 22) $a_c20 = (float)$addon['commission'];
+                    elseif  ($a_pct >= 13 && $a_pct <= 17) $a_c15 = (float)$addon['commission'];
+                    else                                    $a_c30 = (float)$addon['commission'];
                     $a_net  = (float)$addon['charged_price'] - (float)$addon['commission'];
                     $t_promo += (float)$addon['charged_price'];
                     $t_c30 += $a_c30; $t_c20 += $a_c20; $t_c15 += $a_c15; $t_net += $a_net;
