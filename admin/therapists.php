@@ -1202,8 +1202,9 @@ function saveCommEdit(btn, recId, source) {
                                   border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;">
                 </div>
 
+                <input type="hidden" name="add_today" value="1">
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
-                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" name="add_today" class="btn btn-primary" style="width:100%;"
+                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary" style="width:100%;"
                         <?php if (is_cashier()): ?>onclick="openPinGate('Check In Therapist',this.closest('form'))"<?php endif; ?>>
                     ➕ Check In to Today's Roster
                 </button>
