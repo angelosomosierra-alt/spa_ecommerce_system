@@ -53,7 +53,8 @@ if (!$engine->serviceHasTherapist($service_id)) {
     exit;
 }
 
-$slots = $engine->getAvailableSlots($service_id, $date, $people, $rate_type, $therapist_id);
+// Admin-only endpoint (reschedule modal) — runs later than online/customer booking.
+$slots = $engine->getAvailableSlots($service_id, $date, $people, $rate_type, $therapist_id, AvailabilityEngine::ADMIN_CLOSE_HOUR);
 
 // Count available slots
 $available_count = count(array_filter($slots, fn($s) => in_array($s['status'], ['available','warning'])));

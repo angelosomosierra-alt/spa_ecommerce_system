@@ -418,7 +418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         require_once __DIR__ . '/availability.php';
                         $av_engine = new AvailabilityEngine($conn);
                         $appt_rate_check = ($rate_type === 'home') ? 'home' : 'regular';
-                        $av_check = $av_engine->checkSlot($item_id, $chk_date, $people_count, $appt_rate_check, 0, $therapist_id);
+                        $av_check = $av_engine->checkSlot($item_id, $chk_date, $people_count, $appt_rate_check, 0, $therapist_id, AvailabilityEngine::ADMIN_CLOSE_HOUR);
                         if (!$av_check['available']) {
                             return '⛔ ' . ($av_check['reason'] ?? 'Selected therapist is not available at this time.') . $chk_label;
                         }

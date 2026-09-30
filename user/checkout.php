@@ -1497,7 +1497,7 @@ require_once 'header.php';
                         📅 Pick Date &amp; Time
                     </button>
                     <div style="font-size:0.72rem;color:var(--gray);margin-top:4px;">
-                        Open 10:00 AM – 12:00 AM (last booking 11:00 PM) · Book up to 30 days ahead
+                        Open 10:00 AM – 8:00 PM · Book up to 30 days ahead
                     </div>
                 </div>
 
