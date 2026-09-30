@@ -61,13 +61,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])
     skip_save_expense:;
 }
 
+// ── Handle EDIT business expense ───────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_edit_expense']) && is_owner()) {
+    if (!empty($GLOBALS['daily_report_locked'])) {
+        $GLOBALS['widget_msg']      = '🔒 Report is locked. Expense not updated.';
+        $GLOBALS['widget_msg_type'] = 'warning';
+        goto skip_edit_expense;
+    }
+    $edit_id       = intval($_POST['we_edit_id'] ?? 0);
+    $edit_category = strtolower(trim(sanitize_input($_POST['we_category'] ?? '')));
+    if ($edit_category === '') $edit_category = 'misc';
+    $edit_label  = sanitize_input($_POST['we_label']  ?? '');
+    $edit_amount = floatval($_POST['we_amount']       ?? 0);
+    $edit_notes  = sanitize_input($_POST['we_notes']  ?? '');
+
+    if ($edit_id > 0 && $edit_amount > 0 && !empty($edit_label)) {
+        // Not restricted to today -- the Daily Report's Expenses tab lets an
+        // owner correct an entry for whichever date is currently filtered.
+        $stmt = $conn->prepare("UPDATE business_expenses SET category=?, label=?, amount=?, notes=? WHERE id=?");
+        $stmt->bind_param("ssdsi", $edit_category, $edit_label, $edit_amount, $edit_notes, $edit_id);
+        $ok = $stmt->execute(); $stmt->close();
+        $GLOBALS['widget_msg']      = $ok ? "✅ Expense updated." : "DB error.";
+        $GLOBALS['widget_msg_type'] = $ok ? "success" : "danger";
+    } else {
+        $GLOBALS['widget_msg']      = "Amount and description required.";
+        $GLOBALS['widget_msg_type'] = "danger";
+    }
+    skip_edit_expense:;
+}
+
 // ── Handle DELETE business expense ────────────────────────────────────────────
 if (isset($_GET['del_expense']) && is_owner()) {
     $did  = intval($_GET['del_expense']);
-    $stmt = $conn->prepare("DELETE FROM business_expenses WHERE id=? AND expense_date=CURDATE()");
+    // Not restricted to today -- see the edit handler's note above.
+    $stmt = $conn->prepare("DELETE FROM business_expenses WHERE id=?");
     $stmt->bind_param("i", $did); $stmt->execute(); $stmt->close();
-    // Redirect back to same page
-    header("Location: " . strtok($_SERVER['REQUEST_URI'], '?')); exit();
+    // Redirect back to the same view (tab/date filters and all), not just
+    // the bare URL -- otherwise deleting from a filtered date bounces back
+    // to the default tab/date instead of staying put.
+    $_redirect_qs = $_GET;
+    unset($_redirect_qs['del_expense']);
+    $_redirect_url = strtok($_SERVER['REQUEST_URI'], '?') . (!empty($_redirect_qs) ? '?' . http_build_query($_redirect_qs) : '');
+    header("Location: " . $_redirect_url); exit();
 }
 
 // ── Fetch today's business expenses ──────────────────────────────────────────
@@ -83,9 +118,15 @@ $today_exp_total = array_sum(array_column($today_expenses, 'amount'));
 $biz_categories = ['water','laundry','supplies','utilities','food','transport','maintenance','misc'];
 $cat_icons      = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utilities'=>'💡',
                    'food'=>'🍱','transport'=>'🚗','maintenance'=>'🔧','misc'=>'📦'];
+// Compact mode: bare add-form only, no outer panel/header and no embedded
+// "Today's list" -- used when the caller (Daily Report's Expenses tab)
+// already provides its own panel wrapper and its own properly date-filtered
+// expenses table, so this avoids a redundant nested "today only" list.
+$_compact = !empty($GLOBALS['expenses_widget_compact']);
 ?>
 
 <!-- ── BUSINESS EXPENSES WIDGET ───────────────────────────────────────────── -->
+<?php if (!$_compact): ?>
 <div class="panel" style="margin-top:1.5rem;" id="expenses-widget">
 
     <div class="panel-header">
@@ -94,14 +135,15 @@ $cat_icons      = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utiliti
             ₱<?php echo number_format($today_exp_total, 2); ?> today
         </span>
     </div>
+<?php endif; ?>
 
     <?php if (!empty($GLOBALS['widget_msg'])): ?>
     <div class="alert alert-<?php echo $GLOBALS['widget_msg_type']; ?>"
          style="margin:0.75rem 1rem 0;"><?php echo $GLOBALS['widget_msg']; ?></div>
     <?php endif; ?>
 
-    <div class="panel-body" style="padding:1rem;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+    <div<?php echo $_compact ? '' : ' class="panel-body" style="padding:1rem;"'; ?>>
+        <div style="<?php echo $_compact ? '' : 'display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;'; ?>">
 
             <!-- Add form -->
             <div>
@@ -158,6 +200,7 @@ $cat_icons      = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utiliti
                 </form>
             </div>
 
+            <?php if (!$_compact): ?>
             <!-- Today's list -->
             <div>
                 <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.65rem;">
@@ -192,10 +235,15 @@ $cat_icons      = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utiliti
                             ₱<?php echo number_format($e['amount'],2); ?>
                         </span>
                         <?php if (is_owner()): ?>
-                        <a href="?del_expense=<?php echo $e['id']; ?>"
-                           style="color:var(--red);font-size:0.75rem;text-decoration:none;padding:0.1rem 0.3rem;
-                                  border-radius:4px;border:1px solid var(--red);flex-shrink:0;"
-                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this expense?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
+                        <div style="display:flex;gap:0.3rem;flex-shrink:0;">
+                            <button type="button" title="Edit this expense"
+                                    onclick='openEditExpenseModal(<?php echo (int)$e["id"]; ?>, <?php echo json_encode($e["category"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo json_encode($e["label"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo (float)$e["amount"]; ?>, <?php echo json_encode($e["notes"] ?? "", JSON_HEX_APOS|JSON_HEX_QUOT); ?>)'
+                                    style="color:var(--brown);background:transparent;font-size:0.78rem;padding:0.2rem 0.45rem;border-radius:4px;border:1px solid var(--border2);cursor:pointer;">✏️</button>
+                            <a href="?del_expense=<?php echo $e['id']; ?>" title="Delete this expense"
+                               style="color:var(--red);font-size:0.78rem;text-decoration:none;padding:0.2rem 0.45rem;
+                                      border-radius:4px;border:1px solid var(--red);flex-shrink:0;"
+                               onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this expense?').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
+                        </div>
                         <?php endif; ?>
                     </div>
                     <?php endforeach; ?>
@@ -205,7 +253,63 @@ $cat_icons      = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utiliti
                 </div>
                 <?php endif; ?>
             </div>
+            <?php endif; ?>
 
         </div>
     </div>
+<?php if (!$_compact): ?>
 </div>
+<?php endif; ?>
+
+<?php if (is_owner()): ?>
+<!-- ── EDIT EXPENSE MODAL ────────────────────────────────────────────────── -->
+<div id="editExpenseModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(30,20,10,0.55);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:1rem;">
+    <div style="background:#fff;border-radius:14px;width:100%;max-width:420px;padding:1.5rem;box-shadow:0 20px 60px rgba(0,0,0,0.22);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+            <span style="font-weight:700;font-size:1rem;color:var(--brown);">✏️ Edit Expense</span>
+            <button type="button" onclick="closeEditExpenseModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);">✕</button>
+        </div>
+        <form method="POST">
+            <input type="hidden" name="widget_edit_expense" value="1">
+            <input type="hidden" name="we_edit_id" id="editExpId" value="">
+            <div style="margin-bottom:0.6rem;">
+                <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;">Category</label>
+                <input type="text" name="we_category" id="editExpCategory" list="we-category-suggestions"
+                       style="width:100%;padding:0.5rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:0.6rem;">
+                <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;">Amount (₱) *</label>
+                <input type="number" name="we_amount" id="editExpAmount" step="0.01" min="0.01" required
+                       style="width:100%;padding:0.5rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:0.6rem;">
+                <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;">Description *</label>
+                <input type="text" name="we_label" id="editExpLabel" required
+                       style="width:100%;padding:0.5rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:1rem;">
+                <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;">Notes</label>
+                <input type="text" name="we_notes" id="editExpNotes"
+                       style="width:100%;padding:0.5rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
+            </div>
+            <div style="display:flex;gap:0.6rem;">
+                <button type="submit" class="btn btn-primary btn-sm" style="flex:1;">💾 Save Changes</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="closeEditExpenseModal()">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+function openEditExpenseModal(id, category, label, amount, notes) {
+    document.getElementById('editExpId').value = id;
+    document.getElementById('editExpCategory').value = category || '';
+    document.getElementById('editExpLabel').value = label || '';
+    document.getElementById('editExpAmount').value = amount || '';
+    document.getElementById('editExpNotes').value = notes || '';
+    document.getElementById('editExpenseModal').style.display = 'flex';
+}
+function closeEditExpenseModal() {
+    document.getElementById('editExpenseModal').style.display = 'none';
+}
+</script>
+<?php endif; ?>
