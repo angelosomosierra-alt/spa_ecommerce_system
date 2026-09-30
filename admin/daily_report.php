@@ -1389,7 +1389,8 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
             <?php if ($locked): ?>
             <div class="alert alert-warning">🔒 Report is locked. Cannot add expenses.</div>
             <?php else:
-                $GLOBALS['daily_report_locked'] = false;
+                $GLOBALS['daily_report_locked']       = false;
+                $GLOBALS['expenses_widget_compact']   = true;
                 require_once 'expenses_widget.php';
             endif; ?>
         </div>
@@ -1405,11 +1406,11 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
         <div class="table-wrap" style="border:none;border-radius:0;">
             <table>
                 <thead>
-                    <tr><th>Category</th><th>Description</th><th style="text-align:right;">Amount</th><th>Logged by</th><th>Time</th></tr>
+                    <tr><th>Category</th><th>Description</th><th style="text-align:right;">Amount</th><th>Logged by</th><th>Time</th><?php if (is_owner()): ?><th style="text-align:center;">Actions</th><?php endif; ?></tr>
                 </thead>
                 <tbody>
                 <?php if (empty($expenses)): ?>
-                <tr><td colspan="5" style="text-align:center;color:var(--gray);padding:2rem;">No expenses logged for this date.</td></tr>
+                <tr><td colspan="6" style="text-align:center;color:var(--gray);padding:2rem;">No expenses logged for this date.</td></tr>
                 <?php else: foreach ($expenses as $e):
                     $cat_icons = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utilities'=>'💡','food'=>'🍱','transport'=>'🚗','maintenance'=>'🔧','misc'=>'📦'];
                 ?>
@@ -1424,6 +1425,17 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         ?>
                     </td>
                     <td style="font-size:0.75rem;color:var(--gray);"><?php echo date('h:i A', strtotime($e['created_at'])); ?></td>
+                    <?php if (is_owner()): ?>
+                    <td style="text-align:center;white-space:nowrap;">
+                        <button type="button" title="Edit this expense"
+                                onclick='openEditExpenseModal(<?php echo (int)$e["id"]; ?>, <?php echo json_encode($e["category"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo json_encode($e["label"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo (float)$e["amount"]; ?>, <?php echo json_encode($e["notes"] ?? "", JSON_HEX_APOS|JSON_HEX_QUOT); ?>)'
+                                style="color:var(--brown);background:transparent;font-size:0.78rem;padding:0.2rem 0.45rem;border-radius:4px;border:1px solid var(--border2);cursor:pointer;">✏️</button>
+                        <a href="?tab=expenses&date=<?php echo urlencode($report_date); ?>&del_expense=<?php echo $e['id']; ?>" title="Delete this expense"
+                           style="color:var(--red);font-size:0.78rem;text-decoration:none;padding:0.2rem 0.45rem;
+                                  border-radius:4px;border:1px solid var(--red);"
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this expense?').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
+                    </td>
+                    <?php endif; ?>
                 </tr>
                 <?php endforeach; endif; ?>
                 </tbody>
@@ -1431,7 +1443,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <tr style="background:var(--bg3);font-weight:700;">
                         <td colspan="2" style="text-align:right;">Total Expenses</td>
                         <td style="text-align:right;color:var(--rust);">₱<?php echo number_format($expenses_total,2); ?></td>
-                        <td colspan="2"></td>
+                        <td colspan="<?php echo is_owner() ? 3 : 2; ?>"></td>
                     </tr>
                 </tfoot>
             </table>
