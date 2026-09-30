@@ -178,6 +178,7 @@ $_s = $conn->prepare("
         a.advance_payment_date,
         a.status          AS appt_status,
         GROUP_CONCAT(DISTINCT t.full_name ORDER BY t.full_name SEPARATOR ', ') AS therapists,
+        MIN(at2.therapist_id) AS sr_therapist_id,
         IFNULL(SUM(at2.commission),0) AS total_commission
     FROM orders o
     JOIN order_items oi ON oi.order_id = o.id
