@@ -4,7 +4,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Core availability engine for Recovery Spa booking system.
  *
- * Operating hours: 10:00 AM – 10:00 PM (Asia/Manila)
+ * Operating hours: 10:00 AM – 12:00 AM / midnight (Asia/Manila); last bookable
+ * start time is 11:00 PM.
  * Slot interval:   Based on service session_time
  * Pre-open window: 2 hours before open (8:00 AM) = future booking rules apply
  *
@@ -27,7 +28,7 @@ class AvailabilityEngine {
 
     // Operating hours
     const OPEN_HOUR      = 10; // 10:00 AM
-    const CLOSE_HOUR     = 20; // 8:00 PM
+    const CLOSE_HOUR     = 23; // 11:00 PM — last bookable start; business runs until 12AM
     const PRE_OPEN_HOURS = 2;  // 2hrs before open = future booking rules
 
     public function __construct($conn) {
@@ -167,10 +168,10 @@ class AvailabilityEngine {
         $slot_hour = (int)$slot_dt->format('H');
         $slot_min  = (int)$slot_dt->format('i');
         if ($slot_hour < self::OPEN_HOUR || $slot_hour > self::CLOSE_HOUR) {
-            return ['available' => false, 'reason' => 'Outside operating hours (10AM–8PM)'];
+            return ['available' => false, 'reason' => 'Outside operating hours (10AM–11PM)'];
         }
         if ($slot_hour === self::CLOSE_HOUR && $slot_min > 0) {
-            return ['available' => false, 'reason' => 'Last bookable start time is 8:00 PM'];
+            return ['available' => false, 'reason' => 'Last bookable start time is 11:00 PM'];
         }
 
         // ── Past time check (same day) ────────────────────────────────────────
@@ -252,7 +253,7 @@ class AvailabilityEngine {
         $session_time = intval($svc['session_time'] ?? 60);
         $slots = [];
 
-        // Generate slots from 10AM to 10PM based on session_time interval
+        // Generate slots from 10AM to 11PM (last start) based on session_time interval
         $open  = new DateTime("{$date} " . sprintf('%02d:00', self::OPEN_HOUR), $this->tz);
         $close = new DateTime("{$date} " . sprintf('%02d:00', self::CLOSE_HOUR), $this->tz);
 
