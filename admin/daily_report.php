@@ -812,6 +812,15 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
         // ── Per-row commission-tier & totals accumulators ─────────────────────
         $pm_icons = ['cash'=>'💵','gcash'=>'📱','maya'=>'💜','qrph'=>'📷','bank'=>'🏦','card'=>'💳','swiper'=>'💳','online'=>'💳'];
         $t_reg=$t_promo=$t_celeb=$t_dpwd=$t_c30=$t_c20=$t_c15=$t_d50=$t_net=0;
+        // Commission-percent lookup for column routing -- this table used to guess
+        // the tier from rate_type (regular/home/hotel), which is the customer's
+        // PRICING tier and has nothing to do with what percent the therapist is
+        // actually paid. Route by the therapist's real configured rate instead,
+        // same as the spreadsheet import above.
+        $disp_cm = [];
+        $_dcq = $conn->query("SELECT therapist_id, service_id, commission_percent FROM therapist_commission");
+        if ($_dcq) foreach ($_dcq->fetch_all(MYSQLI_ASSOC) as $_dc)
+            $disp_cm[(int)$_dc['therapist_id'] . '_' . (int)$_dc['service_id']] = (float)$_dc['commission_percent'];
         ?>
             <table style="min-width:1900px;font-size:0.78rem;">
                 <thead>
@@ -848,13 +857,17 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     $ts_in    = strtotime($row['appointment_date']);
                     $time_in  = date('h:i A', $ts_in);
                     $time_out = date('h:i A', $ts_in + ((int)($row['duration_minutes'] ?? 0)) * 60);
-                    // Commission tier from rate_type (regular=30%, home=20%, hotel=15%)
-                    $tier_pct = match($row['rate_type'] ?? 'regular') {
-                        'home' => 20, 'hotel' => 15, default => 30
-                    };
-                    $c30 = ($tier_pct === 30) ? (float)$row['total_commission'] : 0;
-                    $c20 = ($tier_pct === 20) ? (float)$row['total_commission'] : 0;
-                    $c15 = ($tier_pct === 15) ? (float)$row['total_commission'] : 0;
+                    // Commission tier from the therapist's actual configured rate
+                    // for this service (therapist_commission) -- NOT rate_type,
+                    // which is the customer's pricing tier and unrelated to what
+                    // percent the therapist is paid.
+                    $_row_tid = (int)($row['sr_therapist_id'] ?? 0);
+                    $_row_pct = $disp_cm[$_row_tid . '_' . (int)$row['service_id']] ?? 0;
+                    $_total_comm = (float)$row['total_commission'];
+                    $c30 = $c20 = $c15 = 0.0;
+                    if      ($_row_pct >= 18 && $_row_pct <= 22) $c20 = $_total_comm;
+                    elseif  ($_row_pct >= 13 && $_row_pct <= 17) $c15 = $_total_comm;
+                    else                                          $c30 = $_total_comm; // 28-32%, 23-27%, and any unmatched rate all show here (no 25% column in this table)
                     // Discount columns
                     $disc_pwd  = in_array($row['discount_type'], ['senior','pwd']) ? (float)$row['discount_amount'] : 0;
                     $disc_50   = ($row['discount_type'] === 'employee')            ? (float)$row['discount_amount'] : 0;
