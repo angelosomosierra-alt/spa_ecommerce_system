@@ -31,3 +31,5 @@ admin/walkin_payment_debug.php
 *~
 .DS_Store
 Thumbs.db
+
+vendor.zip
