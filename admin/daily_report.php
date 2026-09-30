@@ -471,11 +471,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             a.appointment_date,
             a.duration_minutes,
             a.charged_price,
-            a.celebration_discount,
             a.therapist_id            AS appt_therapist_id,
             o.customer_name,
             o.slip_number,
             o.payment_method,
+            o.discount_type,
+            o.discount_amount,
+            o.completion_discount_type,
+            IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
             oi.service_id,
             COALESCE(s.name, '[Deleted Service]') AS service_name,
             COALESCE(sd.regular_price, s.price) AS regular_price,
@@ -547,7 +550,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $therapist_id  = (int)($ap['appt_therapist_id'] ?? 0);
         $regular_price = (float)($ap['regular_price'] ?? 0);
         $promo_price   = (float)($ap['charged_price']  ?? 0);
-        $celeb_10      = (float)($ap['celebration_discount'] ?? 0);
+        // Celebration discount can come from booking-time OR completion-time
+        // discount fields -- appointments.celebration_discount is never populated.
+        $celeb_10 = 0.0;
+        if (($ap['discount_type'] ?? '') === 'celebration') $celeb_10 += (float)$ap['discount_amount'];
+        if (($ap['completion_discount_type'] ?? '') === 'celebration') $celeb_10 += (float)$ap['completion_discount_amount'];
         $disc_20_pwd   = 0.0; $disc_50_staff = 0.0;
         $total_comm    = (float)($ap['total_commission'] ?? 0);
 
@@ -810,7 +817,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         <th>Stylist</th>
                         <th style="text-align:right;">Regular<br>Price</th>
                         <th style="text-align:right;">Promo<br>Price</th>
-                        <th style="text-align:right;">Celeb<br>10%</th>
+                        <th style="text-align:right;">Celeb</th>
                         <th style="text-align:right;">Disc 20%<br>(PWD/SNR)</th>
                         <th style="text-align:right;">30%<br>Commission Fee</th>
                         <th style="text-align:right;">20%<br>Commission Fee</th>
@@ -844,7 +851,11 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     // Discount columns
                     $disc_pwd  = in_array($row['discount_type'], ['senior','pwd']) ? (float)$row['discount_amount'] : 0;
                     $disc_50   = ($row['discount_type'] === 'employee')            ? (float)$row['discount_amount'] : 0;
-                    $disc_celeb= floatval($row['celebration_discount'] ?? 0);
+                    // Celebration discount can come from booking-time OR completion-time
+                    // discount fields -- appointments.celebration_discount is never populated.
+                    $disc_celeb = 0.0;
+                    if (($row['discount_type'] ?? '') === 'celebration') $disc_celeb += (float)$row['discount_amount'];
+                    if (($row['completion_discount_type'] ?? '') === 'celebration') $disc_celeb += (float)$row['completion_discount_amount'];
                     $net       = (float)$row['charged_price'] - (float)$row['total_commission'];
                     // Accumulate totals
                     $t_reg   += (float)$row['regular_price'];
@@ -1266,7 +1277,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'POS READING',            'val' => $pos_reading,          'color' => 'var(--brown)',
                  'note' => 'Manual entry from POS machine'],
                 ['label' => 'DISCOUNTS',              'val' => $total_discounts,      'color' => 'var(--rust)'],
-                ['label' => 'CELEB. DISCOUNTS 10%',  'val' => $celeb_discount,       'color' => 'var(--rust)'],
+                ['label' => 'CELEB. DISCOUNTS',  'val' => $celeb_discount,       'color' => 'var(--rust)'],
                 ['label' => 'REDEEMED GC',            'val' => $gc_redeem_total,      'color' => 'var(--rust)'],
                 ['label' => 'SWIPER',                 'val' => $card_total,           'color' => 'var(--brown)',
                  'note' => 'Card / Swiper'],
@@ -1758,7 +1769,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     <th style="padding:0.4rem 0.5rem;min-width:90px;">Stylist</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;">Reg. Price</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;">Promo Price</th>
-                    <th style="padding:0.4rem 0.5rem;text-align:right;width:72px;">Celeb 10%</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:72px;">Celeb</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc 20% PWD</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 30%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 20%</th>

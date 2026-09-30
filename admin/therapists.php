@@ -151,9 +151,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
         echo json_encode(['success' => false, 'message' => 'Owner/IT lang ang pwedeng mag-edit ng commission.']);
         exit();
     }
-    $at_id    = intval($_POST['at_id']       ?? 0);
     $new_comm = floatval($_POST['commission'] ?? 0);
-    if ($at_id <= 0 || $new_comm < 0) {
+    if ($new_comm < 0) {
+        echo json_encode(['success' => false, 'message' => 'Invalid na halaga.']);
+        exit();
+    }
+
+    // ── Package-session commission lives on appointment_sessions, not
+    //    appointment_therapists — different table, different update path.
+    if (($_POST['source'] ?? '') === 'package_session') {
+        $aps_id = intval($_POST['aps_id'] ?? 0);
+        if ($aps_id <= 0) {
+            echo json_encode(['success' => false, 'message' => 'Invalid na halaga.']);
+            exit();
+        }
+        $aps_chk = $conn->prepare("SELECT appointment_id, therapist_id, commission FROM appointment_sessions WHERE id=?");
+        $aps_chk->bind_param("i", $aps_id); $aps_chk->execute();
+        $aps_row = $aps_chk->get_result()->fetch_assoc(); $aps_chk->close();
+        if (!$aps_row) {
+            echo json_encode(['success' => false, 'message' => 'Hindi mahanap ang record.']);
+            exit();
+        }
+        $old_comm = floatval($aps_row['commission']);
+        $delta    = $new_comm - $old_comm;
+
+        $upd = $conn->prepare("UPDATE appointment_sessions SET commission=? WHERE id=?");
+        $upd->bind_param("di", $new_comm, $aps_id); $upd->execute(); $upd->close();
+
+        // Keep the accumulated running total on appointment_therapists in sync —
+        // complete_session adds each session's commission into this total, so an
+        // edit here must adjust it by the delta, not just update the session row.
+        if ($aps_row['therapist_id'] && abs($delta) > 0.00001) {
+            $at_adj = $conn->prepare("UPDATE appointment_therapists SET commission = commission + ? WHERE appointment_id=? AND therapist_id=?");
+            $at_adj->bind_param("dii", $delta, $aps_row['appointment_id'], $aps_row['therapist_id']);
+            $at_adj->execute(); $at_adj->close();
+        }
+
+        // Sync to daily_report_session_commission_rows if this session already
+        // has its own cross-day report row (see complete_session).
+        $synced = false;
+        $drscr_chk = $conn->prepare("SELECT id FROM daily_report_session_commission_rows WHERE appointment_session_id=? LIMIT 1");
+        $drscr_chk->bind_param("i", $aps_id); $drscr_chk->execute();
+        $drscr_row = $drscr_chk->get_result()->fetch_assoc(); $drscr_chk->close();
+        if ($drscr_row) {
+            $drscr_upd = $conn->prepare("UPDATE daily_report_session_commission_rows SET commission=? WHERE id=?");
+            $drscr_upd->bind_param("di", $new_comm, $drscr_row['id']); $drscr_upd->execute(); $drscr_upd->close();
+            $synced = true;
+        }
+        echo json_encode(['success' => true, 'synced_to_report' => $synced]);
+        exit();
+    }
+
+    $at_id = intval($_POST['at_id'] ?? 0);
+    if ($at_id <= 0) {
         echo json_encode(['success' => false, 'message' => 'Invalid na halaga.']);
         exit();
     }
@@ -211,7 +261,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'assigned'
+           AND ap.status = 'approved'
         ) AS is_assigned,
 
         -- Current appointment: service name
@@ -221,7 +271,7 @@ $today_roster = $conn->query("
          JOIN services s ON ap.service_id = s.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'assigned'
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_service,
@@ -232,7 +282,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'assigned'
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_appt_time,
@@ -244,7 +294,7 @@ $today_roster = $conn->query("
          JOIN users u ON ap.user_id = u.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'assigned'
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_customer,
@@ -255,7 +305,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'assigned'
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_people,
@@ -266,7 +316,7 @@ $today_roster = $conn->query("
          JOIN appointments ap ON at2.appointment_id = ap.id
          WHERE at2.therapist_id = t.id
            AND DATE(ap.appointment_date) = CURDATE()
-           AND ap.status = 'assigned'
+           AND ap.status = 'approved'
          ORDER BY ap.appointment_date ASC
          LIMIT 1
         ) AS current_appt_id,
@@ -415,6 +465,7 @@ if (isset($_GET['history'])) {
         $sess_stmt = $conn->prepare("
             SELECT
                 ap.id AS appt_id,
+                aps.id AS aps_id,
                 NULL AS at_id,
                 COALESCE(aps.completed_at, aps.session_date) AS appointment_date,
                 'completed' AS status,
@@ -622,13 +673,13 @@ require_once 'admin_header.php';
                     <input type="number" class="comm-edit-input" step="0.01"
                            value="<?php echo (float)$rec['commission']; ?>"
                            style="display:none;width:90px;padding:0.3rem;border:1px solid var(--border2);border-radius:6px;">
-                    <?php if (is_full_access() && !$_is_pkg_row): ?>
+                    <?php if (is_full_access()): ?>
                     <button type="button" class="comm-edit-btn" onclick="toggleCommEdit(this)"
                             style="margin-left:4px;background:none;border:none;cursor:pointer;font-size:0.85rem;"
                             title="I-edit ang commission">✏️</button>
                     <button type="button" class="comm-save-btn" style="display:none;margin-left:4px;
                             background:none;border:none;cursor:pointer;color:#2d8a4e;font-size:0.85rem;"
-                            onclick="saveCommEdit(this, <?php echo $rec['at_id']; ?>)"
+                            onclick="saveCommEdit(this, <?php echo $_is_pkg_row ? (int)$rec['aps_id'] : (int)$rec['at_id']; ?>, '<?php echo $_is_pkg_row ? 'package_session' : 'appointment_therapist'; ?>')"
                             title="I-save">💾</button>
                     <button type="button" class="comm-cancel-btn" style="display:none;margin-left:2px;
                             background:none;border:none;cursor:pointer;color:#dc3545;font-size:0.85rem;"
@@ -744,7 +795,7 @@ function cancelCommEdit(btn) {
     td.querySelector('.comm-cancel-btn').style.display = 'none';
 }
 
-function saveCommEdit(btn, atId) {
+function saveCommEdit(btn, recId, source) {
     const td = btn.closest('td');
     const newVal = parseFloat(td.querySelector('.comm-edit-input').value) || 0;
     const csrfInput = td.querySelector('input[name="csrf_token"]');
@@ -752,7 +803,12 @@ function saveCommEdit(btn, atId) {
     btn.disabled = true;
     const fd = new FormData();
     fd.append('action', 'edit_therapist_commission');
-    fd.append('at_id', atId);
+    if (source === 'package_session') {
+        fd.append('source', 'package_session');
+        fd.append('aps_id', recId);
+    } else {
+        fd.append('at_id', recId);
+    }
     fd.append('commission', newVal);
     fd.append('csrf_token', csrfToken);
     fetch(window.location.pathname, { method: 'POST', body: fd, credentials: 'same-origin' })

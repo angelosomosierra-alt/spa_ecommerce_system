@@ -1308,12 +1308,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     goto end_action;
                 }
             }
+            // ── Guard: every assigned person-slot must have a real therapist
+            // before completion, so commission can actually be calculated.
+            // "Any Available" (NULL) is fine at booking/approval time, but
+            // must be resolved to a specific therapist by completion.
+            $cp_unresolved = $conn->prepare("SELECT COUNT(*) AS c FROM appointment_therapists WHERE appointment_id=? AND therapist_id IS NULL");
+            $cp_unresolved->bind_param("i", $appt_id); $cp_unresolved->execute();
+            $cp_unresolved_count = (int)$cp_unresolved->get_result()->fetch_assoc()['c']; $cp_unresolved->close();
+            if ($cp_unresolved_count > 0) {
+                $message = "⚠️ Assign a specific therapist (not \"Any Available\") to every person slot before completing — commission can't be calculated otherwise.";
+                $message_type = "danger";
+                goto end_action;
+            }
+
             $cp_by   = (int)$_SESSION['user_id'];
             $cp_name = (is_cashier() && !empty($pr['full_name']))
                 ? $pr['full_name']
                 : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
             $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
-            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper'])) $cp_pay_method = 'cash';
+            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','unpaid'])) $cp_pay_method = 'cash';
+            $cp_unpaid_billto = trim(sanitize_input($_POST['complete_unpaid_billto'] ?? ''));
 
             // ── Completion discount — server-side recompute (never trust client totals) ──
             $cd_type  = sanitize_input($_POST['complete_disc_type'] ?? 'none');
@@ -1326,7 +1340,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $order_already_paid = false;
             $oi_r2 = null;
             if (!empty($appt['order_item_id'])) {
-                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status, o.total_amount, o.discount_amount FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
+                $oi_s2 = $conn->prepare("SELECT o.id, o.payment_status, o.total_amount, o.discount_amount, o.customer_name FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
                 $oi_s2->bind_param("i", $appt['order_item_id']); $oi_s2->execute();
                 $oi_r2 = $oi_s2->get_result()->fetch_assoc(); $oi_s2->close();
                 $order_already_paid = ($oi_r2 && $oi_r2['payment_status'] === 'paid');
@@ -1375,16 +1389,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     $cd_amount = max(0.0, min($cd_amount, max(0.0, $sv_gross - $sv_bdisc)));
                     $new_final = max(0.0, $sv_orig + $sv_extras - $sv_bdisc - $cd_amount);
 
-                    $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
-                    $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
-                    $upd_ord->execute(); $upd_ord->close();
+                    if ($cp_pay_method === 'unpaid') {
+                        // Charged to account (e.g. corporate/hotel billing) — the sale
+                        // is still recognized (completed appointment, final_amount set),
+                        // but no payment is collected now. Bridge it into Unpaids Corp
+                        // so it's tracked as a receivable instead of silently vanishing.
+                        $upd_ord = $conn->prepare("UPDATE orders SET payment_status='unpaid', final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
+                        $upd_ord->bind_param("dsdsdi", $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
+                        $upd_ord->execute(); $upd_ord->close();
+
+                        $unpaid_amount = max(0.0, $new_final - floatval($appt['advance_payment'] ?? 0));
+                        if ($unpaid_amount > 0) {
+                            $unpaid_name = $cp_unpaid_billto !== '' ? $cp_unpaid_billto
+                                : ($oi_r2['customer_name'] ?: ($appt['full_name'] ?? 'Unknown'));
+
+                            // Self-heal: unpaids_corp predates any appointment/order linkage.
+                            $_upc_cols = array_column($conn->query("SHOW COLUMNS FROM unpaids_corp")->fetch_all(MYSQLI_ASSOC), 'Field');
+                            if (!in_array('appointment_id', $_upc_cols)) {
+                                $conn->query("ALTER TABLE unpaids_corp ADD COLUMN appointment_id INT NULL, ADD COLUMN order_id INT NULL");
+                            }
+
+                            $up_by  = (int)$_SESSION['user_id'];
+                            $up_ins = $conn->prepare("INSERT INTO unpaids_corp (report_date, client_name, amount, series, created_by, appointment_id, order_id) VALUES (CURDATE(), ?, ?, ?, ?, ?, ?)");
+                            $up_series = 'APT-' . $appt_id;
+                            $up_ins->bind_param("sdsiii", $unpaid_name, $unpaid_amount, $up_series, $up_by, $appt_id, $oi_r2['id']);
+                            $up_ins->execute(); $up_ins->close();
+                        }
+                    } else {
+                        $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
+                        $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
+                        $upd_ord->execute(); $upd_ord->close();
+                    }
                 }
 
             }
 
-            // Mark unpaid extras paid — runs unconditionally so extras added after check-in are settled even when the main order was already paid
-            $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
-            $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
+            // Mark unpaid extras paid — skipped when charging the whole visit to an
+            // account, since those extras haven't actually been paid either.
+            // Runs unconditionally otherwise so extras added after check-in are
+            // settled even when the main order was already paid.
+            if ($cp_pay_method !== 'unpaid') {
+                $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
+                $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
+            }
 
             // ── Appointment status + supply deduction — atomic transaction ────────
             $conn->begin_transaction();
@@ -1394,30 +1441,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $upd->execute(); $upd->close();
 
                 // ── Supply deduction (Phase 2) ────────────────────────────────────
-                $_ppl   = max(1, intval($appt['people_count'] ?? 1));
-                $_svc_d = (int)$appt['service_id'];
-                $_rs    = $conn->prepare("SELECT supply_id, quantity_per_person FROM service_supply_usage WHERE service_id = ?");
-                $_rs->bind_param("i", $_svc_d); $_rs->execute();
-                $_rrows = $_rs->get_result()->fetch_all(MYSQLI_ASSOC); $_rs->close();
-                foreach ($_rrows as $_rr) {
-                    $_sid    = (int)$_rr['supply_id'];
-                    $_qty    = floatval($_rr['quantity_per_person']) * $_ppl;
-                    $_sb_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
-                    $_sb_s->bind_param("i", $_sid); $_sb_s->execute();
-                    $_sb_row  = $_sb_s->get_result()->fetch_assoc(); $_sb_s->close();
-                    if ($_sb_row === null) {
-                        // Supply is archived — log the skip with stock_before/after = 0; do not deduct
-                        $_sbefore = 0.0; $_safter = 0.0;
-                    } else {
-                        $_sbefore = (float)$_sb_row['current_stock'];
-                        $_ud     = $conn->prepare("UPDATE supplies SET current_stock = GREATEST(0, current_stock - ?) WHERE id = ? AND deleted_at IS NULL");
-                        $_ud->bind_param("di", $_qty, $_sid); $_ud->execute(); $_ud->close();
-                        $_sa_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
-                        $_sa_s->bind_param("i", $_sid); $_sa_s->execute();
-                        $_safter  = (float)($_sa_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sa_s->close();
+                // Gated off by default (see AUTO_SUPPLY_DEDUCTION_ENABLED in config.php):
+                // inventory currently relies on Deliveries + Physical Count variance
+                // instead of guessed per-appointment recipes. Flip that flag once real
+                // service_supply_usage recipes are confirmed accurate.
+                if (AUTO_SUPPLY_DEDUCTION_ENABLED) {
+                    $_ppl   = max(1, intval($appt['people_count'] ?? 1));
+                    $_svc_d = (int)$appt['service_id'];
+                    $_rs    = $conn->prepare("SELECT supply_id, quantity_per_person FROM service_supply_usage WHERE service_id = ?");
+                    $_rs->bind_param("i", $_svc_d); $_rs->execute();
+                    $_rrows = $_rs->get_result()->fetch_all(MYSQLI_ASSOC); $_rs->close();
+                    foreach ($_rrows as $_rr) {
+                        $_sid    = (int)$_rr['supply_id'];
+                        $_qty    = floatval($_rr['quantity_per_person']) * $_ppl;
+                        $_sb_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
+                        $_sb_s->bind_param("i", $_sid); $_sb_s->execute();
+                        $_sb_row  = $_sb_s->get_result()->fetch_assoc(); $_sb_s->close();
+                        if ($_sb_row === null) {
+                            // Supply is archived — log the skip with stock_before/after = 0; do not deduct
+                            $_sbefore = 0.0; $_safter = 0.0;
+                        } else {
+                            $_sbefore = (float)$_sb_row['current_stock'];
+                            $_ud     = $conn->prepare("UPDATE supplies SET current_stock = GREATEST(0, current_stock - ?) WHERE id = ? AND deleted_at IS NULL");
+                            $_ud->bind_param("di", $_qty, $_sid); $_ud->execute(); $_ud->close();
+                            $_sa_s   = $conn->prepare("SELECT current_stock FROM supplies WHERE id = ? AND deleted_at IS NULL");
+                            $_sa_s->bind_param("i", $_sid); $_sa_s->execute();
+                            $_safter  = (float)($_sa_s->get_result()->fetch_assoc()['current_stock'] ?? 0); $_sa_s->close();
+                        }
+                        $_sul    = $conn->prepare("INSERT INTO supply_usage_log (appointment_id, supply_id, quantity_deducted, stock_before, stock_after) VALUES (?, ?, ?, ?, ?)");
+                        $_sul->bind_param("iiddd", $appt_id, $_sid, $_qty, $_sbefore, $_safter); $_sul->execute(); $_sul->close();
                     }
-                    $_sul    = $conn->prepare("INSERT INTO supply_usage_log (appointment_id, supply_id, quantity_deducted, stock_before, stock_after) VALUES (?, ?, ?, ?, ?)");
-                    $_sul->bind_param("iiddd", $appt_id, $_sid, $_qty, $_sbefore, $_safter); $_sul->execute(); $_sul->close();
                 }
                 // ── End supply deduction ──────────────────────────────────────────
 
@@ -1969,12 +2022,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
     $cis_appt_id = intval($_POST['appt_id'] ?? 0);
     $cis_sess_id = intval($_POST['session_id'] ?? 0);
 
-    $cis_s = $conn->prepare("SELECT id, session_number, status FROM appointment_sessions WHERE id=? AND appointment_id=?");
+    $cis_s = $conn->prepare("
+        SELECT aps.id, aps.session_number, aps.status, a.status AS appt_status
+        FROM appointment_sessions aps
+        JOIN appointments a ON a.id = aps.appointment_id
+        WHERE aps.id=? AND aps.appointment_id=?
+    ");
     $cis_s->bind_param("ii", $cis_sess_id, $cis_appt_id); $cis_s->execute();
     $cis_row = $cis_s->get_result()->fetch_assoc(); $cis_s->close();
 
+    // Sequential guard: session N (N>1) requires session N-1 to already be completed.
+    $cis_prev_ok = true;
+    if ($cis_row && (int)$cis_row['session_number'] > 1) {
+        $cis_prev_num = (int)$cis_row['session_number'] - 1;
+        $cis_prevq = $conn->prepare("SELECT status FROM appointment_sessions WHERE appointment_id=? AND session_number=? LIMIT 1");
+        $cis_prevq->bind_param("ii", $cis_appt_id, $cis_prev_num); $cis_prevq->execute();
+        $cis_prev_status = $cis_prevq->get_result()->fetch_assoc()['status'] ?? null; $cis_prevq->close();
+        $cis_prev_ok = ($cis_prev_status === 'completed');
+    }
+
     if (!$cis_row) {
         $message = "Session not found."; $message_type = "danger";
+    } elseif ($cis_row['appt_status'] !== 'approved') {
+        $message = "⚠️ Check in the appointment itself first before checking in individual sessions."; $message_type = "danger";
+    } elseif (!$cis_prev_ok) {
+        $message = "⚠️ Session " . ((int)$cis_row['session_number'] - 1) . " must be completed before checking in Session {$cis_row['session_number']}."; $message_type = "danger";
     } elseif ($cis_row['status'] !== 'scheduled') {
         $message = "This session must be scheduled (date + therapist assigned) before check-in."; $message_type = "danger";
     } else {
@@ -2026,6 +2098,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
         $message = "⚠️ Session {$cs_row['session_number']} can't be completed yet — it is " . str_replace('_', ' ', $cs_row['status']) . ". Check it in first."; $message_type = "danger";
     } elseif (empty($cs_row['session_count']) || (int)$cs_row['session_count'] <= 1) {
         $message = "This appointment is not linked to a session-count package."; $message_type = "danger";
+    } elseif (empty($cs_row['therapist_id'])) {
+        $message = "⚠️ Assign a specific therapist to Session {$cs_row['session_number']} before completing it — commission can't be calculated otherwise."; $message_type = "danger";
     } else {
         $session_count_total = (int)$cs_row['session_count'];
         $session_price       = round(floatval($cs_row['charged_price']) / $session_count_total, 2);
@@ -2979,12 +3053,23 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         foreach ($_pkg_sessions as $_pi => $_ps) { if ($_ps['status'] !== 'completed') { $_pkg_next_idx = $_pi; break; } }
         $_pkg_default_tid = $_pkg_sessions[0]['therapist_id'] ?? null;
         $_pkg_qualified   = $get_qualified((int)$a['service_id']);
+        // Sessions can only be checked in / completed once the customer has
+        // actually been checked in for the appointment itself (top-level
+        // status 'approved'). Before that, this is planning-only.
+        $_pkg_appt_checked_in = ($status === 'approved');
         ?>
         <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">
             🔁 Session Package — <?php echo $_pkg_done; ?>/<?php echo $_pkg_total; ?> sessions completed
         </div>
+        <?php if (!$_pkg_appt_checked_in): ?>
+        <div style="font-size:0.75rem;color:#92400e;background:#fef9f0;border:1px solid #fcd34d;border-radius:8px;padding:0.5rem 0.7rem;margin-bottom:0.75rem;">
+            ⚠️ Check in the appointment itself (below) before any session can be checked in or completed.
+        </div>
+        <?php endif; ?>
         <div style="display:flex;flex-direction:column;gap:0.6rem;">
         <?php foreach ($_pkg_sessions as $_pi => $_ps):
+            $_pkg_prev_done  = ($_pi === 0) || ($_pkg_sessions[$_pi - 1]['status'] === 'completed');
+            $_pkg_can_checkin = $_pkg_appt_checked_in && $_pkg_prev_done;
             $_is_next = ($_pi === $_pkg_next_idx);
             $_sess_therapist_name = null;
             if (!empty($_ps['therapist_id'])) {
@@ -3051,6 +3136,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php else: ?> · <span style="font-style:italic;">Unassigned therapist</span><?php endif; ?>
                 </div>
                 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                    <?php if ($_pkg_can_checkin): ?>
                     <form method="POST" style="margin:0;">
                         <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="checkin_session">
@@ -3058,6 +3144,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                         <input type="hidden" name="session_id" value="<?php echo $_ps['id']; ?>">
                         <button type="submit" class="btn btn-success btn-sm">✅ Check In</button>
                     </form>
+                    <?php else: ?>
+                    <button type="button" class="btn btn-success btn-sm" disabled
+                            title="<?php echo !$_pkg_appt_checked_in ? 'Check in the appointment first' : 'Complete Session ' . ((int)$_ps['session_number'] - 1) . ' first'; ?>"
+                            style="opacity:0.5;cursor:not-allowed;">✅ Check In</button>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">
+                        <?php echo !$_pkg_appt_checked_in ? 'Check in the appointment first' : 'Session ' . ((int)$_ps['session_number'] - 1) . ' must be completed first'; ?>
+                    </span>
+                    <?php endif; ?>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="toggleSessionReassign(<?php echo $_ps['id']; ?>)">✏️ Edit</button>
                 </div>
                 <div style="margin-top:0.4rem;display:flex;align-items:center;gap:0.5rem;">
@@ -3095,6 +3189,12 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php endif; ?>
                     <?php if ($_ps['checked_in_at']): ?> · Checked in <?php echo date('g:i A', strtotime($_ps['checked_in_at'])); ?><?php endif; ?>
                 </div>
+                <?php if (empty($_ps['therapist_id'])): ?>
+                <div style="display:flex;align-items:center;gap:0.5rem;">
+                    <button type="button" class="btn btn-primary btn-sm" disabled title="Assign a specific therapist first" style="opacity:0.5;cursor:not-allowed;">🎉 Complete Session</button>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
+                </div>
+                <?php else: ?>
                 <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="complete_session">
@@ -3106,6 +3206,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php endif; ?>
                     <button type="submit" class="btn btn-primary btn-sm">🎉 Complete Session</button>
                 </form>
+                <?php endif; ?>
                 <?php endif; ?>
             </div>
         <?php endforeach; ?>
@@ -3311,7 +3412,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         </div>
         <?php endif; ?>
 
-        <?php if ($status === 'approved'): ?>
+        <?php if (in_array($status, ['approved', 'assigned'])): ?>
         <button type="button" onclick="toggleAddService(<?php echo $appt_id; ?>)"
                 style="padding:0.38rem 0.9rem;border-radius:7px;border:1.5px dashed var(--gold);background:rgba(201,106,44,0.06);color:var(--gold);font-size:0.82rem;font-weight:700;cursor:pointer;transition:all .15s;"
                 onmouseover="this.style.background='rgba(201,106,44,0.12)'"
@@ -3454,7 +3555,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </script>
             <button type="button" class="btn btn-success btn-sm" data-checkin-btn
                     data-bill-json='<?php echo htmlspecialchars(json_encode($_bill_lines), ENT_QUOTES); ?>'
-                    onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>', null, '<?php echo htmlspecialchars(addslashes($_checkin_bill_title)); ?>')"
+                    onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>', null, '<?php echo htmlspecialchars(addslashes($_checkin_bill_title)); ?>', <?php echo floatval($a['advance_payment'] ?? 0); ?>)"
                     <?php if ($_has_unassigned_therapist): ?>
                     disabled title="Assign a specific therapist to all services first"
                     style="opacity:0.5;cursor:not-allowed;"
@@ -3475,6 +3576,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="action"              value="complete">
                 <input type="hidden" name="appt_id"             value="<?php echo $appt_id; ?>">
                 <input type="hidden" name="complete_pay_method"  id="cp-method-<?php echo $appt_id; ?>"  value="cash">
+                <input type="hidden" name="complete_unpaid_billto" id="cp-unpaid-billto-<?php echo $appt_id; ?>" value="">
                 <input type="hidden" name="celebration_discount" id="cp-celeb-<?php echo $appt_id; ?>"   value="0">
                 <input type="hidden" name="advance_payment"      id="cp-advance-<?php echo $appt_id; ?>" value="0">
                 <input type="hidden" name="complete_disc_type"   id="cp-cdtype-<?php echo $appt_id; ?>"  value="none">
@@ -3506,9 +3608,22 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 advancePayment: <?php echo floatval($a['advance_payment'] ?? 0); ?>
             };
             </script>
+            <?php
+            $_cp_unassigned = false;
+            foreach ($assigned_therapists as $_cp_at) {
+                if ($_cp_at['therapist_id'] === null) { $_cp_unassigned = true; break; }
+            }
+            ?>
             <?php if (!$is_session_pkg_card): ?>
-            <button type="button" class="btn btn-primary btn-sm"
-                    onclick="openCompleteModal(<?php echo $appt_id; ?>)">🎉 Mark Complete</button>
+                <?php if ($_cp_unassigned): ?>
+                <button type="button" class="btn btn-primary btn-sm" disabled
+                        title="Assign a specific therapist (not &quot;Any Available&quot;) first"
+                        style="opacity:0.5;cursor:not-allowed;">🎉 Mark Complete</button>
+                <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
+                <?php else: ?>
+                <button type="button" class="btn btn-primary btn-sm"
+                        onclick="openCompleteModal(<?php echo $appt_id; ?>)">🎉 Mark Complete</button>
+                <?php endif; ?>
             <?php else: ?>
             <span style="font-size:0.78rem;color:var(--gray);font-style:italic;">Use "Complete Session" above to progress this package.</span>
             <?php endif; ?>
@@ -3544,7 +3659,8 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     '<?php echo $a['service_type']; ?>',
                     <?php echo $a['people_count']??1; ?>,
                     '<?php echo htmlspecialchars(addslashes($a['customer_note']??''), ENT_QUOTES, 'UTF-8'); ?>',
-                    '<?php echo htmlspecialchars(addslashes(implode(', ', array_column($assigned_therapists, 'full_name'))), ENT_QUOTES, 'UTF-8'); ?>'
+                    '<?php echo htmlspecialchars(addslashes(implode(', ', array_column($assigned_therapists, 'full_name'))), ENT_QUOTES, 'UTF-8'); ?>',
+                    '<?php echo $status; ?>'
                 )"
                 class="btn btn-secondary btn-sm">✏️ Edit</button>
         <button type="button"
@@ -3721,6 +3837,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="action"              value="complete">
                 <input type="hidden" name="appt_id"             value="<?php echo $s2_id; ?>">
                 <input type="hidden" name="complete_pay_method"  id="cp-method-<?php echo $s2_id; ?>"  value="cash">
+                <input type="hidden" name="complete_unpaid_billto" id="cp-unpaid-billto-<?php echo $s2_id; ?>" value="">
                 <input type="hidden" name="celebration_discount" id="cp-celeb-<?php echo $s2_id; ?>"   value="0">
                 <input type="hidden" name="advance_payment"      id="cp-advance-<?php echo $s2_id; ?>" value="0">
                 <input type="hidden" name="complete_disc_type"   id="cp-cdtype-<?php echo $s2_id; ?>"  value="none">
@@ -3751,12 +3868,25 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 advancePayment: <?php echo floatval($_session2['advance_payment'] ?? 0); ?>
             };
             </script>
+            <?php
+            $_s2_cp_unassigned = false;
+            foreach ($_session2_assigned_therapists as $_s2_cp_at) {
+                if ($_s2_cp_at['therapist_id'] === null) { $_s2_cp_unassigned = true; break; }
+            }
+            ?>
+            <?php if ($_s2_cp_unassigned): ?>
+            <button type="button" class="btn btn-primary btn-sm" disabled
+                    title="Assign a specific therapist (not &quot;Any Available&quot;) first"
+                    style="opacity:0.5;cursor:not-allowed;">🎉 Mark Complete</button>
+            <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
+            <?php else: ?>
             <button type="button" class="btn btn-primary btn-sm" onclick="openCompleteModal(<?php echo $s2_id; ?>)">🎉 Mark Complete</button>
+            <?php endif; ?>
         <?php endif; ?>
 
         <?php if ($s2_status === 'assigned'): ?>
             <button type="button" class="btn btn-success btn-sm"
-                    onclick="openCheckinModal(<?php echo $s2_id; ?>, '<?php echo htmlspecialchars(addslashes($display_name)); ?>', <?php echo json_encode([['name' => $a['service_name'] . ' (Session 2)', 'price' => floatval($_session2['charged_price'] ?? 0)]]); ?>)">
+                    onclick="openCheckinModal(<?php echo $s2_id; ?>, '<?php echo htmlspecialchars(addslashes($display_name)); ?>', <?php echo json_encode([['name' => $a['service_name'] . ' (Session 2)', 'price' => floatval($_session2['charged_price'] ?? 0)]]); ?>, null, <?php echo floatval($_session2['advance_payment'] ?? 0); ?>)">
                 ✅ Check In
             </button>
             <form method="POST" style="margin:0;display:inline;">
@@ -4289,7 +4419,11 @@ function cmRecompute() {
     }
     cdAmt = Math.max(0, Math.min(cdAmt, Math.max(0, gross - bDisc)));
 
-    var advPay   = parseFloat(document.getElementById('cm-advance-pay')?.value) || 0;
+    // When `already` > 0 (e.g. Pay Now was used at check-in), the advance was
+    // necessarily already folded into that fully-paid amount -- subtracting it
+    // again here would double-count the same money. Only apply it standalone
+    // when the order hasn't been paid yet (Pay Later path).
+    var advPay   = already > 0 ? 0 : (parseFloat(document.getElementById('cm-advance-pay')?.value) || 0);
     var totalDue = Math.max(0, gross - bDisc - cdAmt - advPay - already);
 
     // Build breakdown
@@ -4336,6 +4470,10 @@ function openCompleteModal(apptId) {
     cmState.apptId         = apptId;
     cmState.payMethod      = 'cash';
     cmState.discType       = 'none';
+    var unpaidBillto = document.getElementById('cm-unpaid-billto');
+    if (unpaidBillto) unpaidBillto.value = '';
+    var unpaidNameWrap = document.getElementById('cm-unpaid-name-wrap');
+    if (unpaidNameWrap) unpaidNameWrap.style.display = 'none';
     cmState.originalTotal  = data.originalTotal;
     cmState.bookingDisc    = data.bookingDisc;
     cmState.bookingDiscType= data.bookingDiscType;
@@ -4390,12 +4528,14 @@ function closeCompleteModal() {
 
 function cmSelectPayment(method) {
     cmState.payMethod = method;
-    ['cash','swiper','qrph','bank'].forEach(function(m) {
+    ['cash','swiper','qrph','bank','unpaid'].forEach(function(m) {
         var btn = document.getElementById('cm-pay-' + m);
         if (!btn) return;
         btn.style.borderColor = m === method ? '#C96A2C' : '#e5e7eb';
         btn.style.background  = m === method ? '#fff8f2' : '';
     });
+    var nameWrap = document.getElementById('cm-unpaid-name-wrap');
+    if (nameWrap) nameWrap.style.display = (method === 'unpaid') ? 'block' : 'none';
 }
 
 function submitComplete() {
@@ -4418,6 +4558,8 @@ function submitComplete() {
     var hiddenCvType  = document.getElementById('cp-cvtype-'  + cmState.apptId);
     var hiddenCvVal   = document.getElementById('cp-cvvalue-' + cmState.apptId);
     var hiddenAdv     = document.getElementById('cp-advance-' + cmState.apptId);
+    var hiddenBillto  = document.getElementById('cp-unpaid-billto-' + cmState.apptId);
+    if (hiddenBillto)  hiddenBillto.value  = document.getElementById('cm-unpaid-billto')?.value || '';
     if (hiddenMethod)  hiddenMethod.value  = cmState.payMethod;
     if (hiddenCdType)  hiddenCdType.value  = cmState.discType;
     if (cmState.discType === 'celebration') {
@@ -4627,8 +4769,11 @@ function submitComplete() {
             <div id="checkin-discount-line" style="display:none;justify-content:space-between;font-size:0.8rem;color:#dc3545;margin-top:0.25rem;">
                 <span>Discount</span><span class="disc-amt">−₱0.00</span>
             </div>
+            <div id="checkin-advance-line" style="display:none;justify-content:space-between;font-size:0.8rem;color:#C96A2C;margin-top:0.25rem;">
+                <span>💰 Advance (pre-recorded)</span><span class="adv-amt">−₱0.00</span>
+            </div>
             <div style="display:flex;justify-content:space-between;font-weight:800;padding-top:0.5rem;border-top:1px solid var(--border2);margin-top:0.4rem;font-size:0.88rem;">
-                <span>Total</span>
+                <span>Total<span id="checkin-total-label" style="font-weight:400;font-size:0.7rem;color:var(--gray);display:none;"> (remaining to collect)</span></span>
                 <span id="checkin-bill-total">₱0.00</span>
             </div>
         </div>
@@ -4838,6 +4983,16 @@ function submitComplete() {
                     <div style="font-size:1rem;">🏦</div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
                 </div>
+            </div>
+            <div id="cm-pay-unpaid" onclick="cmSelectPayment('unpaid')"
+                 style="margin-top:0.5rem;padding:0.6rem 0.75rem;border:2px dashed #e5e7eb;border-radius:10px;cursor:pointer;transition:all .15s;">
+                <div style="font-size:0.82rem;font-weight:700;color:#92400e;">🧾 Unpaid — Charge to Account</div>
+                <div style="font-size:0.7rem;color:var(--gray);margin-top:2px;">Corporate/hotel billing — records this as a receivable in Unpaids Corp instead of collecting payment now.</div>
+            </div>
+            <div id="cm-unpaid-name-wrap" style="display:none;margin-top:0.6rem;">
+                <label style="font-size:0.75rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">Bill To (Company / Client Name)</label>
+                <input type="text" id="cm-unpaid-billto" placeholder="e.g. Iloilo Grand Hotel — leave blank to use customer name"
+                       style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.83rem;box-sizing:border-box;">
             </div>
         </div>
 
@@ -5184,7 +5339,7 @@ document.addEventListener('keydown', e => {
 var _ciApptId = 0;
 var _ciVoucherType = 'percent';
 
-function openCheckinModal(apptId, customerName, billLines, billTitle) {
+function openCheckinModal(apptId, customerName, billLines, billTitle, advanceAmount) {
     _ciApptId = apptId;
     document.getElementById('ciCustomerName').textContent = customerName || '';
     document.getElementById('ci-appt-id').value  = apptId;
@@ -5192,6 +5347,16 @@ function openCheckinModal(apptId, customerName, billLines, billTitle) {
 
     var titleEl = document.getElementById('checkin-bill-title');
     if (titleEl) titleEl.textContent = billTitle || '🧾 Buong Bill';
+
+    window._ciAdvance = parseFloat(advanceAmount) || 0;
+    var advLineEl = document.getElementById('checkin-advance-line');
+    var totalLabelEl = document.getElementById('checkin-total-label');
+    if (advLineEl) {
+        advLineEl.style.display = window._ciAdvance > 0 ? 'flex' : 'none';
+        var advAmtSpan = advLineEl.querySelector('.adv-amt');
+        if (advAmtSpan) advAmtSpan.textContent = '−₱' + window._ciAdvance.toFixed(2);
+    }
+    if (totalLabelEl) totalLabelEl.style.display = window._ciAdvance > 0 ? 'inline' : 'none';
 
     if (billLines) {
         // Nested Session 2 view passes its bill line(s) directly — it has no
@@ -5295,7 +5460,8 @@ function ciRecomputeTotal() {
             discAmt = Math.min(vVal, subtotal);
         }
     }
-    var total = Math.max(0, subtotal - discAmt);
+    var advance = window._ciAdvance || 0;
+    var total = Math.max(0, subtotal - discAmt - advance);
     var totalEl = document.getElementById('checkin-bill-total');
     if (totalEl) totalEl.textContent = '₱' + total.toFixed(2);
     var discLineEl = document.getElementById('checkin-discount-line');
@@ -5504,7 +5670,7 @@ function submitApprove(apptId) {
 }
 
 // ── FULL EDIT APPOINTMENT ─────────────────────────────────────────────────────
-function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount, notes, currentTherapistNames) {
+function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount, notes, currentTherapistNames, apptStatus) {
     document.getElementById('edit_appt_id').value           = apptId;
     document.getElementById('edit_new_service_id').value    = serviceId;
     document.getElementById('edit_date_picker').value       = currentDate ? currentDate.substring(0,10) : '';
@@ -5525,6 +5691,12 @@ function openEditModal(apptId, serviceId, currentDate, serviceType, peopleCount,
 
     // Populate extra services list
     document.getElementById('edit-add-extra-wrap').style.display = 'none';
+    // Assigned appointments now have the full Add Service form directly on the
+    // card (same as approved), so hide this limited duplicate (no therapist
+    // picker) here to avoid two different "add service" paths on one card.
+    // Pending appointments have no card-level Add Service yet, so keep it there.
+    const addExtraBtn = document.getElementById('edit-add-extra-btn');
+    if (addExtraBtn) addExtraBtn.style.display = (apptStatus === 'assigned') ? 'none' : 'block';
     const listEl = document.getElementById('edit-extra-services-list');
     const extras = (window._apptExtras || {})[apptId] || [];
     if (extras.length === 0) {
@@ -5722,7 +5894,7 @@ function loadAddSvcSlots() {
         <div style="margin-bottom:1rem;padding:0.7rem;background:var(--bg3);border-radius:10px;">
             <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">➕ Extra Services</div>
             <div id="edit-extra-services-list"></div>
-            <button type="button" onclick="openAddExtraServiceInEdit()"
+            <button type="button" id="edit-add-extra-btn" onclick="openAddExtraServiceInEdit()"
                     style="margin-top:0.5rem;width:100%;padding:0.5rem;background:transparent;border:1px dashed var(--gold);border-radius:8px;color:var(--gold);font-weight:600;font-size:0.8rem;cursor:pointer;">
                 ➕ Magdagdag ng Serbisyo
             </button>

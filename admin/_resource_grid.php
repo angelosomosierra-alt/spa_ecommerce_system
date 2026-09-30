@@ -1,18 +1,23 @@
 <?php
 /**
- * Slotting and Rotation — live resource grid (time × resource).
- * Single source of truth for both embed points (admin/index.php dashboard and
- * admin/therapists.php "Today's Rotation") and for the AJAX refresh endpoint
- * (admin/resource_grid_ajax.php) — none of them may duplicate this query or
- * markup, they only call render_resource_grid_html($conn).
+ * Slotting and Rotation — live resource grid (time × resource), rendered as
+ * a real continuous timeline (minute-accurate blocks), not hour-rounded
+ * table rows. Single source of truth for both embed points (admin/index.php
+ * dashboard and admin/therapists.php "Today's Rotation") and for the AJAX
+ * refresh endpoint (admin/resource_grid_ajax.php) — none of them may
+ * duplicate this query or markup, they only call render_resource_grid_html($conn).
  *
  * Self-heals the same idempotent schema as admin/resources.php / admin/walkin.php
  * so this include is safe to drop into any admin page on its own.
  */
 
-// Hourly rows, 9:00 AM through 11:00 PM–12:00 MN (the last row), today only.
+// Timeline window, 9:00 AM through 11:00 PM–12:00 MN, today only.
 if (!defined('RESOURCE_GRID_START_HOUR')) define('RESOURCE_GRID_START_HOUR', 9);
-if (!defined('RESOURCE_GRID_END_HOUR'))   define('RESOURCE_GRID_END_HOUR', 24); // exclusive — last row covers 23:00–24:00
+if (!defined('RESOURCE_GRID_END_HOUR'))   define('RESOURCE_GRID_END_HOUR', 24); // exclusive
+// Pixels per minute of the timeline. 2px/min = 120px/hour, so a 30-min
+// appointment is a readable 60px-tall block; a full day is 1800px tall,
+// shown inside a vertically-scrolling viewport (see $viewport_max_h below).
+if (!defined('RESOURCE_GRID_PX_PER_MIN')) define('RESOURCE_GRID_PX_PER_MIN', 2);
 
 if (!function_exists('render_resource_grid_html')) {
 
@@ -66,12 +71,15 @@ function render_resource_grid_html(mysqli $conn): string {
         GROUP BY a.id
     ")->fetch_all(MYSQLI_ASSOC);
 
-    $today9am = strtotime(date('Y-m-d') . ' ' . RESOURCE_GRID_START_HOUR . ':00:00');
-    $num_rows = RESOURCE_GRID_END_HOUR - RESOURCE_GRID_START_HOUR;
+    $px_per_min   = RESOURCE_GRID_PX_PER_MIN;
+    $window_start = strtotime(date('Y-m-d') . ' ' . RESOURCE_GRID_START_HOUR . ':00:00');
+    $window_mins  = (RESOURCE_GRID_END_HOUR - RESOURCE_GRID_START_HOUR) * 60;
+    $total_height = $window_mins * $px_per_min;
 
-    // occupancy[resource_id][row_index] = null | 'skip' | ['span'=>n, ...cell data]
+    // occupancy[resource_id] = flat list of blocks -- no per-hour slot to
+    // collide over, so any number of back-to-back bookings just coexist.
     $occupancy = [];
-    foreach ($resources as $r) $occupancy[$r['id']] = array_fill(0, $num_rows, null);
+    foreach ($resources as $r) $occupancy[$r['id']] = [];
 
     foreach ($occ_rows as $o) {
         $rid = (int)$o['resource_id'];
@@ -80,24 +88,21 @@ function render_resource_grid_html(mysqli $conn): string {
         $start_ts = strtotime($o['appointment_date']);
         $end_ts   = $start_ts + ((int)$o['eff_duration'] * 60);
 
-        $display_start = max($start_ts, $today9am);
-        $display_end   = min($end_ts, $today9am + $num_rows * 3600);
-        if ($display_start >= $display_end) continue; // entirely outside today's 9AM–12MN window
+        $display_start = max($start_ts, $window_start);
+        $display_end   = min($end_ts, $window_start + $window_mins * 60);
+        if ($display_start >= $display_end) continue; // entirely outside today's display window
 
-        $start_row = (int)floor(($display_start - $today9am) / 3600);
-        $end_row   = (int)ceil(($display_end - $today9am) / 3600) - 1;
-        $span      = $end_row - $start_row + 1;
-        if ($span < 1) continue;
+        $top_px    = (int)round((($display_start - $window_start) / 60) * $px_per_min);
+        $height_px = max(18, (int)round((($display_end - $display_start) / 60) * $px_per_min));
 
-        $label_time = date('g:i A', $start_ts) . ' – ' . date('g:i A', $end_ts);
-        $occupancy[$rid][$start_row] = [
-            'span'       => $span,
+        $occupancy[$rid][] = [
+            'top'        => $top_px,
+            'height'     => $height_px,
             'therapist'  => $o['therapist_names'] ?: 'Unassigned',
             'service'    => $o['service_name'],
             'status'     => $o['status'],
-            'time_label' => $label_time,
+            'time_label' => date('g:i A', $start_ts) . ' – ' . date('g:i A', $end_ts),
         ];
-        for ($i = $start_row + 1; $i <= $end_row; $i++) $occupancy[$rid][$i] = 'skip';
     }
 
     $status_colors = [
@@ -106,49 +111,80 @@ function render_resource_grid_html(mysqli $conn): string {
         'approved' => ['#D1FAE5', '#065F46'],
     ];
 
+    // "Now" line — only meaningful within today's displayed window.
+    $now_ts  = time();
+    $now_top = null;
+    if ($now_ts >= $window_start && $now_ts < $window_start + $window_mins * 60) {
+        $now_top = (int)round((($now_ts - $window_start) / 60) * $px_per_min);
+    }
+
+    $viewport_max_h = 640; // scrollable viewport; full day is $total_height tall
+
     ob_start();
     ?>
     <div class="panel">
         <div class="panel-header">
             <span class="panel-title">🛎️ Live Resource Grid — <?php echo date('F j, Y'); ?></span>
         </div>
-        <div class="table-wrap" style="border:none;border-radius:0;overflow-x:auto;">
-            <table style="min-width:100%;border-collapse:collapse;">
-                <thead>
-                    <tr>
-                        <th style="min-width:80px;">Time</th>
-                        <?php foreach ($resources as $r): ?>
-                        <th style="min-width:110px;"><?php echo $type_labels[$r['type']] ?? ucfirst($r['type']); ?><br>
-                            <span style="font-weight:400;font-size:0.75rem;color:var(--gray);"><?php echo htmlspecialchars($r['name']); ?></span>
-                        </th>
-                        <?php endforeach; ?>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php for ($row = 0; $row < $num_rows; $row++):
-                        $hour = RESOURCE_GRID_START_HOUR + $row;
-                        $row_label = date('g:i A', strtotime(date('Y-m-d') . " {$hour}:00:00"));
-                    ?>
-                    <tr>
-                        <td style="font-size:0.78rem;color:var(--gray);white-space:nowrap;"><?php echo $row_label; ?></td>
+        <div style="overflow-x:auto;">
+            <div style="min-width:<?php echo 80 + count($resources) * 150; ?>px;">
+                <!-- Column headers -->
+                <div style="display:flex;border-bottom:2px solid var(--border2);">
+                    <div style="width:80px;flex-shrink:0;"></div>
+                    <?php foreach ($resources as $r): ?>
+                    <div style="flex:1;min-width:150px;text-align:center;padding:0.5rem 0.3rem;font-size:0.78rem;font-weight:700;color:var(--brown);">
+                        <?php echo $type_labels[$r['type']] ?? ucfirst($r['type']); ?><br>
+                        <span style="font-weight:400;font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($r['name']); ?></span>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <!-- Timeline: vertically scrollable, minute-accurate blocks -->
+                <div id="resourceTimelineScroll"
+                     data-start-hour="<?php echo RESOURCE_GRID_START_HOUR; ?>"
+                     data-px-per-min="<?php echo $px_per_min; ?>"
+                     style="max-height:<?php echo $viewport_max_h; ?>px;overflow-y:auto;position:relative;">
+                    <div style="display:flex;position:relative;height:<?php echo $total_height; ?>px;">
+
+                        <!-- Time axis -->
+                        <div style="width:80px;flex-shrink:0;position:relative;">
+                            <?php for ($h = RESOURCE_GRID_START_HOUR; $h < RESOURCE_GRID_END_HOUR; $h++):
+                                $label_top = ($h - RESOURCE_GRID_START_HOUR) * 60 * $px_per_min;
+                            ?>
+                            <div style="position:absolute;top:<?php echo $label_top - 6; ?>px;left:0.4rem;font-size:0.7rem;color:var(--gray);font-weight:600;white-space:nowrap;">
+                                <?php echo date('g:i A', strtotime(date('Y-m-d') . " {$h}:00:00")); ?>
+                            </div>
+                            <?php endfor; ?>
+                        </div>
+
+                        <!-- Resource columns -->
                         <?php foreach ($resources as $r):
-                            $cell = $occupancy[$r['id']][$row];
-                            if ($cell === 'skip') continue; // covered by a rowspan from an earlier row
-                            if ($cell === null): ?>
-                        <td style="background:var(--bg3);text-align:center;color:var(--gray);font-size:0.75rem;padding:0.5rem;">Open</td>
-                            <?php else:
+                            $hour_px = 60 * $px_per_min;
+                        ?>
+                        <div style="flex:1;min-width:150px;position:relative;border-left:1px solid var(--border2);
+                                    background-image:repeating-linear-gradient(to bottom, transparent, transparent <?php echo $hour_px - 1; ?>px, var(--border2) <?php echo $hour_px - 1; ?>px, var(--border2) <?php echo $hour_px; ?>px);">
+                            <?php foreach ($occupancy[$r['id']] as $cell):
                                 [$cbg, $cfg] = $status_colors[$cell['status']] ?? ['#e2e3e5', '#41464b']; ?>
-                        <td rowspan="<?php echo $cell['span']; ?>" style="background:<?php echo $cbg; ?>;color:<?php echo $cfg; ?>;padding:0.5rem 0.6rem;font-size:0.78rem;vertical-align:top;border-left:3px solid <?php echo $cfg; ?>;">
-                            <div style="font-weight:700;"><?php echo htmlspecialchars($cell['therapist']); ?></div>
-                            <div style="font-size:0.72rem;"><?php echo htmlspecialchars($cell['service']); ?></div>
-                            <div style="font-size:0.68rem;opacity:0.8;"><?php echo $cell['time_label']; ?> · <?php echo ucfirst($cell['status']); ?></div>
-                        </td>
-                            <?php endif;
-                        endforeach; ?>
-                    </tr>
-                    <?php endfor; ?>
-                </tbody>
-            </table>
+                            <div style="position:absolute;top:<?php echo $cell['top']; ?>px;height:<?php echo $cell['height']; ?>px;left:4px;right:4px;
+                                        background:<?php echo $cbg; ?>;color:<?php echo $cfg; ?>;border-left:3px solid <?php echo $cfg; ?>;
+                                        border-radius:6px;padding:0.3rem 0.5rem;font-size:0.72rem;overflow:hidden;box-sizing:border-box;">
+                                <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($cell['therapist']); ?></div>
+                                <div style="font-size:0.68rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($cell['service']); ?></div>
+                                <div style="font-size:0.62rem;opacity:0.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo $cell['time_label']; ?> · <?php echo ucfirst($cell['status']); ?></div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <?php endforeach; ?>
+
+                        <?php if ($now_top !== null): ?>
+                        <!-- "Now" line, spanning the full width -->
+                        <div style="position:absolute;top:<?php echo $now_top; ?>px;left:80px;right:0;height:0;border-top:2px solid #dc3545;z-index:5;pointer-events:none;">
+                            <span style="position:absolute;left:-4px;top:-5px;width:8px;height:8px;border-radius:50%;background:#dc3545;"></span>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
     <?php

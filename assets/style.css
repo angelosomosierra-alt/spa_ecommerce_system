@@ -725,6 +725,11 @@ nav {
 
 .qty-input:focus { outline: none; border-color: var(--gold); }
 
+/* Hidden by default — products.php's modal JS (syncQty) only reveals this
+   once the entered quantity actually exceeds stock. Was missing its base
+   rule entirely, so it rendered permanently visible regardless of quantity. */
+.stock-warn { display: none; background: #FEF3C7; color: #92400E; padding: 0.6rem 0.85rem; border-radius: 8px; font-size: 0.9rem; margin-bottom: 0.85rem; border-left: 3px solid #F59E0B; }
+
 .modal-actions { display: flex; gap: 0.75rem; }
 
 .btn-modal-primary {
@@ -1361,3 +1366,211 @@ tbody tr:hover { background-color: #FAF3E8; }
     .hero h1 { font-size: 1.6rem; }
     nav { padding: 0 1rem; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   SITE-WIDE ACCESSIBILITY — senior / low-vision friendly (site redesign)
+   Additive only: darkens/adds variables and base rules, never removes or
+   renames anything already in use elsewhere (admin CSS is separate).
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+    /* --gray was #888880 — only 3.3:1 on --cream, fails WCAG AA body text
+       (needs 4.5:1). Darkened site-wide; every existing var(--gray) usage
+       (footer text, hours, meta labels) gets this fix automatically. */
+    --gray: #5F5B52;
+    /* New: for label/badge TEXT on light backgrounds where --gold (2.5:1)
+       and --gold-lt (1.5:1) both fail outright — reserve those for
+       decorative/icon use or dark backgrounds only. */
+    --gold-dark: #8A6A22;
+    /* New: for button backgrounds carrying white text, and for price text
+       on light backgrounds — meets 4.5:1+ where plain --rust (3.5:1) only
+       clears the "large text" 3:1 threshold. */
+    --rust-dark: #A94F1D;
+}
+
+/* NOTE: base font-size, body/heading typography, and button min-height are
+   scoped to header.php's own <style> block instead of set here — this file
+   is also loaded by user/header.php's pages (cart, checkout, profile,
+   appointments), which are explicitly OUT of this redesign's scope. Sizing
+   changes here would leak into those untouched pages' carefully-tuned
+   layouts. Only genuinely safe, purely-corrective, non-layout-shifting
+   rules (color variables, focus rings, reduced-motion) go here globally. */
+
+/* Visible, non-default focus ring on every interactive element — not just
+   relying on (and not removing) the browser default. */
+a:focus-visible, button:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+    outline: 3px solid var(--rust-dark);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* Respect prefers-reduced-motion — disable/minimise transitions & smooth
+   scrolling for users who've asked for it (matters for low-vision/senior
+   users; excessive motion can be disorienting). */
+@media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ── Best-seller card grid (index.php) ──────────────────────────────────── */
+.bestseller-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.75rem;
+}
+@media (max-width: 960px) { .bestseller-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px) { .bestseller-grid { grid-template-columns: 1fr; } }
+.section-see-all {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    color: var(--rust-dark); font-weight: 700; text-decoration: none;
+    font-size: 1rem; margin-top: 1.25rem; border-bottom: 2px solid transparent;
+    transition: border-color 0.2s;
+}
+.section-see-all:hover { border-color: var(--rust-dark); }
+
+/* ── Category showcase tiles (index.php) ────────────────────────────────── */
+.category-showcase-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.25rem;
+}
+@media (max-width: 900px) { .category-showcase-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 620px) { .category-showcase-grid { grid-template-columns: repeat(2, 1fr); } }
+.category-tile {
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+    gap: 0.6rem; padding: 1.5rem 1rem; background: var(--white);
+    border: 1.5px solid var(--border); border-radius: 16px; text-decoration: none;
+    color: var(--brown); transition: transform 0.25s, box-shadow 0.25s, border-color 0.25s;
+}
+.category-tile:hover, .category-tile:focus-visible {
+    transform: translateY(-5px); box-shadow: 0 14px 34px rgba(59,42,26,.14);
+    border-color: var(--rust-dark);
+}
+.category-tile-img {
+    width: 72px; height: 72px; border-radius: 50%; object-fit: cover;
+    border: 2px solid var(--border);
+}
+.category-tile-icon {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--warm), #EAD8C0);
+    display: flex; align-items: center; justify-content: center; font-size: 2rem;
+}
+.category-tile-name { font-weight: 700; font-size: 1.02rem; color: var(--brown); }
+.category-tile-count { font-size: 0.88rem; color: var(--gray); }
+
+/* ── Kiosk sidebar layout (services.php / products.php) ─────────────────── */
+.kiosk-layout { display: grid; grid-template-columns: 260px 1fr; gap: 2rem; align-items: start; }
+@media (max-width: 860px) { .kiosk-layout { grid-template-columns: 1fr; } }
+
+.kiosk-sidebar {
+    position: sticky; top: 90px;
+    display: flex; flex-direction: column; gap: 0.5rem;
+    background: var(--white); border: 1.5px solid var(--border);
+    border-radius: 16px; padding: 1rem; max-height: calc(100vh - 110px);
+    overflow-y: auto; overflow-x: hidden;
+    /* CSS Grid items default to min-width:auto, so a long unwrapped category
+       label (e.g. "Additional in Massage Service") was forcing this grid
+       item wider than its 260px track and overflowing into the item grid
+       beside it — this is what looked like "a floating card overlapping
+       the sidebar and content" (bug 5). min-width:0 lets the track win. */
+    min-width: 0;
+}
+@media (max-width: 860px) {
+    .kiosk-sidebar {
+        position: static; flex-direction: row; overflow-x: auto; overflow-y: visible;
+        max-height: none; -webkit-overflow-scrolling: touch;
+    }
+}
+.kiosk-cat-btn {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.9rem 1rem; border-radius: 12px; border: 2px solid transparent;
+    background: var(--warm); color: var(--brown); font-size: 1rem; font-weight: 600;
+    text-decoration: none; cursor: pointer; text-align: left;
+    transition: background 0.2s, border-color 0.2s, transform 0.15s;
+    min-height: 52px;
+    /* Desktop: wrap long labels within the fixed 260px column instead of
+       forcing the sidebar wider (see .kiosk-sidebar comment above). */
+    white-space: normal; line-height: 1.25;
+}
+@media (max-width: 860px) {
+    /* Mobile: sidebar becomes a horizontal scrolling chip bar — nowrap here
+       is correct and intentional, each chip keeps its natural width. */
+    .kiosk-cat-btn { flex-shrink: 0; white-space: nowrap; }
+}
+.kiosk-cat-btn:hover { transform: translateX(3px); }
+@media (max-width: 860px) { .kiosk-cat-btn:hover { transform: none; } }
+.kiosk-cat-btn .kiosk-cat-icon { font-size: 1.3rem; flex-shrink: 0; }
+/* Active state uses a border + background + a leading marker — not color alone */
+.kiosk-cat-btn.active {
+    background: var(--brown); color: var(--cream); border-color: var(--rust-dark);
+}
+.kiosk-cat-btn.active::before { content: "▸ "; }
+
+.kiosk-content-title {
+    font-family: 'Cormorant Garamond', serif; font-size: 1.9rem; font-weight: 700;
+    color: var(--brown); margin: 2rem 0 1.25rem; padding-bottom: 0.6rem;
+    border-bottom: 2px solid var(--border);
+}
+.kiosk-content-title:first-child { margin-top: 0; }
+.kiosk-item-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+@media (max-width: 600px) { .kiosk-item-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .kiosk-item-grid { grid-template-columns: 1fr; } }
+
+.kiosk-item-card {
+    background: var(--white); border: 1.5px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; box-shadow: 0 4px 20px rgba(59,42,26,.06);
+    transition: transform 0.25s, box-shadow 0.25s;
+    scroll-margin-top: 100px;
+}
+.kiosk-item-card:hover { transform: translateY(-5px); box-shadow: 0 16px 40px rgba(59,42,26,.14); }
+.kiosk-item-card.flash-highlight { border-color: var(--rust-dark); box-shadow: 0 0 0 3px rgba(169,79,29,0.35); }
+
+/* ── Shared item card shell — used by index.php's best-seller cards AND
+   services.php / products.php's kiosk item cards (which wrap this same
+   markup in .kiosk-item-card and add a couple of page-specific tweaks
+   inline). Centralised here instead of duplicated per page. ──────────── */
+.svc-card, .prd-card {
+    background: var(--white); border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--border); box-shadow: 0 4px 20px rgba(59,42,26,.06);
+    display: flex; flex-direction: column;
+    transition: transform 0.25s, box-shadow 0.25s;
+}
+.svc-card:hover, .prd-card:hover { transform: translateY(-6px); box-shadow: 0 18px 50px rgba(59,42,26,.14); }
+.svc-img-wrap { position: relative; overflow: hidden; background: var(--warm); aspect-ratio: 4/3; }
+.prd-img-wrap { position: relative; overflow: hidden; background: var(--warm); aspect-ratio: 1/1; }
+.svc-img-wrap img, .prd-img-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.svc-cat-badge {
+    position: absolute; top: .85rem; left: .85rem;
+    background: rgba(59,42,26,.75); backdrop-filter: blur(6px);
+    color: #fff; font-size: .75rem; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; padding: .3rem .8rem; border-radius: 50px;
+}
+.prd-cat-badge {
+    font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--gold-dark); margin-bottom: .3rem; display: inline-block;
+}
+.img-placeholder {
+    width: 100%; height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: linear-gradient(135deg, var(--warm), #EAD8C0);
+    color: var(--brown-md); font-size: 2.2rem; gap: .3rem;
+}
+.img-placeholder small { font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--brown-lt); }
+
+/* ── Shared footer (footer.php — index.php, services.php, products.php) ──
+   Restored: this CSS lived only in the old index.php's inline block and
+   was never carried over anywhere when footer.php was split out, so the
+   footer rendered as unstyled plain text/links on every page. ─────────── */
+.spa-footer { background: #3B2A1A; color: #EAD8C0; padding: 3.5rem 2rem 2rem; }
+.footer-inner { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 2.5rem; margin-bottom: 2.5rem; }
+.footer-brand .ft-logo { font-family: 'Cormorant Garamond', serif; font-size: 1.7rem; color: #C8A46B; font-weight: 400; margin-bottom: 0.5rem; }
+.footer-brand p { font-size: 0.95rem; color: #D8B98C; line-height: 1.7; }
+.footer-col h4 { font-size: 0.82rem; letter-spacing: 0.12em; text-transform: uppercase; color: #C8A46B; font-weight: 700; margin-bottom: 1rem; }
+.footer-col ul { list-style: none; }
+.footer-col ul li { margin-bottom: 0.6rem; }
+.footer-col ul li a { color: #D8B98C; font-size: 0.95rem; transition: color 0.2s; text-decoration: none; }
+.footer-col ul li a:hover { color: #EAD8C0; }
+.footer-bottom { max-width: 1200px; margin: 0 auto; padding-top: 1.5rem; border-top: 1px solid rgba(200,164,107,0.2); text-align: center; font-size: 0.88rem; color: #B99B72; }
+@media (max-width: 900px) { .footer-inner { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .footer-inner { grid-template-columns: 1fr; } }

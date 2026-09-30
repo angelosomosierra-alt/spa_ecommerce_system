@@ -98,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
         $mail->Body = "
             <div style='font-family:Arial,sans-serif;max-width:500px;margin:0 auto;'>
                 <div style='background:linear-gradient(135deg,#3B2A1A,#6B4C30);padding:25px;text-align:center;border-radius:12px 12px 0 0;'>
-                    <span style='font-size:2.5rem;'>💆</span>
+                    <span style='font-size:2.5rem;'></span>
                     <h2 style='color:#FAF3E8;margin:8px 0 4px;letter-spacing:1px;'>RECOVERY</h2>
                     <p style='color:#C8A46B;font-size:0.85rem;margin:0;'>Email Verification</p>
                 </div>
@@ -773,7 +773,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
     <form method="POST">
         <?php echo csrf_field(); ?>
         <div class="form-group">
-            <label>email</label>
+            <label>Email</label>
             <input type="text" name="email" placeholder="Enter your email" required value="<?php echo htmlspecialchars($_POST['username'] ?? ''); ?>">
         </div>
         <div class="form-group">

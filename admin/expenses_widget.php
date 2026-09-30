@@ -19,7 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])
         $GLOBALS['widget_msg_type'] = 'warning';
         goto skip_save_expense;
     }
-    $category = sanitize_input($_POST['we_category'] ?? 'misc');
+    $category = strtolower(trim(sanitize_input($_POST['we_category'] ?? '')));
+    if ($category === '') $category = 'misc';
     $label    = sanitize_input($_POST['we_label']    ?? '');
     $amount   = floatval($_POST['we_amount']         ?? 0);
     $notes    = sanitize_input($_POST['we_notes']    ?? '');
@@ -111,12 +112,13 @@ $cat_icons      = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utiliti
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.5rem;">
                         <div>
                             <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;">Category</label>
-                            <select name="we_category"
-                                    style="width:100%;padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.82rem;">
+                            <input type="text" name="we_category" list="we-category-suggestions" placeholder="e.g. Water, Repairs..."
+                                   style="width:100%;padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.82rem;box-sizing:border-box;">
+                            <datalist id="we-category-suggestions">
                                 <?php foreach ($biz_categories as $cat): ?>
-                                <option value="<?php echo $cat; ?>"><?php echo ($cat_icons[$cat]??'📦').' '.ucfirst($cat); ?></option>
+                                <option value="<?php echo ucfirst($cat); ?>">
                                 <?php endforeach; ?>
-                            </select>
+                            </datalist>
                         </div>
                         <div>
                             <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;">Amount (₱) *</label>
