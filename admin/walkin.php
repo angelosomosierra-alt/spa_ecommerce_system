@@ -256,7 +256,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
 
             if ($item) {
                 $item_name_html = htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8');
-                $is_two_session_booking = !empty($item['is_two_session']) && $booking_date_2 !== '';
+                // Booking Mode (session_group_id) creation retired — Choose Duration's
+                // session_count is now the only way to book multi-session. Existing
+                // session_group_id appointments from before this change are untouched
+                // and continue to display/report/complete exactly as before.
+                $is_two_session_booking = false;
                 if ($is_two_session_booking) {
                     $rate_type = 'regular'; // 2-session package price is fixed — never rate-adjusted, regardless of what the client sent
                 }
@@ -1519,7 +1523,9 @@ function selectWalkinTherapist(id) {
 }
 
 function isTwoSessionCapable(svc) {
-    return !!(svc && parseInt(svc.is_two_session) === 1);
+    // Booking Mode (session_group_id) retired — Choose Duration's session_count
+    // is now the only multi-session path. Keeps this UI permanently hidden.
+    return false;
 }
 
 // ── Duration Variants ─────────────────────────────────────────────────────
