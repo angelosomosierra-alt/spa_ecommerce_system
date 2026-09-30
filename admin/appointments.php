@@ -945,6 +945,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
     skip_cancel:;
 }
 
+// ── SET / CHANGE RESOURCE (Room / Chair / Head Spa) — AJAX ─────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_resource') {
+    verify_csrf_token();
+    header('Content-Type: application/json');
+    $sr_appt_id     = intval($_POST['appt_id'] ?? 0);
+    $sr_resource_id = intval($_POST['resource_id'] ?? 0);
+
+    $sr_chk = $conn->prepare("SELECT a.status, a.appointment_date, a.duration_minutes, s.session_time FROM appointments a JOIN services s ON s.id = a.service_id WHERE a.id = ?");
+    $sr_chk->bind_param("i", $sr_appt_id); $sr_chk->execute();
+    $sr_row = $sr_chk->get_result()->fetch_assoc(); $sr_chk->close();
+
+    if (!$sr_row || in_array($sr_row['status'], ['declined', 'cancelled'])) {
+        echo json_encode(['success' => false, 'message' => 'Appointment not found or no longer active.']);
+        exit();
+    }
+
+    if ($sr_resource_id > 0) {
+        $sr_duration = (int)($sr_row['duration_minutes'] ?: $sr_row['session_time'] ?: 60);
+        if (!is_resource_available($sr_resource_id, $sr_row['appointment_date'], $sr_duration, $sr_appt_id)) {
+            echo json_encode(['success' => false, 'message' => 'That resource is no longer available for this time — please pick another.']);
+            exit();
+        }
+        $sr_upd = $conn->prepare("UPDATE appointments SET resource_id = ? WHERE id = ?");
+        $sr_upd->bind_param("ii", $sr_resource_id, $sr_appt_id);
+    } else {
+        $sr_upd = $conn->prepare("UPDATE appointments SET resource_id = NULL WHERE id = ?");
+        $sr_upd->bind_param("i", $sr_appt_id);
+    }
+    $sr_upd->execute(); $sr_upd->close();
+
+    log_activity($conn, 'appointment_resource_assigned',
+        $sr_resource_id > 0
+            ? "Assigned resource #{$sr_resource_id} to appointment #{$sr_appt_id}"
+            : "Cleared resource assignment for appointment #{$sr_appt_id}",
+        'appointment', $sr_appt_id);
+
+    echo json_encode(['success' => true, 'message' => $sr_resource_id > 0 ? '✅ Resource assigned.' : '✅ Resource cleared.']);
+    exit();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIONS — approve / decline / complete
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1273,6 +1313,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $ci_stmt->bind_param("isi", $ci_by, $ci_name, $appt_id);
                 $ci_stmt->execute(); $ci_stmt->close();
 
+                // Session Package: checking in the appointment itself also checks in
+                // Session 1 — its own separate Check In control is hidden in the UI
+                // (render_card) since this makes it redundant. No-op for appointments
+                // with no session package rows.
+                $ci_s1 = $conn->prepare("UPDATE appointment_sessions SET status='checked_in', checked_in_at=NOW() WHERE appointment_id=? AND session_number=1 AND status='scheduled'");
+                $ci_s1->bind_param("i", $appt_id); $ci_s1->execute(); $ci_s1->close();
+
                 $conn->commit();
             } catch (Throwable $e) {
                 $conn->rollback();
@@ -1563,7 +1610,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                             $reg_q->bind_param("i", $svc_id); $reg_q->execute();
                             $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
                             $bdisc_frac = (isset($sv_orig) && $sv_orig > 0) ? (($sv_bdisc ?? 0.0) / $sv_orig) : 0.0;
-                            $commission_amt = round($reg_price * (1 - $bdisc_frac) * $ph * floatval($cm_row['commission_percent']) / 100, 2);
+                            $comm_base  = get_commission_base_price((int)$svc_id, $appt['service_duration_id'] ?? null, $reg_price);
+                            $commission_amt = round($comm_base * (1 - $bdisc_frac) * $ph * floatval($cm_row['commission_percent']) / 100, 2);
                         }
                     }
                 }
@@ -2078,7 +2126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
 
     $cs_s = $conn->prepare("
         SELECT aps.id, aps.session_number, aps.status, aps.therapist_id,
-               a.id AS appt_id, a.charged_price, a.service_id, a.rate_type,
+               a.id AS appt_id, a.charged_price, a.service_id, a.rate_type, a.service_duration_id,
                COALESCE(o.customer_name, u.full_name) AS customer_name,
                s.name AS service_name, sd.duration_minutes AS sd_duration, sd.session_count
         FROM appointment_sessions aps
@@ -2117,9 +2165,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
             $cm->bind_param("ii", $cs_tid, $cs_row['service_id']); $cm->execute();
             $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
             if ($cm_row) {
+                // service_durations.promo_price for a session_count>1 row is the whole
+                // package's promo total, same basis as charged_price -- divide by
+                // session_count the same way $session_price does, so the two stay comparable.
+                $comm_base_total = get_commission_base_price((int)$cs_row['service_id'], $cs_row['service_duration_id'] ?? null, floatval($cs_row['charged_price']));
+                $comm_session_price = round($comm_base_total / $session_count_total, 2);
                 $commission_amt = ($cs_row['rate_type'] === 'influencer')
                     ? floatval($cm_row['influencer_flat_rate'])
-                    : round($session_price * floatval($cm_row['commission_percent']) / 100, 2);
+                    : round($comm_session_price * floatval($cm_row['commission_percent']) / 100, 2);
             }
         }
 
@@ -2352,6 +2405,12 @@ foreach ($appointments as &$_appt_ref) {
 }
 unset($_appt_ref);
 
+// ── Resource (Room/Chair/Head Spa) display map — id => ['name'=>, 'type'=>] ────
+$resource_map = [];
+$_res_rows = $conn->query("SELECT id, name, type FROM service_resources");
+if ($_res_rows) { while ($_rr = $_res_rows->fetch_assoc()) { $resource_map[(int)$_rr['id']] = $_rr; } }
+$resource_type_icons = ['room' => '🚪', 'chair' => '💺', 'head_spa' => '🧖'];
+
 // Stats — global (non-date-filtered) counts, resolved through the SAME
 // effective_status rule as the Kanban board so tab badges never diverge from
 // what's actually displayed there. One query + in-PHP counting, replacing the
@@ -2532,7 +2591,7 @@ $history_rows  = array_values(array_filter($appointments, fn($a) => in_array($a[
 $_slotting_walkin_customer_id = get_walkin_customer_id();
 
 // ── Card renderer closure ─────────────────────────────────────────────────────
-$render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_cat, $get_qualified, $filter, $conflict_appt_ids, $_slotting_walkin_customer_id): void {
+$render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_cat, $get_qualified, $filter, $conflict_appt_ids, $_slotting_walkin_customer_id, $resource_map, $resource_type_icons): void {
     $status  = $a['status'];
     $people  = max(1,intval($a['people_count']));
     $appt_id = $a['id'];
@@ -3136,8 +3195,10 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php echo $_ps['session_date'] ? date('M j, Y g:i A', strtotime($_ps['session_date'])) : '—'; ?>
                     <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php else: ?> · <span style="font-style:italic;">Unassigned therapist</span><?php endif; ?>
                 </div>
-                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                    <?php if ($_pkg_can_checkin): ?>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+                    <?php if ($_pi === 0): ?>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">✅ Checked in together with the appointment — use the main Check In button below.</span>
+                    <?php elseif ($_pkg_can_checkin): ?>
                     <form method="POST" style="margin:0;">
                         <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="checkin_session">
@@ -3683,6 +3744,18 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </button>
         </form>
         <?php endif; ?>
+        <?php endif; ?>
+
+        <?php if (in_array($status, ['pending','assigned','approved'])):
+            $_ra_duration  = (int)($a['duration_minutes'] ?: $a['session_time'] ?: 60);
+            $_ra_suggested = suggest_resource_type_for_service((int)$a['service_id']);
+            $_ra_res       = !empty($a['resource_id']) ? ($resource_map[(int)$a['resource_id']] ?? null) : null;
+            $_ra_label     = $_ra_res ? trim(($resource_type_icons[$_ra_res['type']] ?? '') . ' ' . $_ra_res['name']) : '';
+        ?>
+        <button type="button" class="btn btn-secondary btn-sm"
+                onclick="openResourceAssignModal(<?php echo $appt_id; ?>, '<?php echo $a['appointment_date']; ?>', <?php echo $_ra_duration; ?>, '<?php echo $_ra_suggested; ?>', '<?php echo htmlspecialchars(addslashes($_ra_label), ENT_QUOTES, 'UTF-8'); ?>')">
+            <?php echo $_ra_label ? '🛎️ ' . htmlspecialchars($_ra_label) : '🛎️ Assign Room/Chair/HS'; ?>
+        </button>
         <?php endif; ?>
     </div>
 
@@ -5720,6 +5793,46 @@ function closeEditModal() {
     document.getElementById('editModal').style.display = 'none';
 }
 
+// ── Assign Resource (Room / Chair / Head Spa) modal ───────────────────────────
+var _resAssignApptId = 0;
+function openResourceAssignModal(apptId, dateTime, durationMinutes, suggestedType, currentLabel) {
+    _resAssignApptId = apptId;
+    document.getElementById('resAssignCurrent').textContent = currentLabel
+        ? ('Currently: ' + currentLabel)
+        : 'No resource assigned yet.';
+    document.getElementById('resAssignError').style.display = 'none';
+    rpInit('resAssign', suggestedType, apptId);
+    rpSetWindow('resAssign', dateTime, durationMinutes);
+    document.getElementById('resAssignModal').style.display = 'flex';
+}
+function closeResAssignModal() {
+    document.getElementById('resAssignModal').style.display = 'none';
+}
+function submitResourceAssign() {
+    var resourceId = rpGetSelected('resAssign') || 0;
+    var fd = new FormData();
+    fd.append('action',      'set_resource');
+    fd.append('appt_id',     _resAssignApptId);
+    fd.append('resource_id', resourceId);
+    fd.append('csrf_token',  document.querySelector('input[name="csrf_token"]').value);
+    fetch(window.location.pathname + window.location.search, { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                var errEl = document.getElementById('resAssignError');
+                errEl.textContent = '⚠️ ' + (data.message || 'Could not save resource assignment.');
+                errEl.style.display = 'block';
+            }
+        })
+        .catch(() => {
+            var errEl = document.getElementById('resAssignError');
+            errEl.textContent = '⚠️ Could not save resource assignment. Please try again.';
+            errEl.style.display = 'block';
+        });
+}
+
 function removeEditExtraService(btnEl, extraId, apptId) {
     if (!confirm('Sigurado ka bang tatanggalin ito?')) return;
     var fd = new FormData();
@@ -5882,6 +5995,23 @@ function loadAddSvcSlots() {
         });
 }
 </script>
+
+<!-- ── ASSIGN RESOURCE MODAL (Room / Chair / Head Spa) ────────────────────── -->
+<div id="resAssignModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem;">
+    <div style="background:var(--bg2);border-radius:16px;padding:1.5rem;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+            <span style="font-weight:800;font-size:1rem;color:var(--brown);">🛎️ Assign Room / Chair / Head Spa</span>
+            <button onclick="closeResAssignModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);">✕</button>
+        </div>
+        <div id="resAssignCurrent" style="font-size:0.78rem;color:var(--gray);margin-bottom:0.85rem;"></div>
+        <?php $rp_prefix = 'resAssign'; $rp_field_name = 'resAssignResourceId'; $rp_required = false; include __DIR__ . '/_resource_picker.php'; ?>
+        <div id="resAssignError" style="display:none;font-size:0.78rem;color:var(--rust);margin-top:0.6rem;"></div>
+        <div style="display:flex;gap:0.75rem;margin-top:1.25rem;">
+            <button type="button" class="btn btn-primary" onclick="submitResourceAssign()" style="flex:1;">💾 Save</button>
+            <button type="button" class="btn btn-secondary" onclick="closeResAssignModal()">Cancel</button>
+        </div>
+    </div>
+</div>
 
 <!-- ── EDIT APPOINTMENT MODAL ─────────────────────────────────────────────── -->
 <?php $all_therapists_modal = $conn->query("SELECT id, full_name FROM therapists ORDER BY full_name ASC")->fetch_all(MYSQLI_ASSOC); ?>

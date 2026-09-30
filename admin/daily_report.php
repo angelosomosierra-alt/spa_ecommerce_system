@@ -471,7 +471,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             a.appointment_date,
             a.duration_minutes,
             a.charged_price,
-            a.therapist_id            AS appt_therapist_id,
+            -- appointments.therapist_id is a dead legacy column no other part of
+            -- the system writes to anymore (real assignment lives in
+            -- appointment_therapists, the junction table joined below via at2).
+            -- Reading the old column here caused the commission-percent lookup
+            -- to miss for every appointment and silently fall back to the 30%
+            -- bucket, even though the peso amount itself (summed from at2 below)
+            -- was already correct.
+            MIN(at2.therapist_id)     AS appt_therapist_id,
             o.customer_name,
             o.slip_number,
             o.payment_method,

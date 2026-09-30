@@ -250,7 +250,8 @@ try {
                     $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                 } else {
                     $disc_frac  = ($total_amount > 0) ? ($discount_amount_calc / $total_amount) : 0.0;
-                    $commission = round($regular_price * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                    $comm_base  = get_commission_base_price($item_id, null, $regular_price);
+                    $commission = round($comm_base * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                 }
             }
             $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");

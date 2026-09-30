@@ -171,7 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
     $voucher_value  = floatval($_POST['voucher_amount'] ?? 0);
 
     $online_methods = ['gcash', 'maya', 'card', 'qrph'];
-    if (empty($customer_name) || empty($phone) || empty($item_id)) {
+    if (empty($customer_name) || empty($item_id)) {
         $walkin_message = "Please fill in all required fields and select an item.";
         $walkin_type    = "danger";
     } elseif (!ONLINE_PAYMENT_ENABLED && in_array($payment_method, $online_methods)) {
@@ -256,7 +256,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
 
             if ($item) {
                 $item_name_html = htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8');
-                $is_two_session_booking = !empty($item['is_two_session']) && $booking_date_2 !== '';
+                // Booking Mode (session_group_id) creation retired — Choose Duration's
+                // session_count is now the only way to book multi-session. Existing
+                // session_group_id appointments from before this change are untouched
+                // and continue to display/report/complete exactly as before.
+                $is_two_session_booking = false;
                 if ($is_two_session_booking) {
                     $rate_type = 'regular'; // 2-session package price is fixed — never rate-adjusted, regardless of what the client sent
                 }
@@ -589,7 +593,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                                     $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                                 } else {
                                     $disc_frac  = ($total_amount > 0) ? ($discount_amount_calc / $total_amount) : 0.0;
-                                    $commission = round($commission_base_price * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                                    $comm_base  = get_commission_base_price($item_id, $selected_duration['id'] ?? null, $commission_base_price);
+                                    $commission = round($comm_base * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
                                 }
                             }
                         }
@@ -841,8 +846,8 @@ require_once 'admin_header.php';
                                 <input type="text" name="customer_name" placeholder="Enter full name" required>
                             </div>
                             <div class="form-group">
-                                <label>Phone Number <span class="required">*</span></label>
-                                <input type="tel" name="phone" placeholder="09XXXXXXXXX" required>
+                                <label>Phone Number</label>
+                                <input type="tel" name="phone" placeholder="09XXXXXXXXX">
                             </div>
                         </div>
                         <div class="form-group" style="margin-top:0.5rem;">
@@ -1198,7 +1203,7 @@ require_once 'admin_header.php';
                     <div class="form-section-body">
                         <div class="form-grid-2">
                             <div class="form-group"><label>Full Name <span class="required">*</span></label><input type="text" name="customer_name" placeholder="Enter full name" required></div>
-                            <div class="form-group"><label>Phone Number <span class="required">*</span></label><input type="tel" name="phone" placeholder="09XXXXXXXXX" required></div>
+                            <div class="form-group"><label>Phone Number</label><input type="tel" name="phone" placeholder="09XXXXXXXXX"></div>
                         </div>
                         <div class="form-group" style="margin-top:0.5rem;">
                             <label>Service Slip No.</label>
@@ -1519,7 +1524,9 @@ function selectWalkinTherapist(id) {
 }
 
 function isTwoSessionCapable(svc) {
-    return !!(svc && parseInt(svc.is_two_session) === 1);
+    // Booking Mode (session_group_id) retired — Choose Duration's session_count
+    // is now the only multi-session path. Keeps this UI permanently hidden.
+    return false;
 }
 
 // ── Duration Variants ─────────────────────────────────────────────────────
@@ -1949,7 +1956,7 @@ function openPaymongoPopup(formType, method) {
     if (!itemId) { uiAlert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
     const name  = form.querySelector('[name="customer_name"]')?.value?.trim();
     const phone = form.querySelector('[name="phone"]')?.value?.trim();
-    if (!name || !phone) { uiAlert('Please fill in customer name and phone number first.'); return; }
+    if (!name) { uiAlert('Please fill in customer name first.'); return; }
     if (formType === 'service') {
         if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
         if (isTwoSessionModeActive() && !form.querySelector('[name="booking_date_2"]')?.value) { uiAlert("Please select Session 2's booking date first."); return; }
@@ -2782,8 +2789,7 @@ function openQrphFlow(formType) {
     var itemId = form.querySelector('[name="item_id"]')?.value;
     if (!itemId) { uiAlert('Please select a ' + (formType === 'service' ? 'service' : 'product') + ' first.'); return; }
     var name  = (form.querySelector('[name="customer_name"]')?.value || '').trim();
-    var phone = (form.querySelector('[name="phone"]')?.value || '').trim();
-    if (!name || !phone) { uiAlert('Please fill in customer name and phone number first.'); return; }
+    if (!name) { uiAlert('Please fill in customer name first.'); return; }
     if (formType === 'service') {
         if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
         if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }

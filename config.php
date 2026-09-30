@@ -440,6 +440,36 @@ function suggest_resource_type_for_service(int $service_id): string {
     return 'room';
 }
 
+/**
+ * Commission is always calculated off a service's promo price whenever one
+ * is defined for it (service_durations.promo_price > 0) -- regardless of
+ * whether that promo is currently scheduled/active, and regardless of what
+ * the customer was actually charged. Services with no promo price set keep
+ * computing commission on $fallback_price exactly as before (today's active/
+ * regular price), so this only changes behavior for services that actually
+ * have a promo defined.
+ *
+ * $service_duration_id: the specific duration/session-count row actually
+ * booked, when known (appointments.service_duration_id). When null (booking
+ * paths that don't track a specific duration selection), falls back to the
+ * service's first/default service_durations row, matching the same
+ * fallback convention used at booking time.
+ */
+function get_commission_base_price(int $service_id, ?int $service_duration_id, float $fallback_price): float {
+    global $conn;
+    if ($service_duration_id) {
+        $stmt = $conn->prepare("SELECT promo_price FROM service_durations WHERE id = ? LIMIT 1");
+        $stmt->bind_param("i", $service_duration_id);
+    } else {
+        $stmt = $conn->prepare("SELECT promo_price FROM service_durations WHERE service_id = ? ORDER BY duration_minutes, session_count LIMIT 1");
+        $stmt->bind_param("i", $service_id);
+    }
+    $stmt->execute();
+    $promo = floatval($stmt->get_result()->fetch_assoc()['promo_price'] ?? 0);
+    $stmt->close();
+    return $promo > 0 ? $promo : $fallback_price;
+}
+
 // Walk-in-sourced appointments are attributed to this account (see admin/walkin.php);
 // online-sourced ones use the real customer's own user_id from user/checkout.php.
 // Slotting and Rotation's approval flow (admin/appointments.php) uses this to tell
