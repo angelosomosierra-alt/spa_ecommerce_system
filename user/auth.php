@@ -32,7 +32,7 @@ if (isset($_GET['logout'])) {
 }
 
 if (isset($_SESSION['user_id'])) {
-    header($_SESSION['role'] === 'admin' ? "Location: ../admin/index.php" : "Location: ../user/index.php");
+    header($_SESSION['role'] === 'admin' ? "Location: ../admin/index.php" : "Location: ../index.php");
     exit();
 }
 
@@ -311,7 +311,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                 $_SESSION['username']  = $user['username'];
                 $_SESSION['full_name'] = $user['full_name'];
                 $_SESSION['cart']      = load_cart_from_db($conn, $user['id']);
-                header("Location: ../user/index.php");
+                header("Location: ../index.php");
                 exit();
             }
         } else {

@@ -560,7 +560,7 @@ function redirect_if_not_user(): void {
 
 function redirect_if_logged_in(): void {
     if (is_logged_in()) {
-        header('Location: ' . BASE_URL . (is_admin() ? 'admin/index.php' : 'user/index.php'));
+        header('Location: ' . BASE_URL . (is_admin() ? 'admin/index.php' : 'index.php'));
         exit();
     }
 }
