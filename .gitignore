@@ -31,3 +31,12 @@ admin/walkin_payment_debug.php
 *~
 .DS_Store
 Thumbs.db
+
+# User-uploaded images — these live on the server's persistent filesystem
+# (symlinked from uploads/services and uploads/products to a folder outside
+# public_html, so deploys can never touch them), not in git. Committing them
+# caused the opposite problem: images uploaded live through the admin panel
+# were never in git, and a deploy appeared to reset the folder back to
+# whatever WAS committed, silently erasing them.
+/uploads/services/
+/uploads/products/
