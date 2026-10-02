@@ -1475,6 +1475,14 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
        beside it — this is what looked like "a floating card overlapping
        the sidebar and content" (bug 5). min-width:0 lets the track win. */
     min-width: 0;
+    /* position:sticky combined with overflow-y:auto on the same element is a
+       known Chrome repaint trigger — scrolling this box could leave a stale
+       "ghost" frame of the previous scroll position painted behind the new
+       one, making long multi-line category labels appear to overlap their
+       neighbors. Forcing this element onto its own GPU compositing layer
+       makes Chrome repaint it cleanly on every scroll frame instead. */
+    transform: translateZ(0);
+    will-change: transform;
 }
 @media (max-width: 860px) {
     .kiosk-sidebar {
