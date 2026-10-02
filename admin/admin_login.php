@@ -17,7 +17,7 @@ if (isset($_GET['logout'])) {
 
 // Already logged in — send to the right place
 if (isset($_SESSION['user_id'])) {
-    header($_SESSION['role'] === 'admin' ? 'Location: index.php' : 'Location: ../user/index.php');
+    header($_SESSION['role'] === 'admin' ? 'Location: index.php' : 'Location: ../index.php');
     exit();
 }
 
@@ -168,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
 <div class="auth-wrap">
 <div class="auth-card">
     <div class="auth-header">
-        <div style="font-size:1.8rem;margin-bottom:0.5rem;">🔐</div>
+        <div style="font-size:1.8rem;margin-bottom:0.5rem;"></div>
         <h1>RECOVERY ILOILO</h1>
         <p>Staff &amp; Admin Portal</p>
     </div>
