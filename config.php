@@ -706,3 +706,112 @@ function save_cart_to_db($conn, int $user_id, array $cart): void {
         error_log('[CART] save_cart_to_db failed: ' . $e->getMessage());
     }
 }
+
+// ─── CUSTOMER STOREFRONT HELPERS ──────────────────────────────────────────────
+// Used by index.php, services.php, products.php and footer.php. These were
+// called by the storefront redesign but never actually defined anywhere in the
+// codebase — any page calling get_best_selling_services()/get_best_selling_products()
+// (index.php) fatal-errored immediately (before any HTML output, since the calls
+// run at the top of the file), and any page including footer.php
+// (get_customer_categories_with_counts()) fatal-errored once execution reached
+// the footer at the bottom of the page.
+
+function get_best_selling_services($conn, int $limit = 10, int $days = 90): array {
+    $stmt = $conn->prepare("
+        SELECT s.id, s.name, s.price, s.image, s.category_id, c.name AS category_name,
+               COUNT(*) AS sold_count
+        FROM appointments a
+        JOIN services s   ON s.id = a.service_id
+        LEFT JOIN categories c ON c.id = s.category_id
+        WHERE s.deleted_at IS NULL
+          AND a.status NOT IN ('cancelled', 'declined')
+          AND a.appointment_date >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        GROUP BY s.id, s.name, s.price, s.image, s.category_id, c.name
+        ORDER BY sold_count DESC, s.name ASC
+        LIMIT ?
+    ");
+    $stmt->bind_param("ii", $days, $limit);
+    $stmt->execute();
+    $rows = [];
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) $rows[] = $row;
+    $stmt->close();
+
+    // Fall back to any active services (newest first) if nothing sold yet in
+    // the window — an empty "Best Sellers" carousel on a quiet/new store would
+    // otherwise just render nothing.
+    if (empty($rows)) {
+        $res = $conn->query("
+            SELECT s.id, s.name, s.price, s.image, s.category_id, c.name AS category_name
+            FROM services s
+            LEFT JOIN categories c ON c.id = s.category_id
+            WHERE s.deleted_at IS NULL
+            ORDER BY s.id DESC
+            LIMIT " . (int)$limit
+        );
+        while ($row = $res->fetch_assoc()) $rows[] = $row;
+    }
+    return $rows;
+}
+
+function get_best_selling_products($conn, int $limit = 10, int $days = 90): array {
+    $stmt = $conn->prepare("
+        SELECT p.id, p.name, p.price, p.image, p.stock, p.category_id, c.name AS category_name,
+               COALESCE(SUM(oi.quantity), 0) AS sold_count
+        FROM order_items oi
+        JOIN orders o     ON o.id = oi.order_id
+        JOIN products p   ON p.id = oi.product_id
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.deleted_at IS NULL
+          AND oi.product_id IS NOT NULL
+          AND o.payment_status = 'paid'
+          AND o.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        GROUP BY p.id, p.name, p.price, p.image, p.stock, p.category_id, c.name
+        ORDER BY sold_count DESC, p.name ASC
+        LIMIT ?
+    ");
+    $stmt->bind_param("ii", $days, $limit);
+    $stmt->execute();
+    $rows = [];
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) $rows[] = $row;
+    $stmt->close();
+
+    if (empty($rows)) {
+        $res = $conn->query("
+            SELECT p.id, p.name, p.price, p.image, p.stock, p.category_id, c.name AS category_name
+            FROM products p
+            LEFT JOIN categories c ON c.id = p.category_id
+            WHERE p.deleted_at IS NULL
+            ORDER BY p.id DESC
+            LIMIT " . (int)$limit
+        );
+        while ($row = $res->fetch_assoc()) $rows[] = $row;
+    }
+    return $rows;
+}
+
+function get_customer_categories_with_counts($conn, string $type): array {
+    $table = $type === 'product' ? 'products' : 'services';
+    $stmt = $conn->prepare("
+        SELECT c.id, c.name,
+               COUNT(i.id) AS item_count,
+               (SELECT i2.image FROM {$table} i2
+                WHERE i2.category_id = c.id AND i2.deleted_at IS NULL
+                  AND i2.image IS NOT NULL AND i2.image <> ''
+                ORDER BY i2.id LIMIT 1) AS sample_image
+        FROM categories c
+        LEFT JOIN {$table} i ON i.category_id = c.id AND i.deleted_at IS NULL
+        WHERE c.type = ?
+        GROUP BY c.id, c.name
+        HAVING item_count > 0
+        ORDER BY c.name ASC
+    ");
+    $stmt->bind_param("s", $type);
+    $stmt->execute();
+    $rows = [];
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) $rows[] = $row;
+    $stmt->close();
+    return $rows;
+}
