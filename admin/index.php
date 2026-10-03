@@ -720,10 +720,10 @@ require_once 'admin_header.php';
         </div>
         <div class="modal-box-body" style="padding:0;">
             <div class="qb-steps">
-                <span class="qb-step" data-step="1">1. Service</span>
-                <span class="qb-step" data-step="2">2. Time, Therapist &amp; Room</span>
-                <span class="qb-step" data-step="3">3. Customer</span>
-                <span class="qb-step" data-step="4">4. Payment</span>
+                <span class="qb-step" data-step="1" onclick="qbStepClick(1)">1. Service</span>
+                <span class="qb-step" data-step="2" onclick="qbStepClick(2)">2. Time, Therapist &amp; Room</span>
+                <span class="qb-step" data-step="3" onclick="qbStepClick(3)">3. Customer</span>
+                <span class="qb-step" data-step="4" onclick="qbStepClick(4)">4. Payment</span>
             </div>
 
             <div class="qb-panel" id="qbPanel1">
@@ -901,6 +901,7 @@ var QB_PAYMENT_METHODS = <?php
 ?>;
 var qbState = {};
 var qbStep  = 1;
+var qbMaxStepReached = 1;
 
 function openQuickBook(prefillDate) {
     qbState = {
@@ -936,6 +937,7 @@ function openQuickBook(prefillDate) {
     var confirmBtn = document.getElementById('qbConfirmBtn');
     confirmBtn.disabled = false;
     confirmBtn.textContent = 'Book Walk-In';
+    qbMaxStepReached = 1;
     qbGotoStep(1);
     document.getElementById('quickBookModal').classList.add('active');
 }
@@ -944,11 +946,13 @@ function closeQuickBook() { document.getElementById('quickBookModal').classList.
 
 function qbGotoStep(n) {
     qbStep = n;
+    if (n > qbMaxStepReached) qbMaxStepReached = n;
     for (var i = 1; i <= 4; i++) {
         document.getElementById('qbPanel' + i).style.display = (i === n) ? '' : 'none';
         var stepEl = document.querySelector('.qb-step[data-step="' + i + '"]');
         stepEl.classList.toggle('active', i === n);
         stepEl.classList.toggle('done', i < n);
+        stepEl.classList.toggle('reachable', i <= qbMaxStepReached && i !== n);
     }
     document.getElementById('qbBackBtn').style.display    = (n === 1) ? 'none' : '';
     document.getElementById('qbNextBtn').style.display    = (n === 4) ? 'none' : '';
@@ -958,6 +962,13 @@ function qbGotoStep(n) {
         document.getElementById('qbBookingDateLabel').textContent =
             'Booking for ' + dt.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
     }
+    var scrollBody = document.querySelector('#quickBookModal .modal-box-body');
+    if (scrollBody) scrollBody.scrollTop = 0;
+}
+
+function qbStepClick(n) {
+    if (n === qbStep || n > qbMaxStepReached) return;
+    qbGotoStep(n);
 }
 
 function qbBack() { if (qbStep > 1) qbGotoStep(qbStep - 1); }
@@ -1224,13 +1235,25 @@ function qbSubmit() {
 .badge-assigned { background:#cfe2ff; color:#084298; }
 
 /* ── Quick Book modal ───────────────────────────────────────────────── */
-.qb-steps { display:flex; border-bottom:1px solid var(--border); background:var(--bg3); }
+#quickBookModal .modal-box, #apptCalendarModal .modal-box {
+    max-height:90vh; display:flex; flex-direction:column;
+}
+#quickBookModal .modal-box-body, #apptCalendarModal .modal-box-body {
+    flex:1; overflow-y:auto;
+}
+.qb-steps {
+    display:flex; height:52px; border-bottom:1px solid var(--border); background:var(--bg3);
+    position:sticky; top:0; z-index:5;
+}
 .qb-step {
-    flex:1; text-align:center; padding:1rem 0.5rem; font-size:0.85rem; font-weight:600;
-    color:var(--gray); border-bottom:3px solid transparent;
+    flex:1; display:flex; align-items:center; justify-content:center; text-align:center;
+    padding:0 0.5rem; font-size:0.85rem; font-weight:600;
+    color:var(--gray); border-bottom:3px solid transparent; cursor:default;
 }
 .qb-step.active { color:var(--brown); border-bottom-color:#C96A2C; }
 .qb-step.done { color:var(--brown); }
+.qb-step.reachable { cursor:pointer; }
+.qb-step.reachable:hover { background:rgba(201,106,44,0.08); }
 .qb-panel { padding:1.75rem; min-height:420px; }
 .qb-field-row { display:flex; gap:1.5rem; flex-wrap:wrap; }
 .qb-field { flex:1; min-width:220px; }
@@ -1270,14 +1293,14 @@ function qbSubmit() {
 .qb-sub-box { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:0.75rem; }
 .qb-notice { margin-top:0.6rem; padding:0.7rem 1rem; background:#fff8f2; border-left:3px solid #C96A2C; border-radius:6px; font-size:0.85rem; color:#92400e; }
 
-.qb-svc-layout { display:grid; grid-template-columns:220px 1fr; gap:0; min-height:420px; max-height:60vh; }
-.qb-svc-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--border); overflow-y:auto; }
+.qb-svc-layout { display:grid; grid-template-columns:220px 1fr; gap:0; align-items:start; }
+.qb-svc-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--border); position:sticky; top:52px; background:#fff; }
 .qb-svc-cat-btn {
     padding:0.9rem 1.25rem; font-weight:600; color:var(--brown); text-decoration:none;
     border-bottom:1px solid var(--border); border-left:3px solid transparent;
 }
 .qb-svc-cat-btn:hover { background:var(--bg3); }
-.qb-svc-content { overflow-y:auto; padding:0 1.5rem; }
+.qb-svc-content { padding:0 1.5rem; }
 .qb-svc-cat-title { font-size:1rem; font-weight:700; color:var(--brown); margin:1.25rem 0 0.5rem; }
 .qb-svc-row {
     display:flex; align-items:center; gap:1rem; padding:0.9rem 0.75rem; border-radius:10px;
@@ -1302,7 +1325,8 @@ function qbSubmit() {
 .qb-pay-btn.selected { background:#C96A2C; color:#fff; border-color:#C96A2C; }
 .qb-error { margin-top:1rem; padding:0.85rem 1rem; background:#f8d7da; color:#842029; border-radius:10px; font-size:0.9rem; }
 @media (max-width:640px) {
-    .qb-svc-layout { grid-template-columns:1fr; max-height:none; }
+    .qb-svc-layout { grid-template-columns:1fr; }
+    .qb-svc-sidebar { position:static; }
     .qb-svc-sidebar { flex-direction:row; flex-wrap:wrap; overflow-x:auto; }
     .qb-pay-grid { grid-template-columns:repeat(2,1fr); }
     .qb-rate-grid { grid-template-columns:repeat(2,1fr); }
