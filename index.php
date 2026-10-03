@@ -318,9 +318,7 @@ require_once 'header.php';
     background: linear-gradient(to right, transparent, var(--gold) 50%, transparent);
 }
 .theme-divider::after { background: linear-gradient(to left, transparent, var(--gold) 50%, transparent); }
-.theme-divider-mark {
-    flex-shrink: 0; color: var(--gold-dark); font-size: 1.1rem; line-height: 1;
-}
+.theme-divider-mark { display: none; }
 </style>
 
 <section class="hero" id="index">

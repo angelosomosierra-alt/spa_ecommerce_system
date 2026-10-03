@@ -42,7 +42,10 @@
     box-sizing: border-box;
 }
 
-html { scroll-behavior: smooth; }
+/* Accessibility base: 18px instead of the browser default 16px — applies
+   site-wide (main pages and customer account pages alike) via rem units,
+   not just the pages that happened to set it locally before. */
+html { scroll-behavior: smooth; font-size: 18px; }
 
 body {
     font-family: 'DM Sans', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;

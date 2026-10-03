@@ -98,11 +98,8 @@ if (isset($_SESSION['user_id'])) {
     @media (max-width: 960px) { .header-search { max-width: 200px; } }
     @media (max-width: 768px) { .header-search { max-width: 150px; } }
     @media (max-width: 480px) { .header-search { display: none; } }
-    /* ── Accessibility base: scoped to index.php/services.php/products.php
-       only (this header), not the whole site — user/header.php's pages
-       (cart, checkout, profile, appointments) are untouched by this
-       redesign and must keep their own tuned sizing. ─────────────────── */
-    html { font-size: 18px; } /* base 18px, not 14-16px — larger throughout via rem */
+    /* Accessibility base (18px html font-size) now lives in assets/style.css
+       and applies site-wide, including user/header.php's account pages. */
     body { line-height: 1.6; font-weight: 400; }
     h1, h2, h3, h4 { line-height: 1.25; }
     p, li, label, td, th { font-weight: 400; }
