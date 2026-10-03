@@ -323,7 +323,7 @@ require_once 'header.php';
 
 <section class="hero" id="index">
     <p class="hero-eyebrow">Welcome to RECOVERY ILOILO</p>
-    <h1>Massage <em>Therapy</em><br>Pamper</h1>
+    <h1>Skin <em>and</em> Wellness</h1>
     <p>Experience the ultimate spa and wellness journey — where every treatment is a ritual of renewal.</p>
     <div class="hero-ctas">
         <a href="<?php echo BASE_URL; ?>services.php" class="hero-btn-primary">Book a Service</a>
