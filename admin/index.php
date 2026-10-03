@@ -345,11 +345,80 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
     </div>
     <?php if ($is_future_or_today): ?>
     <div class="appt-cal-day-booknow">
-        <button type="button" class="btn btn-primary btn-full" style="font-size:1.1rem;padding:1.1rem 1.5rem;">Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
+        <button type="button" class="btn btn-primary btn-full" style="font-size:1.1rem;padding:1.1rem 1.5rem;" onclick="openQuickBook('<?php echo $date_str; ?>')">Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
     </div>
     <?php endif; ?>
     <?php
     return ob_get_clean();
+}
+
+// ── Quick Book: compact walk-in booking (date/time -> service -> therapist &
+// room -> payment), no slot-conflict checking — the receptionist has already
+// confirmed availability via the calendar/resource grid before opening this. ─
+function render_quick_book_services_html(mysqli $conn): string {
+    $services = $conn->query("SELECT s.*, c.name AS category_name FROM services s LEFT JOIN categories c ON s.category_id = c.id WHERE s.deleted_at IS NULL ORDER BY c.name, s.name")->fetch_all(MYSQLI_ASSOC);
+
+    $by_cat = [];
+    foreach ($services as $svc) {
+        $key = $svc['category_id'] ? (int)$svc['category_id'] : 0;
+        if (!isset($by_cat[$key])) $by_cat[$key] = ['label' => $svc['category_name'] ?: 'Other', 'items' => []];
+        $by_cat[$key]['items'][] = $svc;
+    }
+
+    ob_start();
+    ?>
+    <div class="qb-svc-layout">
+        <nav class="qb-svc-sidebar">
+            <?php foreach ($by_cat as $cat_id => $cat_data): ?>
+            <a href="#qb-cat-<?php echo $cat_id; ?>" class="qb-svc-cat-btn" data-cat-id="<?php echo $cat_id; ?>"><?php echo htmlspecialchars($cat_data['label']); ?></a>
+            <?php endforeach; ?>
+        </nav>
+        <div class="qb-svc-content">
+            <?php if (empty($by_cat)): ?>
+            <div style="color:var(--gray);text-align:center;padding:2rem;">No services available.</div>
+            <?php endif; ?>
+            <?php foreach ($by_cat as $cat_id => $cat_data): ?>
+            <section id="qb-cat-<?php echo $cat_id; ?>" data-cat-section="<?php echo $cat_id; ?>">
+                <h4 class="qb-svc-cat-title"><?php echo htmlspecialchars($cat_data['label']); ?></h4>
+                <?php foreach ($cat_data['items'] as $svc): ?>
+                <div class="qb-svc-row" data-service-id="<?php echo $svc['id']; ?>"
+                     data-service-name="<?php echo htmlspecialchars($svc['name'], ENT_QUOTES, 'UTF-8'); ?>"
+                     data-price="<?php echo (float)$svc['price']; ?>"
+                     data-minutes="<?php echo (int)$svc['session_time']; ?>"
+                     onclick="qbSelectService(this)">
+                    <span class="qb-svc-row-name"><?php echo htmlspecialchars($svc['name']); ?></span>
+                    <span class="qb-svc-row-meta"><?php echo (int)$svc['session_time']; ?> min</span>
+                    <span class="qb-svc-row-price">₱<?php echo number_format($svc['price'], 2); ?></span>
+                </div>
+                <?php endforeach; ?>
+            </section>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+function quick_book_qualified_therapists(mysqli $conn, int $service_id): array {
+    $stmt = $conn->prepare("
+        SELECT t.id, t.full_name,
+               CASE WHEN ta.therapist_id IS NOT NULL AND (ta.time_out IS NULL OR ta.time_out = '') THEN 1 ELSE 0 END AS on_duty
+        FROM therapists t
+        LEFT JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE()
+        WHERE t.is_generalist = 1
+           OR EXISTS(SELECT 1 FROM therapist_specialty_services WHERE therapist_id = t.id AND service_id = ?)
+           OR EXISTS(SELECT 1 FROM therapist_specialties ts JOIN services s ON s.category_id = ts.category_id WHERE ts.therapist_id = t.id AND s.id = ?)
+        ORDER BY on_duty DESC, t.full_name ASC
+    ");
+    $stmt->bind_param("ii", $service_id, $service_id);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+    return $rows;
+}
+
+function quick_book_active_resources(mysqli $conn): array {
+    return $conn->query("SELECT id, name, type FROM service_resources WHERE is_active = 1 ORDER BY FIELD(type,'room','chair','head_spa'), sort_order, name")->fetch_all(MYSQLI_ASSOC);
 }
 
 // ── AJAX endpoint: access-protected, outputs ONLY the three panels, then exits ─
@@ -377,6 +446,97 @@ if (($_GET['ajax'] ?? '') === 'calendar_day') {
     ob_clean();
     header('Content-Type: text/html; charset=utf-8');
     echo render_appt_day_list_html($conn, $_GET['date'] ?? date('Y-m-d'));
+    exit;
+}
+
+if (($_GET['ajax'] ?? '') === 'quick_book_pickers') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    $service_id = (int)($_GET['service_id'] ?? 0);
+    echo json_encode([
+        'therapists' => $service_id > 0 ? quick_book_qualified_therapists($conn, $service_id) : [],
+        'resources'  => quick_book_active_resources($conn),
+    ]);
+    exit;
+}
+
+if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    verify_csrf_token();
+
+    $date           = $_POST['date'] ?? '';
+    $time           = $_POST['time'] ?? '';
+    $service_id     = (int)($_POST['service_id'] ?? 0);
+    $therapist_id   = (int)($_POST['therapist_id'] ?? 0);
+    $resource_id    = (int)($_POST['resource_id'] ?? 0);
+    $payment_method = $_POST['payment_method'] ?? '';
+    $valid_payment_methods = ['cash', 'gcash', 'maya', 'qrph', 'bank', 'card'];
+
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || !preg_match('/^\d{2}:\d{2}$/', $time)) {
+        echo json_encode(['ok' => false, 'message' => 'Please choose a valid date and time.']); exit;
+    }
+    if ($service_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a service.']); exit; }
+    if ($therapist_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a therapist.']); exit; }
+    if ($resource_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a room, chair, or head spa.']); exit; }
+    if (!in_array($payment_method, $valid_payment_methods, true)) { echo json_encode(['ok' => false, 'message' => 'Please choose a payment method.']); exit; }
+
+    $stmt = $conn->prepare("SELECT * FROM services WHERE id = ? AND deleted_at IS NULL");
+    $stmt->bind_param("i", $service_id);
+    $stmt->execute();
+    $service = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$service) { echo json_encode(['ok' => false, 'message' => 'That service is no longer available.']); exit; }
+
+    $price             = (float)$service['price'];
+    $duration_minutes  = (int)$service['session_time'];
+    $appointment_date  = $date . ' ' . $time . ':00';
+    $walkin_user_id    = get_walkin_customer_id();
+
+    $conn->begin_transaction();
+    try {
+        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, 'Walk-in Customer', 'N/A', ?, ?, ?, 'paid', 'approved', 'none', 0, ?, NULL)");
+        $stmt->bind_param("isdsd", $walkin_user_id, $appointment_date, $price, $payment_method, $price);
+        $stmt->execute();
+        $order_id = $stmt->insert_id;
+        $stmt->close();
+
+        $stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, 1, ?, ?)");
+        $stmt->bind_param("iidd", $order_id, $service_id, $price, $price);
+        $stmt->execute();
+        $order_item_id = $stmt->insert_id;
+        $stmt->close();
+
+        $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, charged_price, resource_id, duration_minutes) VALUES (?, ?, ?, ?, 'assigned', 1, 'onsite', 'regular', ?, ?, ?)");
+        $stmt->bind_param("iiisdii", $walkin_user_id, $service_id, $order_item_id, $appointment_date, $price, $resource_id, $duration_minutes);
+        $stmt->execute();
+        $appointment_id = $stmt->insert_id;
+        $stmt->close();
+
+        $commission = 0.00;
+        $cm = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+        $cm->bind_param("ii", $therapist_id, $service_id);
+        $cm->execute();
+        $cm_row = $cm->get_result()->fetch_assoc();
+        $cm->close();
+        if ($cm_row) {
+            $comm_base  = get_commission_base_price($service_id, null, $price);
+            $commission = round($comm_base * (float)$cm_row['commission_percent'] / 100, 2);
+        }
+
+        $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
+        $stmt->bind_param("iid", $appointment_id, $therapist_id, $commission);
+        $stmt->execute();
+        $stmt->close();
+
+        $conn->commit();
+        echo json_encode(['ok' => true, 'message' => 'Appointment booked.', 'appointment_id' => $appointment_id]);
+    } catch (Throwable $e) {
+        $conn->rollback();
+        echo json_encode(['ok' => false, 'message' => 'Could not save the booking. Please try again.']);
+    }
     exit;
 }
 
@@ -447,7 +607,7 @@ require_once 'admin_header.php';
         <span class="panel-title">Appointments</span>
         <div style="display:flex;gap:0.6rem;">
             <button type="button" class="btn btn-primary btn-sm" onclick="openApptCalendar()">Calendar</button>
-            <button type="button" class="btn btn-secondary btn-sm">Book Now</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="openQuickBook()">Book Now</button>
         </div>
     </div>
 </div>
@@ -474,6 +634,76 @@ require_once 'admin_header.php';
         </div>
     </div>
 </div>
+
+<!-- Quick Book (walk-in) modal -->
+<div class="modal-overlay" id="quickBookModal">
+    <div class="modal-box" style="max-width:1720px;width:95vw;">
+        <div class="modal-box-header">
+            <span class="modal-box-title">Book Now</span>
+            <button class="modal-box-close" onclick="closeQuickBook()">✕</button>
+        </div>
+        <div class="modal-box-body" style="padding:0;">
+            <div class="qb-steps">
+                <span class="qb-step" data-step="1">1. Date &amp; Time</span>
+                <span class="qb-step" data-step="2">2. Service</span>
+                <span class="qb-step" data-step="3">3. Therapist &amp; Room</span>
+                <span class="qb-step" data-step="4">4. Payment</span>
+            </div>
+
+            <div class="qb-panel" id="qbPanel1">
+                <div class="qb-field-row">
+                    <div class="qb-field">
+                        <label for="qbDate">Date</label>
+                        <input type="date" id="qbDate">
+                    </div>
+                    <div class="qb-field">
+                        <label for="qbTime">Time</label>
+                        <input type="time" id="qbTime">
+                    </div>
+                </div>
+            </div>
+
+            <div class="qb-panel" id="qbPanel2" style="display:none;">
+                <?php echo render_quick_book_services_html($conn); ?>
+            </div>
+
+            <div class="qb-panel" id="qbPanel3" style="display:none;">
+                <div class="qb-field-row">
+                    <div class="qb-field">
+                        <label for="qbTherapist">Therapist</label>
+                        <select id="qbTherapist"><option value="">Loading&hellip;</option></select>
+                    </div>
+                    <div class="qb-field">
+                        <label for="qbResource">Room / Chair / Head Spa</label>
+                        <select id="qbResource"><option value="">Loading&hellip;</option></select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="qb-panel" id="qbPanel4" style="display:none;">
+                <div class="qb-summary" id="qbSummary"></div>
+                <div class="qb-field" style="margin-top:1.25rem;">
+                    <label>Payment Method</label>
+                    <div class="qb-pay-grid">
+                        <button type="button" class="qb-pay-btn" data-method="cash" onclick="qbSelectPayment(this)">Cash</button>
+                        <button type="button" class="qb-pay-btn" data-method="gcash" onclick="qbSelectPayment(this)">GCash</button>
+                        <button type="button" class="qb-pay-btn" data-method="maya" onclick="qbSelectPayment(this)">Maya</button>
+                        <button type="button" class="qb-pay-btn" data-method="qrph" onclick="qbSelectPayment(this)">QRPH</button>
+                        <button type="button" class="qb-pay-btn" data-method="bank" onclick="qbSelectPayment(this)">Bank</button>
+                        <button type="button" class="qb-pay-btn" data-method="card" onclick="qbSelectPayment(this)">Card</button>
+                    </div>
+                </div>
+                <div id="qbError" class="qb-error" style="display:none;"></div>
+            </div>
+        </div>
+        <div class="modal-box-footer">
+            <button type="button" class="btn btn-secondary" id="qbBackBtn" onclick="qbBack()" style="display:none;">Back</button>
+            <button type="button" class="btn btn-primary" id="qbNextBtn" onclick="qbNext()">Next</button>
+            <button type="button" class="btn btn-primary" id="qbConfirmBtn" onclick="qbSubmit()" style="display:none;">Confirm Booking</button>
+        </div>
+    </div>
+</div>
+
 <script>
 function openApptCalendar() { document.getElementById('apptCalendarModal').classList.add('active'); }
 function closeApptCalendar() { document.getElementById('apptCalendarModal').classList.remove('active'); }
@@ -501,6 +731,167 @@ function apptCalShowDay(dateStr, el) {
         .then(function (r) { return r.text(); })
         .then(function (html) { document.getElementById('apptCalDayList').innerHTML = html; });
 }
+</script>
+
+<script>
+var QB_CSRF = '<?php echo generate_csrf_token(); ?>';
+var qbState = {};
+var qbStep  = 1;
+
+function openQuickBook(prefillDate) {
+    qbState = { date: prefillDate || '', time: '', service_id: 0, service_name: '', price: 0, minutes: 0,
+                therapist_id: 0, therapist_name: '', resource_id: 0, resource_name: '', payment_method: '' };
+    document.getElementById('qbDate').value = prefillDate || new Date().toISOString().slice(0, 10);
+    var now = new Date();
+    document.getElementById('qbTime').value = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+    document.querySelectorAll('.qb-svc-row.selected').forEach(function (r) { r.classList.remove('selected'); });
+    document.querySelectorAll('.qb-pay-btn.selected').forEach(function (b) { b.classList.remove('selected'); });
+    document.getElementById('qbTherapist').innerHTML = '<option value="">Select therapist&hellip;</option>';
+    document.getElementById('qbResource').innerHTML  = '<option value="">Select room/chair&hellip;</option>';
+    document.getElementById('qbSummary').innerHTML = '';
+    document.getElementById('qbError').style.display = 'none';
+    var confirmBtn = document.getElementById('qbConfirmBtn');
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'Confirm Booking';
+    qbGotoStep(1);
+    document.getElementById('quickBookModal').classList.add('active');
+}
+
+function closeQuickBook() { document.getElementById('quickBookModal').classList.remove('active'); }
+
+function qbGotoStep(n) {
+    qbStep = n;
+    for (var i = 1; i <= 4; i++) {
+        document.getElementById('qbPanel' + i).style.display = (i === n) ? '' : 'none';
+        var stepEl = document.querySelector('.qb-step[data-step="' + i + '"]');
+        stepEl.classList.toggle('active', i === n);
+        stepEl.classList.toggle('done', i < n);
+    }
+    document.getElementById('qbBackBtn').style.display    = (n === 1) ? 'none' : '';
+    document.getElementById('qbNextBtn').style.display    = (n === 4) ? 'none' : '';
+    document.getElementById('qbConfirmBtn').style.display = (n === 4) ? '' : 'none';
+}
+
+function qbBack() { if (qbStep > 1) qbGotoStep(qbStep - 1); }
+
+function qbNext() {
+    if (qbStep === 1) {
+        var d = document.getElementById('qbDate').value, t = document.getElementById('qbTime').value;
+        if (!d || !t) { uiAlert('Please choose a date and time.'); return; }
+        qbState.date = d; qbState.time = t;
+        qbGotoStep(2);
+    } else if (qbStep === 2) {
+        if (!qbState.service_id) { uiAlert('Please choose a service.'); return; }
+        qbLoadPickers();
+    } else if (qbStep === 3) {
+        var thSel = document.getElementById('qbTherapist'), rsSel = document.getElementById('qbResource');
+        if (!thSel.value) { uiAlert('Please choose a therapist.'); return; }
+        if (!rsSel.value) { uiAlert('Please choose a room, chair, or head spa.'); return; }
+        qbState.therapist_id   = thSel.value;
+        qbState.therapist_name = thSel.options[thSel.selectedIndex].text;
+        qbState.resource_id    = rsSel.value;
+        qbState.resource_name  = rsSel.options[rsSel.selectedIndex].text;
+        qbBuildSummary();
+        qbGotoStep(4);
+    }
+}
+
+function qbSelectService(el) {
+    document.querySelectorAll('.qb-svc-row.selected').forEach(function (r) { r.classList.remove('selected'); });
+    el.classList.add('selected');
+    qbState.service_id   = el.getAttribute('data-service-id');
+    qbState.service_name = el.getAttribute('data-service-name');
+    qbState.price         = parseFloat(el.getAttribute('data-price'));
+    qbState.minutes        = parseInt(el.getAttribute('data-minutes'), 10);
+}
+
+function qbLoadPickers() {
+    document.getElementById('qbTherapist').innerHTML = '<option value="">Loading&hellip;</option>';
+    document.getElementById('qbResource').innerHTML  = '<option value="">Loading&hellip;</option>';
+    qbGotoStep(3);
+    fetch('index.php?ajax=quick_book_pickers&service_id=' + encodeURIComponent(qbState.service_id), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var thSel = document.getElementById('qbTherapist');
+            thSel.innerHTML = '<option value="">Select therapist&hellip;</option>' + data.therapists.map(function (t) {
+                return '<option value="' + t.id + '">' + t.full_name + (t.on_duty == 1 ? ' (on duty)' : '') + '</option>';
+            }).join('');
+            var rsSel = document.getElementById('qbResource');
+            var typeLabels = { room: 'Room', chair: 'Chair', head_spa: 'Head Spa' };
+            rsSel.innerHTML = '<option value="">Select room/chair&hellip;</option>' + data.resources.map(function (r) {
+                return '<option value="' + r.id + '">' + (typeLabels[r.type] || r.type) + ' — ' + r.name + '</option>';
+            }).join('');
+        })
+        .catch(function () { uiAlert('Could not load therapists/rooms. Please try again.'); });
+}
+
+function qbBuildSummary() {
+    var dt = new Date(qbState.date + 'T' + qbState.time);
+    var dateLabel = dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    var timeLabel = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    document.getElementById('qbSummary').innerHTML =
+        '<div class="qb-summary-row"><span>Date &amp; Time</span><strong>' + dateLabel + ', ' + timeLabel + '</strong></div>' +
+        '<div class="qb-summary-row"><span>Service</span><strong>' + qbState.service_name + ' (' + qbState.minutes + ' min)</strong></div>' +
+        '<div class="qb-summary-row"><span>Therapist</span><strong>' + qbState.therapist_name + '</strong></div>' +
+        '<div class="qb-summary-row"><span>Room</span><strong>' + qbState.resource_name + '</strong></div>' +
+        '<div class="qb-summary-row qb-summary-total"><span>Total</span><strong>₱' + qbState.price.toFixed(2) + '</strong></div>';
+}
+
+function qbSelectPayment(el) {
+    document.querySelectorAll('.qb-pay-btn.selected').forEach(function (b) { b.classList.remove('selected'); });
+    el.classList.add('selected');
+    qbState.payment_method = el.getAttribute('data-method');
+}
+
+function qbSubmit() {
+    if (!qbState.payment_method) { uiAlert('Please choose a payment method.'); return; }
+    var errEl = document.getElementById('qbError');
+    errEl.style.display = 'none';
+    var confirmBtn = document.getElementById('qbConfirmBtn');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Booking…';
+
+    var body = new URLSearchParams({
+        date: qbState.date, time: qbState.time, service_id: qbState.service_id,
+        therapist_id: qbState.therapist_id, resource_id: qbState.resource_id,
+        payment_method: qbState.payment_method
+    });
+
+    fetch('index.php?ajax=quick_book_submit', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': QB_CSRF },
+        body: body.toString()
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                closeQuickBook();
+                uiAlert('Appointment booked successfully.').then(function () { location.reload(); });
+            } else {
+                errEl.textContent = data.message || 'Could not save the booking.';
+                errEl.style.display = '';
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Confirm Booking';
+            }
+        })
+        .catch(function () {
+            errEl.textContent = 'Network error. Please try again.';
+            errEl.style.display = '';
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm Booking';
+        });
+}
+
+(function () {
+    var reduceMotionQB = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.querySelectorAll('.qb-svc-cat-btn').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            var target = document.getElementById('qb-cat-' + btn.dataset.catId);
+            if (target) target.scrollIntoView({ behavior: reduceMotionQB ? 'auto' : 'smooth', block: 'start' });
+        });
+    });
+}());
 </script>
 
 <style>
@@ -541,6 +932,61 @@ function apptCalShowDay(dateStr, el) {
     padding:0 0.4rem; line-height:1.4; margin-top:0.15rem;
 }
 .badge-assigned { background:#cfe2ff; color:#084298; }
+
+/* ── Quick Book modal ───────────────────────────────────────────────── */
+.qb-steps { display:flex; border-bottom:1px solid var(--border); background:var(--bg3); }
+.qb-step {
+    flex:1; text-align:center; padding:1rem 0.5rem; font-size:0.85rem; font-weight:600;
+    color:var(--gray); border-bottom:3px solid transparent;
+}
+.qb-step.active { color:var(--brown); border-bottom-color:#C96A2C; }
+.qb-step.done { color:var(--brown); }
+.qb-panel { padding:1.75rem; min-height:420px; }
+.qb-field-row { display:flex; gap:1.5rem; flex-wrap:wrap; }
+.qb-field { flex:1; min-width:220px; }
+.qb-field label { display:block; font-size:0.85rem; font-weight:700; color:var(--brown-md); margin-bottom:0.5rem; }
+.qb-field input, .qb-field select {
+    width:100%; padding:0.85rem 1rem; border:1.5px solid var(--border); border-radius:10px;
+    font-family:inherit; font-size:1.05rem; color:var(--brown); background:#fff; box-sizing:border-box;
+}
+.qb-field input:focus, .qb-field select:focus { outline:none; border-color:#C96A2C; }
+
+.qb-svc-layout { display:grid; grid-template-columns:220px 1fr; gap:0; min-height:420px; max-height:60vh; }
+.qb-svc-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--border); overflow-y:auto; }
+.qb-svc-cat-btn {
+    padding:0.9rem 1.25rem; font-weight:600; color:var(--brown); text-decoration:none;
+    border-bottom:1px solid var(--border); border-left:3px solid transparent;
+}
+.qb-svc-cat-btn:hover { background:var(--bg3); }
+.qb-svc-content { overflow-y:auto; padding:0 1.5rem; }
+.qb-svc-cat-title { font-size:1rem; font-weight:700; color:var(--brown); margin:1.25rem 0 0.5rem; }
+.qb-svc-row {
+    display:flex; align-items:center; gap:1rem; padding:0.9rem 0.75rem; border-radius:10px;
+    cursor:pointer; border:1.5px solid transparent;
+}
+.qb-svc-row:hover { background:var(--bg3); }
+.qb-svc-row.selected { background:#FDE8D8; border-color:#C96A2C; }
+.qb-svc-row-name { flex:1; font-weight:600; color:var(--brown); }
+.qb-svc-row-meta { font-size:0.82rem; color:var(--gray); white-space:nowrap; }
+.qb-svc-row-price { font-weight:700; color:var(--rust-dark); white-space:nowrap; }
+
+.qb-summary { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:1.25rem 1.5rem; }
+.qb-summary-row { display:flex; justify-content:space-between; padding:0.5rem 0; font-size:0.95rem; color:var(--brown); border-bottom:1px solid var(--border); }
+.qb-summary-row:last-child { border-bottom:none; }
+.qb-summary-total { font-size:1.1rem; }
+.qb-pay-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.75rem; }
+.qb-pay-btn {
+    padding:1rem; border:1.5px solid var(--border); border-radius:10px; background:#fff;
+    font-size:1rem; font-weight:600; color:var(--brown); cursor:pointer;
+}
+.qb-pay-btn:hover { background:var(--bg3); }
+.qb-pay-btn.selected { background:#C96A2C; color:#fff; border-color:#C96A2C; }
+.qb-error { margin-top:1rem; padding:0.85rem 1rem; background:#f8d7da; color:#842029; border-radius:10px; font-size:0.9rem; }
+@media (max-width:640px) {
+    .qb-svc-layout { grid-template-columns:1fr; max-height:none; }
+    .qb-svc-sidebar { flex-direction:row; flex-wrap:wrap; overflow-x:auto; }
+    .qb-pay-grid { grid-template-columns:repeat(2,1fr); }
+}
 </style>
 <div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:0.35rem;">
     <span id="livePanelsTs" style="font-size:0.65rem;color:var(--gray);">Live &mdash; auto-refreshes every 45s</span>
