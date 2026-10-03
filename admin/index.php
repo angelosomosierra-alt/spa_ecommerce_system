@@ -293,7 +293,7 @@ function render_appt_calendar_html(mysqli $conn, int $year, int $month): string 
             $count    = $counts[$date_str] ?? 0;
             $classes  = 'appt-cal-day' . ($date_str === $today_str ? ' today' : '') . ($count > 0 ? ' has-appts' : '');
         ?>
-        <div class="<?php echo $classes; ?>" onclick="apptCalShowDay('<?php echo $date_str; ?>')">
+        <div class="<?php echo $classes; ?>" onclick="apptCalShowDay('<?php echo $date_str; ?>', this)">
             <span class="d-num"><?php echo $d; ?></span>
             <?php if ($count > 0): ?><span class="d-count"><?php echo $count; ?></span><?php endif; ?>
         </div>
@@ -345,7 +345,7 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
     </div>
     <?php if ($is_future_or_today): ?>
     <div class="appt-cal-day-booknow">
-        <button type="button" class="btn btn-primary btn-full">📅 Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
+        <button type="button" class="btn btn-primary btn-full" style="font-size:1.1rem;padding:1.1rem 1.5rem;">Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
     </div>
     <?php endif; ?>
     <?php
@@ -444,9 +444,9 @@ require_once 'admin_header.php';
 
 <div class="panel" style="margin-bottom:1.5rem;">
     <div class="panel-header">
-        <span class="panel-title">📅 Appointments</span>
+        <span class="panel-title">Appointments</span>
         <div style="display:flex;gap:0.6rem;">
-            <button type="button" class="btn btn-primary btn-sm" onclick="openApptCalendar()">📅 Calendar</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="openApptCalendar()">Calendar</button>
             <button type="button" class="btn btn-secondary btn-sm">Book Now</button>
         </div>
     </div>
@@ -459,7 +459,7 @@ require_once 'admin_header.php';
 <div class="modal-overlay" id="apptCalendarModal">
     <div class="modal-box" style="max-width:1720px;width:95vw;">
         <div class="modal-box-header">
-            <span class="modal-box-title">📅 Appointments Calendar</span>
+            <span class="modal-box-title">Appointments Calendar</span>
             <button class="modal-box-close" onclick="closeApptCalendar()">✕</button>
         </div>
         <div class="modal-box-body" style="padding:0;">
@@ -493,7 +493,9 @@ function apptCalNav(dir) {
         });
 }
 
-function apptCalShowDay(dateStr) {
+function apptCalShowDay(dateStr, el) {
+    document.querySelectorAll('.appt-cal-day.selected').forEach(function (d) { d.classList.remove('selected'); });
+    if (el) el.classList.add('selected');
     document.getElementById('apptCalDayList').innerHTML = '<div style="color:var(--gray);font-size:0.82rem;text-align:center;padding:2rem 0;">Loading&hellip;</div>';
     fetch('index.php?ajax=calendar_day&date=' + encodeURIComponent(dateStr), { credentials: 'same-origin' })
         .then(function (r) { return r.text(); })
@@ -532,6 +534,8 @@ function apptCalShowDay(dateStr) {
 .appt-cal-day.today { border-color:var(--gold); font-weight:700; }
 .appt-cal-day.has-appts { background:#FDE8D8; }
 .appt-cal-day.has-appts:hover { background:#f8d1ad; }
+.appt-cal-day.selected { background:#C96A2C; color:#fff; }
+.appt-cal-day.selected:hover { background:#A94F1D; }
 .appt-cal-day .d-count {
     font-size:0.75rem; font-weight:700; color:#fff; background:#C96A2C; border-radius:10px;
     padding:0 0.4rem; line-height:1.4; margin-top:0.15rem;
