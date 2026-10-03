@@ -217,12 +217,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         $chosen_time = strtotime($booking_date);
         $hour = (int)date('H', $chosen_time);
         if ($hour < 10) {
-            $message = "❌ We open at 10:00 AM.";
+            $message = "We open at 10:00 AM.";
             $message_type = "danger";
         }
         $cutoff_time = strtotime('+2 hours');
         if ($chosen_time < $cutoff_time && empty($message)) {
-            $message = "❌ Appointments must be booked at least 2 hours in advance. Earliest: " . date('h:i A', $cutoff_time);
+            $message = "Appointments must be booked at least 2 hours in advance. Earliest: " . date('h:i A', $cutoff_time);
             $message_type = "danger";
         }
     }
@@ -269,9 +269,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     $cap_on_duty       = (int)($cap_data['on_duty_qualified']  ?? 0);
 
                     if ($is_today_booking && $cap_on_duty > 0 && $people_count > $cap_on_duty) {
-                        $capacity_warning = "⚠️ You requested {$people_count} people but only {$cap_on_duty} qualified therapist(s) are on duty today. Your booking will be accepted but may need rescheduling.";
+                        $capacity_warning = "You requested {$people_count} people but only {$cap_on_duty} qualified therapist(s) are on duty today. Your booking will be accepted but may need rescheduling.";
                     } elseif (!$is_today_booking && $cap_total > 0 && $people_count > $cap_total) {
-                        $capacity_warning = "⚠️ You requested {$people_count} people but we only have {$cap_total} therapist(s) qualified for this service. Your booking will be accepted but may need rescheduling.";
+                        $capacity_warning = "You requested {$people_count} people but we only have {$cap_total} therapist(s) qualified for this service. Your booking will be accepted but may need rescheduling.";
                     }
 
                     // ── B-2: hard availability check via AvailabilityEngine ────────
@@ -295,7 +295,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         $next_txt = $next
                             ? ' Next available: ' . date('M j, g:i A', strtotime($next['datetime'])) . '.'
                             : ' Please choose a different date or time.';
-                        $message      = '❌ ' . $reason . '.' . $next_txt;
+                        $message      = $reason . '.' . $next_txt;
                         $message_type = 'danger';
                     }
 
@@ -315,7 +315,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                             $tn->execute();
                             $tn_name = $tn->get_result()->fetch_assoc()['full_name'] ?? 'Your preferred therapist';
                             $tn->close();
-                            $_SESSION['checkout_error'] = "⚠️ {$tn_name} is not available at that time. Please pick a different time or choose Any Available Therapist.";
+                            $_SESSION['checkout_error'] = "{$tn_name} is not available at that time. Please pick a different time or choose Any Available Therapist.";
                             header('Location: ' . BASE_URL . 'user/checkout.php');
                             exit;
                         }
@@ -615,11 +615,11 @@ $payload = json_encode([
 
                     require_once __DIR__ . '/../notify.php';
                     if ($checkout_type === 'service') {
-                        add_notification($conn, $user_id, 'appointment', '📅 Appointment Booked!', 'Your booking #' . $order_id . ' is pending approval.', 'appointments.php');
-                        add_notification($conn, null, 'appointment', '📅 New Service Booking', 'New appointment booking #' . $order_id . ' by a customer.', 'appointments.php');
+                        add_notification($conn, $user_id, 'appointment', 'Appointment Booked', 'Your booking #' . $order_id . ' is pending approval.', 'appointments.php');
+                        add_notification($conn, null, 'appointment', 'New Service Booking', 'New appointment booking #' . $order_id . ' by a customer.', 'appointments.php');
                     } else {
-                        add_notification($conn, $user_id, 'order', '🛍️ Order Placed!', 'Your order #' . $order_id . ' (₱' . number_format($total_amount,2) . ') has been placed.', 'appointments.php#orders');
-                        add_notification($conn, null, 'order', '🛍️ New Product Order', 'New product order #' . $order_id . ' (₱' . number_format($total_amount,2) . ').', 'orders.php');
+                        add_notification($conn, $user_id, 'order', 'Order Placed', 'Your order #' . $order_id . ' (₱' . number_format($total_amount,2) . ') has been placed.', 'appointments.php#orders');
+                        add_notification($conn, null, 'order', 'New Product Order', 'New product order #' . $order_id . ' (₱' . number_format($total_amount,2) . ').', 'orders.php');
                     }
                 }
             } else {
@@ -1243,7 +1243,7 @@ require_once 'header.php';
     <!-- Success overlay -->
     <div class="co-success-overlay show" id="successOverlay">
         <div class="co-success-box">
-            <div class="co-success-icon">📅</div>
+            <div class="co-success-icon"></div>
             <h2 style="font-family:'Cormorant Garamond',serif;color:#3B2A1A;margin:0 0 0.5rem;font-size:1.6rem;">
                 Booking Submitted!
             </h2>
@@ -1253,14 +1253,14 @@ require_once 'header.php';
             <div style="background:#fff8f2;border:2px solid #C96A2C;border-radius:12px;
                         padding:1rem;margin-bottom:1.25rem;text-align:left;">
                 <div style="font-weight:700;color:#C96A2C;font-size:0.92rem;margin-bottom:0.5rem;">
-                    ⏳ Your booking is PENDING approval
+                    Your booking is PENDING approval
                 </div>
                 <ul style="margin:0;padding-left:1.2rem;color:#3B2A1A;font-size:0.85rem;
                            line-height:1.8;font-family:'DM Sans',sans-serif;">
                     <li><strong>Do NOT go to the spa yet</strong> until you receive a confirmation</li>
                     <li>We will review your booking and assign a therapist</li>
                     <li>You will receive an <strong>email + app notification</strong> once approved</li>
-                    <li>Only proceed to the spa after receiving the ✅ approval</li>
+                    <li>Only proceed to the spa after receiving the approval</li>
                 </ul>
             </div>
 
@@ -1280,7 +1280,7 @@ require_once 'header.php';
                style="display:block;padding:0.85rem;background:linear-gradient(135deg,#C96A2C,#a94f1d);
                       color:#fff;border-radius:12px;text-decoration:none;font-weight:700;
                       font-family:'DM Sans',sans-serif;font-size:0.9rem;margin-bottom:0.6rem;">
-                📅 Track My Appointment
+                Track My Appointment
             </a>
             <a href="index.php"
                style="display:block;padding:0.7rem;border:1.5px solid #EAD8C0;color:#888;
@@ -1349,7 +1349,6 @@ require_once 'header.php';
         <!-- Contact Info -->
         <div class="co-card" style="margin-bottom:1.25rem;">
             <div class="co-card-head">
-                <div class="co-card-head-icon">👤</div>
                 <div class="co-card-head-title">Contact Information</div>
             </div>
             <form method="POST" id="checkoutForm">
@@ -1387,7 +1386,6 @@ require_once 'header.php';
         <!-- Booking Details -->
         <div class="co-card" style="margin-bottom:1.25rem;">
             <div class="co-card-head">
-                <div class="co-card-head-icon">📅</div>
                 <div class="co-card-head-title">Booking Details</div>
             </div>
             <div class="co-card-body">
@@ -1398,14 +1396,12 @@ require_once 'header.php';
                     <div class="svc-type-group">
                         <div class="svc-type-btn active" id="svcbtn-onsite"
                              onclick="selectServiceType('onsite')">
-                            <span class="svc-type-icon">🏢</span>
                             <span class="svc-type-label">At the Spa</span>
                             <span class="svc-type-sub">Visit our branch</span>
                         </div>
                         <?php if (!empty($checkout_items[0]['is_home_service'])): ?>
                         <div class="svc-type-btn" id="svcbtn-home"
                              onclick="selectServiceType('home')">
-                            <span class="svc-type-icon">🏠</span>
                             <span class="svc-type-label">Home Service</span>
                             <span class="svc-type-sub">
                                 +₱<?php echo number_format($checkout_items[0]['home_service_fee'],2); ?> fee
@@ -1414,7 +1410,7 @@ require_once 'header.php';
                         <?php endif; ?>
                     </div>
                     <div class="home-fee-badge" id="homeFeeNotice">
-                        🏠 A home service fee of
+                        A home service fee of
                         <strong>₱<?php echo number_format($checkout_items[0]['home_service_fee'] ?? 0, 2); ?></strong>
                         will be added to your total.
                     </div>
@@ -1427,7 +1423,7 @@ require_once 'header.php';
                     <input type="hidden" name="preferred_therapist_id" id="preferred_therapist_id" value="0">
                     <div class="therapist-scroll">
                         <div class="therapist-card active" onclick="selectTherapist(0, this)">
-                            <div class="therapist-avatar">🌿</div>
+                            <div class="therapist-avatar"></div>
                             <div class="therapist-name">Any Available</div>
                             <div class="therapist-sub">Best fit assigned</div>
                         </div>
@@ -1494,7 +1490,7 @@ require_once 'header.php';
                     <label class="co-label">Date &amp; Time <span>*</span></label>
                     <input type="hidden" name="booking_date" id="booking_date_input">
                     <button type="button" class="dt-pick-btn" id="dtPickBtn" onclick="openBM()">
-                        📅 Pick Date &amp; Time
+                        Pick Date &amp; Time
                     </button>
                     <div style="font-size:0.72rem;color:var(--gray);margin-top:4px;">
                         Open 10:00 AM – 8:00 PM · Book up to 30 days ahead
@@ -1507,13 +1503,12 @@ require_once 'header.php';
         <!-- Special Requests -->
         <div class="co-card" style="margin-bottom:1.25rem;">
             <div class="co-card-head">
-                <div class="co-card-head-icon">💬</div>
                 <div class="co-card-head-title">Special Requests & Notes</div>
             </div>
             <div class="co-card-body">
                 <div class="co-note-wrap">
                     <div class="co-note-label">
-                        ✨ Anything we should know?
+                        Anything we should know?
                         <span style="font-size:0.68rem;color:var(--gray);font-weight:400;text-transform:none;letter-spacing:0;">
                             optional
                         </span>
@@ -1549,19 +1544,16 @@ require_once 'header.php';
         <!-- Payment Method -->
         <div class="co-card" style="margin-bottom:1.25rem;">
             <div class="co-card-head">
-                <div class="co-card-head-icon">💳</div>
                 <div class="co-card-head-title">Payment Method</div>
             </div>
             <div class="co-card-body">
                 <div class="pay-group" id="paymentBtnsGroup">
                     <div class="pay-btn active" id="paybtn-onsite" onclick="selectPayment('onsite')">
-                        <span class="pay-btn-icon">🏪</span>
                         <span class="pay-btn-label">Pay at Spa</span>
                         <span class="pay-btn-sub">Cash when you arrive</span>
                     </div>
                     <?php if (ONLINE_PAYMENT_ENABLED): ?>
                     <div class="pay-btn" id="paybtn-online" onclick="selectPayment('online')">
-                        <span class="pay-btn-icon">💳</span>
                         <span class="pay-btn-label">Pay Online</span>
                         <span class="pay-btn-sub">GCash · Maya · Cards</span>
                         <span class="pay-badge">Secure via PayMongo</span>
@@ -1570,21 +1562,21 @@ require_once 'header.php';
                 </div>
                 <?php if (!ONLINE_PAYMENT_ENABLED): ?>
                 <div style="margin-top:0.6rem;padding:0.6rem 0.85rem;background:#fff8f2;border-left:3px solid #C96A2C;border-radius:6px;font-size:0.82rem;color:#92400e;">
-                    💳 Online payment is coming soon — please complete payment onsite for now.
+                    Online payment is coming soon — please complete payment onsite for now.
                 </div>
                 <?php endif; ?>
                 <div class="pay-note" id="pay-note">
-                    🏪 <strong>Pay at Spa:</strong> Your booking will be set to
+                    <strong>Pay at Spa:</strong> Your booking will be set to
                     <strong>Pending</strong> — pay when you arrive and staff will confirm.
                 </div>
 
                 <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
-                    ✅ Confirm Booking
+                    Confirm Booking
                 </button>
                 <a href="<?php echo $checkout_type === 'service' ? 'index.php' : 'cart.php'; ?>"
                    class="co-back">← Go Back</a>
                 <div class="co-secure">
-                    🔒 Secured by 256-bit SSL encryption
+                    Secured by 256-bit SSL encryption
                 </div>
             </div>
         </div>
@@ -1596,7 +1588,6 @@ require_once 'header.php';
         <div class="co-summary">
             <div class="co-card">
                 <div class="co-card-head">
-                    <div class="co-card-head-icon">🛍️</div>
                     <div class="co-card-head-title">Order Summary</div>
                 </div>
                 <div class="co-card-body">
@@ -1612,7 +1603,7 @@ require_once 'header.php';
                         <div style="flex:1;min-width:0;">
                             <div class="co-item-name"><?php echo htmlspecialchars($item['name']); ?></div>
                             <?php if (isset($item['session_time'])): ?>
-                            <div class="co-item-meta">⏱ <?php echo $item['session_time']; ?> mins</div>
+                            <div class="co-item-meta"><?php echo $item['session_time']; ?> mins</div>
                             <?php endif; ?>
                             <div class="co-item-meta">Qty: <?php echo $item['quantity']; ?></div>
                         </div>
@@ -1628,7 +1619,7 @@ require_once 'header.php';
                             <span id="subtotalDisplay">₱<?php echo number_format($total_amount, 2); ?></span>
                         </div>
                         <div class="co-total-row" id="homeFeeRow" style="display:none;">
-                            <span>🏠 Home Service Fee</span>
+                            <span>Home Service Fee</span>
                             <span id="homeFeeAmt">+₱<?php echo number_format($checkout_items[0]['home_service_fee'] ?? 0, 2); ?></span>
                         </div>
                         <div class="co-total-row">
@@ -1636,7 +1627,7 @@ require_once 'header.php';
                             <span>Free</span>
                         </div>
                         <div class="co-total-row" id="extra-svc-total-row" style="display:none;">
-                            <span>➕ Added Services</span>
+                            <span>Added Services</span>
                             <span id="extra-svc-total-amt">+₱0.00</span>
                         </div>
                         <div class="co-total-row grand">
@@ -1656,7 +1647,7 @@ require_once 'header.php';
                                    transition:all .15s;font-family:'DM Sans',sans-serif;"
                             onmouseover="this.style.background='rgba(201,106,44,0.12)'"
                             onmouseout="this.style.background='rgba(201,106,44,0.05)'">
-                        ➕ Add Other Service
+                        Add Other Service
                     </button>
                     <?php endif; ?>
 
@@ -1669,10 +1660,10 @@ require_once 'header.php';
                             What to expect
                         </div>
                         <div style="font-size:0.8rem;color:var(--brown);line-height:1.7;">
-                            📍 Please arrive <strong>15–20 minutes early</strong><br>
-                            🧴 Wear comfortable clothing<br>
-                            📵 Keep your phone on silent<br>
-                            💧 Stay hydrated before your session
+                            Please arrive <strong>15–20 minutes early</strong><br>
+                            Wear comfortable clothing<br>
+                            Keep your phone on silent<br>
+                            Stay hydrated before your session
                         </div>
                     </div>
                     <?php endif; ?>
@@ -1687,7 +1678,7 @@ require_once 'header.php';
 <div class="bm-overlay" id="bmOverlay">
     <div class="bm-box">
         <div class="bm-header">
-            <span class="bm-header-title">📅 Pick Date &amp; Time</span>
+            <span class="bm-header-title">Pick Date &amp; Time</span>
             <button class="bm-close" type="button" onclick="closeBM()" aria-label="Close">✕</button>
         </div>
         <div class="bm-body">
@@ -1702,11 +1693,11 @@ require_once 'header.php';
             <!-- Time picker section (appears after date selected) -->
             <div class="bm-slots-section" id="bmSlotsSection" style="display:none;">
                 <div class="bm-tp-legend">
-                    <span>🟢 Available</span>
-                    <span>⬜ Occupied</span>
+                    <span>Available</span>
+                    <span>Occupied</span>
                 </div>
                 <div id="bmSlotsLoading" style="text-align:center;padding:1.2rem;color:var(--gray);font-size:0.85rem;display:none;">
-                    ⏳ Checking availability…
+                    Checking availability…
                 </div>
                 <div id="bmSlotsUnavail" style="display:none;padding:0.85rem;background:#fff5f5;
                      border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;"></div>
@@ -1727,7 +1718,7 @@ require_once 'header.php';
         <div class="bm-footer" id="bmFooter" style="display:none;">
             <div class="bm-selected-info" id="bmSelectedInfo"></div>
             <button type="button" class="bm-confirm" id="bmConfirmBtn" onclick="confirmBM()" disabled>
-                ✅ Confirm
+                Confirm
             </button>
         </div>
     </div>
@@ -1738,7 +1729,7 @@ require_once 'header.php';
 <div class="bm-overlay" id="esOverlay">
     <div class="bm-box" style="max-width:540px;max-height:90vh;display:flex;flex-direction:column;">
         <div class="bm-header">
-            <span class="bm-header-title">➕ Add Other Service</span>
+            <span class="bm-header-title">Add Other Service</span>
             <button class="bm-close" type="button" onclick="closeExtraModal()" aria-label="Close">✕</button>
         </div>
         <div class="bm-body" style="flex:1;overflow-y:auto;padding:1rem 1.1rem;">
@@ -1805,7 +1796,7 @@ require_once 'header.php';
                                font-weight:700;cursor:pointer;transition:all .15s;"
                         onmouseover="this.style.opacity='0.88'"
                         onmouseout="this.style.opacity='1'">
-                    ✅ Add This Service
+                    Add This Service
                 </button>
             </div>
         </div>
@@ -1837,7 +1828,7 @@ function checkCapacityWarning(count) {
         const context = isToday && ON_DUTY_QUALIFIED > 0
             ? `only <strong>${ON_DUTY_QUALIFIED}</strong> qualified therapist(s) on duty today`
             : `only <strong>${TOTAL_QUALIFIED}</strong> qualified therapist(s) available for this service`;
-        warn.innerHTML = `⚠️ You selected <strong>${count} people</strong> but we have ${context}. Your booking will be accepted but may need rescheduling.`;
+        warn.innerHTML = `You selected <strong>${count} people</strong> but we have ${context}. Your booking will be accepted but may need rescheduling.`;
         warn.style.display = '';
     } else {
         warn.style.display = 'none';
@@ -1885,15 +1876,15 @@ function selectPayment(method) {
     const note = document.getElementById('pay-note');
     const btn  = document.getElementById('placeOrderBtn');
     if (method === 'online') {
-        note.innerHTML    = '💳 <strong>Online Payment:</strong> You\'ll be redirected to PayMongo to pay securely via <strong>GCash, Maya, or Card</strong>.';
+        note.innerHTML    = '<strong>Online Payment:</strong> You\'ll be redirected to PayMongo to pay securely via <strong>GCash, Maya, or Card</strong>.';
         note.style.borderLeftColor = '#198754';
         note.style.background      = '#f0fdf4';
-        btn.textContent   = '💳 Proceed to Payment';
+        btn.textContent   = 'Proceed to Payment';
     } else {
-        note.innerHTML    = '🏪 <strong>Pay at Spa:</strong> Your booking will be set to <strong>Pending</strong> — pay when you arrive and staff will confirm.';
+        note.innerHTML    = '<strong>Pay at Spa:</strong> Your booking will be set to <strong>Pending</strong> — pay when you arrive and staff will confirm.';
         note.style.borderLeftColor = '#C96A2C';
         note.style.background      = '#fff8f2';
-        btn.textContent   = '✅ Confirm Booking';
+        btn.textContent   = 'Confirm Booking';
     }
 }
 
@@ -2107,17 +2098,17 @@ function bmLoadBusyWindows(dateStr) {
             loading.style.display = 'none';
             if (data.error) {
                 unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
-                unavail.textContent   = '⚠️ ' + (data.error || 'Could not check availability.');
+                unavail.textContent   = data.error || 'Could not check availability.';
                 return;
             }
             if (data.reason_code && !data.on_duty && data.is_today) {
                 unavail.style.cssText = 'display:block;';
-                unavail.innerHTML     = '<div style="text-align:center;padding:1.5rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">📅 ' + data.message + '</div>';
+                unavail.innerHTML     = '<div style="text-align:center;padding:1.5rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">' + data.message + '</div>';
                 return;
             }
             if (data.reason_code === 'NOT_QUALIFIED') {
                 unavail.style.cssText = 'display:block;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;';
-                unavail.textContent   = '⚠️ ' + data.message;
+                unavail.textContent   = data.message;
                 return;
             }
             bwData = data;
@@ -2127,7 +2118,7 @@ function bmLoadBusyWindows(dateStr) {
         .catch(() => {
             loading.style.display = 'none';
             unavail.style.display = 'block';
-            unavail.textContent   = '⚠️ Could not load availability. Please try again.';
+            unavail.textContent   = 'Could not load availability. Please try again.';
         });
 }
 
@@ -2206,7 +2197,7 @@ function confirmBM() {
     const ampm = bmSelectedHour < 12 ? 'AM' : 'PM';
     const timeLabel = h12 + ':' + String(bmSelectedMinute).padStart(2, '0') + ' ' + ampm;
     const btn = document.getElementById('dtPickBtn');
-    btn.textContent = '📅 ' + BM_MONTHS[mo - 1] + ' ' + dy + ', ' + yr + ' · ' + timeLabel + ' — Change';
+    btn.textContent = BM_MONTHS[mo - 1] + ' ' + dy + ', ' + yr + ' · ' + timeLabel + ' — Change';
     btn.classList.add('has-value');
 
     closeBM();
