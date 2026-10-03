@@ -306,15 +306,17 @@ function render_appt_calendar_html(mysqli $conn, int $year, int $month): string 
 function render_appt_day_list_html(mysqli $conn, string $date_str): string {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_str)) $date_str = date('Y-m-d');
 
-    $stmt = $conn->prepare("SELECT a.appointment_date, a.status, u.full_name, s.name AS service_name,
-            GROUP_CONCAT(DISTINCT t.full_name SEPARATOR ', ') AS therapist_names
+    $stmt = $conn->prepare("SELECT a.appointment_date, a.status,
+            COALESCE(u.full_name, 'Unknown customer') AS full_name,
+            COALESCE(s.name, 'Unknown service') AS service_name,
+            (SELECT GROUP_CONCAT(DISTINCT t.full_name SEPARATOR ', ')
+             FROM appointment_therapists at2
+             JOIN therapists t ON t.id = at2.therapist_id
+             WHERE at2.appointment_id = a.id) AS therapist_names
         FROM appointments a
-        JOIN users u ON a.user_id = u.id
-        JOIN services s ON a.service_id = s.id
-        LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
-        LEFT JOIN therapists t ON t.id = at2.therapist_id
+        LEFT JOIN users u ON a.user_id = u.id
+        LEFT JOIN services s ON a.service_id = s.id
         WHERE DATE(a.appointment_date) = ?
-        GROUP BY a.id
         ORDER BY a.appointment_date ASC");
     $stmt->bind_param("s", $date_str);
     $stmt->execute();
