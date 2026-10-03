@@ -17,7 +17,7 @@ if (isset($_GET['logout'])) {
 
 // Already logged in — send to the right place
 if (isset($_SESSION['user_id'])) {
-    header($_SESSION['role'] === 'admin' ? 'Location: index.php' : 'Location: ../index.php');
+    header($_SESSION['role'] === 'admin' ? 'Location: index.php' : 'Location: ../user/index.php');
     exit();
 }
 

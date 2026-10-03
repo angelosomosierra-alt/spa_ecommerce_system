@@ -166,6 +166,7 @@ $_s = $conn->prepare("
         oi.service_id,
         COALESCE(s.name, '[Deleted Service]') AS service_name,
         COALESCE(sd.regular_price, s.price) AS regular_price,
+        sd.promo_price    AS sd_promo_price,
         a.id              AS appt_id,
         a.appointment_date,
         a.duration_minutes,

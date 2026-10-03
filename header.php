@@ -33,6 +33,11 @@ if (isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($page_title); ?></title>
+    <!-- Makes every relative link/asset on this page resolve against the site
+         root, regardless of the actual request URL — needed so this same
+         header/page content renders correctly whether loaded at index.php
+         directly or via user/index.php (one URL level deeper). -->
+    <base href="<?php echo BASE_URL; ?>">
     <link rel="stylesheet" href="assets/style.css?v=<?php echo filemtime(__DIR__ . '/assets/style.css'); ?>">
     <link rel="stylesheet" href="assets/responsive.css?v=<?php echo filemtime(__DIR__ . '/assets/responsive.css'); ?>">
     <script src="assets/ui-modal.js?v=<?php echo filemtime(__DIR__ . '/assets/ui-modal.js'); ?>"></script>
@@ -98,11 +103,8 @@ if (isset($_SESSION['user_id'])) {
     @media (max-width: 960px) { .header-search { max-width: 200px; } }
     @media (max-width: 768px) { .header-search { max-width: 150px; } }
     @media (max-width: 480px) { .header-search { display: none; } }
-    /* ── Accessibility base: scoped to index.php/services.php/products.php
-       only (this header), not the whole site — user/header.php's pages
-       (cart, checkout, profile, appointments) are untouched by this
-       redesign and must keep their own tuned sizing. ─────────────────── */
-    html { font-size: 18px; } /* base 18px, not 14-16px — larger throughout via rem */
+    /* Accessibility base (18px html font-size) now lives in assets/style.css
+       and applies site-wide, including user/header.php's account pages. */
     body { line-height: 1.6; font-weight: 400; }
     h1, h2, h3, h4 { line-height: 1.25; }
     p, li, label, td, th { font-weight: 400; }
@@ -170,6 +172,8 @@ if (isset($_SESSION['user_id'])) {
                 <span></span><span></span><span></span>
             </button>
             <?php if (isset($_SESSION['user_id'])): ?>
+                <a href="user/appointments.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">My Appointments</a>
+                <a href="user/profile.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">My Profile</a>
                 <a href="user/cart.php" class="cart-icon-btn" title="View Cart" aria-label="View cart, <?php echo $cart_count; ?> items">
                     🛒
                     <span class="cart-icon-badge" id="cartIconBadge" style="<?php echo $cart_count === 0 ? 'display:none' : ''; ?>">
