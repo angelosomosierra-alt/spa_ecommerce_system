@@ -124,81 +124,132 @@ $page_title = 'My Profile';
 require_once __DIR__ . '/header.php';
 ?>
 
-    <div class="container">
-        <div class="profile-container">
-            <div class="profile-header">
-                <h1 class="profile-name"><?php echo htmlspecialchars($user['full_name'], ENT_QUOTES, 'UTF-8'); ?></h1>
-                <p class="profile-email"><?php echo htmlspecialchars($user['email'], ENT_QUOTES, 'UTF-8'); ?></p>
-                <p style="color: #999; font-size: 0.9rem;">Member since <?php echo date('F Y', strtotime($user['created_at'])); ?></p>
-            </div>
+<style>
+.pf-wrap { max-width: 760px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+.pf-title { font-family:'Cormorant Garamond',serif; font-size: 2rem; color: var(--brown); margin-bottom: 0.3rem; }
+.pf-subtitle { color: var(--gray); font-size: 1rem; margin-bottom: 2rem; }
 
-            <?php if ($message): ?>
-                <div class="alert alert-<?php echo $message_type; ?>" style="margin-bottom: 2rem;"><?php echo $message; ?></div>
-            <?php endif; ?>
+.pf-head-card {
+    background: #fff; border-radius: 16px; border: 1px solid var(--cream2, #EAD8C0);
+    box-shadow: 0 2px 16px rgba(59,42,26,0.06); padding: 1.75rem; margin-bottom: 1.5rem;
+    display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;
+}
+.pf-avatar {
+    width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--gold), #a94f1d); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; font-weight: 700; font-family:'Cormorant Garamond',serif;
+}
+.pf-head-name { font-size: 1.3rem; font-weight: 700; color: var(--brown); }
+.pf-head-email { color: var(--gray); font-size: 0.95rem; margin-top: 0.15rem; }
+.pf-head-since { color: var(--gray); font-size: 0.85rem; margin-top: 0.25rem; }
 
-            <form method="POST">
-                <?php echo csrf_field(); ?>
-                <h3 style="color: #3B2A1A; margin-bottom: 1.5rem;">Personal Information</h3>
+.pf-card { background: #fff; border-radius: 16px; border: 1px solid var(--cream2, #EAD8C0); box-shadow: 0 2px 16px rgba(59,42,26,0.06); overflow: hidden; margin-bottom: 1.5rem; }
+.pf-card-head { padding: 1.1rem 1.5rem; border-bottom: 1px solid var(--cream2, #EAD8C0); background: var(--cream); }
+.pf-card-head h3 { font-size: 1.05rem; font-weight: 700; color: var(--brown); margin: 0; }
+.pf-card-body { padding: 1.5rem; }
 
-                <div class="form-row">
-                    <div class="form-group">
+.pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+.pf-field { margin-bottom: 1.25rem; }
+.pf-field:last-child { margin-bottom: 0; }
+.pf-field label { display: block; font-size: 0.85rem; font-weight: 700; color: var(--brown-md); margin-bottom: 0.4rem; }
+.pf-field input, .pf-field textarea {
+    width: 100%; padding: 0.75rem 0.9rem; border: 1.5px solid var(--cream2, #EAD8C0); border-radius: 10px;
+    font-family: inherit; font-size: 1rem; color: var(--brown); background: var(--cream); box-sizing: border-box;
+}
+.pf-field input:focus, .pf-field textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
+.pf-field input:disabled { background: #eee; color: var(--gray); }
+.pf-field textarea { resize: vertical; min-height: 80px; }
+.pf-hint { font-size: 0.8rem; color: var(--gray); margin-top: 0.3rem; }
+
+.pf-actions { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }
+.pf-actions .btn { font-size: 1rem; padding: 0.85rem 1.75rem; }
+
+@media (max-width: 600px) {
+    .pf-row { grid-template-columns: 1fr; gap: 0; }
+    .pf-actions { flex-direction: column; }
+    .pf-actions .btn, .pf-actions a { width: 100%; }
+}
+</style>
+
+<div class="pf-wrap">
+    <h1 class="pf-title">My Profile</h1>
+    <p class="pf-subtitle">Manage your personal information and password</p>
+
+    <div class="pf-head-card">
+        <div class="pf-avatar"><?php echo strtoupper(substr($user['full_name'], 0, 1)); ?></div>
+        <div>
+            <div class="pf-head-name"><?php echo htmlspecialchars($user['full_name'], ENT_QUOTES, 'UTF-8'); ?></div>
+            <div class="pf-head-email"><?php echo htmlspecialchars($user['email'], ENT_QUOTES, 'UTF-8'); ?></div>
+            <div class="pf-head-since">Member since <?php echo date('F Y', strtotime($user['created_at'])); ?></div>
+        </div>
+    </div>
+
+    <?php if ($message): ?>
+        <div class="alert alert-<?php echo $message_type; ?>"><?php echo $message; ?></div>
+    <?php endif; ?>
+
+    <form method="POST">
+        <?php echo csrf_field(); ?>
+
+        <div class="pf-card">
+            <div class="pf-card-head"><h3>Personal Information</h3></div>
+            <div class="pf-card-body">
+                <div class="pf-row">
+                    <div class="pf-field">
                         <label for="full_name">Full Name</label>
                         <input type="text" id="full_name" name="full_name" value="<?php echo htmlspecialchars($user['full_name'], ENT_QUOTES, 'UTF-8'); ?>" required>
                     </div>
-
-                    <div class="form-group">
+                    <div class="pf-field">
                         <label for="email">Email</label>
                         <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($user['email'], ENT_QUOTES, 'UTF-8'); ?>" required>
                     </div>
                 </div>
-
-                <div class="form-row">
-                    <div class="form-group">
+                <div class="pf-row">
+                    <div class="pf-field">
                         <label for="phone">Phone Number</label>
                         <input type="tel" id="phone" name="phone" value="<?php echo htmlspecialchars($user['phone'], ENT_QUOTES, 'UTF-8'); ?>" required>
                     </div>
-
-                    <div class="form-group">
+                    <div class="pf-field">
                         <label for="username">Username</label>
-                        <input type="text" id="username" name="username" value="<?php echo htmlspecialchars($user['username'], ENT_QUOTES, 'UTF-8'); ?>" disabled style="background-color: #f0f0f0;">
+                        <input type="text" id="username" name="username" value="<?php echo htmlspecialchars($user['username'], ENT_QUOTES, 'UTF-8'); ?>" disabled>
                     </div>
                 </div>
-
-                <div class="form-group">
+                <div class="pf-field">
                     <label for="address">Address</label>
                     <textarea id="address" name="address" required><?php echo htmlspecialchars($user['address'], ENT_QUOTES, 'UTF-8'); ?></textarea>
                 </div>
+            </div>
+        </div>
 
-                <hr style="margin: 2rem 0; border: none; border-top: 2px solid #EAD8C0;">
-
-                <h3 style="color: #3B2A1A; margin-bottom: 1.5rem;">Change Password (Optional)</h3>
-
-                <div class="form-group">
+        <div class="pf-card">
+            <div class="pf-card-head"><h3>Change Password</h3></div>
+            <div class="pf-card-body">
+                <div class="pf-field">
                     <label for="current_password">Current Password</label>
                     <input type="password" id="current_password" name="current_password" placeholder="Leave empty if not changing password">
                 </div>
-
-                <div class="form-row">
-                    <div class="form-group">
+                <div class="pf-row">
+                    <div class="pf-field">
                         <label for="new_password">New Password</label>
                         <input type="password" id="new_password" name="new_password" placeholder="Leave empty if not changing password">
                     </div>
-
-                    <div class="form-group">
+                    <div class="pf-field">
                         <label for="confirm_password">Confirm New Password</label>
                         <input type="password" id="confirm_password" name="confirm_password" placeholder="Leave empty if not changing password">
                     </div>
                 </div>
-
-                <div style="display: flex; gap: 1rem; margin-top: 2rem;">
-                    <button type="submit" name="update_profile" class="btn btn-primary">Save Changes</button>
-                    <a href="index.php" class="hero-btn-primary" style="padding: 0.5rem 1rem; font-size: 0.8rem;">HOME</a>
-
-                    <a href="profile.php?logout=1" class="btn btn-danger">Logout</a>
-                </div>
-            </form>
+                <div class="pf-hint">At least 8 characters, with an uppercase letter, a number, and a special character.</div>
+            </div>
         </div>
-    </div>
+
+        <div class="pf-actions">
+            <button type="submit" name="update_profile" class="btn btn-primary">Save Changes</button>
+            <a href="index.php" class="btn btn-secondary">Home</a>
+            <a href="profile.php?logout=1" class="btn btn-danger">Logout</a>
+        </div>
+    </form>
+</div>
 
 <?php require_once __DIR__ . '/../footer.php'; ?>
 </body>

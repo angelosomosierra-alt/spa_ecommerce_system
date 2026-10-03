@@ -311,7 +311,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                 $_SESSION['username']  = $user['username'];
                 $_SESSION['full_name'] = $user['full_name'];
                 $_SESSION['cart']      = load_cart_from_db($conn, $user['id']);
-                header("Location: ../index.php");
+                header("Location: ./index.php");
                 exit();
             }
         } else {

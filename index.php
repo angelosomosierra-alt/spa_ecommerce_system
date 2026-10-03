@@ -8,7 +8,7 @@ if (isset($_GET['logout'])) {
     }
     session_unset();
     session_destroy();
-    header("Location: index.php");
+    header('Location: ' . BASE_URL . 'index.php');
     exit();
 }
 
@@ -318,18 +318,16 @@ require_once 'header.php';
     background: linear-gradient(to right, transparent, var(--gold) 50%, transparent);
 }
 .theme-divider::after { background: linear-gradient(to left, transparent, var(--gold) 50%, transparent); }
-.theme-divider-mark {
-    flex-shrink: 0; color: var(--gold-dark); font-size: 1.1rem; line-height: 1;
-}
+.theme-divider-mark { display: none; }
 </style>
 
 <section class="hero" id="index">
     <p class="hero-eyebrow">Welcome to RECOVERY ILOILO</p>
-    <h1>Massage <em>Therapy</em><br>Pamper</h1>
+    <h1>Skin <em>and</em> Wellness</h1>
     <p>Experience the ultimate spa and wellness journey — where every treatment is a ritual of renewal.</p>
     <div class="hero-ctas">
-        <a href="services.php" class="hero-btn-primary">Book a Service</a>
-        <a href="products.php" class="hero-btn-outline">Shop Products</a>
+        <a href="<?php echo BASE_URL; ?>services.php" class="hero-btn-primary">Book a Service</a>
+        <a href="<?php echo BASE_URL; ?>products.php" class="hero-btn-outline">Shop Products</a>
     </div>
 </section>
 
@@ -355,7 +353,7 @@ require_once 'header.php';
                 <div class="bs-photo-card">
                     <div class="bs-photo-img-wrap">
                         <?php if (!empty($svc['image'])): ?>
-                        <img src="uploads/services/<?php echo htmlspecialchars($svc['image']); ?>" alt="<?php echo htmlspecialchars($svc['name']); ?>" loading="lazy"
+                        <img src="<?php echo BASE_URL; ?>uploads/services/<?php echo htmlspecialchars($svc['image']); ?>" alt="<?php echo htmlspecialchars($svc['name']); ?>" loading="lazy"
                              onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
                         <div class="img-placeholder" style="display:none">💆<small>Spa Service</small></div>
                         <?php else: ?>
@@ -366,7 +364,7 @@ require_once 'header.php';
                     <div class="bs-photo-body">
                         <div class="bs-photo-price">₱<?php echo number_format($svc['price'],2); ?></div>
                         <h3 class="bs-photo-name"><?php echo htmlspecialchars($svc['name']); ?></h3>
-                        <a class="bs-photo-btn" href="services.php?category=<?php echo (int)($svc['category_id'] ?? 0); ?>&item=svc-<?php echo $svc['id']; ?>">Book Service</a>
+                        <a class="bs-photo-btn" href="<?php echo BASE_URL; ?>services.php?category=<?php echo (int)($svc['category_id'] ?? 0); ?>&item=svc-<?php echo $svc['id']; ?>">Book Service</a>
                     </div>
                 </div>
                 </div>
@@ -377,7 +375,7 @@ require_once 'header.php';
     </div>
     <div class="bs-dots" data-bs-dots="services"></div>
     <?php endif; ?>
-    <div class="bs-cta-wrap"><a href="services.php" class="bs-cta-btn">View Services</a></div>
+    <div class="bs-cta-wrap"><a href="<?php echo BASE_URL; ?>services.php" class="bs-cta-btn">View Services</a></div>
     </div>
 </section>
 
@@ -403,7 +401,7 @@ require_once 'header.php';
                 <div class="bs-photo-card">
                     <div class="bs-photo-img-wrap">
                         <?php if (!empty($prd['image'])): ?>
-                        <img src="uploads/products/<?php echo htmlspecialchars($prd['image']); ?>" alt="<?php echo htmlspecialchars($prd['name']); ?>" loading="lazy"
+                        <img src="<?php echo BASE_URL; ?>uploads/products/<?php echo htmlspecialchars($prd['image']); ?>" alt="<?php echo htmlspecialchars($prd['name']); ?>" loading="lazy"
                              onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
                         <div class="img-placeholder" style="display:none">🧴<small>Spa Product</small></div>
                         <?php else: ?>
@@ -415,7 +413,7 @@ require_once 'header.php';
                     <div class="bs-photo-body">
                         <div class="bs-photo-price">₱<?php echo number_format($prd['price'],2); ?></div>
                         <h3 class="bs-photo-name"><?php echo htmlspecialchars($prd['name']); ?></h3>
-                        <a class="bs-photo-btn" href="products.php?category=<?php echo (int)($prd['category_id'] ?? 0); ?>&item=prd-<?php echo $prd['id']; ?>"><?php echo $oos ? 'Out of Stock' : 'Shop Now'; ?></a>
+                        <a class="bs-photo-btn" href="<?php echo BASE_URL; ?>products.php?category=<?php echo (int)($prd['category_id'] ?? 0); ?>&item=prd-<?php echo $prd['id']; ?>"><?php echo $oos ? 'Out of Stock' : 'Shop Now'; ?></a>
                     </div>
                 </div>
                 </div>
@@ -426,7 +424,7 @@ require_once 'header.php';
     </div>
     <div class="bs-dots" data-bs-dots="products"></div>
     <?php endif; ?>
-    <div class="bs-cta-wrap"><a href="products.php" class="bs-cta-btn">View Products</a></div>
+    <div class="bs-cta-wrap"><a href="<?php echo BASE_URL; ?>products.php" class="bs-cta-btn">View Products</a></div>
     </div>
 </section>
 
@@ -440,9 +438,9 @@ require_once 'header.php';
     </div>
     <div class="category-showcase-grid">
         <?php foreach ($svc_categories as $cat): ?>
-        <a class="category-tile" href="services.php?category=<?php echo (int)$cat['id']; ?>">
+        <a class="category-tile" href="<?php echo BASE_URL; ?>services.php?category=<?php echo (int)$cat['id']; ?>">
             <?php if (!empty($cat['sample_image'])): ?>
-            <img class="category-tile-img" src="uploads/services/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
+            <img class="category-tile-img" src="<?php echo BASE_URL; ?>uploads/services/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
             <div class="category-tile-icon" style="display:none;"><?php echo showcase_icon($cat['name'], $cat_icons); ?></div>
             <?php else: ?>
@@ -453,9 +451,9 @@ require_once 'header.php';
         </a>
         <?php endforeach; ?>
         <?php foreach ($prd_categories as $cat): ?>
-        <a class="category-tile" href="products.php?category=<?php echo (int)$cat['id']; ?>">
+        <a class="category-tile" href="<?php echo BASE_URL; ?>products.php?category=<?php echo (int)$cat['id']; ?>">
             <?php if (!empty($cat['sample_image'])): ?>
-            <img class="category-tile-img" src="uploads/products/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
+            <img class="category-tile-img" src="<?php echo BASE_URL; ?>uploads/products/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
             <div class="category-tile-icon" style="display:none;"><?php echo showcase_icon($cat['name'], $cat_icons); ?></div>
             <?php else: ?>
@@ -489,7 +487,7 @@ require_once 'header.php';
                 <div style="text-align:center;">
                     <video autoplay loop muted playsinline
                            style="width:70%; max-width:430px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1);">
-                        <source src="img/for_contactus.mp4" type="video/mp4">
+                        <source src="<?php echo BASE_URL; ?>img/for_contactus.mp4" type="video/mp4">
                     </video>
                 </div>
             </div>
@@ -593,7 +591,11 @@ require_once 'header.php';
         // ever visibly resetting to card #1. ─────────────────────────────
         var REAL = realSlides.length;
         realSlides.forEach(function (s) { track.appendChild(s.cloneNode(true)); });      // trailing clone
-        var leadingClones = realSlides.map(function (s) { return s.cloneNode(true); });
+        // Build in reverse before inserting: each insertBefore(..., firstChild) puts
+        // the new node at position 0, so inserting [1,2,3,4,5] in that order ends up
+        // reversed to [5,4,3,2,1] — making the card immediately before slide #1 a
+        // clone of #1 itself instead of #5. Reversing the array first corrects this.
+        var leadingClones = realSlides.map(function (s) { return s.cloneNode(true); }).reverse();
         leadingClones.forEach(function (s) { track.insertBefore(s, track.firstChild); }); // leading clone
         var slides = Array.prototype.slice.call(track.children); // length = 3 * REAL
 

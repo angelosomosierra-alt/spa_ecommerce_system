@@ -323,7 +323,7 @@ require_once 'header.php';
 
 <section class="hero" id="index">
     <p class="hero-eyebrow">Welcome to RECOVERY ILOILO</p>
-    <h1>Massage <em>Therapy</em><br>Pamper</h1>
+    <h1>Skin <em>and</em> Wellness</h1>
     <p>Experience the ultimate spa and wellness journey — where every treatment is a ritual of renewal.</p>
     <div class="hero-ctas">
         <a href="<?php echo BASE_URL; ?>services.php" class="hero-btn-primary">Book a Service</a>
@@ -563,7 +563,7 @@ require_once 'header.php';
 
 </div>
 
-<?php require_once 'footer.php'; ?>
+<?php require_once '../footer.php'; ?>
 <script>
 /* ── Best-Sellers carousel: autoplay + arrows + dots + swipe + hover-pause,
    with prefers-reduced-motion disabling autoplay (manual controls still
@@ -591,7 +591,11 @@ require_once 'header.php';
         // ever visibly resetting to card #1. ─────────────────────────────
         var REAL = realSlides.length;
         realSlides.forEach(function (s) { track.appendChild(s.cloneNode(true)); });      // trailing clone
-        var leadingClones = realSlides.map(function (s) { return s.cloneNode(true); });
+        // Build in reverse before inserting: each insertBefore(..., firstChild) puts
+        // the new node at position 0, so inserting [1,2,3,4,5] in that order ends up
+        // reversed to [5,4,3,2,1] — making the card immediately before slide #1 a
+        // clone of #1 itself instead of #5. Reversing the array first corrects this.
+        var leadingClones = realSlides.map(function (s) { return s.cloneNode(true); }).reverse();
         leadingClones.forEach(function (s) { track.insertBefore(s, track.firstChild); }); // leading clone
         var slides = Array.prototype.slice.call(track.children); // length = 3 * REAL
 
