@@ -1,11 +1,11 @@
 <?php
 /**
  * user/index.php — login/registration landing URL.
- * The actual homepage lives only at the site root (index.php) — this file
- * just redirects there so there is one homepage design to maintain, not two
- * that can drift out of sync (which is what happened before: this file used
- * to be a full standalone page with its own older design).
+ * Renders the exact same homepage as the site root (index.php) in place,
+ * so the URL stays at user/index.php after login instead of navigating
+ * away to index.php. There is still only one homepage design to maintain —
+ * this just requires the root file directly rather than duplicating it
+ * (header.php's <base> tag makes its relative asset links still resolve
+ * correctly even though this page is one folder deeper than index.php).
  */
-require_once '../config.php';
-header('Location: ' . BASE_URL . 'index.php');
-exit();
+require_once __DIR__ . '/../index.php';

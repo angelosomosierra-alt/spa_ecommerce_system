@@ -33,6 +33,11 @@ if (isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($page_title); ?></title>
+    <!-- Makes every relative link/asset on this page resolve against the site
+         root, regardless of the actual request URL — needed so this same
+         header/page content renders correctly whether loaded at index.php
+         directly or via user/index.php (one URL level deeper). -->
+    <base href="<?php echo BASE_URL; ?>">
     <link rel="stylesheet" href="assets/style.css?v=<?php echo filemtime(__DIR__ . '/assets/style.css'); ?>">
     <link rel="stylesheet" href="assets/responsive.css?v=<?php echo filemtime(__DIR__ . '/assets/responsive.css'); ?>">
     <script src="assets/ui-modal.js?v=<?php echo filemtime(__DIR__ . '/assets/ui-modal.js'); ?>"></script>
