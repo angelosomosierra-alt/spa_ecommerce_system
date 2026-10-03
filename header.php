@@ -33,11 +33,6 @@ if (isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($page_title); ?></title>
-    <!-- Makes every relative link/asset on this page resolve against the site
-         root, regardless of the actual request URL — needed so this same
-         header/page content renders correctly whether loaded at index.php
-         directly or via user/index.php (one URL level deeper). -->
-    <base href="<?php echo BASE_URL; ?>">
     <link rel="stylesheet" href="assets/style.css?v=<?php echo filemtime(__DIR__ . '/assets/style.css'); ?>">
     <link rel="stylesheet" href="assets/responsive.css?v=<?php echo filemtime(__DIR__ . '/assets/responsive.css'); ?>">
     <script src="assets/ui-modal.js?v=<?php echo filemtime(__DIR__ . '/assets/ui-modal.js'); ?>"></script>
@@ -131,14 +126,8 @@ if (isset($_SESSION['user_id'])) {
         <a href="index.php#about">ℹ️ About Us</a>
         <a href="index.php#contact">📞 Contact</a>
         <div class="nav-drawer-divider"></div>
-        <?php if (isset($_SESSION['user_id'])): ?>
-        <a href="user/cart.php">🛒 Cart (<?php echo $cart_count; ?>)</a>
-        <a href="user/appointments.php">📅 My Appointments</a>
-        <a href="user/profile.php">👤 My Profile</a>
-        <a href="user/auth.php?logout=1" style="color:#ff8a8a;">🚪 Logout</a>
-        <?php else: ?>
-        <a href="user/auth.php">🔑 Login / Register</a>
-        <?php endif; ?>
+        <a href="user/auth.php">Login</a>
+        <a href="user/auth.php?register=1">Register</a>
     </div>
 </div>
 
@@ -171,20 +160,8 @@ if (isset($_SESSION['user_id'])) {
             <button class="nav-hamburger" id="navHamburger" onclick="toggleNavDrawer()" aria-label="Open menu">
                 <span></span><span></span><span></span>
             </button>
-            <?php if (isset($_SESSION['user_id'])): ?>
-                <a href="user/appointments.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">My Appointments</a>
-                <a href="user/profile.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">My Profile</a>
-                <a href="user/cart.php" class="cart-icon-btn" title="View Cart" aria-label="View cart, <?php echo $cart_count; ?> items">
-                    🛒
-                    <span class="cart-icon-badge" id="cartIconBadge" style="<?php echo $cart_count === 0 ? 'display:none' : ''; ?>">
-                        <?php echo $cart_count > 99 ? '99+' : $cart_count; ?>
-                    </span>
-                </a>
-                <a href="user/auth.php?logout=1" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">Logout</a>
-            <?php else: ?>
-                <a href="user/auth.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">Login</a>
-                <a href="user/auth.php?register=1" class="hero-btn-primary" style="padding:0.5rem 1.1rem;font-size:0.9rem;">Register</a>
-            <?php endif; ?>
+            <a href="user/auth.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">Login</a>
+            <a href="user/auth.php?register=1" class="hero-btn-primary" style="padding:0.5rem 1.1rem;font-size:0.9rem;">Register</a>
         </div>
     </nav>
 </header>

@@ -1,11 +1,17 @@
 <?php
 /**
- * user/index.php — login/registration landing URL.
- * Renders the exact same homepage as the site root (index.php) in place,
- * so the URL stays at user/index.php after login instead of navigating
- * away to index.php. There is still only one homepage design to maintain —
- * this just requires the root file directly rather than duplicating it
- * (header.php's <base> tag makes its relative asset links still resolve
- * correctly even though this page is one folder deeper than index.php).
+ * user/index.php — the homepage, reached while logged in.
+ * Renders the exact same homepage content as the site root (index.php),
+ * via the shared homepage_data.php/homepage_content.php partials, but
+ * wrapped in the account-area header (user/header.php: avatar, cart,
+ * notifications, appointments) instead of the public header. header.php's
+ * <base> tag makes the shared content's relative asset links still resolve
+ * correctly even though this page is one folder deeper than index.php.
  */
-require_once __DIR__ . '/../index.php';
+require_once '../config.php';
+require_once '../homepage_data.php';
+
+$page_title = 'Recovery Iloilo — Home';
+require_once 'header.php';
+require_once '../homepage_content.php';
+require_once '../footer.php';
