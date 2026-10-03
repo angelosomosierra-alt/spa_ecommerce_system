@@ -479,8 +479,8 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
     <div class="nav-drawer-links">
         <a href="index.php" <?php echo $current_page==='index.php' ? 'class="active"' : ''; ?>>🏠 Home</a>
         <a href="index.php#about">ℹ️ About Us</a>
-        <a href="index.php#services">💆 Services</a>
-        <a href="index.php#products">🛍️ Products</a>
+        <a href="services.php" <?php echo $current_page==='services.php' ? 'class="active"' : ''; ?>>💆 Services</a>
+        <a href="products.php" <?php echo $current_page==='products.php' ? 'class="active"' : ''; ?>>🛍️ Products</a>
         <a href="index.php#contact">📞 Contact</a>
         <?php if (isset($_SESSION['user_id'])): ?>
         <div class="nav-drawer-divider"></div>
@@ -514,8 +514,8 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
         <ul class="nav-links">
             <li><a href="index.php"           <?php echo $current_page==='index.php'        ?'class="active"':''; ?>>Home</a></li>
             <li><a href="index.php#about"            <?php echo $current_page==='about.php'        ?'class="active"':''; ?>>About Us</a></li>
-            <li><a href="index.php#services"   <?php echo $current_page==='services.php'     ?'class="active"':''; ?>>Services</a></li>
-            <li><a href="index.php#products"   <?php echo $current_page==='products.php'     ?'class="active"':''; ?>>Products</a></li>
+            <li><a href="services.php"   <?php echo $current_page==='services.php'     ?'class="active"':''; ?>>Services</a></li>
+            <li><a href="products.php"   <?php echo $current_page==='products.php'     ?'class="active"':''; ?>>Products</a></li>
             <li><a href="index.php#contact"          <?php echo $current_page==='contact.php'      ?'class="active"':''; ?>>Contact</a></li>
             <?php if (isset($_SESSION['user_id'])): ?>
                 <li><a href="appointments.php" <?php echo $current_page==='appointments.php' ?'class="active"':''; ?>>Appointments</a></li>

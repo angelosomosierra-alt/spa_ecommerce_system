@@ -326,8 +326,8 @@ require_once 'header.php';
     <h1>Skin <em>and</em> Wellness</h1>
     <p>Experience the ultimate spa and wellness journey — where every treatment is a ritual of renewal.</p>
     <div class="hero-ctas">
-        <a href="<?php echo BASE_URL; ?>services.php" class="hero-btn-primary">Book a Service</a>
-        <a href="<?php echo BASE_URL; ?>products.php" class="hero-btn-outline">Shop Products</a>
+        <a href="services.php" class="hero-btn-primary">Book a Service</a>
+        <a href="products.php" class="hero-btn-outline">Shop Products</a>
     </div>
 </section>
 
@@ -364,7 +364,7 @@ require_once 'header.php';
                     <div class="bs-photo-body">
                         <div class="bs-photo-price">₱<?php echo number_format($svc['price'],2); ?></div>
                         <h3 class="bs-photo-name"><?php echo htmlspecialchars($svc['name']); ?></h3>
-                        <a class="bs-photo-btn" href="<?php echo BASE_URL; ?>services.php?category=<?php echo (int)($svc['category_id'] ?? 0); ?>&item=svc-<?php echo $svc['id']; ?>">Book Service</a>
+                        <a class="bs-photo-btn" href="services.php?category=<?php echo (int)($svc['category_id'] ?? 0); ?>&item=svc-<?php echo $svc['id']; ?>">Book Service</a>
                     </div>
                 </div>
                 </div>
@@ -375,7 +375,7 @@ require_once 'header.php';
     </div>
     <div class="bs-dots" data-bs-dots="services"></div>
     <?php endif; ?>
-    <div class="bs-cta-wrap"><a href="<?php echo BASE_URL; ?>services.php" class="bs-cta-btn">View Services</a></div>
+    <div class="bs-cta-wrap"><a href="services.php" class="bs-cta-btn">View Services</a></div>
     </div>
 </section>
 
@@ -413,7 +413,7 @@ require_once 'header.php';
                     <div class="bs-photo-body">
                         <div class="bs-photo-price">₱<?php echo number_format($prd['price'],2); ?></div>
                         <h3 class="bs-photo-name"><?php echo htmlspecialchars($prd['name']); ?></h3>
-                        <a class="bs-photo-btn" href="<?php echo BASE_URL; ?>products.php?category=<?php echo (int)($prd['category_id'] ?? 0); ?>&item=prd-<?php echo $prd['id']; ?>"><?php echo $oos ? 'Out of Stock' : 'Shop Now'; ?></a>
+                        <a class="bs-photo-btn" href="products.php?category=<?php echo (int)($prd['category_id'] ?? 0); ?>&item=prd-<?php echo $prd['id']; ?>"><?php echo $oos ? 'Out of Stock' : 'Shop Now'; ?></a>
                     </div>
                 </div>
                 </div>
@@ -424,7 +424,7 @@ require_once 'header.php';
     </div>
     <div class="bs-dots" data-bs-dots="products"></div>
     <?php endif; ?>
-    <div class="bs-cta-wrap"><a href="<?php echo BASE_URL; ?>products.php" class="bs-cta-btn">View Products</a></div>
+    <div class="bs-cta-wrap"><a href="products.php" class="bs-cta-btn">View Products</a></div>
     </div>
 </section>
 
@@ -438,7 +438,7 @@ require_once 'header.php';
     </div>
     <div class="category-showcase-grid">
         <?php foreach ($svc_categories as $cat): ?>
-        <a class="category-tile" href="<?php echo BASE_URL; ?>services.php?category=<?php echo (int)$cat['id']; ?>">
+        <a class="category-tile" href="services.php?category=<?php echo (int)$cat['id']; ?>">
             <?php if (!empty($cat['sample_image'])): ?>
             <img class="category-tile-img" src="<?php echo BASE_URL; ?>uploads/services/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
@@ -451,7 +451,7 @@ require_once 'header.php';
         </a>
         <?php endforeach; ?>
         <?php foreach ($prd_categories as $cat): ?>
-        <a class="category-tile" href="<?php echo BASE_URL; ?>products.php?category=<?php echo (int)$cat['id']; ?>">
+        <a class="category-tile" href="products.php?category=<?php echo (int)$cat['id']; ?>">
             <?php if (!empty($cat['sample_image'])): ?>
             <img class="category-tile-img" src="<?php echo BASE_URL; ?>uploads/products/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
