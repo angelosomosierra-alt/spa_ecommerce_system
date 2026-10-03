@@ -591,7 +591,11 @@ require_once 'header.php';
         // ever visibly resetting to card #1. ─────────────────────────────
         var REAL = realSlides.length;
         realSlides.forEach(function (s) { track.appendChild(s.cloneNode(true)); });      // trailing clone
-        var leadingClones = realSlides.map(function (s) { return s.cloneNode(true); });
+        // Build in reverse before inserting: each insertBefore(..., firstChild) puts
+        // the new node at position 0, so inserting [1,2,3,4,5] in that order ends up
+        // reversed to [5,4,3,2,1] — making the card immediately before slide #1 a
+        // clone of #1 itself instead of #5. Reversing the array first corrects this.
+        var leadingClones = realSlides.map(function (s) { return s.cloneNode(true); }).reverse();
         leadingClones.forEach(function (s) { track.insertBefore(s, track.firstChild); }); // leading clone
         var slides = Array.prototype.slice.call(track.children); // length = 3 * REAL
 
