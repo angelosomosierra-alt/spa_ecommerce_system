@@ -267,7 +267,7 @@ function render_appt_calendar_html(mysqli $conn, int $year, int $month): string 
     $today_str  = date('Y-m-d');
 
     $counts = [];
-    $stmt = $conn->prepare("SELECT DATE(appointment_date) d, COUNT(*) c FROM appointments WHERE status NOT IN ('cancelled','declined','refunded') AND YEAR(appointment_date) = ? AND MONTH(appointment_date) = ? GROUP BY DATE(appointment_date)");
+    $stmt = $conn->prepare("SELECT DATE(appointment_date) d, COUNT(*) c FROM appointments WHERE YEAR(appointment_date) = ? AND MONTH(appointment_date) = ? GROUP BY DATE(appointment_date)");
     $stmt->bind_param("ii", $year, $month);
     $stmt->execute();
     $res = $stmt->get_result();
@@ -293,7 +293,7 @@ function render_appt_calendar_html(mysqli $conn, int $year, int $month): string 
             $count    = $counts[$date_str] ?? 0;
             $classes  = 'appt-cal-day' . ($date_str === $today_str ? ' today' : '') . ($count > 0 ? ' has-appts' : '');
         ?>
-        <div class="<?php echo $classes; ?>" <?php if ($count > 0): ?>onclick="apptCalShowDay('<?php echo $date_str; ?>')"<?php endif; ?>>
+        <div class="<?php echo $classes; ?>" onclick="apptCalShowDay('<?php echo $date_str; ?>')">
             <span class="d-num"><?php echo $d; ?></span>
             <?php if ($count > 0): ?><span class="d-count"><?php echo $count; ?></span><?php endif; ?>
         </div>
@@ -306,7 +306,16 @@ function render_appt_calendar_html(mysqli $conn, int $year, int $month): string 
 function render_appt_day_list_html(mysqli $conn, string $date_str): string {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_str)) $date_str = date('Y-m-d');
 
-    $stmt = $conn->prepare("SELECT a.appointment_date, a.status, u.full_name, s.name AS service_name FROM appointments a JOIN users u ON a.user_id = u.id JOIN services s ON a.service_id = s.id WHERE DATE(a.appointment_date) = ? ORDER BY a.appointment_date ASC");
+    $stmt = $conn->prepare("SELECT a.appointment_date, a.status, u.full_name, s.name AS service_name,
+            GROUP_CONCAT(DISTINCT t.full_name SEPARATOR ', ') AS therapist_names
+        FROM appointments a
+        JOIN users u ON a.user_id = u.id
+        JOIN services s ON a.service_id = s.id
+        LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
+        LEFT JOIN therapists t ON t.id = at2.therapist_id
+        WHERE DATE(a.appointment_date) = ?
+        GROUP BY a.id
+        ORDER BY a.appointment_date ASC");
     $stmt->bind_param("s", $date_str);
     $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -325,6 +334,7 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
             <div style="flex:1;min-width:0;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($a['full_name']); ?></div>
                 <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($a['service_name']); ?></div>
+                <div style="font-size:0.68rem;color:var(--gray);">💆 <?php echo htmlspecialchars($a['therapist_names'] ?: 'Unassigned'); ?></div>
             </div>
             <span class="badge badge-<?php echo $a['status']; ?>"><?php echo ucfirst($a['status']); ?></span>
         </div>
@@ -500,10 +510,12 @@ function apptCalShowDay(dateStr) {
 .appt-cal-day {
     position:relative; aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
     border-radius:8px; font-size:0.78rem; color:var(--brown); background:var(--bg3); border:1px solid transparent;
+    cursor:pointer;
 }
-.appt-cal-day.appt-cal-blank { background:transparent; }
+.appt-cal-day:hover { background:#f0e4d3; }
+.appt-cal-day.appt-cal-blank { background:transparent; cursor:default; }
 .appt-cal-day.today { border-color:var(--gold); font-weight:700; }
-.appt-cal-day.has-appts { background:#FDE8D8; cursor:pointer; }
+.appt-cal-day.has-appts { background:#FDE8D8; }
 .appt-cal-day.has-appts:hover { background:#f8d1ad; }
 .appt-cal-day .d-count {
     font-size:0.6rem; font-weight:700; color:#fff; background:#C96A2C; border-radius:10px;
