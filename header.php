@@ -167,6 +167,8 @@ if (isset($_SESSION['user_id'])) {
                 <span></span><span></span><span></span>
             </button>
             <?php if (isset($_SESSION['user_id'])): ?>
+                <a href="user/appointments.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">My Appointments</a>
+                <a href="user/profile.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">My Profile</a>
                 <a href="user/cart.php" class="cart-icon-btn" title="View Cart" aria-label="View cart, <?php echo $cart_count; ?> items">
                     🛒
                     <span class="cart-icon-badge" id="cartIconBadge" style="<?php echo $cart_count === 0 ? 'display:none' : ''; ?>">
