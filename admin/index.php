@@ -787,10 +787,13 @@ require_once 'admin_header.php';
                     </div>
                 </div>
                 <div class="qb-field" style="margin-top:1.25rem;">
-                    <label for="qbCustomerNote">Appointment Details <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                    <label for="qbCustomerNote">Notes <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
                     <textarea id="qbCustomerNote" placeholder="e.g. Female therapist, light pressure, VIP guest…"></textarea>
                 </div>
-                <div class="qb-summary" id="qbReviewSummary" style="margin-top:1.5rem;"></div>
+                <div class="qb-field" style="margin-top:1.5rem;">
+                    <label>Appointment Details</label>
+                    <div class="qb-summary" id="qbReviewSummary"></div>
+                </div>
             </div>
 
             <div class="qb-panel" id="qbPanel4" style="display:none;">
@@ -962,6 +965,7 @@ function qbGotoStep(n) {
         document.getElementById('qbBookingDateLabel').textContent =
             'Booking for ' + dt.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
     }
+    if (n === 3) qbBuildReviewSummary();
     var scrollBody = document.querySelector('#quickBookModal .modal-box-body');
     if (scrollBody) scrollBody.scrollTop = 0;
 }
@@ -996,7 +1000,6 @@ function qbNext() {
         qbState.customer_name  = name;
         qbState.phone          = document.getElementById('qbCustomerPhone').value.trim();
         qbState.customer_note  = document.getElementById('qbCustomerNote').value.trim();
-        qbBuildReviewSummary();
         qbRecalc();
         qbGotoStep(4);
     }
