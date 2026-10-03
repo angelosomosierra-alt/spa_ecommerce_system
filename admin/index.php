@@ -256,12 +256,108 @@ function render_live_panels(array $d): void {
     <?php
 }
 
+// ── Appointments calendar: month grid + per-day list, shared by page-load and AJAX nav ─
+function render_appt_calendar_html(mysqli $conn, int $year, int $month): string {
+    if ($month < 1) { $month = 12; $year--; }
+    if ($month > 12) { $month = 1; $year++; }
+    $first_ts   = mktime(0, 0, 0, $month, 1, $year);
+    $days_in_mo = (int)date('t', $first_ts);
+    $start_wday = (int)date('w', $first_ts); // 0=Sun
+    $ym         = sprintf('%04d-%02d', $year, $month);
+    $today_str  = date('Y-m-d');
+
+    $counts = [];
+    $stmt = $conn->prepare("SELECT DATE(appointment_date) d, COUNT(*) c FROM appointments WHERE status NOT IN ('cancelled','declined','refunded') AND YEAR(appointment_date) = ? AND MONTH(appointment_date) = ? GROUP BY DATE(appointment_date)");
+    $stmt->bind_param("ii", $year, $month);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) $counts[$row['d']] = (int)$row['c'];
+    $stmt->close();
+
+    ob_start();
+    ?>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="apptCalNav(-1)">&lsaquo; Prev</button>
+        <strong style="color:var(--brown);font-size:0.95rem;"><?php echo date('F Y', $first_ts); ?></strong>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="apptCalNav(1)">Next &rsaquo;</button>
+    </div>
+    <div class="appt-cal-grid appt-cal-dow">
+        <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+    </div>
+    <div class="appt-cal-grid" data-ym="<?php echo $ym; ?>">
+        <?php for ($i = 0; $i < $start_wday; $i++): ?>
+        <div class="appt-cal-day appt-cal-blank"></div>
+        <?php endfor; ?>
+        <?php for ($d = 1; $d <= $days_in_mo; $d++):
+            $date_str = sprintf('%04d-%02d-%02d', $year, $month, $d);
+            $count    = $counts[$date_str] ?? 0;
+            $classes  = 'appt-cal-day' . ($date_str === $today_str ? ' today' : '') . ($count > 0 ? ' has-appts' : '');
+        ?>
+        <div class="<?php echo $classes; ?>" <?php if ($count > 0): ?>onclick="apptCalShowDay('<?php echo $date_str; ?>')"<?php endif; ?>>
+            <span class="d-num"><?php echo $d; ?></span>
+            <?php if ($count > 0): ?><span class="d-count"><?php echo $count; ?></span><?php endif; ?>
+        </div>
+        <?php endfor; ?>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+function render_appt_day_list_html(mysqli $conn, string $date_str): string {
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_str)) $date_str = date('Y-m-d');
+
+    $stmt = $conn->prepare("SELECT a.appointment_date, a.status, u.full_name, s.name AS service_name FROM appointments a JOIN users u ON a.user_id = u.id JOIN services s ON a.service_id = s.id WHERE DATE(a.appointment_date) = ? ORDER BY a.appointment_date ASC");
+    $stmt->bind_param("s", $date_str);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    ob_start();
+    ?>
+    <div style="font-size:0.85rem;font-weight:700;color:var(--brown);margin-bottom:0.75rem;">
+        <?php echo date('F j, Y', strtotime($date_str)); ?>
+    </div>
+    <?php if (empty($rows)): ?>
+        <div style="color:var(--gray);font-size:0.82rem;text-align:center;padding:2rem 0;">No appointments on this day.</div>
+    <?php else: foreach ($rows as $a): ?>
+        <div style="display:flex;align-items:flex-start;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid var(--border2);">
+            <div style="font-size:0.72rem;font-weight:700;color:var(--gold);white-space:nowrap;min-width:3.5rem;"><?php echo date('h:i A', strtotime($a['appointment_date'])); ?></div>
+            <div style="flex:1;min-width:0;">
+                <div style="font-size:0.82rem;font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($a['full_name']); ?></div>
+                <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($a['service_name']); ?></div>
+            </div>
+            <span class="badge badge-<?php echo $a['status']; ?>"><?php echo ucfirst($a['status']); ?></span>
+        </div>
+    <?php endforeach; endif; ?>
+    <?php
+    return ob_get_clean();
+}
+
 // ── AJAX endpoint: access-protected, outputs ONLY the three panels, then exits ─
 if (($_GET['ajax'] ?? '') === 'live_panels') {
     redirect_if_not_admin();
     ob_clean();
     header('Content-Type: text/html; charset=utf-8');
     render_live_panels(run_live_queries($conn));
+    exit;
+}
+
+if (($_GET['ajax'] ?? '') === 'calendar_month') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: text/html; charset=utf-8');
+    $ym_parts = explode('-', $_GET['ym'] ?? date('Y-m'));
+    $yy = isset($ym_parts[0]) ? (int)$ym_parts[0] : (int)date('Y');
+    $mm = isset($ym_parts[1]) ? (int)$ym_parts[1] : (int)date('n');
+    echo render_appt_calendar_html($conn, $yy, $mm);
+    exit;
+}
+
+if (($_GET['ajax'] ?? '') === 'calendar_day') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: text/html; charset=utf-8');
+    echo render_appt_day_list_html($conn, $_GET['date'] ?? date('Y-m-d'));
     exit;
 }
 
@@ -327,8 +423,64 @@ require_once 'admin_header.php';
     </a>
 </div>
 
+<div class="panel" style="margin-bottom:1.5rem;">
+    <div class="panel-header">
+        <span class="panel-title">📅 Appointments</span>
+        <div style="display:flex;gap:0.6rem;">
+            <button type="button" class="btn btn-primary btn-sm" onclick="openApptCalendar()">📅 Calendar</button>
+            <button type="button" class="btn btn-secondary btn-sm">Book Now</button>
+        </div>
+    </div>
+</div>
+
 <div id="resourceGridContainer" style="margin-bottom:1.5rem;"><?php require_once __DIR__ . '/_resource_grid.php'; echo render_resource_grid_html($conn); ?></div>
 <?php include __DIR__ . '/_resource_grid_js.php'; ?>
+
+<!-- Appointments calendar modal -->
+<div class="modal-overlay" id="apptCalendarModal">
+    <div class="modal-box" style="max-width:860px;">
+        <div class="modal-box-header">
+            <span class="modal-box-title">📅 Appointments Calendar</span>
+            <button class="modal-box-close" onclick="closeApptCalendar()">✕</button>
+        </div>
+        <div class="modal-box-body" style="padding:0;">
+            <div class="appt-cal-modal-grid">
+                <div id="apptCalMonth" style="padding:1.25rem;border-right:1px solid var(--border);">
+                    <?php echo render_appt_calendar_html($conn, (int)date('Y'), (int)date('n')); ?>
+                </div>
+                <div id="apptCalDayList" style="padding:1.25rem;">
+                    <div style="color:var(--gray);font-size:0.82rem;text-align:center;padding:2rem 0;">Select a day to view its appointments.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function openApptCalendar() { document.getElementById('apptCalendarModal').classList.add('active'); }
+function closeApptCalendar() { document.getElementById('apptCalendarModal').classList.remove('active'); }
+
+function apptCalNav(dir) {
+    var grid = document.querySelector('#apptCalMonth [data-ym]');
+    var ym = grid ? grid.getAttribute('data-ym') : '<?php echo date('Y-m'); ?>';
+    var parts = ym.split('-');
+    var y = parseInt(parts[0], 10), m = parseInt(parts[1], 10) + dir;
+    if (m < 1) { m = 12; y--; } else if (m > 12) { m = 1; y++; }
+    var newYm = y + '-' + (m < 10 ? '0' + m : m);
+    fetch('index.php?ajax=calendar_month&ym=' + newYm, { credentials: 'same-origin' })
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+            document.getElementById('apptCalMonth').innerHTML = html;
+            document.getElementById('apptCalDayList').innerHTML = '<div style="color:var(--gray);font-size:0.82rem;text-align:center;padding:2rem 0;">Select a day to view its appointments.</div>';
+        });
+}
+
+function apptCalShowDay(dateStr) {
+    document.getElementById('apptCalDayList').innerHTML = '<div style="color:var(--gray);font-size:0.82rem;text-align:center;padding:2rem 0;">Loading&hellip;</div>';
+    fetch('index.php?ajax=calendar_day&date=' + encodeURIComponent(dateStr), { credentials: 'same-origin' })
+        .then(function (r) { return r.text(); })
+        .then(function (html) { document.getElementById('apptCalDayList').innerHTML = html; });
+}
+</script>
 
 <style>
 .rotation-groups-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; }
@@ -340,6 +492,24 @@ require_once 'admin_header.php';
 @media (max-width:1100px) { .stats-grid-5 { grid-template-columns:repeat(3,1fr) !important; } }
 @media (max-width:700px)  { .stats-grid-5 { grid-template-columns:repeat(2,1fr) !important; } }
 @media (max-width:480px)  { .stats-grid-5 { grid-template-columns:1fr !important; } }
+
+.appt-cal-modal-grid { display:grid; grid-template-columns:1.4fr 1fr; }
+@media (max-width:640px) { .appt-cal-modal-grid { grid-template-columns:1fr; } }
+.appt-cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+.appt-cal-dow { text-align:center; font-size:0.68rem; font-weight:700; color:var(--gray); margin-bottom:4px; }
+.appt-cal-day {
+    position:relative; aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    border-radius:8px; font-size:0.78rem; color:var(--brown); background:var(--bg3); border:1px solid transparent;
+}
+.appt-cal-day.appt-cal-blank { background:transparent; }
+.appt-cal-day.today { border-color:var(--gold); font-weight:700; }
+.appt-cal-day.has-appts { background:#FDE8D8; cursor:pointer; }
+.appt-cal-day.has-appts:hover { background:#f8d1ad; }
+.appt-cal-day .d-count {
+    font-size:0.6rem; font-weight:700; color:#fff; background:#C96A2C; border-radius:10px;
+    padding:0 0.3rem; line-height:1.3; margin-top:0.1rem;
+}
+.badge-assigned { background:#cfe2ff; color:#084298; }
 </style>
 <div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:0.35rem;">
     <span id="livePanelsTs" style="font-size:0.65rem;color:var(--gray);">Live &mdash; auto-refreshes every 45s</span>
