@@ -278,7 +278,7 @@ function render_appt_calendar_html(mysqli $conn, int $year, int $month): string 
     ?>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem;">
         <button type="button" class="btn btn-secondary btn-sm" onclick="apptCalNav(-1)">&lsaquo; Prev</button>
-        <strong style="color:var(--brown);font-size:0.95rem;"><?php echo date('F Y', $first_ts); ?></strong>
+        <strong style="color:var(--brown);font-size:1.25rem;"><?php echo date('F Y', $first_ts); ?></strong>
         <button type="button" class="btn btn-secondary btn-sm" onclick="apptCalNav(1)">Next &rsaquo;</button>
     </div>
     <div class="appt-cal-grid appt-cal-dow">
@@ -323,11 +323,12 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 
+    $is_future_or_today = $date_str >= date('Y-m-d');
+
     ob_start();
     ?>
-    <div style="font-size:0.85rem;font-weight:700;color:var(--brown);margin-bottom:0.75rem;">
-        <?php echo date('F j, Y', strtotime($date_str)); ?>
-    </div>
+    <div class="appt-cal-day-head"><?php echo date('F j, Y', strtotime($date_str)); ?></div>
+    <div class="appt-cal-day-scroll">
     <?php if (empty($rows)): ?>
         <div style="color:var(--gray);font-size:0.82rem;text-align:center;padding:2rem 0;">No appointments on this day.</div>
     <?php else: foreach ($rows as $a): ?>
@@ -341,6 +342,12 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
             <span class="badge badge-<?php echo $a['status']; ?>"><?php echo ucfirst($a['status']); ?></span>
         </div>
     <?php endforeach; endif; ?>
+    </div>
+    <?php if ($is_future_or_today): ?>
+    <div class="appt-cal-day-booknow">
+        <button type="button" class="btn btn-primary btn-full">📅 Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
+    </div>
+    <?php endif; ?>
     <?php
     return ob_get_clean();
 }
@@ -450,17 +457,17 @@ require_once 'admin_header.php';
 
 <!-- Appointments calendar modal -->
 <div class="modal-overlay" id="apptCalendarModal">
-    <div class="modal-box" style="max-width:860px;">
+    <div class="modal-box" style="max-width:1720px;width:95vw;">
         <div class="modal-box-header">
             <span class="modal-box-title">📅 Appointments Calendar</span>
             <button class="modal-box-close" onclick="closeApptCalendar()">✕</button>
         </div>
         <div class="modal-box-body" style="padding:0;">
             <div class="appt-cal-modal-grid">
-                <div id="apptCalMonth" style="padding:1.25rem;border-right:1px solid var(--border);">
+                <div id="apptCalMonth" class="appt-cal-month-pane">
                     <?php echo render_appt_calendar_html($conn, (int)date('Y'), (int)date('n')); ?>
                 </div>
-                <div id="apptCalDayList" style="padding:1.25rem;">
+                <div id="apptCalDayList" class="appt-cal-day-pane">
                     <div style="color:var(--gray);font-size:0.82rem;text-align:center;padding:2rem 0;">Select a day to view its appointments.</div>
                 </div>
             </div>
@@ -505,13 +512,19 @@ function apptCalShowDay(dateStr) {
 @media (max-width:700px)  { .stats-grid-5 { grid-template-columns:repeat(2,1fr) !important; } }
 @media (max-width:480px)  { .stats-grid-5 { grid-template-columns:1fr !important; } }
 
-.appt-cal-modal-grid { display:grid; grid-template-columns:1.4fr 1fr; }
-@media (max-width:640px) { .appt-cal-modal-grid { grid-template-columns:1fr; } }
-.appt-cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
-.appt-cal-dow { text-align:center; font-size:0.68rem; font-weight:700; color:var(--gray); margin-bottom:4px; }
+.appt-cal-modal-grid { display:grid; grid-template-columns:1.4fr 1fr; min-height:720px; }
+@media (max-width:640px) { .appt-cal-modal-grid { grid-template-columns:1fr; min-height:0; } }
+.appt-cal-month-pane { padding:1.5rem; border-right:1px solid var(--border); }
+.appt-cal-day-pane { display:flex; flex-direction:column; min-height:720px; max-height:80vh; }
+@media (max-width:640px) { .appt-cal-day-pane { max-height:60vh; } }
+.appt-cal-day-head { padding:1.5rem 1.5rem 0.75rem; font-size:1rem; font-weight:700; color:var(--brown); flex-shrink:0; }
+.appt-cal-day-scroll { flex:1; overflow-y:auto; padding:0 1.5rem; }
+.appt-cal-day-booknow { flex-shrink:0; padding:1rem 1.5rem; border-top:1px solid var(--border); background:var(--bg3); }
+.appt-cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:8px; }
+.appt-cal-dow { text-align:center; font-size:0.85rem; font-weight:700; color:var(--gray); margin-bottom:8px; }
 .appt-cal-day {
     position:relative; aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
-    border-radius:8px; font-size:0.78rem; color:var(--brown); background:var(--bg3); border:1px solid transparent;
+    border-radius:10px; font-size:1.05rem; color:var(--brown); background:var(--bg3); border:1px solid transparent;
     cursor:pointer;
 }
 .appt-cal-day:hover { background:#f0e4d3; }
@@ -520,8 +533,8 @@ function apptCalShowDay(dateStr) {
 .appt-cal-day.has-appts { background:#FDE8D8; }
 .appt-cal-day.has-appts:hover { background:#f8d1ad; }
 .appt-cal-day .d-count {
-    font-size:0.6rem; font-weight:700; color:#fff; background:#C96A2C; border-radius:10px;
-    padding:0 0.3rem; line-height:1.3; margin-top:0.1rem;
+    font-size:0.75rem; font-weight:700; color:#fff; background:#C96A2C; border-radius:10px;
+    padding:0 0.4rem; line-height:1.4; margin-top:0.15rem;
 }
 .badge-assigned { background:#cfe2ff; color:#084298; }
 </style>
