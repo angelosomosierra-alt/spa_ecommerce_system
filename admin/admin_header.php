@@ -5,7 +5,6 @@
  *
  * Required variables before including:
  *   $page_title  — e.g. "Dashboard"
- *   $page_icon   — e.g. "📊"
  *   $active_page — e.g. "index" | "services" | "products" | etc.
  */
 
@@ -13,11 +12,11 @@ $admin_username   = $_SESSION['username']   ?? 'Admin';
 $admin_initial    = strtoupper(substr($admin_username, 0, 1));
 $admin_role       = $_SESSION['admin_role'] ?? 'owner';
 $admin_role_label = match($admin_role) {
-    'cashier'   => '🏪 Receptionist',
-    'marketing' => '📣 Marketing',
-    'it'        => '💻 IT Support',
-    'hr'        => '🧑‍💼 HR',
-    default     => '👑 Owner',
+    'cashier'   => 'Receptionist',
+    'marketing' => 'Marketing',
+    'it'        => 'IT Support',
+    'hr'        => 'HR',
+    default     => 'Owner',
 };
 
 // ── Notification setup (admin = user_id IS NULL) ──────────────────────────────
@@ -78,7 +77,7 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                 <div class="sidebar-user-role"><?php echo $admin_role_label; ?></div>
             </div>
         </div>
-        <a href="index.php?logout=1" class="sidebar-logout">🚪 Logout</a>
+        <a href="index.php?logout=1" class="sidebar-logout">Logout</a>
     </div>
 
 </aside>
@@ -91,7 +90,6 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
         <div style="display:flex;align-items:center;gap:0;">
             <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle menu">☰</button>
             <div class="topbar-title">
-                <span class="page-icon"><?php echo $page_icon ?? '⚙️'; ?></span>
                 <?php echo htmlspecialchars($page_title ?? 'Admin'); ?>
             </div>
         </div>
@@ -121,7 +119,7 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                             border:1px solid #EAD8C0;z-index:9999;overflow:hidden;">
                     <div style="display:flex;justify-content:space-between;align-items:center;
                                 padding:0.65rem 1rem;background:#3B2A1A;color:#FAF3E8;">
-                        <span style="font-weight:600;font-size:0.85rem;">🔔 Notifications</span>
+                        <span style="font-weight:600;font-size:0.85rem;">Notifications</span>
                         <a id="adminMarkAllRead" href="?mark_notif_read=1"
                            style="font-size:0.72rem;color:#C8A46B;text-decoration:none;display:<?php echo $admin_notif_unread > 0 ? 'inline' : 'none'; ?>;">
                             Mark all read
@@ -132,7 +130,6 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                         <div style="padding:1.5rem;text-align:center;color:#aaa;font-size:0.82rem;">No notifications yet</div>
                         <?php else: ?>
                         <?php
-                        $an_icons = ['order'=>'🛍️','appointment'=>'📅','status'=>'🔔','general'=>'💬'];
                         foreach ($admin_notif_list as $n):
                             $diff = time() - strtotime($n['created_at']);
                             if ($diff < 60)        $n_time = 'Just now';
@@ -146,9 +143,6 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                                   text-decoration:none;color:#3B2A1A;
                                   background:<?php echo $n['is_read'] ? '#fff' : '#fff8f3'; ?>;
                                   transition:background 0.15s;">
-                            <span style="font-size:1.2rem;flex-shrink:0;margin-top:1px;">
-                                <?php echo $an_icons[$n['type']] ?? '🔔'; ?>
-                            </span>
                             <div style="flex:1;min-width:0;">
                                 <div style="font-weight:600;font-size:0.82rem;color:#3B2A1A;
                                             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">

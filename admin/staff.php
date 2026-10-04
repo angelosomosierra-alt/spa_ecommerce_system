@@ -46,7 +46,7 @@ $conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS is_generalist TINY
 // ── CREATE STAFF ACCOUNT ─────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
     verify_csrf_token();
-    if (!$can_manage_accounts) { $msg = '⚠️ Access denied.'; $msg_type = 'danger'; goto skip_create_cashier; }
+    if (!$can_manage_accounts) { $msg = 'Access denied.'; $msg_type = 'danger'; goto skip_create_cashier; }
     $username      = trim($_POST['username']        ?? '');
     $email         = trim($_POST['email']           ?? '');
     $full_name     = trim($_POST['full_name']       ?? '');
@@ -65,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
     $errors = [];
     // [PERMISSION] Server-side gate — never trust the form submission
     if (!in_array($admin_role_val, creatable_roles($creator_role), true)) {
-        $errors[] = '⚠️ You are not permitted to create that account type.';
+        $errors[] = 'You are not permitted to create that account type.';
     }
     if (empty($username) || empty($email) || empty($password))
         $errors[] = 'Username, email and password are required.';
@@ -90,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
             $existing_count = intval($chk_r->get_result()->fetch_assoc()['c']);
             $chk_r->close();
             if ($existing_count >= 1) {
-                $errors[] = '⚠️ Only 1 Receptionist account is allowed. Please deactivate the existing one before creating a new one.';
+                $errors[] = 'Only 1 Receptionist account is allowed. Please deactivate the existing one before creating a new one.';
             }
         }
     }
@@ -114,8 +114,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
         $stmt->bind_param("ssssss", $username, $email, $hashed, $full_name, $phone, $admin_role_val);
         $stmt->execute(); $stmt->close();
         $msg = $admin_role_val === 'cashier'
-            ? "✅ Receptionist account created."
-            : "✅ {$role_label} account for <strong>{$full_name}</strong> created.";
+            ? "Receptionist account created."
+            : "{$role_label} account for <strong>{$full_name}</strong> created.";
     } else {
         $msg = implode('<br>', $errors); $msg_type = 'danger';
     }
@@ -125,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
 // ── SAVE RECEPTIONIST LOGIN SETTINGS ─────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_receptionist_settings'])) {
     verify_csrf_token();
-    if (!$can_manage_accounts) { $msg = '⚠️ Access denied.'; $msg_type = 'danger'; goto skip_receptionist_settings; }
+    if (!$can_manage_accounts) { $msg = 'Access denied.'; $msg_type = 'danger'; goto skip_receptionist_settings; }
     $r_start = $_POST['r_login_start'] ?? '07:00';
     $r_end   = $_POST['r_login_end']   ?? '23:59';
     if (preg_match('/^\d{2}:\d{2}$/', $r_start) && preg_match('/^\d{2}:\d{2}$/', $r_end)) {
@@ -138,9 +138,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_receptionist_set
             $stmt->bind_param("ssis", $key, $val, $uid, $now);
             $stmt->execute(); $stmt->close();
         }
-        $msg = '✅ Receptionist login time window saved.';
+        $msg = 'Receptionist login time window saved.';
     } else {
-        $msg = '❌ Invalid time format.'; $msg_type = 'danger';
+        $msg = 'Invalid time format.'; $msg_type = 'danger';
     }
     skip_receptionist_settings:;
 }
@@ -151,20 +151,20 @@ if (isset($_GET['clear_r_session'])) {
     $rid  = intval($_GET['clear_r_session']);
     $stmt = $conn->prepare("UPDATE users SET session_token=NULL, session_started=NULL WHERE id=? AND admin_role='cashier'");
     $stmt->bind_param("i", $rid); $stmt->execute(); $stmt->close();
-    $msg = '✅ Receptionist session cleared. They can now log in again.';
+    $msg = 'Receptionist session cleared. They can now log in again.';
     header("Location: staff.php?tab=cashiers"); exit();
 }
 
 // ── UPDATE CASHIER PIN ────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pin'])) {
     verify_csrf_token();
-    if (!$can_manage_accounts) { $msg = '⚠️ Access denied.'; $msg_type = 'danger'; goto skip_update_pin; }
+    if (!$can_manage_accounts) { $msg = 'Access denied.'; $msg_type = 'danger'; goto skip_update_pin; }
     $uid = intval($_POST['pin_user_id'] ?? 0);
     $pin = trim($_POST['new_pin'] ?? '');
     if ($uid > 0 && ctype_digit($pin) && strlen($pin) === 4) {
         $stmt = $conn->prepare("UPDATE users SET cashier_pin=? WHERE id=? AND admin_role='cashier'");
         $stmt->bind_param("si", $pin, $uid); $stmt->execute(); $stmt->close();
-        $msg = "✅ PIN updated.";
+        $msg = "PIN updated.";
     } else {
         $msg = 'PIN must be exactly 4 digits.'; $msg_type = 'danger';
     }
@@ -174,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pin'])) {
 // ── RESET STAFF PASSWORD ──────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_password'])) {
     verify_csrf_token();
-    if (!$can_manage_accounts) { $msg = '⚠️ Access denied.'; $msg_type = 'danger'; goto skip_reset_password; }
+    if (!$can_manage_accounts) { $msg = 'Access denied.'; $msg_type = 'danger'; goto skip_reset_password; }
     $reset_user_id        = intval($_POST['reset_user_id']        ?? 0);
     $new_password         = $_POST['new_password']                ?? '';
     $confirm_new_password = $_POST['confirm_new_password']        ?? '';
@@ -207,7 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_password'])) {
         $hashed_rp = password_hash($new_password, PASSWORD_DEFAULT);
         $upd_rp = $conn->prepare("UPDATE users SET password=?, session_token=NULL, session_started=NULL WHERE id=?");
         $upd_rp->bind_param("si", $hashed_rp, $reset_user_id); $upd_rp->execute(); $upd_rp->close();
-        $msg = "✅ Password for <strong>" . htmlspecialchars($rp_target['full_name']) . "</strong> has been reset. The new password will not be shown again.";
+        $msg = "Password for <strong>" . htmlspecialchars($rp_target['full_name']) . "</strong> has been reset. The new password will not be shown again.";
         $msg_type = 'success';
     } else {
         $msg = implode(' ', $rp_errors); $msg_type = 'danger';
@@ -226,16 +226,16 @@ if (isset($_GET['delete_cashier'])) {
     $del_creator = current_admin_role();
 
     if ($del_id === (int)$_SESSION['user_id']) {
-        $msg = '⚠️ You cannot delete your own account.'; $msg_type = 'warning';
+        $msg = 'You cannot delete your own account.'; $msg_type = 'warning';
     } elseif ($target_role === 'owner') {
-        $msg = '⚠️ Cannot delete an owner account.'; $msg_type = 'warning';
+        $msg = 'Cannot delete an owner account.'; $msg_type = 'warning';
     } elseif (!in_array($target_role, creatable_roles($del_creator), true)) {
-        $msg = '⚠️ You are not permitted to delete that account type.'; $msg_type = 'warning';
+        $msg = 'You are not permitted to delete that account type.'; $msg_type = 'warning';
     } else {
         $stmt = $conn->prepare("DELETE FROM users WHERE id=? AND admin_role=?");
         $stmt->bind_param("is", $del_id, $target_role); $stmt->execute(); $stmt->close();
         $role_labels_del = ['cashier' => 'Receptionist', 'marketing' => 'Marketing', 'it' => 'IT Support', 'hr' => 'HR'];
-        $msg = '🗑️ ' . ($role_labels_del[$target_role] ?? ucfirst($target_role)) . ' account removed.';
+        $msg = '' . ($role_labels_del[$target_role] ?? ucfirst($target_role)) . ' account removed.';
     }
 }
 
@@ -257,19 +257,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
             $stmt = $conn->prepare("UPDATE therapists SET full_name=?, phone=?, specialties=?, is_generalist=? WHERE id=?");
             $stmt->bind_param("sssii", $full_name, $phone, $specialties_text, $is_generalist, $tid);
             $stmt->execute(); $stmt->close();
-            $msg = "✅ Therapist <strong>" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "</strong> updated.";
+            $msg = "Therapist <strong>" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "</strong> updated.";
             log_activity($conn, 'therapist_updated', "Updated therapist: {$full_name}", 'therapist', $tid);
         } else {
             $chk = $conn->prepare("SELECT id FROM therapists WHERE LOWER(full_name)=LOWER(?)");
             $chk->bind_param("s", $full_name); $chk->execute();
             if ($chk->get_result()->num_rows > 0) {
-                $msg = "⚠️ A therapist named \"" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "\" already exists.";
+                $msg = "A therapist named \"" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "\" already exists.";
                 $msg_type = 'danger'; $tid = -1;
             } else {
                 $stmt = $conn->prepare("INSERT INTO therapists (full_name, phone, specialties, is_generalist) VALUES (?,?,?,?)");
                 $stmt->bind_param("sssi", $full_name, $phone, $specialties_text, $is_generalist);
                 $stmt->execute(); $tid = $conn->insert_id; $stmt->close();
-                $msg = "✅ Therapist <strong>" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "</strong> added.";
+                $msg = "Therapist <strong>" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "</strong> added.";
                 log_activity($conn, 'therapist_added', "Added therapist: {$full_name}", 'therapist', (int)$tid);
             }
             $chk->close();
@@ -335,7 +335,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
 
                 if (!empty($missing_comm)) {
                     $missing_names = htmlspecialchars(implode(', ', array_column($missing_comm, 'name')), ENT_QUOTES, 'UTF-8');
-                    $msg .= "<br>⚠️ <strong>Commission not set</strong> for: <em>{$missing_names}</em>. "
+                    $msg .= "<br><strong>Commission not set</strong> for: <em>{$missing_names}</em>. "
                           . "Please go to the <a href='staff.php?tab=commission' style='color:var(--gold);font-weight:700;'>Commission Matrix</a> to set rates.";
                     $msg_type = 'warning';
                 }
@@ -374,7 +374,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_therapist_ded']))
         ");
         $stmt->bind_param("isssdsi", $therapist_id, $ded_date, $type, $label, $amount, $notes, $added_by);
         $ok       = $stmt->execute(); $stmt->close();
-        $msg      = $ok ? "✅ Deduction recorded." : "Error saving deduction.";
+        $msg      = $ok ? "Deduction recorded." : "Error saving deduction.";
         $msg_type = $ok ? "success" : "danger";
     } else {
         $msg = "Select a therapist and enter a valid amount."; $msg_type = "danger";
@@ -412,7 +412,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_commission'])) {
             $stmt->bind_param("iidd", $t_id, $sid, $pct, $flat);
             $stmt->execute(); $stmt->close();
         }
-        $msg = "✅ Commission rates saved.";
+        $msg = "Commission rates saved.";
     }
 }
 
@@ -446,7 +446,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_receptionist_p
         $stmt = $conn->prepare("INSERT INTO receptionist_pins (full_name, phone, pin) VALUES (?,?,?)");
         $stmt->bind_param("sss", $rp_name, $rp_phone, $rp_pin);
         $stmt->execute(); $stmt->close();
-        $msg = "✅ Receptionist PIN created for <strong>{$rp_name}</strong>.";
+        $msg = "Receptionist PIN created for <strong>{$rp_name}</strong>.";
     } else {
         $msg = implode('<br>', $r_errors); $msg_type = 'danger';
     }
@@ -468,7 +468,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_receptionist_p
             $stmt = $conn->prepare("UPDATE receptionist_pins SET full_name=?, phone=?, pin=? WHERE id=?");
             $stmt->bind_param("sssi", $rp_name, $rp_phone, $rp_pin, $rp_id);
             $stmt->execute(); $stmt->close();
-            $msg = "✅ Receptionist PIN updated.";
+            $msg = "Receptionist PIN updated.";
         }
         $chk->close();
     } else {
@@ -481,7 +481,7 @@ if (isset($_GET['delete_receptionist'])) {
     $del_rp = intval($_GET['delete_receptionist']);
     $stmt   = $conn->prepare("DELETE FROM receptionist_pins WHERE id=?");
     $stmt->bind_param("i", $del_rp); $stmt->execute(); $stmt->close();
-    $msg = '🗑️ Receptionist PIN removed.';
+    $msg = 'Receptionist PIN removed.';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -758,14 +758,14 @@ if (isset($_GET['edit_therapist'])) {
 }
 
 if (isset($_GET['deleted']) && $_GET['deleted'] === 'therapist') {
-    $msg = '🗑️ Therapist removed.'; $active_tab = 'therapists';
+    $msg = 'Therapist removed.'; $active_tab = 'therapists';
 }
 if (isset($_GET['delete_receptionist'])) {
     $active_tab = 'receptionists';
 }
 
 $page_title  = 'Staff';
-$page_icon   = '🪪';
+$page_icon   = '';
 $active_page = 'staff';
 require_once 'admin_header.php';
 ?>
@@ -781,11 +781,11 @@ require_once 'admin_header.php';
             border-bottom:2px solid var(--border2);padding-bottom:0;flex-wrap:wrap;">
     <?php
     $tabs = [
-        'cashiers'      => ['🏪 Staff Accounts',        count($cashiers) + count($marketings) + count($it_staff) + count($hr_staff)],
-        'receptionists' => ['📋 Receptionists',        count($receptionist_pins)],
-        'therapists'    => ['💆 Therapists',           count($all_therapists)],
-        'commission'    => ['💰 Commission Matrix',    null],
-        'deductions'    => ['💸 CA & Deductions',      null],
+        'cashiers'      => ['Staff Accounts',        count($cashiers) + count($marketings) + count($it_staff) + count($hr_staff)],
+        'receptionists' => ['Receptionists',        count($receptionist_pins)],
+        'therapists'    => ['Therapists',           count($all_therapists)],
+        'commission'    => ['Commission Matrix',    null],
+        'deductions'    => ['CA & Deductions',      null],
     ];
     foreach ($tabs as $tab_key => [$tab_label, $count]):
         if ($tab_key === 'cashiers' && !$can_manage_accounts) continue;
@@ -818,7 +818,7 @@ require_once 'admin_header.php';
     <!-- Create Account Form -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">➕ Create Account</span>
+            <span class="panel-title">Create Account</span>
         </div>
         <div class="panel-body" style="padding:1.25rem;">
             <?php $_allowed_create = creatable_roles(current_admin_role()); ?>
@@ -832,32 +832,32 @@ require_once 'admin_header.php';
                 <?php
                 $_role_defs = [
                     'cashier' => [
-                        'icon' => '📋 Receptionist', 'sub' => 'Limited access',
+                        'icon' => 'Receptionist', 'sub' => 'Limited access',
                         'sub_color'   => 'var(--rust)',
                         'note_bg'     => 'rgba(201,106,44,0.08)', 'note_border' => 'var(--rust)',
                         'note_color'  => 'var(--brown)',
-                        'note_text'   => '📋 <strong>Receptionist:</strong> Appointments, orders, walk-in, and expenses. Cannot access analytics, products, services, or staff management.',
+                        'note_text'   => '<strong>Receptionist:</strong> Appointments, orders, walk-in, and expenses. Cannot access analytics, products, services, or staff management.',
                     ],
                     'marketing' => [
-                        'icon' => '📣 Marketing', 'sub' => 'Full access',
+                        'icon' => 'Marketing', 'sub' => 'Full access',
                         'sub_color'   => 'var(--gray)',
                         'note_bg'     => 'rgba(22,163,74,0.07)', 'note_border' => '#16a34a',
                         'note_color'  => '#14532d',
-                        'note_text'   => '📣 <strong>Marketing:</strong> Full access to all pages — dashboard, analytics, services, products, users, staff, discounts, and reports.',
+                        'note_text'   => '<strong>Marketing:</strong> Full access to all pages — dashboard, analytics, services, products, users, staff, discounts, and reports.',
                     ],
                     'it' => [
-                        'icon' => '💻 IT Support', 'sub' => 'Full access',
+                        'icon' => 'IT Support', 'sub' => 'Full access',
                         'sub_color'   => 'var(--gray)',
                         'note_bg'     => 'rgba(37,99,235,0.07)', 'note_border' => '#2563eb',
                         'note_color'  => '#1e3a8a',
-                        'note_text'   => '💻 <strong>IT Support:</strong> Full access to all pages — same as Marketing. Intended for system maintenance and technical management.',
+                        'note_text'   => '<strong>IT Support:</strong> Full access to all pages — same as Marketing. Intended for system maintenance and technical management.',
                     ],
                     'hr' => [
-                        'icon' => '🧑‍💼 HR', 'sub' => 'Full access',
+                        'icon' => 'HR', 'sub' => 'Full access',
                         'sub_color'   => 'var(--gray)',
                         'note_bg'     => 'rgba(168,85,247,0.07)', 'note_border' => '#a855f7',
                         'note_color'  => '#581c87',
-                        'note_text'   => '🧑‍💼 <strong>HR:</strong> Same full access as IT Support. Intended for human resources and staff management.',
+                        'note_text'   => '<strong>HR:</strong> Same full access as IT Support. Intended for human resources and staff management.',
                     ],
                 ];
                 $_col_str = implode(' ', array_fill(0, count($_allowed_create), '1fr'));
@@ -927,7 +927,7 @@ require_once 'admin_header.php';
                                oninput="checkPwd(this.value)">
                         <button type="button" onclick="togglePwd('pwdInput')"
                                 style="position:absolute;right:0.5rem;top:50%;transform:translateY(-50%);
-                                       background:none;border:none;cursor:pointer;color:var(--gray);font-size:0.9rem;">👁</button>
+                                       background:none;border:none;cursor:pointer;color:var(--gray);font-size:0.9rem;"></button>
                     </div>
                     <div style="margin-top:0.45rem;display:grid;grid-template-columns:1fr 1fr;gap:0.2rem;">
                         <div id="chk-len"   style="font-size:0.72rem;color:var(--gray);">✗ 8+ characters</div>
@@ -943,12 +943,12 @@ require_once 'admin_header.php';
                                   background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
                 </div>
                 <button type="submit" name="create_cashier" class="btn btn-primary" style="width:100%;">
-                    ➕ Create Account
+                    Create Account
                 </button>
             </form>
             <?php else: ?>
             <div style="text-align:center;padding:2rem;color:var(--gray);">
-                <div style="font-size:2rem;margin-bottom:0.5rem;">🔒</div>
+                <div style="font-size:2rem;margin-bottom:0.5rem;"></div>
                 You do not have permission to create admin accounts.
             </div>
             <?php endif; ?>
@@ -960,7 +960,7 @@ require_once 'admin_header.php';
 
         <!-- Owner accounts -->
         <div class="panel">
-            <div class="panel-header"><span class="panel-title">👑 Owner Accounts</span></div>
+            <div class="panel-header"><span class="panel-title">Owner Accounts</span></div>
             <div class="table-wrap" style="border:none;border-radius:0;">
                 <table>
                     <thead>
@@ -996,11 +996,11 @@ require_once 'admin_header.php';
         <!-- Receptionist accounts -->
         <div class="panel">
             <div class="panel-header">
-                <span class="panel-title">📋 Receptionist Accounts (<?php echo count($cashiers); ?>)</span>
+                <span class="panel-title">Receptionist Accounts (<?php echo count($cashiers); ?>)</span>
             </div>
             <?php if (empty($cashiers)): ?>
             <div class="panel-body" style="text-align:center;padding:2rem;color:var(--gray);">
-                <div style="font-size:2rem;margin-bottom:0.4rem;">📋</div>No receptionist accounts yet.
+                <div style="font-size:2rem;margin-bottom:0.4rem;"></div>No receptionist accounts yet.
             </div>
             <?php else: ?>
             <div class="table-wrap" style="border:none;border-radius:0;">
@@ -1031,7 +1031,7 @@ require_once 'admin_header.php';
                         <td style="white-space:nowrap;">
                             <?php if ($s['id'] !== (int)$_SESSION['user_id']): ?>
                             <button type="button" class="btn btn-secondary btn-sm" style="font-size:0.72rem;"
-                                    onclick="openResetPwdModal(<?php echo $s['id']; ?>, '<?php echo htmlspecialchars(addslashes($s['full_name'])); ?>')">🔑 Reset Password</button>
+                                    onclick="openResetPwdModal(<?php echo $s['id']; ?>, '<?php echo htmlspecialchars(addslashes($s['full_name'])); ?>')">Reset Password</button>
                             <a href="staff.php?delete_cashier=<?php echo $s['id']; ?>&tab=cashiers"
                                class="btn btn-danger btn-sm" style="font-size:0.72rem;"
                                onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($s['full_name'])); ?>?').then(ok=>{if(ok)window.location.href=_h;})">✕</a>
@@ -1048,11 +1048,11 @@ require_once 'admin_header.php';
         <!-- Marketing accounts -->
         <div class="panel">
             <div class="panel-header">
-                <span class="panel-title">📣 Marketing Accounts (<?php echo count($marketings); ?>)</span>
+                <span class="panel-title">Marketing Accounts (<?php echo count($marketings); ?>)</span>
             </div>
             <?php if (empty($marketings)): ?>
             <div class="panel-body" style="text-align:center;padding:1.5rem;color:var(--gray);">
-                <div style="font-size:1.75rem;margin-bottom:0.3rem;">📣</div>No marketing accounts yet.
+                <div style="font-size:1.75rem;margin-bottom:0.3rem;"></div>No marketing accounts yet.
             </div>
             <?php else: ?>
             <div class="table-wrap" style="border:none;border-radius:0;">
@@ -1098,11 +1098,11 @@ require_once 'admin_header.php';
         <!-- IT Support accounts -->
         <div class="panel">
             <div class="panel-header">
-                <span class="panel-title">💻 IT Support Accounts (<?php echo count($it_staff); ?>)</span>
+                <span class="panel-title">IT Support Accounts (<?php echo count($it_staff); ?>)</span>
             </div>
             <?php if (empty($it_staff)): ?>
             <div class="panel-body" style="text-align:center;padding:1.5rem;color:var(--gray);">
-                <div style="font-size:1.75rem;margin-bottom:0.3rem;">💻</div>No IT support accounts yet.
+                <div style="font-size:1.75rem;margin-bottom:0.3rem;"></div>No IT support accounts yet.
             </div>
             <?php else: ?>
             <div class="table-wrap" style="border:none;border-radius:0;">
@@ -1148,11 +1148,11 @@ require_once 'admin_header.php';
         <!-- HR accounts -->
         <div class="panel">
             <div class="panel-header">
-                <span class="panel-title">🧑‍💼 HR Accounts (<?php echo count($hr_staff); ?>)</span>
+                <span class="panel-title">HR Accounts (<?php echo count($hr_staff); ?>)</span>
             </div>
             <?php if (empty($hr_staff)): ?>
             <div class="panel-body" style="text-align:center;padding:1.5rem;color:var(--gray);">
-                <div style="font-size:1.75rem;margin-bottom:0.3rem;">🧑‍💼</div>No HR accounts yet.
+                <div style="font-size:1.75rem;margin-bottom:0.3rem;"></div>No HR accounts yet.
             </div>
             <?php else: ?>
             <div class="table-wrap" style="border:none;border-radius:0;">
@@ -1200,7 +1200,7 @@ require_once 'admin_header.php';
 <!-- ── Receptionist Login Settings (full-width, bottom of cashiers tab) ──── -->
 <div class="panel" style="margin-top:1.5rem;">
     <div class="panel-header">
-        <span class="panel-title">⚙️ Receptionist Login Settings</span>
+        <span class="panel-title">Receptionist Login Settings</span>
     </div>
     <div class="panel-body" style="padding:1.25rem;">
         <?php
@@ -1221,21 +1221,21 @@ require_once 'admin_header.php';
                 <?php echo csrf_field(); ?>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.65rem;margin-bottom:0.75rem;">
                     <div>
-                        <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">🕐 Login Start</label>
+                        <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">Login Start</label>
                         <input type="time" name="r_login_start" value="<?php echo htmlspecialchars($r_start); ?>"
                                style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
                     </div>
                     <div>
-                        <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">🕐 Login End</label>
+                        <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">Login End</label>
                         <input type="time" name="r_login_end" value="<?php echo htmlspecialchars($r_end); ?>"
                                style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
                     </div>
                 </div>
                 <div style="background:rgba(201,106,44,0.07);border-left:3px solid var(--gold);padding:0.6rem 0.85rem;border-radius:6px;font-size:0.78rem;color:var(--brown);margin-bottom:0.75rem;">
-                    📌 Current window: <strong><?php echo date('h:i A', strtotime($r_start)); ?></strong> → <strong><?php echo date('h:i A', strtotime($r_end)); ?></strong> (<?php echo htmlspecialchars($r_tz); ?>)
+                    Current window: <strong><?php echo date('h:i A', strtotime($r_start)); ?></strong> → <strong><?php echo date('h:i A', strtotime($r_end)); ?></strong> (<?php echo htmlspecialchars($r_tz); ?>)
                 </div>
                 <button type="submit" name="save_receptionist_settings" class="btn btn-primary" style="width:100%;">
-                    💾 Save Login Settings
+                    Save Login Settings
                 </button>
             </form>
 
@@ -1249,7 +1249,7 @@ require_once 'admin_header.php';
                             border-radius:8px;padding:0.65rem 0.85rem;margin-bottom:0.85rem;">
                     <div>
                         <div style="font-size:0.82rem;font-weight:600;color:var(--brown);">
-                            <?php echo $r_active ? '🟢' : '⚪'; ?> <?php echo htmlspecialchars($r_acc['full_name']); ?>
+                            <?php echo $r_active ? '' : ''; ?> <?php echo htmlspecialchars($r_acc['full_name']); ?>
                         </div>
                         <div style="font-size:0.72rem;color:var(--gray);margin-top:0.2rem;">
                             <?php if ($r_active): ?>
@@ -1263,7 +1263,7 @@ require_once 'admin_header.php';
                     <a href="staff.php?tab=cashiers&clear_r_session=<?php echo $r_acc['id']; ?>"
                        onclick="var _h=this.href;event.preventDefault();uiConfirm('Force logout the receptionist?').then(ok=>{if(ok)window.location.href=_h;})"
                        style="background:#fee2e2;color:#b91c1c;padding:0.35rem 0.7rem;border-radius:6px;font-size:0.75rem;font-weight:700;cursor:pointer;text-decoration:none;white-space:nowrap;">
-                        🔴 Force Logout
+                        Force Logout
                     </a>
                     <?php endif; ?>
                 </div>
@@ -1272,7 +1272,7 @@ require_once 'admin_header.php';
                 <?php endif; ?>
 
                 <div style="padding:0.65rem 0.85rem;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:0.75rem;color:#0369a1;line-height:1.7;">
-                    💡 <strong>Rules enforced:</strong><br>
+                    <strong>Rules enforced:</strong><br>
                     • Only <strong>1 receptionist account</strong> allowed<br>
                     • Only <strong>1 active session</strong> at a time<br>
                     • Login only within configured time window<br>
@@ -1293,12 +1293,12 @@ require_once 'admin_header.php';
     <!-- ── CREATE FORM ───────────────────────────────────────────────────────── -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">➕ Add Receptionist PIN</span>
+            <span class="panel-title">Add Receptionist PIN</span>
         </div>
         <div class="panel-body" style="padding:1.25rem;">
             <div style="background:rgba(59,42,26,0.06);border-left:3px solid var(--gold);
                         padding:0.75rem 1rem;border-radius:6px;font-size:0.82rem;color:var(--brown);margin-bottom:1rem;line-height:1.6;">
-                📋 <strong>How it works:</strong> All receptionists share one login account for the PC.
+                <strong>How it works:</strong> All receptionists share one login account for the PC.
                 Each individual gets a personal 4-digit PIN used only for <em>accountability</em> —
                 so when updating appointment or order status, the system knows <em>which receptionist</em>
                 made the change. No re-login needed when swapping shifts.
@@ -1332,7 +1332,7 @@ require_once 'admin_header.php';
                     </div>
                 </div>
                 <button type="submit" class="btn btn-primary" style="width:100%;">
-                    ➕ Create Receptionist PIN
+                    Create Receptionist PIN
                 </button>
             </form>
         </div>
@@ -1341,11 +1341,11 @@ require_once 'admin_header.php';
     <!-- ── RECEPTIONIST PIN LIST ──────────────────────────────────────────── -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">📋 Receptionist PINs (<?php echo count($receptionist_pins); ?>)</span>
+            <span class="panel-title">Receptionist PINs (<?php echo count($receptionist_pins); ?>)</span>
         </div>
         <?php if (empty($receptionist_pins)): ?>
         <div class="panel-body" style="text-align:center;padding:2.5rem;color:var(--gray);">
-            <div style="font-size:2rem;margin-bottom:0.4rem;">📋</div>
+            <div style="font-size:2rem;margin-bottom:0.4rem;"></div>
             No receptionist PINs yet.<br>
             <span style="font-size:0.8rem;">Add one using the form on the left.</span>
         </div>
@@ -1389,7 +1389,7 @@ require_once 'admin_header.php';
                                           border-radius:6px;background:var(--bg3);color:var(--brown);
                                           font-size:0.9rem;text-align:center;letter-spacing:0.25em;">
                             <button type="submit" name="update_receptionist_pin" class="btn btn-secondary btn-sm"
-                                    style="font-size:0.72rem;padding:0.25rem 0.5rem;">💾</button>
+                                    style="font-size:0.72rem;padding:0.25rem 0.5rem;"></button>
                         </form>
                     </td>
                     <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($rp['created_at'])); ?></td>
@@ -1409,7 +1409,7 @@ require_once 'admin_header.php';
         <div style="padding:1rem 1.25rem;border-top:1px solid var(--border2);
                     background:rgba(109,40,217,0.04);">
             <div style="font-size:0.78rem;color:var(--brown);font-weight:700;margin-bottom:0.4rem;">
-                🔐 Receptionist Shift Flow
+                Receptionist Shift Flow
             </div>
             <div style="font-size:0.78rem;color:var(--gray);line-height:1.7;">
                 1. All receptionists log in using the shared <strong>Cashier/Receptionist account</strong> — one login for the front desk PC.<br>
@@ -1442,7 +1442,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="panel-header"
              style="<?php echo $edit_therapist ? 'background:linear-gradient(135deg,var(--brown),var(--rust));' : ''; ?>">
             <span class="panel-title" style="<?php echo $edit_therapist ? 'color:#fff;' : ''; ?>">
-                <?php echo $edit_therapist ? '✏️ Edit Therapist' : '➕ Add Therapist'; ?>
+                <?php echo $edit_therapist ? 'Edit Therapist' : 'Add Therapist'; ?>
             </span>
             <?php if ($edit_therapist): ?>
             <a href="staff.php?tab=therapists"
@@ -1462,13 +1462,13 @@ document.addEventListener('DOMContentLoaded', () => {
             <div style="background:rgba(201,106,44,0.1);border:2px solid var(--gold);
                         border-radius:10px;padding:0.75rem 1rem;margin-bottom:1rem;
                         display:flex;align-items:center;gap:0.75rem;">
-                <span style="font-size:1.5rem;">✏️</span>
+                <span style="font-size:1.5rem;"></span>
                 <div>
                     <div style="font-weight:800;color:var(--brown);font-size:0.9rem;">
                         Editing: <?php echo htmlspecialchars($edit_therapist['full_name']); ?>
                     </div>
                     <div style="font-size:0.75rem;color:var(--rust);">
-                        Update the fields below then click 💾 Save Changes.
+                        Update the fields below then click Save Changes.
                         <a href="staff.php?tab=therapists" style="color:var(--gray);margin-left:0.5rem;">✕ Cancel edit</a>
                     </div>
                 </div>
@@ -1513,7 +1513,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <!-- ── Specialty Accordion ──────────────────────────────── -->
                 <div>
                     <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:6px;">
-                        💆 Service Specialties
+                        Service Specialties
                         <span style="font-weight:400;color:var(--gray);font-size:0.72rem;">
                             — tick a category for all services, or expand to pick specific ones
                         </span>
@@ -1604,7 +1604,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
 
                 <button type="submit" class="btn btn-primary" style="width:100%;margin-top:0.25rem;">
-                    <?php echo $edit_therapist ? '💾 Save Changes' : '➕ Add Therapist'; ?>
+                    <?php echo $edit_therapist ? 'Save Changes' : 'Add Therapist'; ?>
                 </button>
             </form>
         </div>
@@ -1613,7 +1613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <!-- ── THERAPISTS TABLE ────────────────────────────────────────────────── -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">💆 All Therapists (<?php echo count($all_therapists); ?>)</span>
+            <span class="panel-title">All Therapists (<?php echo count($all_therapists); ?>)</span>
             <a href="therapists.php" class="btn btn-secondary btn-sm" style="font-size:0.78rem;">
                 → Today's Roster
             </a>
@@ -1648,7 +1648,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <?php if (empty($all_therapists)): ?>
         <div class="panel-body" style="text-align:center;padding:2.5rem;color:var(--gray);">
-            <div style="font-size:2.5rem;margin-bottom:0.5rem;">💆</div>
+            <div style="font-size:2.5rem;margin-bottom:0.5rem;"></div>
             No therapists yet. Add one using the form on the left.
         </div>
         <?php else: ?>
@@ -1742,14 +1742,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     </td>
                     <td style="text-align:center;white-space:nowrap;">
                         <a href="therapists.php?history=<?php echo $tid; ?>"
-                           class="btn btn-secondary btn-sm" style="font-size:0.72rem;">📋 History</a>
+                           class="btn btn-secondary btn-sm" style="font-size:0.72rem;">History</a>
                         <a href="staff.php?tab=commission#t<?php echo $tid; ?>"
-                           class="btn btn-secondary btn-sm" style="font-size:0.72rem;">💰 Commission</a>
+                           class="btn btn-secondary btn-sm" style="font-size:0.72rem;">Commission</a>
                         <a href="staff.php?tab=therapists&edit_therapist=<?php echo $tid; ?>"
-                           class="btn btn-secondary btn-sm" style="font-size:0.72rem;">✏️ Edit</a>
+                           class="btn btn-secondary btn-sm" style="font-size:0.72rem;">Edit</a>
                         <a href="staff.php?delete_therapist=<?php echo $tid; ?>"
                            class="btn btn-danger btn-sm" style="font-size:0.72rem;"
-                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete <?php echo htmlspecialchars(addslashes($t['full_name'])); ?>? This cannot be undone.').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete <?php echo htmlspecialchars(addslashes($t['full_name'])); ?>? This cannot be undone.').then(ok=>{if(ok)window.location.href=_h;})"></a>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -1814,7 +1814,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <?php elseif ($active_tab === 'commission'): ?>
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">💰 Commission Matrix</span>
+        <span class="panel-title">Commission Matrix</span>
         <small style="color:var(--gray);font-size:0.73rem;">Sets % earned per therapist per service</small>
     </div>
     <div class="panel-body" style="padding:1.25rem;">
@@ -1875,7 +1875,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div id="commission-placeholder"
              style="text-align:center;padding:2rem;color:var(--gray);font-size:0.88rem;
                     background:var(--bg3);border-radius:10px;border:1px solid var(--border2);">
-            👆 Select a therapist above to view and set their commission rates.
+            Select a therapist above to view and set their commission rates.
         </div>
 
         <form method="POST" id="commissionForm" style="display:none;">
@@ -1889,7 +1889,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
 
             <input type="text" id="commServiceSearch" oninput="filterCommissionServices(this.value)"
-                   placeholder="🔍 Search service…"
+                   placeholder="Search service…"
                    style="width:100%;max-width:320px;padding:0.55rem 0.85rem;border:1px solid var(--border2);
                           border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;
                           box-sizing:border-box;margin-bottom:0.85rem;">
@@ -1919,7 +1919,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div id="commission-rows"></div>
 
             <div style="margin-top:1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
-                <button type="submit" class="btn btn-primary">💾 Save Commission Rates</button>
+                <button type="submit" class="btn btn-primary">Save Commission Rates</button>
                 <span style="font-size:0.78rem;color:var(--gray);">Applies to future completed appointments only.</span>
             </div>
         </form>
@@ -1999,7 +1999,7 @@ function showCommission(therapistId) {
     document.getElementById('commissionForm').style.display          = 'block';
     document.getElementById('commission_therapist_id').value         = therapistId;
     document.getElementById('commission-therapist-name').textContent =
-        '💆 ' + (therapistNames[therapistId] || '') + ' — Commission Rates';
+        '' + (therapistNames[therapistId] || '') + ' — Commission Rates';
 
     const saved         = savedCommissions[therapistId] || {};
     const mySpecialties = therapistSpecialtyServices[therapistId] || [];
@@ -2049,7 +2049,7 @@ function showCommission(therapistId) {
                     <span data-svc-price="${svc.price}" style="display:none;"></span>
                     <div style="font-size:0.83rem;font-weight:600;color:var(--brown);">
                         ${svc.name}
-                        ${missingComm ? '<span style="background:rgba(234,179,8,0.15);color:#92400e;font-size:0.62rem;padding:0.1rem 0.4rem;border-radius:20px;margin-left:0.3rem;font-weight:700;">⚠️ NO COMMISSION</span>' : ''}
+                        ${missingComm ? '<span style="background:rgba(234,179,8,0.15);color:#92400e;font-size:0.62rem;padding:0.1rem 0.4rem;border-radius:20px;margin-left:0.3rem;font-weight:700;">NO COMMISSION</span>' : ''}
                     </div>
                     <div style="font-size:0.7rem;color:var(--gray);">Regular: ₱${price}</div>
                 </div>
@@ -2081,7 +2081,7 @@ function showCommission(therapistId) {
     if (totalShown === 0) {
         const empty = document.createElement('div');
         empty.style.cssText = 'text-align:center;padding:2rem;color:var(--gray);font-size:0.85rem;background:var(--bg3);border-radius:10px;border:1px solid var(--border2);';
-        empty.innerHTML = '⚠️ No specialties assigned to this therapist yet.<br><small>Go to the <strong>Therapists tab</strong> → Edit → assign service specialties first.</small>';
+        empty.innerHTML = 'No specialties assigned to this therapist yet.<br><small>Go to the <strong>Therapists tab</strong> → Edit → assign service specialties first.</small>';
         rowsEl.appendChild(empty);
     }
 
@@ -2092,7 +2092,7 @@ function showCommission(therapistId) {
         const warn = document.createElement('div');
         warn.id = 'commission-missing-warn';
         warn.style.cssText = 'margin-bottom:1rem;padding:0.75rem 1rem;background:rgba(234,179,8,0.1);border:1.5px solid rgba(234,179,8,0.5);border-radius:8px;font-size:0.82rem;color:#92400e;';
-        warn.innerHTML = `⚠️ <strong>${missingCount} service(s)</strong> have no commission rate set yet. They are highlighted below.`;
+        warn.innerHTML = `<strong>${missingCount} service(s)</strong> have no commission rate set yet. They are highlighted below.`;
         document.getElementById('commission-therapist-name').after(warn);
     }
 }
@@ -2134,7 +2134,7 @@ function updateCommPreview(sel) {
                               background:var(--bg3);color:var(--brown);font-size:0.82rem;">
             </div>
             <button type="submit" class="btn btn-primary" style="padding:0.42rem 1rem;font-size:0.82rem;">
-                🔍 Apply
+                Apply
             </button>
             <?php
             $presets = [
@@ -2161,7 +2161,7 @@ function updateCommPreview(sel) {
 <div class="panel" style="margin-bottom:1.5rem;">
     <div class="panel-header">
         <span class="panel-title">
-            💸 CA Summary
+            CA Summary
             <span style="font-size:0.78rem;font-weight:400;color:var(--gray);margin-left:0.35rem;">
                 Pay Period: <?php echo date('M d', strtotime($period_start)); ?> – <?php echo date('M d, Y', strtotime($period_end)); ?>
             </span>
@@ -2231,7 +2231,7 @@ function updateCommPreview(sel) {
                 <td>
                     <a href="therapists.php?history=<?php echo $t['id']; ?>"
                        class="btn btn-secondary btn-sm" style="font-size:0.68rem;white-space:nowrap;">
-                        📋 Full History
+                        Full History
                     </a>
                 </td>
             </tr>
@@ -2262,7 +2262,7 @@ function updateCommPreview(sel) {
 
     <!-- Add Deduction Form -->
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">➕ Add CA / Deduction</span></div>
+        <div class="panel-header"><span class="panel-title">Add CA / Deduction</span></div>
         <div class="panel-body" style="padding:1.25rem;">
             <form method="POST">
                 <?php echo csrf_field(); ?>
@@ -2283,8 +2283,8 @@ function updateCommPreview(sel) {
                         <select name="ded_type"
                                 style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);
                                        border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;">
-                            <option value="ca">💳 Cash Advance (CA)</option>
-                            <option value="expense">🧾 Personal Expense</option>
+                            <option value="ca">Cash Advance (CA)</option>
+                            <option value="expense">Personal Expense</option>
                         </select>
                     </div>
                     <div>
@@ -2319,7 +2319,7 @@ function updateCommPreview(sel) {
                     </div>
                 </div>
                 <button type="submit" name="add_therapist_ded" class="btn btn-primary" style="width:100%;">
-                    ➕ Record Deduction
+                    Record Deduction
                 </button>
             </form>
         </div>
@@ -2329,7 +2329,7 @@ function updateCommPreview(sel) {
     <div class="panel" id="deductions">
         <div class="panel-header">
             <span class="panel-title">
-                💸 Recent Log
+                Recent Log
                 <span style="font-size:0.78rem;font-weight:400;color:var(--gray);margin-left:0.35rem;">
                     Pay Period: <?php echo date('M d', strtotime($period_start)); ?> – <?php echo date('M d, Y', strtotime($period_end)); ?>
                 </span>
@@ -2341,7 +2341,7 @@ function updateCommPreview(sel) {
         </div>
         <?php if (empty($recent_deds)): ?>
         <div class="panel-body" style="text-align:center;padding:2.5rem;color:var(--gray);">
-            <div style="font-size:2rem;margin-bottom:0.4rem;">💸</div>
+            <div style="font-size:2rem;margin-bottom:0.4rem;"></div>
             No deductions recorded in this pay period.
         </div>
         <?php else: ?>
@@ -2369,7 +2369,7 @@ function updateCommPreview(sel) {
                         <span style="font-size:0.75rem;font-weight:700;padding:0.15rem 0.55rem;border-radius:20px;
                                      background:<?php echo $d['type']==='ca'?'rgba(0,112,243,0.12)':'rgba(201,106,44,0.12)'; ?>;
                                      color:<?php echo $d['type']==='ca'?'#0070f3':'var(--rust)'; ?>;">
-                            <?php echo $d['type']==='ca'?'💳 CA':'🧾 Expense'; ?>
+                            <?php echo $d['type']==='ca'?'CA':'Expense'; ?>
                         </span>
                     </td>
                     <td>
@@ -2406,7 +2406,7 @@ function updateCommPreview(sel) {
     <div style="background:#FAF3E8;border-radius:14px;padding:1.75rem 1.6rem;max-width:400px;width:90vw;
                 box-shadow:0 20px 60px rgba(0,0,0,0.22);">
         <div style="text-align:center;margin-bottom:1.2rem;">
-            <div style="font-size:1.5rem;margin-bottom:0.3rem;">🔑</div>
+            <div style="font-size:1.5rem;margin-bottom:0.3rem;"></div>
             <div style="font-weight:700;font-size:1rem;color:#3B2A1A;">Reset Password</div>
             <div style="font-size:0.8rem;color:#6b5c4c;margin-top:0.25rem;">
                 Setting new password for: <strong id="resetPwdName"></strong>
@@ -2428,7 +2428,7 @@ function updateCommPreview(sel) {
                     <button type="button" onclick="togglePwd('resetPwdInput')"
                             style="position:absolute;right:0.5rem;top:50%;transform:translateY(-50%);
                                    background:none;border:none;cursor:pointer;font-size:0.95rem;
-                                   padding:0;color:#A07850;">👁</button>
+                                   padding:0;color:#A07850;"></button>
                 </div>
             </div>
 
@@ -2457,7 +2457,7 @@ function updateCommPreview(sel) {
                 <button type="submit"
                         style="flex:2;padding:0.6rem;border:none;border-radius:8px;
                                background:#C96A2C;color:#fff;font-weight:700;cursor:pointer;font-size:0.88rem;">
-                    🔑 Reset Password
+                    Reset Password
                 </button>
             </div>
         </form>

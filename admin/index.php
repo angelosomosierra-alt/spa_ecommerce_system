@@ -151,7 +151,7 @@ function render_live_panels(array $d): void {
 <!-- ── Row 1: Therapist Rotation, full width, split by specialty group ─────── -->
 <div class="panel" style="margin-bottom:1.5rem;">
     <div class="panel-header">
-        <span class="panel-title">🔄 Therapist Rotation</span>
+        <span class="panel-title">Therapist Rotation</span>
         <?php if (!empty($roster)): ?>
         <span style="font-size:0.72rem;color:var(--gray);"><?php echo count($roster); ?> on duty</span>
         <?php endif; ?>
@@ -163,12 +163,12 @@ function render_live_panels(array $d): void {
         <div class="rotation-groups-grid">
             <?php
             $group_defs = [
-                'therapist' => ['💆', 'Therapist'],
-                'facial'    => ['🧖', 'Facial'],
-                'nail_lash' => ['💅', 'Nail and Lashes'],
-                'aesthetic' => ['✨', 'Aesthetic'],
+                'therapist' => 'Therapist',
+                'facial'    => 'Facial',
+                'nail_lash' => 'Nail and Lashes',
+                'aesthetic' => 'Aesthetic',
             ];
-            foreach ($group_defs as $gkey => [$gicon, $glabel]):
+            foreach ($group_defs as $gkey => $glabel):
                 $g_roster = array_values(array_filter($roster, fn($r) => in_array($gkey, $r['groups'], true)));
                 if (empty($g_roster)) continue;
                 $g_next = null;
@@ -178,7 +178,7 @@ function render_live_panels(array $d): void {
             ?>
             <div style="background:var(--bg3);border-radius:8px;padding:0.75rem;">
                 <div style="display:flex;flex-direction:column;gap:0.15rem;margin-bottom:0.5rem;">
-                    <span style="font-size:0.8rem;font-weight:700;color:var(--brown);"><?php echo $gicon; ?> <?php echo $glabel; ?></span>
+                    <span style="font-size:0.8rem;font-weight:700;color:var(--brown);"><?php echo $glabel; ?></span>
                     <span style="font-size:0.72rem;font-weight:700;color:<?php echo $g_next ? 'var(--green)' : '#dc3545'; ?>;">
                         <?php echo $g_next ? 'Next: ' . htmlspecialchars($g_next['full_name']) : 'All Busy'; ?>
                     </span>
@@ -202,7 +202,7 @@ function render_live_panels(array $d): void {
 
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">▶️ Ongoing Sessions</span>
+        <span class="panel-title">Ongoing Sessions</span>
         <?php if (!empty($ongoing)): ?>
         <span style="background:#dc3545;color:#fff;font-size:0.72rem;padding:0.2rem 0.55rem;border-radius:20px;font-weight:700;"><?php echo count($ongoing); ?></span>
         <?php endif; ?>
@@ -210,7 +210,7 @@ function render_live_panels(array $d): void {
     <div class="panel-body" style="padding:0.75rem;">
         <?php if (empty($ongoing)): ?>
         <div style="text-align:center;padding:2rem 1rem;color:var(--gray);">
-            <div style="font-size:1.75rem;margin-bottom:0.35rem;">💤</div>
+            <div style="font-size:1.75rem;margin-bottom:0.35rem;"></div>
             <div style="font-size:0.82rem;">No sessions in progress.</div>
         </div>
         <?php else: foreach ($ongoing as $s): ?>
@@ -218,7 +218,7 @@ function render_live_panels(array $d): void {
             <div style="font-weight:600;font-size:0.82rem;color:var(--brown);"><?php echo htmlspecialchars($s['customer_name']); ?></div>
             <div style="font-size:0.75rem;color:var(--gray);margin:0.1rem 0;"><?php echo htmlspecialchars($s['service_name']); ?></div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.3rem;">
-                <span style="font-size:0.72rem;color:var(--gray);">💆 <?php echo htmlspecialchars($s['therapists'] ?? '&mdash;'); ?></span>
+                <span style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($s['therapists'] ?? '&mdash;'); ?></span>
                 <span style="font-size:0.72rem;font-weight:700;color:#dc3545;white-space:nowrap;"><?php echo (int)$s['minutes_remaining']; ?> min left</span>
             </div>
         </div>
@@ -228,7 +228,7 @@ function render_live_panels(array $d): void {
 
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">⏭️ Upcoming (today)</span>
+        <span class="panel-title">Upcoming (today)</span>
         <?php if (!empty($upcoming)): ?>
         <span style="background:#0070f3;color:#fff;font-size:0.72rem;padding:0.2rem 0.55rem;border-radius:20px;font-weight:700;"><?php echo count($upcoming); ?></span>
         <?php endif; ?>
@@ -236,7 +236,7 @@ function render_live_panels(array $d): void {
     <div class="panel-body" style="padding:0.75rem;">
         <?php if (empty($upcoming)): ?>
         <div style="text-align:center;padding:2rem 1rem;color:var(--gray);">
-            <div style="font-size:1.75rem;margin-bottom:0.35rem;">✅</div>
+            <div style="font-size:1.75rem;margin-bottom:0.35rem;"></div>
             <div style="font-size:0.82rem;">No more sessions today.</div>
         </div>
         <?php else: foreach ($upcoming as $s): ?>
@@ -245,7 +245,7 @@ function render_live_panels(array $d): void {
             <div style="flex:1;min-width:0;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($s['customer_name']); ?></div>
                 <div style="font-size:0.72rem;color:var(--gray);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($s['service_name']); ?></div>
-                <div style="font-size:0.68rem;color:var(--gray);">💆 <?php echo htmlspecialchars($s['therapists']); ?></div>
+                <div style="font-size:0.68rem;color:var(--gray);"><?php echo htmlspecialchars($s['therapists']); ?></div>
             </div>
         </div>
         <?php endforeach; endif; ?>
@@ -337,7 +337,7 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
             <div style="flex:1;min-width:0;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($a['full_name']); ?></div>
                 <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($a['service_name']); ?></div>
-                <div style="font-size:0.68rem;color:var(--gray);">💆 <?php echo htmlspecialchars($a['therapist_names'] ?: 'Unassigned'); ?></div>
+                <div style="font-size:0.68rem;color:var(--gray);"><?php echo htmlspecialchars($a['therapist_names'] ?: 'Unassigned'); ?></div>
             </div>
             <span class="badge badge-<?php echo $a['status']; ?>"><?php echo ucfirst($a['status']); ?></span>
         </div>
@@ -640,38 +640,38 @@ while ($row = $result->fetch_assoc()) $recent_appts[] = $row;
 
 $live = run_live_queries($conn);
 
-$page_title = 'Dashboard'; $page_icon = '🏠'; $active_page = 'index';
+$page_title = 'Dashboard'; $page_icon = ''; $active_page = 'index';
 require_once 'admin_header.php';
 ?>
 <link rel="stylesheet" href="admin.css?v=<?php echo time(); ?>">
 <div class="stats-grid stats-grid-5" style="grid-template-columns:repeat(5,1fr);">
     <div class="stat-card blue">
-        <div class="stat-icon">📅</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $today_appts; ?></div>
         <div class="stat-label">Today's Appointments</div>
     </div>
     <a href="appointments.php" style="display:block;text-decoration:none;color:inherit;">
         <div class="stat-card amber" style="height:100%;box-sizing:border-box;">
-            <div class="stat-icon">⏳</div>
+            <div class="stat-icon"></div>
             <div class="stat-number"><?php echo $pending_appts; ?></div>
             <div class="stat-label">Pending Approvals</div>
         </div>
     </a>
     <div class="stat-card green">
-        <div class="stat-icon">💆</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $on_duty_count; ?></div>
         <div class="stat-label">Therapists On Duty</div>
     </div>
     <a href="orders.php" style="display:block;text-decoration:none;color:inherit;">
         <div class="stat-card amber" style="height:100%;box-sizing:border-box;">
-            <div class="stat-icon">💰</div>
+            <div class="stat-icon"></div>
             <div class="stat-number"><?php echo $pending_orders; ?></div>
             <div class="stat-label">Pending Payments</div>
         </div>
     </a>
     <a href="products.php" style="display:block;text-decoration:none;color:inherit;">
         <div class="stat-card red" style="height:100%;box-sizing:border-box;">
-            <div class="stat-icon">⚠️</div>
+            <div class="stat-icon"></div>
             <div class="stat-number"><?php echo $low_stock; ?></div>
             <div class="stat-label">Low Stock</div>
         </div>
@@ -1343,7 +1343,7 @@ function qbSubmit() {
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">📦 Recent Orders</span><a href="orders.php" class="btn btn-secondary btn-sm">View All</a></div>
+        <div class="panel-header"><span class="panel-title">Recent Orders</span><a href="orders.php" class="btn btn-secondary btn-sm">View All</a></div>
         <div class="table-wrap" style="border:none;border-radius:0;">
             <table>
                 <thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead>
@@ -1362,7 +1362,7 @@ function qbSubmit() {
         </div>
     </div>
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">📅 Recent Appointments</span><a href="appointments.php" class="btn btn-secondary btn-sm">View All</a></div>
+        <div class="panel-header"><span class="panel-title">Recent Appointments</span><a href="appointments.php" class="btn btn-secondary btn-sm">View All</a></div>
         <div class="table-wrap" style="border:none;border-radius:0;">
             <table>
                 <thead><tr><th>Customer</th><th>Service</th><th>Date</th><th>Status</th></tr></thead>
