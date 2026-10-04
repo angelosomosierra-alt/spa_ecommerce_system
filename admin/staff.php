@@ -1898,6 +1898,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         margin-bottom:1rem;padding-bottom:0.75rem;border-bottom:2px solid var(--border2);">
             </div>
 
+            <input type="text" id="commServiceSearch" oninput="filterCommissionServices(this.value)"
+                   placeholder="🔍 Search service…"
+                   style="width:100%;max-width:320px;padding:0.55rem 0.85rem;border:1px solid var(--border2);
+                          border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;
+                          box-sizing:border-box;margin-bottom:0.85rem;">
+            <div id="commServiceNoMatch" style="display:none;padding:0.75rem 1rem;margin-bottom:0.75rem;color:var(--gray);font-size:0.85rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);">
+                No services match your search.
+            </div>
+
             <div style="display:grid;grid-template-columns:2fr 0.7fr 0.8fr 1fr;gap:0.5rem;
                         padding:0.5rem 0.75rem;background:var(--bg3);border-radius:8px;
                         margin-bottom:0.5rem;font-size:0.73rem;font-weight:700;
@@ -1980,6 +1989,21 @@ function filterCommissionTherapists(term) {
     document.getElementById('commTherapistNoMatch').style.display = visible === 0 ? '' : 'none';
 }
 
+function filterCommissionServices(term) {
+    term = term.trim().toLowerCase();
+    var rows         = document.querySelectorAll('#commission-rows [data-svc-name]');
+    var headers      = document.querySelectorAll('#commission-rows .comm-cat-header');
+    var catHasMatch  = {};
+    var visible      = 0;
+    rows.forEach(function (row) {
+        var match = !term || row.dataset.svcName.indexOf(term) !== -1;
+        row.style.display = match ? '' : 'none';
+        if (match) { catHasMatch[row.dataset.cat] = true; visible++; }
+    });
+    headers.forEach(function (h) { h.style.display = catHasMatch[h.dataset.cat] ? '' : 'none'; });
+    document.getElementById('commServiceNoMatch').style.display = visible === 0 ? '' : 'none';
+}
+
 function showCommission(therapistId) {
     document.querySelectorAll('[id^="tab-"]').forEach(btn => {
         btn.style.background  = btn.dataset.hasMissing === '1' ? 'rgba(234,179,8,0.08)' : 'var(--bg3)';
@@ -2003,6 +2027,8 @@ function showCommission(therapistId) {
     const mySpecialties = therapistSpecialtyServices[therapistId] || [];
     const rowsEl        = document.getElementById('commission-rows');
     rowsEl.innerHTML    = '';
+    document.getElementById('commServiceSearch').value = '';
+    document.getElementById('commServiceNoMatch').style.display = 'none';
     const iStyle        = 'width:100%;padding:0.35rem 0.5rem;border:1px solid var(--border2);border-radius:6px;background:var(--bg2);color:var(--brown);font-size:0.85rem;text-align:center;box-sizing:border-box;';
 
     let missingCount  = 0;
@@ -2014,6 +2040,8 @@ function showCommission(therapistId) {
         if (qualifiedSvcs.length === 0) return; // skip category entirely if no qualified services
 
         const catEl = document.createElement('div');
+        catEl.className = 'comm-cat-header';
+        catEl.dataset.cat = cat;
         catEl.style.cssText = 'font-size:0.72rem;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:0.06em;padding:0.65rem 0 0.3rem;margin-top:0.4rem;border-top:1px solid var(--border2);';
         catEl.textContent = cat;
         rowsEl.appendChild(catEl);
@@ -2025,6 +2053,8 @@ function showCommission(therapistId) {
             totalShown++;
 
             const row = document.createElement('div');
+            row.dataset.cat     = cat;
+            row.dataset.svcName = svc.name.toLowerCase();
             row.style.cssText = 'display:grid;grid-template-columns:2fr 0.7fr 0.8fr 1fr;gap:0.5rem;align-items:center;padding:0.45rem 0.75rem;border-radius:8px;margin-bottom:0.3rem;'
                 + (missingComm
                     ? 'background:rgba(234,179,8,0.1);border:1.5px solid rgba(234,179,8,0.5);'
