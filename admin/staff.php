@@ -1822,7 +1822,16 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="text-align:center;padding:2rem;color:var(--gray);">No therapists found.</div>
         <?php else: ?>
 
-        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.5rem;">
+        <div style="margin-bottom:0.85rem;">
+            <input type="text" id="commTherapistSearch" oninput="filterCommissionTherapists(this.value)"
+                   placeholder="🔍 Search therapist…"
+                   style="width:100%;max-width:320px;padding:0.55rem 0.85rem;border:1px solid var(--border2);
+                          border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
+        </div>
+        <div id="commTherapistNoMatch" style="display:none;padding:0.75rem 1rem;margin-bottom:1rem;color:var(--gray);font-size:0.85rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);">
+            No therapists match your search.
+        </div>
+        <div id="commTherapistPills" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.5rem;">
             <?php foreach ($all_therapists as $t):
                 // Count how many specialty services have no commission set
                 $missing_count = 0;
@@ -1852,6 +1861,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ?>
             <button type="button" id="tab-<?php echo $t['id']; ?>"
                     data-has-missing="<?php echo $missing_count > 0 ? '1' : '0'; ?>"
+                    data-name="<?php echo htmlspecialchars(strtolower($t['full_name']), ENT_QUOTES, 'UTF-8'); ?>"
                     onclick="showCommission(<?php echo $t['id']; ?>)"
                     style="position:relative;padding:0.4rem 1.1rem;border-radius:20px;
                            border:2px solid <?php echo $missing_count > 0 ? 'rgba(234,179,8,0.6)' : 'var(--border2)'; ?>;
@@ -1957,6 +1967,18 @@ const therapistSpecialtyServices = <?php
     }
     echo json_encode($tss_map, JSON_HEX_TAG);
 ?>;
+
+function filterCommissionTherapists(term) {
+    term = term.trim().toLowerCase();
+    var pills   = document.querySelectorAll('#commTherapistPills [id^="tab-"]');
+    var visible = 0;
+    pills.forEach(function (btn) {
+        var match = !term || (btn.dataset.name || '').indexOf(term) !== -1;
+        btn.style.display = match ? '' : 'none';
+        if (match) visible++;
+    });
+    document.getElementById('commTherapistNoMatch').style.display = visible === 0 ? '' : 'none';
+}
 
 function showCommission(therapistId) {
     document.querySelectorAll('[id^="tab-"]').forEach(btn => {
