@@ -139,8 +139,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_cleanup'])) {
 
     $total = array_sum($results);
     $message = $total > 0
-        ? "✅ Cleanup complete — {$total} row(s) fixed across " . count($results) . " column(s)."
-        : "✅ Cleanup complete — nothing needed fixing (all data already clean).";
+        ? "Cleanup complete — {$total} row(s) fixed across " . count($results) . " column(s)."
+        : "Cleanup complete — nothing needed fixing (all data already clean).";
     $message_type = 'success';
 
     // Audit trail — so "was this ever run, and when" is answerable later.
@@ -152,14 +152,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_cleanup'])) {
 }
 
 $page_title  = 'Fix Double-Encoded Text';
-$page_icon   = '🧹';
+$page_icon   = '';
 $active_page = 'fix_double_encoded_text';
 require_once 'admin_header.php';
 ?>
 
 <div class="admin-content">
 <div class="page-header">
-    <h1 class="page-title"><?php echo $page_icon; ?> <?php echo $page_title; ?></h1>
+    <h1 class="page-title"><?php echo $page_title; ?></h1>
     <p class="page-subtitle">One-time cleanup for rows saved before the sanitize_input() double-escaping fix (e.g. a name stored as "M &amp;amp; M Massage" instead of "M &amp; M Massage").</p>
 </div>
 
@@ -169,7 +169,7 @@ require_once 'admin_header.php';
 
 <?php if ($results !== null): ?>
 <div class="panel" style="margin-bottom:1.5rem;">
-    <div class="panel-header"><span class="panel-title">📋 Rows updated per column</span></div>
+    <div class="panel-header"><span class="panel-title">Rows updated per column</span></div>
     <div class="panel-body">
         <?php if (empty($results)): ?>
         <p style="color:var(--gray);">No rows needed fixing.</p>
@@ -188,13 +188,13 @@ require_once 'admin_header.php';
 <?php endif; ?>
 
 <div class="panel">
-    <div class="panel-header"><span class="panel-title">⚠️ Run Cleanup</span></div>
+    <div class="panel-header"><span class="panel-title">Run Cleanup</span></div>
     <div class="panel-body">
         <p>This scans <?php echo count($targets); ?> table.column pairs (every free-text field written through <code>sanitize_input()</code>) and fixes any value that still contains a stale HTML entity from before the save-time-escaping fix. Rows that are already clean are left untouched — safe to run more than once.</p>
         <form method="POST" onsubmit="return confirm('Run the one-time double-encoding cleanup now? This will UPDATE any row still containing stale HTML entities.');">
             <?php echo csrf_field(); ?>
             <input type="hidden" name="run_cleanup" value="1">
-            <button type="submit" class="btn btn-primary">🧹 Run Cleanup</button>
+            <button type="submit" class="btn btn-primary">Run Cleanup</button>
         </form>
     </div>
 </div>

@@ -97,20 +97,20 @@ $action_rows = $conn->query("
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function al_icon(string $action): string {
     return match(true) {
-        str_contains($action, 'approved')    => '✅',
-        str_contains($action, 'completed')   => '🎉',
-        str_contains($action, 'declined')    => '❌',
-        str_contains($action, 'cancelled')   => '🚫',
-        str_contains($action, 'checkedin')   => '📋',
-        str_contains($action, 'assigned') || str_contains($action, 'assign') => '💆',
-        str_contains($action, 'edited') || str_contains($action, 'updated') || str_contains($action, 'rescheduled') => '✏️',
-        str_contains($action, 'created') || str_contains($action, 'added')  => '➕',
-        str_contains($action, 'deleted') || str_contains($action, 'removed')=> '🗑️',
-        str_contains($action, 'login') || str_contains($action, 'clockin')  => '🔑',
-        str_contains($action, 'logout') || str_contains($action, 'clockout')=> '🚪',
-        str_contains($action, 'commission')  => '💰',
-        str_contains($action, 'stock')       => '📦',
-        default                              => '📋',
+        str_contains($action, 'approved')    => '',
+        str_contains($action, 'completed')   => '',
+        str_contains($action, 'declined')    => '',
+        str_contains($action, 'cancelled')   => '',
+        str_contains($action, 'checkedin')   => '',
+        str_contains($action, 'assigned') || str_contains($action, 'assign') => '',
+        str_contains($action, 'edited') || str_contains($action, 'updated') || str_contains($action, 'rescheduled') => '',
+        str_contains($action, 'created') || str_contains($action, 'added')  => '',
+        str_contains($action, 'deleted') || str_contains($action, 'removed')=> '',
+        str_contains($action, 'login') || str_contains($action, 'clockin')  => '',
+        str_contains($action, 'logout') || str_contains($action, 'clockout')=> '',
+        str_contains($action, 'commission')  => '',
+        str_contains($action, 'stock')       => '',
+        default                              => '',
     };
 }
 
@@ -148,11 +148,11 @@ function al_role_badge(string $role): string {
         default     => ['#374151', '#f3f4f6'],
     };
     $label = match($role) {
-        'owner'     => '👑 Owner',
-        'it'        => '💻 IT',
-        'marketing' => '📣 Marketing',
-        'cashier', 'receptionist' => '🏪 Receptionist',
-        'staff'     => '🪪 Staff',
+        'owner'     => 'Owner',
+        'it'        => 'IT',
+        'marketing' => 'Marketing',
+        'cashier', 'receptionist' => 'Receptionist',
+        'staff'     => 'Staff',
         default     => ucfirst($role),
     };
     return "<span style=\"background:{$bg};color:{$color};padding:1px 7px;border-radius:20px;font-size:0.68rem;font-weight:700;\">{$label}</span>";
@@ -182,7 +182,7 @@ function al_date_header(string $dt): string {
 
 // ─── PAGE SETUP ───────────────────────────────────────────────────────────────
 $page_title  = 'Activity Log';
-$page_icon   = '📋';
+$page_icon   = '';
 $active_page = 'activity';
 require_once __DIR__ . '/admin_header.php';
 ?>
@@ -280,7 +280,7 @@ require_once __DIR__ . '/admin_header.php';
 <!-- Log Cards -->
 <?php if (empty($logs)): ?>
 <div class="al-empty">
-    📋 No activity found for the selected filters.<br>
+    No activity found for the selected filters.<br>
     <span style="font-size:.75rem;">Try expanding the date range.</span>
 </div>
 <?php else: ?>

@@ -4,7 +4,7 @@ require_once __DIR__ . '/admin_access.php';
 enforce_page_access();
 
 $page_title  = 'Help / Guide';
-$page_icon   = '❓';
+$page_icon   = '';
 $active_page = 'help';
 require_once __DIR__ . '/admin_header.php';
 ?>
@@ -218,7 +218,7 @@ require_once __DIR__ . '/admin_header.php';
     <!-- Page header -->
     <div class="page-header" style="margin-bottom:1.5rem;">
         <div>
-            <h1 style="font-size:1.4rem;font-weight:800;color:var(--brown);margin:0 0 0.2rem;">❓ Help & Admin Guide</h1>
+            <h1 style="font-size:1.4rem;font-weight:800;color:var(--brown);margin:0 0 0.2rem;">Help & Admin Guide</h1>
             <p style="font-size:0.85rem;color:var(--gray);margin:0;">
                 Everything you need to know about using the Recovery Iloilo admin panel.
                 Search below or click any topic to expand it.
@@ -228,7 +228,7 @@ require_once __DIR__ . '/admin_header.php';
 
     <!-- Search -->
     <div class="help-search-wrap">
-        <span class="help-search-icon">🔍</span>
+        <span class="help-search-icon"></span>
         <input type="text" class="help-search" id="helpSearch"
                placeholder="Search topics… (e.g. commission, walk-in, daily report)"
                oninput="filterHelp(this.value)"
@@ -237,7 +237,7 @@ require_once __DIR__ . '/admin_header.php';
 
     <!-- No results -->
     <div id="helpNoResults">
-        <div style="font-size:2rem;margin-bottom:0.75rem;">🔍</div>
+        <div style="font-size:2rem;margin-bottom:0.75rem;"></div>
         <strong>No topics match your search.</strong><br>
         Try a different keyword, or <a href="#" onclick="document.getElementById('helpSearch').value='';filterHelp('');return false;" style="color:var(--gold);">clear the search</a>.
     </div>
@@ -245,7 +245,7 @@ require_once __DIR__ . '/admin_header.php';
     <!-- ══════════════════════════════════════════════════════════
          SECTION 1: GETTING STARTED
     ══════════════════════════════════════════════════════════ -->
-    <div class="help-section-label"><span>🚀</span> Getting Started</div>
+    <div class="help-section-label"><span></span> Getting Started</div>
 
     <!-- Topic 1 -->
     <div class="help-topic" onclick="toggleHelp(this)">
@@ -260,19 +260,19 @@ require_once __DIR__ . '/admin_header.php';
 
             <div class="help-sub">The 4 Admin Roles</div>
             <ul>
-                <li><strong>👑 Owner</strong> — Full access to everything including settings, staff management, and all reports.</li>
-                <li><strong>💻 IT Support</strong> — Full access to almost everything; cannot modify owner-level settings like receptionist time restrictions.</li>
-                <li><strong>📣 Marketing</strong> — Can view appointments, analytics, daily reports, discounts, and vouchers. Cannot manage staff, services, or products.</li>
-                <li><strong>🏪 Receptionist (Cashier)</strong> — Can manage appointments (Kanban), create walk-in bookings, and file daily reports. Cannot access staff, services, analytics, or financial settings.</li>
+                <li><strong>Owner</strong> — Full access to everything including settings, staff management, and all reports.</li>
+                <li><strong>IT Support</strong> — Full access to almost everything; cannot modify owner-level settings like receptionist time restrictions.</li>
+                <li><strong>Marketing</strong> — Can view appointments, analytics, daily reports, discounts, and vouchers. Cannot manage staff, services, or products.</li>
+                <li><strong>Receptionist (Cashier)</strong> — Can manage appointments (Kanban), create walk-in bookings, and file daily reports. Cannot access staff, services, analytics, or financial settings.</li>
             </ul>
 
             <div class="help-sub">Receptionist Login Restrictions</div>
             <p>Owners can set allowed login hours for receptionists from <strong>Staff → Receptionist Settings</strong>. If a receptionist tries to log in outside those hours, access is denied. Contact the owner if you need access during off-hours.</p>
 
             <div class="help-sub">Forgot Your Password?</div>
-            <p>Passwords cannot be self-reset. Ask the <strong>Owner</strong> or <strong>IT</strong> to go to <strong>Staff → 🔑 Reset Password</strong> next to your account. They set a new temporary password and tell it to you directly. Your old password stops working immediately.</p>
+            <p>Passwords cannot be self-reset. Ask the <strong>Owner</strong> or <strong>IT</strong> to go to <strong>Staff → Reset Password</strong> next to your account. They set a new temporary password and tell it to you directly. Your old password stops working immediately.</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> Owners can also reset passwords for receptionists from the Receptionist Accounts tab. IT can reset cashier, marketing, and IT accounts.</div>
+            <div class="help-tip"><strong>Tip:</strong> Owners can also reset passwords for receptionists from the Receptionist Accounts tab. IT can reset cashier, marketing, and IT accounts.</div>
         </div></div>
     </div>
 
@@ -292,10 +292,10 @@ require_once __DIR__ . '/admin_header.php';
                 <li><strong>Recent activity</strong> — latest actions taken in the system.</li>
             </ul>
 
-            <div class="help-sub">Notification Bell 🔔</div>
+            <div class="help-sub">Notification Bell</div>
             <p>The bell icon in the top-right corner updates automatically every <strong>3 seconds</strong> — there is no need to refresh the page. A red badge shows the number of unread notifications. Click the bell to open the panel and see details. Click <strong>Mark all read</strong> to clear the badge.</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> Keep the dashboard open as your main tab — it gives you the fastest overview of what needs attention today.</div>
+            <div class="help-tip"><strong>Tip:</strong> Keep the dashboard open as your main tab — it gives you the fastest overview of what needs attention today.</div>
         </div></div>
     </div>
 
@@ -311,19 +311,19 @@ require_once __DIR__ . '/admin_header.php';
             <p>The left sidebar lists all pages you have access to. Click any item to navigate. The currently active page is highlighted with a brown background.</p>
 
             <div class="help-sub">On Mobile / Small Screens</div>
-            <p>The sidebar hides automatically on phones and tablets. Tap the <strong>☰ hamburger button</strong> (top-left) to open it, and tap again or anywhere outside to close it. All the same pages are accessible — just behind the menu.</p>
+            <p>The sidebar hides automatically on phones and tablets. Tap the <strong>hamburger button</strong> (top-left) to open it, and tap again or anywhere outside to close it. All the same pages are accessible — just behind the menu.</p>
 
             <div class="help-sub">Pages Depend on Your Role</div>
             <p>The sidebar only shows pages your role can access. Receptionists see fewer items than owners. If you need access to a page that isn't visible, ask the owner to elevate your permissions or create an IT account for you.</p>
 
-            <div class="help-note">ℹ️ Typing a URL directly to a page you don't have access to will redirect you to the Appointments page with an "Access Denied" notice.</div>
+            <div class="help-note">Typing a URL directly to a page you don't have access to will redirect you to the Appointments page with an "Access Denied" notice.</div>
         </div></div>
     </div>
 
     <!-- ══════════════════════════════════════════════════════════
          SECTION 2: APPOINTMENTS & BOOKINGS
     ══════════════════════════════════════════════════════════ -->
-    <div class="help-section-label"><span>📅</span> Appointments &amp; Bookings</div>
+    <div class="help-section-label"><span></span> Appointments &amp; Bookings</div>
 
     <!-- Topic 4 -->
     <div class="help-topic" onclick="toggleHelp(this)">
@@ -335,16 +335,16 @@ require_once __DIR__ . '/admin_header.php';
         <div class="help-topic-body"><div class="help-body-inner">
             <p>Every appointment moves through a lifecycle of statuses:</p>
             <ul>
-                <li><span class="hs hs-pending">⏳ Pending</span> — The customer has booked online and is waiting for admin action. Requires you to assign a therapist or decline.</li>
-                <li><span class="hs hs-assigned">💆 Assigned</span> — A therapist has been assigned. The appointment is confirmed and waiting for the appointment day.</li>
-                <li><span class="hs hs-approved">✅ Approved</span> — The appointment has been approved (same as Assigned in most flows).</li>
-                <li><span class="hs hs-checkin">🟠 Checked In</span> — The customer has arrived at the spa. The session is in progress.</li>
-                <li><span class="hs hs-completed">🎉 Completed</span> — The service is done and payment has been collected. This creates the commission and daily-report entries.</li>
-                <li><span class="hs hs-declined">❌ Declined</span> — An admin rejected the booking, typically because of unavailability. A reason must be entered; the customer is notified.</li>
-                <li><span class="hs hs-cancelled">🚫 Cancelled</span> — Either the customer or an admin cancelled the appointment. A reason is required.</li>
-                <li><span class="hs hs-cancelled">👻 No Show</span> — The customer did not arrive for their scheduled appointment.</li>
+                <li><span class="hs hs-pending">Pending</span> — The customer has booked online and is waiting for admin action. Requires you to assign a therapist or decline.</li>
+                <li><span class="hs hs-assigned">Assigned</span> — A therapist has been assigned. The appointment is confirmed and waiting for the appointment day.</li>
+                <li><span class="hs hs-approved">Approved</span> — The appointment has been approved (same as Assigned in most flows).</li>
+                <li><span class="hs hs-checkin">Checked In</span> — The customer has arrived at the spa. The session is in progress.</li>
+                <li><span class="hs hs-completed">Completed</span> — The service is done and payment has been collected. This creates the commission and daily-report entries.</li>
+                <li><span class="hs hs-declined">Declined</span> — An admin rejected the booking, typically because of unavailability. A reason must be entered; the customer is notified.</li>
+                <li><span class="hs hs-cancelled">Cancelled</span> — Either the customer or an admin cancelled the appointment. A reason is required.</li>
+                <li><span class="hs hs-cancelled">No Show</span> — The customer did not arrive for their scheduled appointment.</li>
             </ul>
-            <div class="help-tip">💡 Only <strong>Completed</strong> appointments appear in the Daily Report spreadsheet and count toward therapist commissions.</div>
+            <div class="help-tip">Only <strong>Completed</strong> appointments appear in the Daily Report spreadsheet and count toward therapist commissions.</div>
         </div></div>
     </div>
 
@@ -370,8 +370,8 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Search / Filter Bar</div>
             <p>Type a customer name, service name, or therapist name into the search field to filter the visible cards in real time. The Kanban columns update immediately as you type.</p>
 
-            <div class="help-sub">🆕 New Appointment Banner</div>
-            <p>If a new booking comes in while you're on the Appointments page, an orange banner appears at the top: <em>"🆕 New appointment"</em>. Click the banner to refresh the board and see the new card in the Pending column.</p>
+            <div class="help-sub">New Appointment Banner</div>
+            <p>If a new booking comes in while you're on the Appointments page, an orange banner appears at the top: <em>"New appointment"</em>. Click the banner to refresh the board and see the new card in the Pending column.</p>
 
             <div class="help-sub">Expanding a Card</div>
             <p>Each appointment card shows a summary. Click the card body (outside the action buttons) to expand the full details: customer info, service, therapist, pricing, notes, and action history.</p>
@@ -397,7 +397,7 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Home-Service Travel Buffer</div>
             <p>For <strong>Home Service</strong> appointments, the system adds a <strong>30-minute travel buffer</strong> after the session end time. This means a therapist assigned to a 2-hour home service at 10 AM is considered unavailable until 12:30 PM (2 hrs + 30 min buffer) for conflict-checking purposes.</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> Keep the therapist's specialty services up to date in the Therapists page so only qualified therapists appear in the assignment list for each service.</div>
+            <div class="help-tip"><strong>Tip:</strong> Keep the therapist's specialty services up to date in the Therapists page so only qualified therapists appear in the assignment list for each service.</div>
         </div></div>
     </div>
 
@@ -410,18 +410,18 @@ require_once __DIR__ . '/admin_header.php';
         </div>
         <div class="help-topic-body"><div class="help-body-inner">
             <div class="help-sub">Editing an Appointment</div>
-            <p>Click the <strong>✏️ Edit</strong> button on an appointment card. You can change the appointment date/time and the assigned therapist. Click Save to confirm.</p>
+            <p>Click the <strong>Edit</strong> button on an appointment card. You can change the appointment date/time and the assigned therapist. Click Save to confirm.</p>
 
             <div class="help-sub">Conflict Check on Edit</div>
             <p>When you save an edit, the system re-checks conflicts for the new therapist and time. If the new therapist is busy during the requested time, <strong>the entire edit is blocked</strong> — the date change is not saved either. Fix the conflict and try again.</p>
 
             <div class="help-sub">Declining an Appointment</div>
-            <p>Click <strong>❌ Decline</strong> on a Pending appointment. You must enter a decline reason. The customer is automatically notified with the reason you provide. Use this for unavailability, incorrect bookings, or out-of-area requests.</p>
+            <p>Click <strong>Decline</strong> on a Pending appointment. You must enter a decline reason. The customer is automatically notified with the reason you provide. Use this for unavailability, incorrect bookings, or out-of-area requests.</p>
 
             <div class="help-sub">Cancelling an Appointment</div>
-            <p>Click <strong>🚫 Cancel</strong> on an Assigned or Approved appointment. Enter a cancellation reason. The customer is notified. Use this when a confirmed appointment can no longer proceed (e.g., therapist sick, customer requested cancellation via phone).</p>
+            <p>Click <strong>Cancel</strong> on an Assigned or Approved appointment. Enter a cancellation reason. The customer is notified. Use this when a confirmed appointment can no longer proceed (e.g., therapist sick, customer requested cancellation via phone).</p>
 
-            <div class="help-note">ℹ️ Only Assigned/Approved appointments (not Completed or Declined) can be cancelled by admin. Declined appointments are final.</div>
+            <div class="help-note">Only Assigned/Approved appointments (not Completed or Declined) can be cancelled by admin. Declined appointments are final.</div>
         </div></div>
     </div>
 
@@ -433,7 +433,7 @@ require_once __DIR__ . '/admin_header.php';
             <span class="help-topic-arrow">▸</span>
         </div>
         <div class="help-topic-body"><div class="help-body-inner">
-            <p>When the customer has finished their session and is ready to pay, click the <strong>✅ Complete</strong> button on a Checked-In appointment card.</p>
+            <p>When the customer has finished their session and is ready to pay, click the <strong>Complete</strong> button on a Checked-In appointment card.</p>
 
             <div class="help-sub">The Complete Modal</div>
             <ul>
@@ -449,7 +449,7 @@ require_once __DIR__ . '/admin_header.php';
 
             <p>After submission, the appointment moves to <strong>History</strong> and an entry is created in the Daily Report for that date.</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> The Complete button is only visible on Checked-In appointments. If a customer is waiting and hasn't checked in yet, click Check-In first, then Complete when done.</div>
+            <div class="help-tip"><strong>Tip:</strong> The Complete button is only visible on Checked-In appointments. If a customer is waiting and hasn't checked in yet, click Check-In first, then Complete when done.</div>
         </div></div>
     </div>
 
@@ -489,7 +489,7 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Payment Methods</div>
             <p>Cash, GCash, Maya, Card, QR PH, or <strong>Unpaid</strong> (for corporate accounts or deferred billing).</p>
 
-            <div class="help-tip">💡 <strong>Advance Payment:</strong> Use the Advance Payment field when a customer pays a deposit now for a future appointment. See Topic 10 for details.</div>
+            <div class="help-tip"><strong>Advance Payment:</strong> Use the Advance Payment field when a customer pays a deposit now for a future appointment. See Topic 10 for details.</div>
         </div></div>
     </div>
 
@@ -504,7 +504,7 @@ require_once __DIR__ . '/admin_header.php';
             <p>An <strong>advance payment</strong> (deposit) is money collected from a customer <em>today</em> for an appointment scheduled on a <em>future date</em>.</p>
 
             <div class="help-sub">How to Record an Advance</div>
-            <p>When creating a walk-in booking, enter the deposit amount in the <strong>💰 Advance Payment (₱)</strong> field. The booking is created for the future date, and the deposit is recorded with today's date. A <strong>💰 Advance: ₱X</strong> badge appears on the appointment card.</p>
+            <p>When creating a walk-in booking, enter the deposit amount in the <strong>Advance Payment (₱)</strong> field. The booking is created for the future date, and the deposit is recorded with today's date. A <strong>Advance: ₱X</strong> badge appears on the appointment card.</p>
 
             <div class="help-sub">In the Daily Report (Day the Advance Is Collected)</div>
             <p>The advance amount appears in the <strong>"Advances Received"</strong> section of <em>today's</em> daily report — because that's when the cash entered the drawer. It adds to Cash on Hand for today.</p>
@@ -515,14 +515,14 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Commission</div>
             <p>Commission for the therapist is <strong>always calculated from the full service price</strong> (or promo price after discounts). The advance payment does not reduce the commission base.</p>
 
-            <div class="help-note">ℹ️ If a customer pays the full amount upfront as an advance, set the advance to the full price. At completion, the balance due shows ₱0.</div>
+            <div class="help-note">If a customer pays the full amount upfront as an advance, set the advance to the full price. At completion, the balance due shows ₱0.</div>
         </div></div>
     </div>
 
     <!-- ══════════════════════════════════════════════════════════
          SECTION 3: THERAPISTS & STAFF
     ══════════════════════════════════════════════════════════ -->
-    <div class="help-section-label"><span>💆</span> Therapists &amp; Staff</div>
+    <div class="help-section-label"><span></span> Therapists &amp; Staff</div>
 
     <!-- Topic 11 -->
     <div class="help-topic" onclick="toggleHelp(this)">
@@ -538,7 +538,7 @@ require_once __DIR__ . '/admin_header.php';
             <p>Fill in the therapist's full name, phone number, and photo (optional). Set their specialties — the services they are qualified to perform. Only services in their specialty list appear in the assignment modal.</p>
 
             <div class="help-sub">Editing a Therapist</div>
-            <p>Click <strong>✏️ Edit</strong> on a therapist card to update their name, photo, specialties, or on-duty status. Changes take effect immediately for all future assignments.</p>
+            <p>Click <strong>Edit</strong> on a therapist card to update their name, photo, specialties, or on-duty status. Changes take effect immediately for all future assignments.</p>
 
             <div class="help-sub">On-Duty / Off-Duty</div>
             <p>Toggle a therapist's status between <strong>On Duty</strong> and <strong>Off Duty</strong>. Off-duty therapists are hidden from the assignment list but their historical appointments are preserved.</p>
@@ -546,7 +546,7 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Attendance Tracking</div>
             <p>The Therapists page shows attendance records. You can log daily attendance to track which therapists were present. This feeds into the commission and deductions calculations.</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> Set therapist specialties carefully. If a therapist is assigned to a service that isn't in their specialty, conflict-checking may still allow it — but commission rates may not apply correctly.</div>
+            <div class="help-tip"><strong>Tip:</strong> Set therapist specialties carefully. If a therapist is assigned to a service that isn't in their specialty, conflict-checking may still allow it — but commission rates may not apply correctly.</div>
         </div></div>
     </div>
 
@@ -579,7 +579,7 @@ require_once __DIR__ . '/admin_header.php';
                 <li><strong>Influencer</strong>: flat rate amount from the Influencer column, regardless of price.</li>
             </ul>
 
-            <div class="help-note">ℹ️ If a therapist has no commission rate set for a service, the system warns you in the Staff page. Set the rate before assigning that therapist to that service.</div>
+            <div class="help-note">If a therapist has no commission rate set for a service, the system warns you in the Staff page. Set the rate before assigning that therapist to that service.</div>
         </div></div>
     </div>
 
@@ -603,22 +603,22 @@ require_once __DIR__ . '/admin_header.php';
             </ul>
 
             <div class="help-sub">Resetting a Password</div>
-            <p>Click the <strong>🔑 Reset Password</strong> button next to any account. Enter and confirm the new password. The change is immediate — the old password is invalidated and any existing session is cleared. Tell the user their new password directly (the system does not email it).</p>
+            <p>Click the <strong>Reset Password</strong> button next to any account. Enter and confirm the new password. The change is immediate — the old password is invalidated and any existing session is cleared. Tell the user their new password directly (the system does not email it).</p>
 
             <div class="help-sub">Deleting an Account</div>
-            <p>Click <strong>🗑️ Delete</strong> to remove an account. Owner accounts cannot be deleted. You cannot delete your own account. Historical records are preserved even after deletion.</p>
+            <p>Click <strong>Delete</strong> to remove an account. Owner accounts cannot be deleted. You cannot delete your own account. Historical records are preserved even after deletion.</p>
 
             <div class="help-sub">Receptionist PINs</div>
             <p>Go to <strong>Staff → Receptionists tab</strong>. Each receptionist has a 4-digit PIN used to confirm actions like completing appointments and filing reports. Set the PIN from the list; PINs are stored securely (hashed).</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> If a receptionist is locked out (session token conflict), click <strong>Clear Session</strong> next to their account. They can then log in again fresh.</div>
+            <div class="help-tip"><strong>Tip:</strong> If a receptionist is locked out (session token conflict), click <strong>Clear Session</strong> next to their account. They can then log in again fresh.</div>
         </div></div>
     </div>
 
     <!-- ══════════════════════════════════════════════════════════
          SECTION 4: DAILY REPORT & SALES
     ══════════════════════════════════════════════════════════ -->
-    <div class="help-section-label"><span>📋</span> Daily Report &amp; Sales</div>
+    <div class="help-section-label"><span></span> Daily Report &amp; Sales</div>
 
     <!-- Topic 14 -->
     <div class="help-topic" onclick="toggleHelp(this)">
@@ -639,7 +639,7 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Report Date</div>
             <p>Always verify the date shown at the top before editing. Filing a report for the wrong date causes reconciliation problems. Use the <strong>← Previous / Next →</strong> arrows or the date picker to navigate.</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> It's best practice to file the daily report at the end of each working day before closing out. Delaying entry makes it harder to remember accurate figures.</div>
+            <div class="help-tip"><strong>Tip:</strong> It's best practice to file the daily report at the end of each working day before closing out. Delaying entry makes it harder to remember accurate figures.</div>
         </div></div>
     </div>
 
@@ -668,7 +668,7 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Receptionist Editing Restrictions</div>
             <p>Receptionists must enter their PIN to unlock spreadsheet editing for the current session. The unlock expires after a set time (configured by the owner). Owners and IT can always edit without a PIN.</p>
 
-            <div class="help-note">ℹ️ Commission fields for auto-imported appointment rows are locked for receptionists. Only owners and IT can modify the commission on an imported row.</div>
+            <div class="help-note">Commission fields for auto-imported appointment rows are locked for receptionists. Only owners and IT can modify the commission on an imported row.</div>
         </div></div>
     </div>
 
@@ -724,16 +724,16 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Export to PDF</div>
             <p>Click <strong>Export PDF</strong> to download a printer-friendly PDF summary of the report.</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> Export Excel <em>before</em> submitting if you want to review the formatted sheet first. The Export works on both draft and submitted reports.</div>
+            <div class="help-tip"><strong>Tip:</strong> Export Excel <em>before</em> submitting if you want to review the formatted sheet first. The Export works on both draft and submitted reports.</div>
 
-            <div class="help-note">ℹ️ Once a report is submitted and locked, a receptionist cannot undo it. Ask the Owner or IT to unlock it if a correction is needed.</div>
+            <div class="help-note">Once a report is submitted and locked, a receptionist cannot undo it. Ask the Owner or IT to unlock it if a correction is needed.</div>
         </div></div>
     </div>
 
     <!-- ══════════════════════════════════════════════════════════
          SECTION 5: SYSTEM SETTINGS & OTHER
     ══════════════════════════════════════════════════════════ -->
-    <div class="help-section-label"><span>⚙️</span> System Settings &amp; Other</div>
+    <div class="help-section-label"><span></span> System Settings &amp; Other</div>
 
     <!-- Topic 18 -->
     <div class="help-topic" onclick="toggleHelp(this)">
@@ -752,7 +752,7 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Commission on Hotel Bookings</div>
             <p>Even though the customer (or hotel) is charged the partner markup, <strong>therapist commission is calculated from the regular service price</strong>, not the hotel rate. This prevents commission from fluctuating with partner pricing.</p>
 
-            <div class="help-note">ℹ️ Partners must have custom rates set for each service before hotel-type bookings can be priced correctly. If no rate is set, the system falls back to the regular price.</div>
+            <div class="help-note">Partners must have custom rates set for each service before hotel-type bookings can be priced correctly. If no rate is set, the system falls back to the regular price.</div>
         </div></div>
     </div>
 
@@ -780,7 +780,7 @@ require_once __DIR__ . '/admin_header.php';
             <div class="help-sub">Vouchers Page</div>
             <p>Create voucher codes with a fixed value (e.g., VOUCHER100 = ₱100 off). Set usage limits (single-use or multi-use), expiry dates, and minimum spend requirements. Vouchers can be used during online checkout or at the counter during walk-in.</p>
 
-            <div class="help-tip">💡 <strong>Tip:</strong> Senior Citizen and PWD discounts require a valid ID to be shown at the counter. Record the ID number in the voucher/discount notes for audit purposes.</div>
+            <div class="help-tip"><strong>Tip:</strong> Senior Citizen and PWD discounts require a valid ID to be shown at the counter. Record the ID number in the voucher/discount notes for audit purposes.</div>
         </div></div>
     </div>
 
@@ -793,7 +793,7 @@ require_once __DIR__ . '/admin_header.php';
         </div>
         <div class="help-topic-body"><div class="help-body-inner">
             <div class="help-sub">The Notification Bell</div>
-            <p>The 🔔 bell icon in the admin header auto-refreshes every <strong>3 seconds</strong>. You do not need to reload the page — new notifications appear on their own. A red badge shows the unread count.</p>
+            <p>The bell icon in the admin header auto-refreshes every <strong>3 seconds</strong>. You do not need to reload the page — new notifications appear on their own. A red badge shows the unread count.</p>
 
             <div class="help-sub">What Triggers an Admin Notification</div>
             <ul>
@@ -839,12 +839,12 @@ require_once __DIR__ . '/admin_header.php';
             <p>The system uses <strong>double-click protection</strong> — submit buttons disable themselves after the first click to prevent duplicate orders or completions. If a button says "Processing…" and nothing happens for more than 10 seconds, the request may have timed out. Refresh the page and check if the action was processed before resubmitting.</p>
 
             <div class="help-sub">Using the Admin on Mobile</div>
-            <p>The admin panel is mobile-friendly. Open it in your phone's browser (Chrome or Safari) and use it just like on desktop. The sidebar collapses behind the ☰ menu. Kanban columns stack vertically on phones. All actions — assigning therapists, completing appointments, filing reports — work on mobile.</p>
+            <p>The admin panel is mobile-friendly. Open it in your phone's browser (Chrome or Safari) and use it just like on desktop. The sidebar collapses behind the menu. Kanban columns stack vertically on phones. All actions — assigning therapists, completing appointments, filing reports — work on mobile.</p>
 
             <div class="help-sub">Printer Receipt / Email Receipt</div>
             <p>After completing an appointment, a receipt can be sent to the customer's email by clicking the email link that appears in the success message. This requires the customer to have an email address on file.</p>
 
-            <div class="help-tip">💡 <strong>If something is truly broken</strong>, screenshot the error, note the page you were on and what you were doing, and contact the IT admin. Include the date and time so they can check the server logs.</div>
+            <div class="help-tip"><strong>If something is truly broken</strong>, screenshot the error, note the page you were on and what you were doing, and contact the IT admin. Include the date and time so they can check the server logs.</div>
         </div></div>
     </div>
 

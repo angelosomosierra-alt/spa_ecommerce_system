@@ -50,7 +50,7 @@ $conn->query("CREATE TABLE IF NOT EXISTS appointment_sessions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
 $page_title  = 'Walk-in Kiosk';
-$page_icon   = '🏪';
+$page_icon   = '';
 $active_page = 'walkin';
 
 $walkin_user_id = null;
@@ -240,9 +240,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $conn->commit();
 
                 $disc_suffix = $discount_type !== 'none' && $discount_amount_calc > 0
-                    ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior','pwd'=>'PWD','employee'=>'Employee','celebration'=>'Celebration Discount'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
+                    ? ' · ' . ['voucher'=>'Voucher','senior'=>'Senior','pwd'=>'PWD','employee'=>'Employee','celebration'=>'Celebration Discount'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
                     : '';
-                $walkin_message = "✅ Product Order #$order_id for <strong>{$customer_name_html}</strong> · ₱" . number_format($total_amount,2) . $disc_suffix;
+                $walkin_message = "Product Order #$order_id for <strong>{$customer_name_html}</strong> · ₱" . number_format($total_amount,2) . $disc_suffix;
                 $walkin_type = "success";
                 }
             }
@@ -341,7 +341,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $final_amount = max(0.00, $total_amount - $discount_amount_calc - $advance_payment);
 
                 if ($is_two_session_booking && $session2_total_price < $regular_price) {
-                    $walkin_message = "⚠️ This service's 2-Session Package price is not properly configured (it must be at least the regular Session 1 price). Please contact IT or update it in Services.";
+                    $walkin_message = "This service's 2-Session Package price is not properly configured (it must be at least the regular Session 1 price). Please contact IT or update it in Services.";
                     $walkin_type    = 'danger';
                 }
 
@@ -371,7 +371,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $qc->bind_param("ii", $item_id, $item_id); $qc->execute();
                         $qualified_on_duty_count = (int)$qc->get_result()->fetch_assoc()['cnt']; $qc->close();
                         if ($qualified_on_duty_count === 0) {
-                            return "⛔ No qualified therapist is currently on duty for <strong>" . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . "</strong>{$chk_label}. Please book a future date or wait until a qualified therapist checks in.";
+                            return "No qualified therapist is currently on duty for <strong>" . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . "</strong>{$chk_label}. Please book a future date or wait until a qualified therapist checks in.";
                         }
 
                         // Feature B-1: today + no free qualified therapist at chosen time
@@ -412,7 +412,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $free_count = (int)$fq->get_result()->fetch_assoc()['free_cnt']; $fq->close();
                         if ($free_count === 0) {
                             $booked_time = date('h:i A', strtotime($chk_date));
-                            return "⛔ No qualified therapist is free at <strong>{$booked_time}</strong> "
+                            return "No qualified therapist is free at <strong>{$booked_time}</strong> "
                                  . "for <strong>" . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . "</strong>{$chk_label}. Please choose a different time.";
                         }
                     }
@@ -424,7 +424,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $appt_rate_check = ($rate_type === 'home') ? 'home' : 'regular';
                         $av_check = $av_engine->checkSlot($item_id, $chk_date, $people_count, $appt_rate_check, 0, $therapist_id, AvailabilityEngine::ADMIN_CLOSE_HOUR);
                         if (!$av_check['available']) {
-                            return '⛔ ' . ($av_check['reason'] ?? 'Selected therapist is not available at this time.') . $chk_label;
+                            return ($av_check['reason'] ?? 'Selected therapist is not available at this time.') . $chk_label;
                         }
                     }
 
@@ -449,7 +449,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 if (empty($walkin_message) && $resource_id_posted > 0) {
                     $resource_check_duration = $selected_duration ? intval($selected_duration['duration_minutes']) : intval($item['session_time'] ?? 60);
                     if (!is_resource_available($resource_id_posted, $booking_date, $resource_check_duration)) {
-                        $walkin_message = '⛔ Selected Room/Chair/Head Spa is no longer available at this time. Please pick another.';
+                        $walkin_message = 'Selected Room/Chair/Head Spa is no longer available at this time. Please pick another.';
                         $walkin_type    = 'danger';
                     }
                 }
@@ -554,7 +554,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         $cf_tooltip = implode('', $cf_details);
                         $cf_plural  = $cf_count > 1 ? "s ({$cf_count})" : "";
 
-                        $walkin_message .= " ⚠️ Note: Selected therapist has a conflicting appointment{$label} — saved without therapist assignment. "
+                        $walkin_message .= " Note: Selected therapist has a conflicting appointment{$label} — saved without therapist assignment. "
                             . "<span style='position:relative;display:inline-block;cursor:help;border-bottom:1px dashed #b45309;color:#b45309;font-weight:600;' "
                             . "onmouseenter=\"this.querySelector('.cf-tip').style.display='block'\" "
                             . "onmouseleave=\"this.querySelector('.cf-tip').style.display='none'\" "
@@ -688,22 +688,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 $rate_labels = ['regular'=>'Regular','home'=>'Home Service (Fixed Price)','hotel'=>'Hotel/Partner','influencer'=>'Influencer (Free)'];
                 $rate_label = $rate_labels[$rate_type] ?? 'Regular';
                 $disc_suffix = $discount_type !== 'none' && $discount_amount_calc > 0
-                    ? ' · 🎟️ ' . ['voucher'=>'Voucher','senior'=>'Senior Citizen','pwd'=>'PWD','employee'=>'Employee','celebration'=>'Celebration Discount'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
+                    ? ' · ' . ['voucher'=>'Voucher','senior'=>'Senior Citizen','pwd'=>'PWD','employee'=>'Employee','celebration'=>'Celebration Discount'][$discount_type] . ' −₱' . number_format($discount_amount_calc,2) . ' · Final: <strong>₱' . number_format($final_amount,2) . '</strong>'
                     : '';
                 $people_suffix  = $people_count > 1 ? " · {$people_count} people" : '';
-                $adv_suffix     = $advance_payment > 0 ? ' · 💰 Advance: ₱' . number_format($advance_payment, 2) : '';
+                $adv_suffix     = $advance_payment > 0 ? ' · Advance: ₱' . number_format($advance_payment, 2) : '';
                 $session_suffix = $is_two_session_booking
-                    ? ' · 🔁 2-Session Package'
-                    : ($svc_session_count > 1 ? " · 🔁 {$svc_session_count}-Session Package (Session 1 booked now)" : '');
-                $walkin_message = "✅ Service Booking #$order_id for <strong>{$customer_name_html}</strong> — {$item_name_html}{$session_suffix} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix . $adv_suffix;
+                    ? ' · 2-Session Package'
+                    : ($svc_session_count > 1 ? " · {$svc_session_count}-Session Package (Session 1 booked now)" : '');
+                $walkin_message = "Service Booking #$order_id for <strong>{$customer_name_html}</strong> — {$item_name_html}{$session_suffix} · {$rate_label}{$people_suffix} · ₱" . number_format($total_amount, 2) . $disc_suffix . $adv_suffix;
                 if ($resource_gate_blocked_promotion) {
-                    $walkin_message .= " ⏳ Booked — pending resource assignment. Approve from the Appointments board to assign a Room/Chair/Head Spa.";
+                    $walkin_message .= " Booked — pending resource assignment. Approve from the Appointments board to assign a Room/Chair/Head Spa.";
                 }
                 $walkin_type    = "success";
                 } catch (Throwable $_we) {
                     $conn->rollback();
                     if ($specialty_error) {
-                        $walkin_message = "⚠️ The selected therapist is not qualified for <strong>{$item_name_html}</strong>. Please select a qualified therapist.";
+                        $walkin_message = "The selected therapist is not qualified for <strong>{$item_name_html}</strong>. Please select a qualified therapist.";
                     } else {
                         error_log('[WALKIN] Service order failed: ' . $_we->getMessage());
                         $walkin_message = "Order failed. Please try again.";
@@ -823,8 +823,8 @@ require_once 'admin_header.php';
 <?php endif; ?>
 
 <div class="kiosk-tabs" style="max-width:320px;">
-    <button type="button" class="kiosk-tab active" onclick="switchTab('service', this)">💆 Book Service</button>
-    <button type="button" class="kiosk-tab" onclick="switchTab('product', this)">🛍️ Buy Product</button>
+    <button type="button" class="kiosk-tab active" onclick="switchTab('service', this)">Book Service</button>
+    <button type="button" class="kiosk-tab" onclick="switchTab('product', this)">Buy Product</button>
 </div>
 
 <div class="kiosk-panel active" id="tab-service">
@@ -838,7 +838,7 @@ require_once 'admin_header.php';
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
             <div>
                 <div class="form-section">
-                    <div class="form-section-header">👤 Customer Information</div>
+                    <div class="form-section-header">Customer Information</div>
                     <div class="form-section-body">
                         <div class="form-grid-2">
                             <div class="form-group">
@@ -858,7 +858,7 @@ require_once 'admin_header.php';
                 </div>
 
                 <div class="form-section">
-                    <div class="form-section-header">💆 Select Service <span class="required">*</span></div>
+                    <div class="form-section-header">Select Service <span class="required">*</span></div>
                     <div class="form-section-body" style="padding:1rem;">
                         <input type="text" class="walkin-search" placeholder="Search services…"
                                oninput="filterGrid('service-grid', this.value)">
@@ -878,10 +878,10 @@ require_once 'admin_header.php';
                                     <?php endif; ?>
                                     <?php echo count($svc['durations']) > 1 ? 'from ' : ''; ?>₱<?php echo number_format($_card_price, 2); ?>
                                     <?php if ($_card_d && !empty($_card_d['is_promo_active'])): ?>
-                                    <span style="font-size:0.68rem;background:#fdf4ff;color:#a21caf;padding:0.05rem 0.4rem;border-radius:20px;border:1px solid #d946ef;">🏷️ Promo</span>
+                                    <span style="font-size:0.68rem;background:#fdf4ff;color:#a21caf;padding:0.05rem 0.4rem;border-radius:20px;border:1px solid #d946ef;">Promo</span>
                                     <?php endif; ?>
                                 </div>
-                                <div class="item-meta">⏱ <?php echo $svc['session_time']; ?> min</div>
+                                <div class="item-meta"><?php echo $svc['session_time']; ?> min</div>
                             </div>
                             <?php endforeach; ?>
                             <?php if (empty($all_services)): ?><p style="color:var(--gray);font-size:0.82rem;padding:1rem;grid-column:1/-1;">No services available.</p><?php endif; ?>
@@ -892,7 +892,7 @@ require_once 'admin_header.php';
 
             <div>
                 <div class="form-section" id="durationVariantSection" style="display:none;">
-                    <div class="form-section-header">⏱ Choose Duration <span class="required">*</span></div>
+                    <div class="form-section-header">Choose Duration <span class="required">*</span></div>
                     <div class="form-section-body">
                         <div id="durationVariantPicker">
                             <div id="durationVariantOptions"></div>
@@ -906,20 +906,20 @@ require_once 'admin_header.php';
 
                 <div class="form-section">
                     <div class="form-section-header" id="therapist-section-header">
-                        💆 Select Therapist <span class="required">*</span>
+                        Select Therapist <span class="required">*</span>
                         <span id="therapist-mode-badge" style="font-size:0.72rem;font-weight:400;color:var(--gray);margin-left:0.4rem;"></span>
                     </div>
                     <div class="form-section-body">
                         <input type="hidden" name="therapist_id" id="svc_therapist_id" value="0">
                         <input type="hidden" name="people_handled" id="svc_people_handled" value="1">
                         <div id="therapist-no-svc-notice" style="margin-bottom:0.75rem;padding:0.6rem 0.85rem;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.25);border-radius:8px;font-size:0.8rem;color:var(--gray);">
-                            💡 Select a service above to see available therapists.
+                            Select a service above to see available therapists.
                         </div>
                         <div id="therapist-today-block" style="display:none;margin-bottom:0.75rem;padding:0.6rem 0.85rem;background:rgba(220,53,69,0.08);border:1px solid rgba(220,53,69,0.35);border-radius:8px;font-size:0.8rem;color:#b91c1c;"></div>
                         <div id="people-count-warning" style="display:none;margin-bottom:0.75rem;padding:0.6rem 0.85rem;background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.5);border-radius:8px;font-size:0.8rem;color:#92400e;"></div>
                         <?php if (empty($all_therapists_list)): ?>
                         <div style="padding:0.65rem;background:rgba(220,53,69,0.08);border:1px solid rgba(220,53,69,0.2);border-radius:8px;font-size:0.82rem;color:#ff6b7a;">
-                            ⚠️ No therapists in the system. Go to <a href="staff.php?tab=therapists" style="color:var(--gold);font-weight:600;">Staff → Therapists</a> to add therapists.
+                            No therapists in the system. Go to <a href="staff.php?tab=therapists" style="color:var(--gold);font-weight:600;">Staff → Therapists</a> to add therapists.
                         </div>
                         <?php else: ?>
                         <div style="display:flex;flex-direction:column;gap:0.4rem;" id="therapist-btn-list">
@@ -949,7 +949,7 @@ require_once 'admin_header.php';
                                         <?php echo htmlspecialchars($th['specialties'] ?: 'General'); ?>
                                         &nbsp;·&nbsp;
                                         <span style="color:<?php echo $is_checked_out ? '#9ca3af' : ($is_on_break ? '#f59e0b' : '#22c55e'); ?>;font-weight:600;">
-                                            <?php echo $is_checked_out ? 'Checked out' : ($is_on_break ? '☕ On break' : ($is_on_duty ? '✅ On duty' : '⚪ Not yet in')); ?>
+                                            <?php echo $is_checked_out ? 'Checked out' : ($is_on_break ? 'On break' : ($is_on_duty ? 'On duty' : 'Not yet in')); ?>
                                         </span>
                                     </div>
                                 </div>
@@ -961,16 +961,16 @@ require_once 'admin_header.php';
                 </div>
 
                 <div class="form-section">
-                    <div class="form-section-header">📅 Booking Details</div>
+                    <div class="form-section-header">Booking Details</div>
                     <div class="form-section-body">
                         <div id="sessionModeSelector" style="display:none;margin-bottom:1rem;">
                             <label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:4px;font-weight:600;">Booking Mode <span class="required">*</span></label>
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
                                 <div class="rate-type-btn active" id="sessionMode1Btn" onclick="selectSessionMode('single')">
-                                    <span style="font-size:1.1rem;">1️⃣</span><span style="font-weight:700;font-size:0.82rem;">1 Session</span><span style="font-size:0.7rem;opacity:0.75;">Regular price</span>
+                                    <span style="font-weight:700;font-size:0.82rem;">1 Session</span><span style="font-size:0.7rem;opacity:0.75;">Regular price</span>
                                 </div>
                                 <div class="rate-type-btn" id="sessionMode2Btn" onclick="selectSessionMode('two')">
-                                    <span style="font-size:1.1rem;">🔁</span><span style="font-weight:700;font-size:0.82rem;">2 Sessions</span><span style="font-size:0.7rem;opacity:0.75;">Package price</span>
+                                    <span style="font-weight:700;font-size:0.82rem;">2 Sessions</span><span style="font-size:0.7rem;opacity:0.75;">Package price</span>
                                 </div>
                             </div>
                         </div>
@@ -979,13 +979,13 @@ require_once 'admin_header.php';
                             <label>Booking Date & Time <span class="required">*</span></label>
                         </div>
                         <div class="form-group" style="margin-bottom:0.35rem;display:none;" id="session1LabelWrap">
-                            <label>🔁 Session 1 <span class="required">*</span></label>
+                            <label>Session 1 <span class="required">*</span></label>
                         </div>
                         <div class="form-group" style="margin-bottom:1rem;">
                             <input type="hidden" name="booking_date" id="walkin_booking_date">
                             <button type="button" class="walkin-dt-pick-btn" id="walkinPickDateBtn"
                                     onclick="openWalkinBM('session1')" disabled>
-                                📅 Pick Date &amp; Time
+                                Pick Date &amp; Time
                             </button>
                             <div id="walkinSelectedDateTime" style="font-size:0.78rem;color:var(--gray);margin-top:5px;">
                                 Select a service and therapist first
@@ -994,13 +994,13 @@ require_once 'admin_header.php';
 
                         <div id="session2DateBlock" style="display:none;margin-bottom:1rem;">
                             <div class="form-group" style="margin-bottom:0.35rem;">
-                                <label>🔁 Session 2 <span class="required">*</span></label>
+                                <label>Session 2 <span class="required">*</span></label>
                             </div>
                             <div class="form-group">
                                 <input type="hidden" name="booking_date_2" id="walkin_booking_date_2">
                                 <button type="button" class="walkin-dt-pick-btn" id="walkinPickDate2Btn"
                                         onclick="openWalkinBM('session2')" disabled>
-                                    📅 Pick Date &amp; Time
+                                    Pick Date &amp; Time
                                 </button>
                                 <div id="walkinSelectedDateTime2" style="font-size:0.78rem;color:var(--gray);margin-top:5px;">
                                     Pick Session 1's date first
@@ -1029,25 +1029,25 @@ require_once 'admin_header.php';
                 </div>
 
                 <div class="form-section">
-                    <div class="form-section-header">🏷️ Rate Type <span class="required">*</span></div>
+                    <div class="form-section-header">Rate Type <span class="required">*</span></div>
                     <div class="form-section-body">
                         <input type="hidden" name="rate_type"  id="rate_type_val"  value="regular">
                         <input type="hidden" name="partner_id" id="partner_id_val" value="0">
                         <div id="rateTypeTwoSessionNotice" style="display:none;margin-bottom:0.75rem;padding:0.55rem 0.75rem;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;font-size:0.78rem;color:#92400e;">
-                            🔁 2-Session Package — rate type is fixed to <strong>Regular</strong>. Session prices are set manually per package and are not modified by Home/Hotel/Influencer rates.
+                            2-Session Package — rate type is fixed to <strong>Regular</strong>. Session prices are set manually per package and are not modified by Home/Hotel/Influencer rates.
                         </div>
                         <div id="rateTypeBtnGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.85rem;">
-                            <div class="rate-type-btn active" id="rtbtn-regular" onclick="selectRateType('regular')"><span style="font-size:1.1rem;">🟢</span><span style="font-weight:700;font-size:0.82rem;">Regular</span><span style="font-size:0.7rem;opacity:0.75;">Standard price</span></div>
-                            <div class="rate-type-btn" id="rtbtn-home" onclick="selectRateType('home')"><span style="font-size:1.1rem;">🏠</span><span style="font-weight:700;font-size:0.82rem;">Home Service</span><span style="font-size:0.7rem;opacity:0.75;">Fixed total price</span></div>
-                            <div class="rate-type-btn" id="rtbtn-hotel" onclick="selectRateType('hotel')"><span style="font-size:1.1rem;">🏨</span><span style="font-weight:700;font-size:0.82rem;">Hotel / Partner</span><span style="font-size:0.7rem;opacity:0.75;">Partner rate</span></div>
-                            <div class="rate-type-btn" id="rtbtn-influencer" onclick="selectRateType('influencer')"><span style="font-size:1.1rem;">🌟</span><span style="font-weight:700;font-size:0.82rem;">Influencer / PR</span><span style="font-size:0.7rem;opacity:0.75;">Free — ₱0</span></div>
+                            <div class="rate-type-btn active" id="rtbtn-regular" onclick="selectRateType('regular')"><span style="font-weight:700;font-size:0.82rem;">Regular</span><span style="font-size:0.7rem;opacity:0.75;">Standard price</span></div>
+                            <div class="rate-type-btn" id="rtbtn-home" onclick="selectRateType('home')"><span style="font-weight:700;font-size:0.82rem;">Home Service</span><span style="font-size:0.7rem;opacity:0.75;">Fixed total price</span></div>
+                            <div class="rate-type-btn" id="rtbtn-hotel" onclick="selectRateType('hotel')"><span style="font-weight:700;font-size:0.82rem;">Hotel / Partner</span><span style="font-size:0.7rem;opacity:0.75;">Partner rate</span></div>
+                            <div class="rate-type-btn" id="rtbtn-influencer" onclick="selectRateType('influencer')"><span style="font-weight:700;font-size:0.82rem;">Influencer / PR</span><span style="font-size:0.7rem;opacity:0.75;">Free — ₱0</span></div>
                         </div>
                         <div id="partner-select-block" style="display:none;margin-bottom:0.85rem;">
                             <label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:4px;font-weight:600;">Select Partner <span class="required">*</span></label>
                             <select id="partner_select_ui" onchange="onPartnerChange(this.value)" style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;">
                                 <option value="">— Select partner —</option>
                                 <?php foreach ($all_partners as $p): ?>
-                                <option value="<?php echo $p['id']; ?>"><?php echo ['hotel'=>'🏨','corporate'=>'🏢','other'=>'🤝'][$p['type']] ?? '🤝'; ?> <?php echo htmlspecialchars($p['name']); ?></option>
+                                <option value="<?php echo $p['id']; ?>"><?php echo htmlspecialchars($p['name']); ?></option>
                                 <?php endforeach; ?>
                                 <?php if (empty($all_partners)): ?><option value="" disabled>No active partners</option><?php endif; ?>
                             </select>
@@ -1067,24 +1067,24 @@ require_once 'admin_header.php';
                 </div>
 
                 <div class="form-section">
-                    <div class="form-section-header">🎟️ Discount / Voucher</div>
+                    <div class="form-section-header">Discount / Voucher</div>
                     <div class="form-section-body">
                         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.4rem;">
-                            <button type="button" id="svc-discbtn-none" onclick="setWalkinDiscount('service','none')" style="padding:0.5rem 0.3rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🚫 None</button>
-                            <button type="button" id="svc-discbtn-voucher" onclick="setWalkinDiscount('service','voucher')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🎟️ Voucher</button>
-                            <button type="button" id="svc-discbtn-celebration" onclick="setWalkinDiscount('service','celebration')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🎉 Celebration<br><small style="font-weight:400;">% off</small></button>
+                            <button type="button" id="svc-discbtn-none" onclick="setWalkinDiscount('service','none')" style="padding:0.5rem 0.3rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">None</button>
+                            <button type="button" id="svc-discbtn-voucher" onclick="setWalkinDiscount('service','voucher')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Voucher</button>
+                            <button type="button" id="svc-discbtn-celebration" onclick="setWalkinDiscount('service','celebration')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Celebration<br><small style="font-weight:400;">% off</small></button>
                         </div>
                         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.75rem;">
-                            <button type="button" id="svc-discbtn-senior" onclick="setWalkinDiscount('service','senior')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">👴 Senior<br><small style="font-weight:400;">20% off</small></button>
-                            <button type="button" id="svc-discbtn-pwd" onclick="setWalkinDiscount('service','pwd')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">♿ PWD<br><small style="font-weight:400;">20% off</small></button>
-                            <button type="button" id="svc-discbtn-employee" onclick="setWalkinDiscount('service','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🪪 Staff<br><small style="font-weight:400;">50% off</small></button>
+                            <button type="button" id="svc-discbtn-senior" onclick="setWalkinDiscount('service','senior')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Senior<br><small style="font-weight:400;">20% off</small></button>
+                            <button type="button" id="svc-discbtn-pwd" onclick="setWalkinDiscount('service','pwd')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">PWD<br><small style="font-weight:400;">20% off</small></button>
+                            <button type="button" id="svc-discbtn-employee" onclick="setWalkinDiscount('service','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Staff<br><small style="font-weight:400;">50% off</small></button>
                         </div>
                         <div id="svc-voucher-inputs" style="display:none;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;">
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
                                 <div>
                                     <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;">Voucher Type</label>
                                     <select id="svc-voucher-type" name="voucher_type" onchange="updateWalkinPreview('service')" style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;background:var(--bg3);">
-                                        <option value="cash">💵 Cash Off (₱)</option>
+                                        <option value="cash">Cash Off (₱)</option>
                                         <option value="percent">% Percentage Off</option>
                                     </select>
                                 </div>
@@ -1095,7 +1095,7 @@ require_once 'admin_header.php';
                             </div>
                         </div>
                         <div id="svc-celeb-inputs" style="display:none;background:#fef0ff;border:1px solid #d946ef;border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;">
-                            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">🎉 Enter discount percentage for this celebration</div>
+                            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">Enter discount percentage for this celebration</div>
                             <div style="display:flex;align-items:center;gap:0.5rem;">
                                 <input type="number" id="svc-celeb-pct" min="0" max="100" step="0.01" placeholder="e.g. 10" value=""
                                        oninput="updateWalkinPreview('service')"
@@ -1109,17 +1109,17 @@ require_once 'admin_header.php';
                 </div>
 
                 <div class="form-section">
-                    <div class="form-section-header">💳 Payment Method <span class="required">*</span></div>
+                    <div class="form-section-header">Payment Method <span class="required">*</span></div>
                     <div class="form-section-body">
                         <div id="svc-pm-container" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));gap:0.4rem;margin-bottom:0.75rem;">
                             <?php
                             $pm_wk = [
-                                'cash'   => ['💵', 'Cash'],
-                                'gcash'  => ['📱', 'GCash'],
-                                'maya'   => ['💜', 'Maya'],
-                                'qrph'   => ['📷', 'QR Ph'],
-                                'card'   => ['💳', 'Card'],
-                                'swiper' => ['💳', 'Swiper'],
+                                'cash'   => 'Cash',
+                                'gcash'  => 'GCash',
+                                'maya'   => 'Maya',
+                                'qrph'   => 'QR Ph',
+                                'card'   => 'Card',
+                                'swiper' => 'Swiper',
                             ];
                             $online_pm = ['gcash','maya','card','qrph'];
                             foreach ($pm_wk as $pmv => $pmi):
@@ -1136,19 +1136,19 @@ require_once 'admin_header.php';
                                        onchange="document.getElementById('service_payment_method').value=this.value; highlightPM(document.getElementById('svc-pm-container'))"
                                        <?php echo $pmv === 'cash' ? 'checked' : ''; ?>
                                        style="accent-color:var(--brown);">
-                                <?php echo $pmi[0]; ?> <?php echo $pmi[1]; ?>
+                                <?php echo $pmi; ?>
                             </label>
                             <?php endforeach; ?>
                         </div>
                         <?php if (!ONLINE_PAYMENT_ENABLED): ?>
                         <div style="margin-bottom:0.5rem;padding:0.5rem 0.75rem;background:#fff8f2;border-left:3px solid #C96A2C;border-radius:6px;font-size:0.78rem;color:#92400e;">
-                            💳 Online payment is coming soon — please complete payment onsite for now.
+                            Online payment is coming soon — please complete payment onsite for now.
                         </div>
                         <?php endif; ?>
                         <div id="svc-online-status" style="display:none;margin-bottom:0.5rem;padding:0.55rem 0.75rem;border-radius:8px;font-size:0.8rem;font-weight:600;"></div>
                         <div style="margin-bottom:0.7rem;">
                             <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:3px;">
-                                💰 Advance Payment (₱) <span style="font-weight:400;color:var(--gray);font-size:0.72rem;">(optional)</span>
+                                Advance Payment (₱) <span style="font-weight:400;color:var(--gray);font-size:0.72rem;">(optional)</span>
                             </label>
                             <input type="number" name="advance_payment" id="walkinAdvancePay"
                                    step="0.01" min="0" value="0" placeholder="0.00"
@@ -1157,7 +1157,7 @@ require_once 'admin_header.php';
                         </div>
                         <div style="margin-bottom:0.7rem;">
                             <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:3px;">
-                                💳 Advance Payment Method
+                                Advance Payment Method
                             </label>
                             <div id="svc-adv-pm-container" style="display:flex;flex-wrap:wrap;gap:0.4rem;">
                                 <?php foreach ($pm_wk as $pmv => $pmi):
@@ -1174,13 +1174,13 @@ require_once 'admin_header.php';
                                            onchange="document.getElementById('service_advance_pm').value=this.value; highlightPM(document.getElementById('svc-adv-pm-container'))"
                                            <?php echo $pmv === 'cash' ? 'checked' : ''; ?>
                                            style="accent-color:var(--brown);">
-                                    <?php echo $pmi[0]; ?> <?php echo $pmi[1]; ?>
+                                    <?php echo $pmi; ?>
                                 </label>
                                 <?php endforeach; ?>
                             </div>
                         </div>
                         <input type="hidden" name="advance_payment_method" id="service_advance_pm" value="cash">
-                        <button type="button" id="svc-book-now" onclick="proceedBooking('service')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">📋 Book Walk-In</button>
+                        <button type="button" id="svc-book-now" onclick="proceedBooking('service')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">Book Walk-In</button>
                     </div>
                 </div>
             </div>
@@ -1199,7 +1199,7 @@ require_once 'admin_header.php';
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
             <div>
                 <div class="form-section">
-                    <div class="form-section-header">👤 Customer Information</div>
+                    <div class="form-section-header">Customer Information</div>
                     <div class="form-section-body">
                         <div class="form-grid-2">
                             <div class="form-group"><label>Full Name <span class="required">*</span></label><input type="text" name="customer_name" placeholder="Enter full name" required></div>
@@ -1212,14 +1212,14 @@ require_once 'admin_header.php';
                     </div>
                 </div>
                 <div class="form-section">
-                    <div class="form-section-header">🛍️ Select Product <span class="required">*</span></div>
+                    <div class="form-section-header">Select Product <span class="required">*</span></div>
                     <div class="form-section-body" style="padding:1rem;">
                         <div class="item-select-grid" id="product-grid">
                             <?php foreach ($all_products as $prd): ?>
                             <div class="item-card" onclick="selectItem('product', <?php echo $prd['id']; ?>, this)" data-id="<?php echo $prd['id']; ?>">
                                 <div class="item-name"><?php echo htmlspecialchars($prd['name']); ?></div>
                                 <div class="item-price">₱<?php echo number_format($prd['price'], 2); ?></div>
-                                <span class="slots-info">📦 <?php echo $prd['stock']; ?> left</span>
+                                <span class="slots-info"><?php echo $prd['stock']; ?> left</span>
                             </div>
                             <?php endforeach; ?>
                             <?php if (empty($all_products)): ?><p style="color:var(--gray);font-size:0.82rem;padding:1rem;grid-column:1/-1;">No products available.</p><?php endif; ?>
@@ -1229,30 +1229,30 @@ require_once 'admin_header.php';
             </div>
             <div>
                 <div class="form-section">
-                    <div class="form-section-header">📦 Order Details</div>
+                    <div class="form-section-header">Order Details</div>
                     <div class="form-section-body">
                         <div class="form-group"><label>Quantity <span class="required">*</span></label><input type="number" name="quantity" id="product_quantity" value="1" min="1" required style="max-width:140px;"></div>
                     </div>
                 </div>
                 <div class="form-section">
-                    <div class="form-section-header">🎟️ Discount / Voucher</div>
+                    <div class="form-section-header">Discount / Voucher</div>
                     <div class="form-section-body">
                         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.4rem;">
-                            <button type="button" id="prod-discbtn-none" onclick="setWalkinDiscount('product','none')" style="padding:0.5rem 0.3rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🚫 None</button>
-                            <button type="button" id="prod-discbtn-voucher" onclick="setWalkinDiscount('product','voucher')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🎟️ Voucher</button>
-                            <button type="button" id="prod-discbtn-celebration" onclick="setWalkinDiscount('product','celebration')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🎉 Celebration<br><small style="font-weight:400;">% off</small></button>
+                            <button type="button" id="prod-discbtn-none" onclick="setWalkinDiscount('product','none')" style="padding:0.5rem 0.3rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">None</button>
+                            <button type="button" id="prod-discbtn-voucher" onclick="setWalkinDiscount('product','voucher')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Voucher</button>
+                            <button type="button" id="prod-discbtn-celebration" onclick="setWalkinDiscount('product','celebration')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Celebration<br><small style="font-weight:400;">% off</small></button>
                         </div>
                         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.75rem;">
-                            <button type="button" id="prod-discbtn-senior" onclick="setWalkinDiscount('product','senior')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">👴 Senior<br><small style="font-weight:400;">20% off</small></button>
-                            <button type="button" id="prod-discbtn-pwd" onclick="setWalkinDiscount('product','pwd')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">♿ PWD<br><small style="font-weight:400;">20% off</small></button>
-                            <button type="button" id="prod-discbtn-employee" onclick="setWalkinDiscount('product','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">🪪 Staff<br><small style="font-weight:400;">50% off</small></button>
+                            <button type="button" id="prod-discbtn-senior" onclick="setWalkinDiscount('product','senior')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Senior<br><small style="font-weight:400;">20% off</small></button>
+                            <button type="button" id="prod-discbtn-pwd" onclick="setWalkinDiscount('product','pwd')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">PWD<br><small style="font-weight:400;">20% off</small></button>
+                            <button type="button" id="prod-discbtn-employee" onclick="setWalkinDiscount('product','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Staff<br><small style="font-weight:400;">50% off</small></button>
                         </div>
                         <div id="prod-voucher-inputs" style="display:none;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;">
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
                                 <div>
                                     <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;">Voucher Type</label>
                                     <select id="prod-voucher-type" name="voucher_type" onchange="updateWalkinPreview('product')" style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;background:var(--bg3);">
-                                        <option value="cash">💵 Cash Off (₱)</option>
+                                        <option value="cash">Cash Off (₱)</option>
                                         <option value="percent">% Percentage Off</option>
                                     </select>
                                 </div>
@@ -1263,7 +1263,7 @@ require_once 'admin_header.php';
                             </div>
                         </div>
                         <div id="prod-celeb-inputs" style="display:none;background:#fef0ff;border:1px solid #d946ef;border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;">
-                            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">🎉 Enter discount percentage for this celebration</div>
+                            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">Enter discount percentage for this celebration</div>
                             <div style="display:flex;align-items:center;gap:0.5rem;">
                                 <input type="number" id="prod-celeb-pct" min="0" max="100" step="0.01" placeholder="e.g. 10" value=""
                                        oninput="updateWalkinPreview('product')"
@@ -1276,7 +1276,7 @@ require_once 'admin_header.php';
                     </div>
                 </div>
                 <div class="form-section">
-                    <div class="form-section-header">💳 Payment Method <span class="required">*</span></div>
+                    <div class="form-section-header">Payment Method <span class="required">*</span></div>
                     <div class="form-section-body">
                         <div id="prod-pm-container" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));gap:0.4rem;margin-bottom:0.75rem;">
                             <?php foreach ($pm_wk as $pmv => $pmi):
@@ -1292,17 +1292,17 @@ require_once 'admin_header.php';
                                        onchange="document.getElementById('product_payment_method').value=this.value; highlightPM(document.getElementById('prod-pm-container'))"
                                        <?php echo $pmv === 'cash' ? 'checked' : ''; ?>
                                        style="accent-color:var(--brown);">
-                                <?php echo $pmi[0]; ?> <?php echo $pmi[1]; ?>
+                                <?php echo $pmi; ?>
                             </label>
                             <?php endforeach; ?>
                         </div>
                         <?php if (!ONLINE_PAYMENT_ENABLED): ?>
                         <div style="margin-bottom:0.5rem;padding:0.5rem 0.75rem;background:#fff8f2;border-left:3px solid #C96A2C;border-radius:6px;font-size:0.78rem;color:#92400e;">
-                            💳 Online payment is coming soon — please complete payment onsite for now.
+                            Online payment is coming soon — please complete payment onsite for now.
                         </div>
                         <?php endif; ?>
                         <div id="prod-online-status" style="display:none;margin-bottom:0.5rem;padding:0.55rem 0.75rem;border-radius:8px;font-size:0.8rem;font-weight:600;"></div>
-                        <button type="button" id="prod-book-now" onclick="proceedBooking('product')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">✅ Confirm Order</button>
+                        <button type="button" id="prod-book-now" onclick="proceedBooking('product')" style="width:100%;margin-top:0.25rem;padding:0.8rem 1rem;background:var(--gold);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">Confirm Order</button>
                     </div>
                 </div>
             </div>
@@ -1315,7 +1315,7 @@ require_once 'admin_header.php';
     <div style="background:#fff;border-radius:18px;width:min(520px,96vw);max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,0.25);animation:walkinBMPopIn .3s cubic-bezier(.34,1.56,.64,1);">
         <!-- Header -->
         <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.35rem;border-bottom:1px solid var(--border2);background:var(--bg3);flex-shrink:0;">
-            <span id="walkinBMTitle" style="font-size:1rem;font-weight:700;color:var(--brown);">📅 Pick Date &amp; Time</span>
+            <span id="walkinBMTitle" style="font-size:1rem;font-weight:700;color:var(--brown);">Pick Date &amp; Time</span>
             <button type="button" onclick="closeWalkinBM()" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--gray);padding:0.2rem 0.4rem;border-radius:6px;transition:color .15s;">✕</button>
         </div>
         <!-- Body -->
@@ -1334,9 +1334,9 @@ require_once 'admin_header.php';
             <!-- Time picker (shown after date selected) -->
             <div id="walkinBMSlotsSection" style="display:none;margin-top:1.1rem;">
                 <div style="font-size:0.72rem;color:var(--gray);margin-bottom:0.6rem;display:flex;gap:0.85rem;">
-                    <span>🟢 Available</span><span>⬜ Occupied</span>
+                    <span>Available</span><span>Occupied</span>
                 </div>
-                <div id="walkinBMSlotsLoading" style="display:none;text-align:center;padding:1.2rem;color:var(--gray);font-size:0.85rem;">⏳ Checking availability…</div>
+                <div id="walkinBMSlotsLoading" style="display:none;text-align:center;padding:1.2rem;color:var(--gray);font-size:0.85rem;">Checking availability…</div>
                 <div id="walkinBMSlotsUnavail" style="display:none;padding:0.85rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;font-size:0.85rem;color:#991b1b;text-align:center;"></div>
                 <div id="walkinTimeCols" style="display:none;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:0.85rem;">
                     <div>
@@ -1357,7 +1357,7 @@ require_once 'admin_header.php';
             <div id="walkinBMSelectedInfo" style="flex:1;font-size:0.85rem;color:var(--brown);"></div>
             <button type="button" id="walkinBMConfirmBtn" onclick="confirmWalkinBM()" disabled
                     style="padding:0.65rem 1.2rem;background:linear-gradient(135deg,var(--gold),var(--rust));color:#fff;border:none;border-radius:10px;font-size:0.88rem;font-weight:700;cursor:pointer;transition:all .18s;white-space:nowrap;opacity:.45;">
-                ✅ Confirm
+                Confirm
             </button>
         </div>
     </div>
@@ -1510,14 +1510,14 @@ function selectWalkinTherapist(id) {
     const hiddenDate = document.getElementById('walkin_booking_date');
     if (hiddenDate) hiddenDate.value = '';
     const pickBtn = document.getElementById('walkinPickDateBtn');
-    if (pickBtn) { pickBtn.textContent = '📅 Pick Date & Time'; pickBtn.classList.remove('has-value'); }
+    if (pickBtn) { pickBtn.textContent = 'Pick Date & Time'; pickBtn.classList.remove('has-value'); }
     const hint = document.getElementById('walkinSelectedDateTime');
     if (hint) hint.textContent = id > 0 ? 'Tap to pick a date and time slot' : 'Select a therapist above to pick a date';
     // Session 2's date depends on Session 1's date — clear it too so it can't go stale
     const hiddenDate2 = document.getElementById('walkin_booking_date_2');
     if (hiddenDate2) hiddenDate2.value = '';
     const pickBtn2 = document.getElementById('walkinPickDate2Btn');
-    if (pickBtn2) { pickBtn2.textContent = '📅 Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
+    if (pickBtn2) { pickBtn2.textContent = 'Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
     const hint2 = document.getElementById('walkinSelectedDateTime2');
     if (hint2) hint2.textContent = "Pick Session 1's date first";
     updatePickDateBtn();
@@ -1581,7 +1581,7 @@ function updateDurationVariantPicker() {
         const wrap = document.createElement('label');
         wrap.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;border:1px solid var(--border2);border-radius:8px;margin-bottom:0.4rem;cursor:pointer;background:var(--bg3);';
         const priceLabel = d.is_promo_active
-            ? ('₱' + fmt(d.active_price) + ' (🏷️ Promo, until ' + formatTimeAmPm(d.promo_end_time) + ')')
+            ? ('₱' + fmt(d.active_price) + ' (Promo, until ' + formatTimeAmPm(d.promo_end_time) + ')')
             : ('₱' + fmt(d.active_price));
         const sessionLabel = parseInt(d.session_count) > 1 ? (' × ' + d.session_count + ' sessions') : '';
         wrap.innerHTML = '<input type="radio" name="duration_variant_radio" value="' + d.id + '" ' + (i === 0 ? 'checked' : '') + '>' +
@@ -1617,7 +1617,7 @@ function selectSessionMode(mode) {
         const hiddenDate2 = document.getElementById('walkin_booking_date_2');
         if (hiddenDate2) hiddenDate2.value = '';
         const pickBtn2 = document.getElementById('walkinPickDate2Btn');
-        if (pickBtn2) { pickBtn2.textContent = '📅 Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
+        if (pickBtn2) { pickBtn2.textContent = 'Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
         const hint2 = document.getElementById('walkinSelectedDateTime2');
         if (hint2) hint2.textContent = "Pick Session 1's date first";
     }
@@ -1702,7 +1702,7 @@ function updateTherapistMode() {
             btn.style.opacity       = ok ? '1'       : '0.25';
             btn.style.cursor        = ok ? 'pointer' : 'not-allowed';
             btn.style.pointerEvents = ok ? 'auto'    : 'none';
-            btn.title               = ok ? ''        : '❌ Not qualified for this service';
+            btn.title               = ok ? ''        : 'Not qualified for this service';
         });
         return;
     }
@@ -1718,7 +1718,7 @@ function updateTherapistMode() {
     const peopleCount = parseInt(peopleInput?.value || 1);
 
     if (badge) {
-        badge.textContent = isFuture ? '📅 Future booking — therapist optional' : '⚡ Immediate — assign therapist now';
+        badge.textContent = isFuture ? 'Future booking — therapist optional' : 'Immediate — assign therapist now';
         badge.style.color = isFuture ? '#0891b2' : '#15803d';
     }
 
@@ -1745,9 +1745,9 @@ function updateTherapistMode() {
             btn.style.opacity       = hasSpecialty ? '0.4' : '0.25';
             btn.style.cursor        = 'not-allowed';
             btn.style.pointerEvents = 'none';
-            btn.title = !hasSpecialty ? '❌ Not qualified for this service'
-                      : hasConflict   ? '⚠️ Busy at this time'
-                                      : '🏁 Checked out';
+            btn.title = !hasSpecialty ? 'Not qualified for this service'
+                      : hasConflict   ? 'Busy at this time'
+                                      : 'Checked out';
         } else {
             btn.style.opacity       = '1';
             btn.style.cursor        = 'pointer';
@@ -1768,7 +1768,7 @@ function updateTherapistMode() {
             walkinAvailBlocked = true;
             if (todayBlock) {
                 todayBlock.style.display = '';
-                todayBlock.innerHTML = '⛔ No qualified therapist is on duty for this service. '
+                todayBlock.innerHTML = 'No qualified therapist is on duty for this service. '
                     + '<strong>Please change the date to a future booking</strong>, '
                     + 'or wait until a qualified therapist checks in.';
             }
@@ -1781,11 +1781,11 @@ function updateTherapistMode() {
                 .toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'});
             let msg;
             if (nextTs === null) {
-                msg = '⛔ No availability left today for this service — please choose a future date.';
+                msg = 'No availability left today for this service — please choose a future date.';
             } else {
                 const nextLabel = new Date(nextTs * 1000)
                     .toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'});
-                msg = `⛔ No qualified therapist free at <strong>${pickedLabel}</strong>. `
+                msg = `No qualified therapist free at <strong>${pickedLabel}</strong>. `
                     + `Next available: <strong>${nextLabel}</strong>.`;
             }
             if (todayBlock) { todayBlock.style.display = ''; todayBlock.innerHTML = msg; }
@@ -1798,7 +1798,7 @@ function updateTherapistMode() {
                 const t = new Date(bookingInput.value.replace(' ', 'T'))
                     .toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'});
                 warnEl.style.display = 'block';
-                warnEl.innerHTML = `⚠️ <strong>${peopleCount} people</strong> requested but only `
+                warnEl.innerHTML = `<strong>${peopleCount} people</strong> requested but only `
                     + `<strong>${qualifiedFree} qualified therapist(s)</strong> available at ${t}.`;
             } else if (warnEl) { warnEl.style.display = 'none'; }
         }
@@ -1810,7 +1810,7 @@ function updateTherapistMode() {
             const t = new Date(bookingInput.value.replace(' ', 'T'))
                 .toLocaleTimeString('en-PH', {hour:'2-digit', minute:'2-digit'});
             warnEl.style.display = 'block';
-            warnEl.innerHTML = `⚠️ <strong>${peopleCount} people</strong> requested but only `
+            warnEl.innerHTML = `<strong>${peopleCount} people</strong> requested but only `
                 + `<strong>${qualifiedFree} qualified therapist(s)</strong> available at ${t}.`;
         } else if (warnEl) { warnEl.style.display = 'none'; }
     }
@@ -1860,11 +1860,11 @@ function updatePricePreview() {
             case 'regular':
                 perPerson = regular;
                 formulaTxt = (selectedDuration && selectedDuration.is_promo_active)
-                    ? ('🏷️ Promo price' + (selectedDuration.promo_end_time ? (', until ' + formatTimeAmPm(selectedDuration.promo_end_time)) : ''))
+                    ? ('Promo price' + (selectedDuration.promo_end_time ? (', until ' + formatTimeAmPm(selectedDuration.promo_end_time)) : ''))
                     : 'Regular price';
                 break;
             case 'home':       perPerson = homePrice;  formulaTxt = `Home Service — Fixed price (₱${homePrice.toFixed(2)})`; break;
-            case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? '⚠️ No rate set — using regular price' : 'Select a partner'; } break;
+            case 'hotel':      if (currentPartnerId > 0 && partnerRates[currentPartnerId]?.[currentServiceId]) { perPerson = parseFloat(partnerRates[currentPartnerId][currentServiceId]); formulaTxt = 'Partner rate'; } else { perPerson = regular; formulaTxt = currentPartnerId > 0 ? 'No rate set — using regular price' : 'Select a partner'; } break;
             case 'influencer': perPerson = 0; formulaTxt = 'Complimentary — ₱0'; break;
         }
         if (peopleCount > 1 && currentRateType !== 'influencer') formulaTxt += ` × ${peopleCount} people`;
@@ -1881,7 +1881,7 @@ function updatePricePreview() {
         const isPkg  = selDur && parseInt(selDur.session_count) > 1;
         sessionPkgNotice.style.display = isPkg ? '' : 'none';
         if (isPkg) {
-            sessionPkgNotice.innerHTML = `🔁 <strong>${selDur.session_count}-Session Package</strong> — only Session 1 is scheduled now, at the date/time you pick below. Sessions 2–${selDur.session_count} are scheduled later from the Appointments page.`;
+            sessionPkgNotice.innerHTML = `<strong>${selDur.session_count}-Session Package</strong> — only Session 1 is scheduled now, at the date/time you pick below. Sessions 2–${selDur.session_count} are scheduled later from the Appointments page.`;
         }
     }
 
@@ -1889,7 +1889,7 @@ function updatePricePreview() {
     const advance = parseFloat(document.getElementById('walkinAdvancePay')?.value) || 0;
     if (advance > 0 && total > 0) {
         const balanceDue = Math.max(0, total - advance);
-        formula.textContent = formulaTxt + ' · 💰 Balance due: ₱' + balanceDue.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+        formula.textContent = formulaTxt + ' · Balance due: ₱' + balanceDue.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
     } else {
         formula.textContent = formulaTxt;
     }
@@ -1917,7 +1917,7 @@ function selectPayment(formType, method, btn) {
     const prefix = formType === 'service' ? 'svc' : 'prod';
     document.querySelectorAll('[id^="' + prefix + '-pay-"]').forEach(b => b.classList.remove('active-pay'));
     btn.classList.add('active-pay');
-    const labels = {cash:'💵 Cash',gcash:'📱 GCash',paymaya:'💜 Maya',qrph:'📷 QRPH',bank:'🏦 Bank Transfer',card:'💳 Card'};
+    const labels = {cash:'Cash',gcash:'GCash',paymaya:'Maya',qrph:'QRPH',bank:'Bank Transfer',card:'Card'};
     const el = document.getElementById(prefix + '-pay-selected');
     if (el) el.textContent = 'Selected: ' + (labels[method] || method);
     const statusEl = document.getElementById(prefix + '-online-status');
@@ -1939,7 +1939,7 @@ function proceedBooking(formType) {
         if (isTwoSessionModeActive() && !form.querySelector('[name="booking_date_2"]')?.value) { uiAlert("Please select Session 2's booking date first."); return; }
         if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
         if (walkinAvailBlocked) {
-            uiAlert('⛔ Cannot book: no qualified therapist is available at the selected time. Please adjust the booking time or choose a future date.');
+            uiAlert('Cannot book: no qualified therapist is available at the selected time. Please adjust the booking time or choose a future date.');
             return;
         }
     }
@@ -1964,10 +1964,10 @@ function openPaymongoPopup(formType, method) {
     }
     const bookBtn = document.getElementById(formType === 'service' ? 'svc-book-now' : 'prod-book-now');
     const bookBtnLabel = bookBtn ? bookBtn.textContent : '';
-    if (bookBtn) { bookBtn.disabled = true; bookBtn.textContent = '⏳ Processing…'; }
+    if (bookBtn) { bookBtn.disabled = true; bookBtn.textContent = 'Processing…'; }
     const prefix = formType === 'service' ? 'svc' : 'prod';
     const statusEl = document.getElementById(prefix + '-online-status');
-    if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(234,179,8,0.1)'; statusEl.style.border='1px solid rgba(234,179,8,0.4)'; statusEl.style.color='#92400e'; statusEl.textContent='⏳ Creating order…'; }
+    if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(234,179,8,0.1)'; statusEl.style.border='1px solid rgba(234,179,8,0.4)'; statusEl.style.color='#92400e'; statusEl.textContent='Creating order…'; }
     const fd = new FormData(form);
     fd.set('payment_method', method);
     fd.set('otp_mode', '1');
@@ -1975,13 +1975,13 @@ function openPaymongoPopup(formType, method) {
     fetch(payUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
         .then(r => r.text().then(t => ({ status: r.status, text: t })))
         .then(({ status, text }) => {
-            let data; try { data = JSON.parse(text); } catch(e) { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.innerHTML='❌ Server error (HTTP '+status+'):<br><small style="font-family:monospace;word-break:break-all;">'+text.replace(/</g,'&lt;').substring(0,400)+'</small>'; } return; }
-            if (!data.success) { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent='❌ '+(data.error||'Payment setup failed.'); } return; }
+            let data; try { data = JSON.parse(text); } catch(e) { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.innerHTML='Server error (HTTP '+status+'):<br><small style="font-family:monospace;word-break:break-all;">'+text.replace(/</g,'&lt;').substring(0,400)+'</small>'; } return; }
+            if (!data.success) { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent=(data.error||'Payment setup failed.'); } return; }
             if (statusEl) statusEl.style.display = 'none';
             // Open OTP/intent modal instead of a popup window
             openPaymentModal(data.order_id, method, data.final_amount || 0, phone, name);
         })
-        .catch(err => { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent='❌ '+err.message; } });
+        .catch(err => { if (bookBtn) { bookBtn.disabled = false; bookBtn.textContent = bookBtnLabel; } if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent=err.message; } });
 }
 
 window.addEventListener('message', function(event) {
@@ -1989,12 +1989,12 @@ window.addEventListener('message', function(event) {
     if (event.data.type === 'walkin_payment_success') {
         const banner = document.createElement('div');
         banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#15803d;color:#fff;text-align:center;padding:1rem 1.5rem;font-size:1rem;font-weight:700;box-shadow:0 4px 20px rgba(0,0,0,0.2);';
-        banner.textContent = '✅ Payment confirmed! Order #'+event.data.order_id+' — '+event.data.customer+' — '+event.data.amount+' via '+event.data.method+' · Reloading…';
+        banner.textContent = 'Payment confirmed! Order #'+event.data.order_id+' — '+event.data.customer+' — '+event.data.amount+' via '+event.data.method+' · Reloading…';
         document.body.prepend(banner);
         setTimeout(() => location.reload(), 2000);
     }
     if (event.data.type === 'walkin_payment_cancelled') {
-        ['svc-online-status','prod-online-status'].forEach(id => { const el = document.getElementById(id); if (el) { el.style.display='block'; el.style.background='rgba(220,53,69,0.08)'; el.style.border='1px solid rgba(220,53,69,0.3)'; el.style.color='#b91c1c'; el.textContent='⚠️ Payment was cancelled. Order removed.'; } });
+        ['svc-online-status','prod-online-status'].forEach(id => { const el = document.getElementById(id); if (el) { el.style.display='block'; el.style.background='rgba(220,53,69,0.08)'; el.style.border='1px solid rgba(220,53,69,0.3)'; el.style.color='#b91c1c'; el.textContent='Payment was cancelled. Order removed.'; } });
     }
 });
 
@@ -2041,11 +2041,11 @@ function updateWalkinPreview(form) {
     else { const selCard = document.querySelector('#product-grid .item-card.selected'); if (selCard) { const priceEl = selCard.querySelector('.item-price'); basePrice = parseFloat((priceEl?.textContent||'0').replace(/[^0-9.]/g,''))||0; } const qty = parseInt(document.getElementById('product_quantity')?.value||1); basePrice *= qty; }
     if (type === 'none' || basePrice <= 0) { preview.style.display = 'none'; return; }
     let discountAmt = 0, label = '';
-    if (type === 'senior') { discountAmt = basePrice * 0.20; label = '👴 Senior Citizen (20%)'; }
-    else if (type === 'pwd') { discountAmt = basePrice * 0.20; label = '♿ PWD (20%)'; }
-    else if (type === 'employee') { discountAmt = basePrice * 0.50; label = '🪪 Employee (50% off)'; }
-    else if (type === 'celebration') { const cpct = parseFloat(document.getElementById(p+'-celeb-pct')?.value||0); discountAmt = basePrice*(Math.min(100,cpct)/100); label='🎉 Celebration ('+cpct+'% off)'; }
-    else if (type === 'voucher') { const vType = document.getElementById(p+'-voucher-type')?.value||'cash'; const vVal = parseFloat(document.getElementById(p+'-voucher-amount')?.value||0); if (vType === 'percent') { discountAmt = basePrice*(vVal/100); label='🎟️ Voucher ('+vVal+'% off)'; } else { discountAmt = Math.min(vVal,basePrice); label='🎟️ Voucher'; } }
+    if (type === 'senior') { discountAmt = basePrice * 0.20; label = 'Senior Citizen (20%)'; }
+    else if (type === 'pwd') { discountAmt = basePrice * 0.20; label = 'PWD (20%)'; }
+    else if (type === 'employee') { discountAmt = basePrice * 0.50; label = 'Employee (50% off)'; }
+    else if (type === 'celebration') { const cpct = parseFloat(document.getElementById(p+'-celeb-pct')?.value||0); discountAmt = basePrice*(Math.min(100,cpct)/100); label='Celebration ('+cpct+'% off)'; }
+    else if (type === 'voucher') { const vType = document.getElementById(p+'-voucher-type')?.value||'cash'; const vVal = parseFloat(document.getElementById(p+'-voucher-amount')?.value||0); if (vType === 'percent') { discountAmt = basePrice*(vVal/100); label='Voucher ('+vVal+'% off)'; } else { discountAmt = Math.min(vVal,basePrice); label='Voucher'; } }
     const finalPrice = Math.max(0, basePrice - discountAmt);
     if (discountAmt > 0) { preview.style.display='block'; const fmt = n => n.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}); preview.innerHTML = label+'<br>Original: <strong>₱'+fmt(basePrice)+'</strong> &nbsp;−&nbsp; <strong style="color:var(--rust);">₱'+fmt(discountAmt)+'</strong> &nbsp;=&nbsp; <strong style="color:#15803d;">₱'+fmt(finalPrice)+'</strong>'; }
     else { preview.style.display='none'; }
@@ -2120,7 +2120,7 @@ function openWalkinBM(target) {
     const thName = tnBtn ? tnBtn.querySelector('[style*="font-weight:700"]')?.textContent?.trim() : '';
     const sessionPrefix = walkinBMTarget === 'session2' ? 'Session 2 — ' : (isTwoSessionModeActive() ? 'Session 1 — ' : '');
     const lbl = document.getElementById('walkinBMTitle');
-    if (lbl) lbl.textContent = sessionPrefix + '📅 Pick Date & Time' + (thName ? ' — ' + thName : '');
+    if (lbl) lbl.textContent = sessionPrefix + 'Pick Date & Time' + (thName ? ' — ' + thName : '');
 
     const now = walkinBMMinDate || new Date();
     walkinBMYear  = now.getFullYear();
@@ -2274,15 +2274,15 @@ function walkinBMLoadBusyWindows(dateStr) {
         .then(data => {
             if (loading) loading.style.display = 'none';
             if (data.error) {
-                if (unavail) { unavail.style.display = 'block'; unavail.textContent = '⚠️ ' + (data.error || 'Could not check availability.'); }
+                if (unavail) { unavail.style.display = 'block'; unavail.textContent = (data.error || 'Could not check availability.'); }
                 return;
             }
             if (data.reason_code && !data.on_duty && data.is_today) {
-                if (unavail) { unavail.style.display = 'block'; unavail.innerHTML = '<div style="text-align:center;padding:1.25rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">📅 ' + data.message + '</div>'; }
+                if (unavail) { unavail.style.display = 'block'; unavail.innerHTML = '<div style="text-align:center;padding:1.25rem 1rem;color:#92400e;background:#fff8f3;border:1px solid #EAD8C0;border-radius:10px;font-size:0.85rem;line-height:1.5;">' + data.message + '</div>'; }
                 return;
             }
             if (data.reason_code === 'NOT_QUALIFIED') {
-                if (unavail) { unavail.style.display = 'block'; unavail.textContent = '⚠️ ' + data.message; }
+                if (unavail) { unavail.style.display = 'block'; unavail.textContent = data.message; }
                 return;
             }
             walkinBwData = data;
@@ -2291,7 +2291,7 @@ function walkinBMLoadBusyWindows(dateStr) {
         })
         .catch(() => {
             if (loading) loading.style.display = 'none';
-            if (unavail) { unavail.style.display = 'block'; unavail.textContent = '⚠️ Could not load availability. Please try again.'; }
+            if (unavail) { unavail.style.display = 'block'; unavail.textContent = 'Could not load availability. Please try again.'; }
         });
 }
 
@@ -2377,7 +2377,7 @@ function confirmWalkinBM() {
     const h12   = walkinBMSelectedHour === 0 ? 12 : walkinBMSelectedHour > 12 ? walkinBMSelectedHour - 12 : walkinBMSelectedHour;
     const ampm  = walkinBMSelectedHour < 12 ? 'AM' : 'PM';
     const timeLabel = h12 + ':' + String(walkinBMSelectedMinute).padStart(2, '0') + ' ' + ampm;
-    const displayText = '📅 ' + WALKIN_BM_MONTHS[mo - 1] + ' ' + dy + ', ' + yr + ' · ' + timeLabel + ' — Change';
+    const displayText = WALKIN_BM_MONTHS[mo - 1] + ' ' + dy + ', ' + yr + ' · ' + timeLabel + ' — Change';
 
     if (walkinBMTarget === 'session2') {
         document.getElementById('walkin_booking_date_2').value = fullValue;
@@ -2403,7 +2403,7 @@ function confirmWalkinBM() {
             const hiddenDate2 = document.getElementById('walkin_booking_date_2');
             if (hiddenDate2) hiddenDate2.value = '';
             const pickBtn2 = document.getElementById('walkinPickDate2Btn');
-            if (pickBtn2) { pickBtn2.textContent = '📅 Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
+            if (pickBtn2) { pickBtn2.textContent = 'Pick Date & Time'; pickBtn2.classList.remove('has-value'); }
             const hint2 = document.getElementById('walkinSelectedDateTime2');
             if (hint2) hint2.textContent = "Pick Session 1's date first";
         }
@@ -2419,7 +2419,7 @@ function confirmWalkinBM() {
 <div id="pmModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9000;align-items:center;justify-content:center;padding:1rem;">
   <div style="background:#fff;border-radius:16px;padding:1.5rem;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.28);max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
-      <span id="pmModalTitle" style="font-weight:800;font-size:1rem;color:#3B2A1A;">💳 Online Payment</span>
+      <span id="pmModalTitle" style="font-weight:800;font-size:1rem;color:#3B2A1A;">Online Payment</span>
       <button onclick="closePmModal()" id="pmModalCloseBtn" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#6b7280;">✕</button>
     </div>
     <!-- Step 1: Input details -->
@@ -2466,7 +2466,7 @@ function confirmWalkinBM() {
       </div>
       <button onclick="pmSendOtp()" id="pmSendBtn"
               style="width:100%;padding:0.75rem;background:#C96A2C;color:#fff;border:none;border-radius:10px;font-size:0.95rem;font-weight:700;cursor:pointer;transition:opacity .15s;">
-        ▶ Proceed to Payment
+        Proceed to Payment
       </button>
       <div style="text-align:center;margin-top:0.6rem;">
         <button onclick="closePmModal()" style="background:none;border:none;color:#6b7280;font-size:0.82rem;cursor:pointer;text-decoration:underline;">Cancel</button>
@@ -2474,7 +2474,7 @@ function confirmWalkinBM() {
     </div>
     <!-- Step 2: Awaiting authorization (redirect) -->
     <div id="pm-step-2" style="display:none;text-align:center;padding:0.5rem 0;">
-      <div style="font-size:2.5rem;margin-bottom:0.65rem;">⏳</div>
+      <div style="font-size:2.5rem;margin-bottom:0.65rem;"></div>
       <div style="font-weight:700;color:#3B2A1A;margin-bottom:0.5rem;">Awaiting Authorization</div>
       <div id="pm-step2-msg" style="color:#6b7280;font-size:0.85rem;line-height:1.5;margin-bottom:1rem;"></div>
       <a id="pm-redirect-link" href="#" target="_blank"
@@ -2491,7 +2491,7 @@ function confirmWalkinBM() {
     </div>
     <!-- Step 3: Error -->
     <div id="pm-step-3" style="display:none;text-align:center;padding:0.5rem 0;">
-      <div style="font-size:2.5rem;margin-bottom:0.65rem;">❌</div>
+      <div style="font-size:2.5rem;margin-bottom:0.65rem;"></div>
       <div style="font-weight:700;color:#b91c1c;margin-bottom:0.5rem;" id="pm-err-title">Payment Failed</div>
       <div style="color:#6b7280;font-size:0.85rem;" id="pm-err-msg"></div>
       <button onclick="pmBackToStep1()" style="width:100%;padding:0.6rem;background:transparent;border:1px solid #d1d5db;color:#6b7280;border-radius:9px;font-size:0.82rem;cursor:pointer;margin-top:1rem;">
@@ -2500,7 +2500,7 @@ function confirmWalkinBM() {
     </div>
     <!-- Step 4: Success -->
     <div id="pm-step-4" style="display:none;text-align:center;padding:0.5rem 0;">
-      <div style="font-size:3rem;margin-bottom:0.65rem;">✅</div>
+      <div style="font-size:3rem;margin-bottom:0.65rem;"></div>
       <div style="font-weight:800;color:#15803d;font-size:1.1rem;margin-bottom:0.5rem;">Payment Confirmed!</div>
       <div id="pm-done-msg" style="color:#6b7280;font-size:0.85rem;"></div>
     </div>
@@ -2513,17 +2513,17 @@ function confirmWalkinBM() {
 <div id="qrphModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9000;align-items:center;justify-content:center;padding:1rem;">
   <div style="background:#fff;border-radius:16px;padding:1.5rem;max-width:320px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.28);text-align:center;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-      <span style="font-weight:800;font-size:1rem;color:#3B2A1A;">📷 QR Ph Payment</span>
+      <span style="font-weight:800;font-size:1rem;color:#3B2A1A;">QR Ph Payment</span>
       <button onclick="closeQrphModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#6b7280;">✕</button>
     </div>
     <p style="font-size:0.82rem;color:#6b7280;margin-bottom:0.85rem;line-height:1.5;">
       Customer scans with any Philippine banking app<br>(GCash, Maya, BPI, BDO, UnionBank, etc.)
     </p>
     <div id="qrphImageContainer" style="margin:0 auto 0.85rem;width:280px;height:auto;min-height:180px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border-radius:10px;border:1px solid #EAD8C0;">
-      <span style="color:#6b7280;font-size:0.82rem;">⏳ Generating…</span>
+      <span style="color:#6b7280;font-size:0.82rem;">Generating…</span>
     </div>
     <div id="qrphAmount" style="font-size:1.3rem;font-weight:800;color:#3B2A1A;margin-bottom:0.4rem;"></div>
-    <div id="qrphStatus" style="font-size:0.85rem;color:#C96A2C;margin-bottom:1rem;">⏳ Waiting for payment…</div>
+    <div id="qrphStatus" style="font-size:0.85rem;color:#C96A2C;margin-bottom:1rem;">Waiting for payment…</div>
     <button onclick="closeQrphModal()" style="padding:0.55rem 1.5rem;border:1.5px solid #d1d5db;border-radius:8px;background:#fff;color:#6b7280;font-size:0.85rem;cursor:pointer;font-family:inherit;">Cancel</button>
   </div>
 </div>
@@ -2558,9 +2558,9 @@ function openAddonPaymentModal(form, method, amount) {
 function pmInitModal() {
     if (pmState.pollTimer) clearInterval(pmState.pollTimer);
     pmState.intentId = ''; pmState.pmId = ''; pmState.clientKey = ''; pmState.pollCount = 0;
-    var icons  = {gcash:'📱', maya:'💜', card:'💳'};
+    var icons  = {gcash:'', maya:'', card:''};
     var labels = {gcash:'GCash', maya:'Maya', card:'Credit/Debit Card'};
-    document.getElementById('pm-method-icon').textContent    = icons[pmState.method]  || '💳';
+    document.getElementById('pm-method-icon').textContent    = icons[pmState.method]  || '';
     document.getElementById('pm-amount-display').textContent = '₱' + pmState.amount.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
     document.getElementById('pm-method-label').textContent   = labels[pmState.method] || pmState.method;
     var isCard = pmState.method === 'card';
@@ -2588,10 +2588,10 @@ function pmShowStep(n) {
 
 function pmError(msg) {
     var el = document.getElementById('pm-error-banner');
-    el.textContent = '⚠️ ' + msg;
+    el.textContent = msg;
     el.style.display = '';
     var btn = document.getElementById('pmSendBtn');
-    if (btn) { btn.disabled = false; btn.textContent = '▶ Proceed to Payment'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Proceed to Payment'; }
 }
 
 function pmGetCsrf() {
@@ -2622,7 +2622,7 @@ function pmCreateIntent(callback) {
 
 function pmSendOtp() {
     var btn = document.getElementById('pmSendBtn');
-    btn.disabled = true; btn.textContent = '⏳ Processing…';
+    btn.disabled = true; btn.textContent = 'Processing…';
     document.getElementById('pm-error-banner').style.display = 'none';
     var phone = (document.getElementById('pm-phone-input')?.value || '').trim();
     var email = '';
@@ -2690,7 +2690,7 @@ function pmBackToStep1() {
     if (pmState.pollTimer) clearInterval(pmState.pollTimer);
     pmShowStep(1);
     var btn = document.getElementById('pmSendBtn');
-    if (btn) { btn.disabled = false; btn.textContent = '▶ Proceed to Payment'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Proceed to Payment'; }
 }
 
 function pmPollStatus() {
@@ -2793,12 +2793,12 @@ function openQrphFlow(formType) {
     if (formType === 'service') {
         if (!form.querySelector('[name="booking_date"]')?.value) { uiAlert('Please select a booking date first.'); return; }
         if (document.getElementById('rate_type_val')?.value === 'hotel' && parseInt(document.getElementById('partner_id_val')?.value || 0) === 0) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
-        if (walkinAvailBlocked) { uiAlert('⛔ Cannot book: no qualified therapist is available at the selected time.'); return; }
+        if (walkinAvailBlocked) { uiAlert('Cannot book: no qualified therapist is available at the selected time.'); return; }
     }
     qrphState.formType = formType;
     var prefix   = formType === 'service' ? 'svc' : 'prod';
     var statusEl = document.getElementById(prefix + '-online-status');
-    if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(234,179,8,0.1)'; statusEl.style.border='1px solid rgba(234,179,8,0.4)'; statusEl.style.color='#92400e'; statusEl.textContent='⏳ Creating order…'; }
+    if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(234,179,8,0.1)'; statusEl.style.border='1px solid rgba(234,179,8,0.4)'; statusEl.style.color='#92400e'; statusEl.textContent='Creating order…'; }
     var fd = new FormData(form);
     fd.set('payment_method', 'qrph');
     fd.set('otp_mode', '1');
@@ -2807,14 +2807,14 @@ function openQrphFlow(formType) {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (!data.success) {
-                if (statusEl) { statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent='❌ ' + (data.error || 'Order creation failed.'); }
+                if (statusEl) { statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent=(data.error || 'Order creation failed.'); }
                 return;
             }
             if (statusEl) statusEl.style.display = 'none';
             openQrphModal(data.order_id || 0, data.final_amount || 0);
         })
         .catch(function(err) {
-            if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent='❌ ' + err.message; }
+            if (statusEl) { statusEl.style.display='block'; statusEl.style.background='rgba(220,53,69,0.08)'; statusEl.style.border='1px solid rgba(220,53,69,0.3)'; statusEl.style.color='#b91c1c'; statusEl.textContent=err.message; }
         });
 }
 
@@ -2824,8 +2824,8 @@ function openQrphModal(orderId, amount) {
     var modal = document.getElementById('qrphModal');
     modal.style.display = 'flex';
     document.getElementById('qrphAmount').textContent = '₱' + parseFloat(amount).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
-    document.getElementById('qrphImageContainer').innerHTML = '<span style="color:#6b7280;font-size:0.82rem;">⏳ Generating QR code…</span>';
-    document.getElementById('qrphStatus').textContent = '⏳ Waiting for payment…';
+    document.getElementById('qrphImageContainer').innerHTML = '<span style="color:#6b7280;font-size:0.82rem;">Generating QR code…</span>';
+    document.getElementById('qrphStatus').textContent = 'Waiting for payment…';
     document.getElementById('qrphStatus').style.color = '#C96A2C';
     var fd = new FormData();
     fd.append('action',      'create_qrph');
@@ -2837,7 +2837,7 @@ function openQrphModal(orderId, amount) {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (!data.success) {
-                document.getElementById('qrphImageContainer').innerHTML = '<span style="color:#b91c1c;font-size:0.82rem;">❌ ' + (data.error || 'Failed to generate QR code') + '</span>';
+                document.getElementById('qrphImageContainer').innerHTML = '<span style="color:#b91c1c;font-size:0.82rem;">' + (data.error || 'Failed to generate QR code') + '</span>';
                 return;
             }
             qrphState.sessionId   = data.session_id;
@@ -2848,7 +2848,7 @@ function openQrphModal(orderId, amount) {
             cont.style.minHeight = '180px';
             cont.innerHTML =
                 '<div style="text-align:center;padding:1.5rem;">'
-              + '<div style="font-size:2.5rem;margin-bottom:0.75rem;">📷</div>'
+              + '<div style="font-size:2.5rem;margin-bottom:0.75rem;"></div>'
               + '<p style="font-size:0.85rem;color:#3B2A1A;margin-bottom:1rem;line-height:1.5;">'
               + 'Click below to open the QR Ph payment page in a new window.</p>'
               + '<button type="button" onclick="window.open(qrphState.checkoutUrl,\'paymongo_qrph\',\'width=420,height=700\')" '
@@ -2860,7 +2860,7 @@ function openQrphModal(orderId, amount) {
                 cont.innerHTML =
                     '<div style="text-align:center;padding:1.5rem;">'
                   + '<p style="font-size:0.85rem;color:#b91c1c;margin-bottom:1rem;">'
-                  + '⚠️ Popup blocked by browser. Click below to open manually:</p>'
+                  + 'Popup blocked by browser. Click below to open manually:</p>'
                   + '<button type="button" onclick="window.open(qrphState.checkoutUrl,\'_blank\')" '
                   + 'style="padding:0.7rem 1.5rem;background:#C96A2C;color:#fff;'
                   + 'border:none;border-radius:8px;font-weight:700;cursor:pointer;">Open Payment Page</button>'
@@ -2869,7 +2869,7 @@ function openQrphModal(orderId, amount) {
             startQrphPolling();
         })
         .catch(function(err) {
-            document.getElementById('qrphImageContainer').innerHTML = '<span style="color:#b91c1c;font-size:0.82rem;">❌ ' + err.message + '</span>';
+            document.getElementById('qrphImageContainer').innerHTML = '<span style="color:#b91c1c;font-size:0.82rem;">' + err.message + '</span>';
         });
 }
 
@@ -2880,7 +2880,7 @@ function startQrphPolling() {
         pollCount++;
         if (pollCount > 60) {
             clearInterval(qrphState.pollTimer);
-            document.getElementById('qrphStatus').textContent = '⏰ Timed out. Please cancel and try another payment method.';
+            document.getElementById('qrphStatus').textContent = 'Timed out. Please cancel and try another payment method.';
             document.getElementById('qrphStatus').style.color = '#b91c1c';
             return;
         }
@@ -2894,7 +2894,7 @@ function startQrphPolling() {
             .then(function(data) {
                 if (data.success && data.paid) {
                     clearInterval(qrphState.pollTimer);
-                    document.getElementById('qrphStatus').textContent = '✅ Payment received!';
+                    document.getElementById('qrphStatus').textContent = 'Payment received!';
                     document.getElementById('qrphStatus').style.color = '#15803d';
                     qrphMarkPaid(data.reference || qrphState.sessionId);
                 }
@@ -2914,15 +2914,15 @@ function qrphMarkPaid(reference) {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.success) {
-                document.getElementById('qrphStatus').textContent = '✅ Order confirmed! Reloading…';
+                document.getElementById('qrphStatus').textContent = 'Order confirmed! Reloading…';
                 setTimeout(function() { location.reload(); }, 2000);
             } else {
-                document.getElementById('qrphStatus').textContent = '⚠️ ' + (data.error || 'Could not record payment.');
+                document.getElementById('qrphStatus').textContent = (data.error || 'Could not record payment.');
                 document.getElementById('qrphStatus').style.color = '#b91c1c';
             }
         })
         .catch(function(err) {
-            document.getElementById('qrphStatus').textContent = '⚠️ ' + err.message;
+            document.getElementById('qrphStatus').textContent = err.message;
             document.getElementById('qrphStatus').style.color = '#b91c1c';
         });
 }

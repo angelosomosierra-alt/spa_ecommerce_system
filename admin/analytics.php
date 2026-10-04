@@ -361,7 +361,7 @@ while ($row = $r->fetch_assoc()) $fb_orders[] = $row;
 $avg_forecast = count($forecast_total) ? array_sum($forecast_total) / count($forecast_total) : 0;
 $extra_head   = '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>';
 $page_title   = 'Analytics';
-$page_icon    = '📊';
+$page_icon    = '';
 $active_page  = 'analytics';
 $analytics_tab = $_GET['atab'] ?? 'charts';
 if (!in_array($analytics_tab, ['charts', 'feedback'], true)) {
@@ -373,8 +373,8 @@ require_once 'admin_header.php';
 <!-- ── ANALYTICS TAB NAV ─────────────────────────────────────────────────── -->
 <div style="display:flex;gap:0.4rem;margin-bottom:1.5rem;border-bottom:2px solid var(--border2);padding-bottom:0;flex-wrap:wrap;">
     <?php foreach([
-        'charts'   => ['📊 Analytics',  false],
-        'feedback' => ['⭐ Feedback',    false],
+        'charts'   => ['Analytics',  false],
+        'feedback' => ['Feedback',    false],
     ] as $tab_key => [$tab_label, $unused]): $is_active = $analytics_tab === $tab_key; ?>
     <a href="analytics.php?atab=<?php echo $tab_key; ?><?php echo isset($_GET['start_date']) ? '&start_date='.htmlspecialchars($start_date) : ''; ?><?php echo isset($_GET['end_date']) ? '&end_date='.htmlspecialchars($end_date) : ''; ?>"
        style="padding:0.6rem 1.25rem;font-size:0.85rem;font-weight:700;text-decoration:none;
@@ -412,7 +412,7 @@ require_once 'admin_header.php';
             <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>"
                    style="padding: 0.4rem; border: 1px solid var(--border); border-radius: 4px;">
         </div>
-        <button type="submit" class="btn-export blue" style="border:none; cursor:pointer; padding: 0.5rem 1.2rem;">🔍 Filter Report</button>
+        <button type="submit" class="btn-export blue" style="border:none; cursor:pointer; padding: 0.5rem 1.2rem;">Filter Report</button>
         <a href="analytics.php" style="font-size: 0.8rem; color: var(--gray); text-decoration: none;">Reset</a>
     </form>
 </div>
@@ -420,52 +420,52 @@ require_once 'admin_header.php';
 <!-- ── KPI CARDS ──────────────────────────────────────────────────────────── -->
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:1.5rem;">
     <div class="stat-card rust">
-        <div class="stat-icon">💰</div>
+        <div class="stat-icon"></div>
         <div class="stat-number">₱<?php echo number_format($total_revenue,0); ?></div>
         <div class="stat-label">Total Revenue</div>
     </div>
     <div class="stat-card blue">
-        <div class="stat-icon">💆</div>
+        <div class="stat-icon"></div>
         <div class="stat-number">₱<?php echo number_format($service_revenue,0); ?></div>
         <div class="stat-label">Services Revenue</div>
         <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">completed appointments</div>
     </div>
     <div class="stat-card green">
-        <div class="stat-icon">🛍️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number">₱<?php echo number_format($product_revenue,0); ?></div>
         <div class="stat-label">Products Revenue</div>
         <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">approved orders</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">📦</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $total_orders; ?></div>
         <div class="stat-label">Paid Orders</div>
     </div>
     <div class="stat-card amber">
-        <div class="stat-icon">🧾</div>
+        <div class="stat-icon"></div>
         <div class="stat-number">₱<?php echo number_format($avg_order,0); ?></div>
         <div class="stat-label">Avg Order Value</div>
     </div>
     <div class="stat-card green">
-        <div class="stat-icon">📅</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $completed_appts; ?></div>
         <div class="stat-label">Completed Appts</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">👥</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $total_customers; ?></div>
         <div class="stat-label">Customers</div>
     </div>
     <?php if ($best_day): ?>
     <div class="stat-card amber">
-        <div class="stat-icon">🏆</div>
+        <div class="stat-icon"></div>
         <div class="stat-number" style="font-size:1.2rem;"><?php echo $best_day['d']; ?></div>
         <div class="stat-label">Best Sales Day</div>
         <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">₱<?php echo number_format($best_day['t'],0); ?> total</div>
     </div>
     <?php endif; ?>
     <div class="stat-card green">
-        <div class="stat-icon">🔮</div>
+        <div class="stat-icon"></div>
         <div class="stat-number" style="font-size:1.2rem;">₱<?php echo number_format($avg_forecast,0); ?></div>
         <div class="stat-label">Forecast Avg / Mo</div>
         <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">next 3 months</div>
@@ -475,21 +475,21 @@ require_once 'admin_header.php';
 <!-- ── REVENUE LINE CHART ─────────────────────────────────────────────────── -->
 <div class="chart-card" style="margin-bottom:1.5rem;">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
-        <h3 style="margin:0;">📈 Revenue Trend — Total · Services · Products</h3>
+        <h3 style="margin:0;">Revenue Trend — Total · Services · Products</h3>
         <div class="chart-tabs" style="margin:0;">
             <button class="chart-tab active" onclick="switchChart('daily',this)">Daily</button>
             <button class="chart-tab"        onclick="switchChart('weekly',this)">Weekly</button>
             <button class="chart-tab"        onclick="switchChart('monthly',this)">Monthly</button>
-            <button class="chart-tab"        onclick="switchChart('forecast',this)">🔮 Forecast</button>
+            <button class="chart-tab"        onclick="switchChart('forecast',this)">Forecast</button>
         </div>
     </div>
 
     <!-- Revenue summary strip -->
     <div id="rev-strip" style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;padding:0.75rem 1rem;background:var(--bg3);border-radius:var(--radius);font-size:0.82rem;">
-        <span>⏱ Period: <strong id="strip-period">Last 14 days</strong></span>
-        <span style="color:var(--rust);">💰 Total: <strong id="strip-total">₱<?php echo number_format(array_sum($daily_total),2); ?></strong></span>
-        <span style="color:#0070f3;">💆 Services: <strong id="strip-svc">₱<?php echo number_format(array_sum($daily_svc),2); ?></strong></span>
-        <span style="color:#198754;">🛍️ Products: <strong id="strip-prd">₱<?php echo number_format(array_sum($daily_prd),2); ?></strong></span>
+        <span>Period: <strong id="strip-period">Last 14 days</strong></span>
+        <span style="color:var(--rust);">Total: <strong id="strip-total">₱<?php echo number_format(array_sum($daily_total),2); ?></strong></span>
+        <span style="color:#0070f3;">Services: <strong id="strip-svc">₱<?php echo number_format(array_sum($daily_svc),2); ?></strong></span>
+        <span style="color:#198754;">Products: <strong id="strip-prd">₱<?php echo number_format(array_sum($daily_prd),2); ?></strong></span>
     </div>
 
     <!-- Actual vs Forecast legend -->
@@ -511,7 +511,7 @@ require_once 'admin_header.php';
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
 
     <div class="chart-card">
-        <h3>💆 Top Services — Completed Sessions</h3>
+        <h3>Top Services — Completed Sessions</h3>
         <?php if (!empty($top_services)): ?>
         <div style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;">
             <div style="flex:0 0 200px;"><canvas id="servicesChart"></canvas></div>
@@ -544,7 +544,7 @@ require_once 'admin_header.php';
     </div>
 
     <div class="chart-card">
-        <h3>🛍️ Top Products — Units Sold</h3>
+        <h3>Top Products — Units Sold</h3>
         <?php if (!empty($top_products)): ?>
         <div style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;">
             <div style="flex:0 0 200px;"><canvas id="productsChart"></canvas></div>
@@ -580,7 +580,7 @@ require_once 'admin_header.php';
 
 <!-- ── FORECAST TABLE ─────────────────────────────────────────────────────── -->
 <div class="chart-card" style="margin-bottom:1.5rem;">
-    <h3>🔮 Revenue Forecast — Next 3 Months
+    <h3>Revenue Forecast — Next 3 Months
         <span style="font-size:0.75rem;background:var(--amber-dim);color:var(--amber);padding:0.2rem 0.6rem;border-radius:20px;margin-left:0.5rem;font-weight:600;">Linear Regression</span>
     </h3>
     <p style="color:var(--gray);font-size:0.82rem;margin-bottom:1rem;">Projected from the last 12 months using least-squares linear regression. Confidence decreases further out.</p>
@@ -637,7 +637,7 @@ require_once 'admin_header.php';
 
 <!-- ── RECENT ORDERS ──────────────────────────────────────────────────────── -->
 <div class="panel">
-    <div class="panel-header"><span class="panel-title">🕐 Recent Orders</span></div>
+    <div class="panel-header"><span class="panel-title">Recent Orders</span></div>
     <div class="table-wrap" style="border:none;border-radius:0;">
         <table>
             <thead>
@@ -659,10 +659,10 @@ require_once 'admin_header.php';
                     <td><?php echo $o['item_count']; ?></td>
                     <td><strong style="color:var(--rust);">₱<?php echo number_format($o['total_amount'],2); ?></strong></td>
                     <td><?php
-                        $pm_labels = ['cash'=>'💵 Cash','gcash'=>'📱 GCash','maya'=>'💜 Maya',
-                                      'qrph'=>'📷 QRPH','bank'=>'🏦 Bank','card'=>'💳 Card','online'=>'💳 Online'];
+                        $pm_labels = ['cash'=>'Cash','gcash'=>'GCash','maya'=>'Maya',
+                                      'qrph'=>'QRPH','bank'=>'Bank','card'=>'Card','online'=>'Online'];
                         $pm_class  = in_array($pm,['gcash','maya','qrph','bank','card','online']) ? 'online' : 'onsite';
-                        echo '<span class="badge badge-'.$pm_class.'">'.(($pm_labels[$pm]) ?? ('💰 '.ucfirst($pm))).'</span>';
+                        echo '<span class="badge badge-'.$pm_class.'">'.(($pm_labels[$pm]) ?? ucfirst($pm)).'</span>';
                     ?></td>
                     <td><span class="badge badge-<?php echo $ps; ?>"><?php echo ucfirst($ps); ?></span></td>
                     <td><span class="badge badge-<?php echo $as; ?>"><?php echo ucfirst($as); ?></span></td>
@@ -841,23 +841,23 @@ new Chart(document.getElementById('productsChart').getContext('2d'), {
 <!-- KPI Cards -->
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:1.5rem;">
     <div class="stat-card amber">
-        <div class="stat-icon">⭐</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $fb_avg ?: '—'; ?></div>
         <div class="stat-label">Overall Rating</div>
         <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">out of 5.0</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">💬</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $fb_total; ?></div>
         <div class="stat-label">Total Reviews</div>
     </div>
     <div class="stat-card blue">
-        <div class="stat-icon">💆</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo count($fb_appt); ?></div>
         <div class="stat-label">Service Reviews</div>
     </div>
     <div class="stat-card green">
-        <div class="stat-icon">🛍️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo count($fb_orders); ?></div>
         <div class="stat-label">Product Reviews</div>
     </div>
@@ -913,7 +913,7 @@ new Chart(document.getElementById('productsChart').getContext('2d'), {
 <!-- Service Appointment Feedback Table -->
 <div class="panel" style="margin-bottom:1.5rem;">
     <div class="panel-header">
-        <span class="panel-title">💆 Service Appointment Feedback</span>
+        <span class="panel-title">Service Appointment Feedback</span>
         <span class="badge badge-approved"><?php echo count($fb_appt); ?> reviews</span>
     </div>
     <div class="table-wrap" style="border:none;border-radius:0;">
@@ -954,7 +954,7 @@ new Chart(document.getElementById('productsChart').getContext('2d'), {
 <!-- Product Order Feedback Table -->
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">🛍️ Product Order Feedback</span>
+        <span class="panel-title">Product Order Feedback</span>
         <span class="badge badge-approved"><?php echo count($fb_orders); ?> reviews</span>
     </div>
     <div class="table-wrap" style="border:none;border-radius:0;">

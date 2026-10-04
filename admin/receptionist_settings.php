@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
 
     // Validate time format HH:MM
     if (!preg_match('/^\d{2}:\d{2}$/', $start) || !preg_match('/^\d{2}:\d{2}$/', $end)) {
-        $msg = '❌ Invalid time format.'; $msg_type = 'danger';
+        $msg = 'Invalid time format.'; $msg_type = 'danger';
     } else {
         $uid = (int)$_SESSION['user_id'];
         $now = date('Y-m-d H:i:s');
@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
             $stmt->bind_param("ssis", $key, $val, $uid, $now);
             $stmt->execute(); $stmt->close();
         }
-        $msg = '✅ Receptionist settings saved.';
+        $msg = 'Receptionist settings saved.';
     }
 }
 
@@ -47,7 +47,7 @@ if (isset($_GET['clear_session'])) {
     $rid = intval($_GET['clear_session']);
     $stmt = $conn->prepare("UPDATE users SET session_token=NULL, session_started=NULL WHERE id=? AND admin_role='cashier'");
     $stmt->bind_param("i", $rid); $stmt->execute(); $stmt->close();
-    $msg = '✅ Receptionist session cleared. They can now log in again.';
+    $msg = 'Receptionist session cleared. They can now log in again.';
 }
 
 // ── Fetch current settings ────────────────────────────────────────────────────
@@ -68,14 +68,14 @@ $receptionists = $conn->query("
 ")->fetch_all(MYSQLI_ASSOC);
 
 $page_title  = 'Receptionist Settings';
-$page_icon   = '⚙️';
+$page_icon   = '';
 $active_page = 'receptionist_settings';
 require_once 'admin_header.php';
 ?>
 
 <div class="admin-content">
 <div class="page-header">
-    <h1 class="page-title"><?php echo $page_icon; ?> <?php echo $page_title; ?></h1>
+    <h1 class="page-title"><?php echo $page_title; ?></h1>
     <p class="page-subtitle">Configure receptionist login restrictions and manage active sessions.</p>
 </div>
 
@@ -89,7 +89,7 @@ require_once 'admin_header.php';
 
 <!-- ── Login Time Window ──────────────────────────────────────────────────── -->
 <div class="card" style="padding:1.5rem;">
-    <h3 style="margin:0 0 1rem;font-size:1rem;color:var(--gold);">🕐 Login Time Window</h3>
+    <h3 style="margin:0 0 1rem;font-size:1rem;color:var(--gold);">Login Time Window</h3>
     <p style="font-size:0.85rem;color:#666;margin-bottom:1.25rem;">
         Receptionist accounts can only log in within this time window.<br>
         Outside this window, login will be blocked automatically.
@@ -131,21 +131,21 @@ require_once 'admin_header.php';
             </select>
         </div>
         <div style="background:#fff8f0;border:1px solid #ead8c0;border-radius:8px;padding:0.75rem;margin-bottom:1rem;font-size:0.8rem;color:#7a5c2e;">
-            📌 Current setting: Receptionist can log in from
+            Current setting: Receptionist can log in from
             <strong><?php echo date('h:i A', strtotime($login_start)); ?></strong>
             to <strong><?php echo date('h:i A', strtotime($login_end)); ?></strong>
             (<?php echo htmlspecialchars($timezone); ?>)
         </div>
         <button type="submit" name="save_settings"
                 style="width:100%;padding:0.7rem;background:var(--gold);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;">
-            💾 Save Settings
+            Save Settings
         </button>
     </form>
 </div>
 
 <!-- ── Active Receptionist Accounts ──────────────────────────────────────── -->
 <div class="card" style="padding:1.5rem;">
-    <h3 style="margin:0 0 1rem;font-size:1rem;color:var(--gold);">🪪 Receptionist Accounts</h3>
+    <h3 style="margin:0 0 1rem;font-size:1rem;color:var(--gold);">Receptionist Accounts</h3>
     <?php if (empty($receptionists)): ?>
         <p style="color:#888;font-size:0.85rem;">No receptionist accounts found.</p>
     <?php else: ?>
@@ -169,11 +169,11 @@ require_once 'admin_header.php';
                     <div style="font-size:0.78rem;color:#888;">@<?php echo htmlspecialchars($r['username']); ?> · <?php echo htmlspecialchars($r['email']); ?></div>
                     <?php if ($is_active): ?>
                         <div style="font-size:0.78rem;color:#15803d;margin-top:0.25rem;">
-                            🟢 Active session — logged in <?php echo $age_hrs; ?> hour(s) ago
+                            Active session — logged in <?php echo $age_hrs; ?> hour(s) ago
                             (<?php echo date('M d, h:i A', strtotime($r['session_started'])); ?>)
                         </div>
                     <?php else: ?>
-                        <div style="font-size:0.78rem;color:#888;margin-top:0.25rem;">⚪ No active session</div>
+                        <div style="font-size:0.78rem;color:#888;margin-top:0.25rem;">No active session</div>
                     <?php endif; ?>
                 </div>
                 <?php if ($is_active): ?>
@@ -181,7 +181,7 @@ require_once 'admin_header.php';
                    onclick="var _h=this.href;event.preventDefault();uiConfirm('Force logout this receptionist?').then(ok=>{if(ok)window.location.href=_h;})"
                    style="white-space:nowrap;background:#fee2e2;color:#b91c1c;border:none;padding:0.4rem 0.75rem;
                           border-radius:6px;font-size:0.78rem;font-weight:600;cursor:pointer;text-decoration:none;">
-                    🔴 Force Logout
+                    Force Logout
                 </a>
                 <?php endif; ?>
             </div>
@@ -190,7 +190,7 @@ require_once 'admin_header.php';
     <?php endif; ?>
 
     <div style="margin-top:1rem;padding:0.75rem;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:0.78rem;color:#0369a1;">
-        💡 <strong>Rules enforced:</strong><br>
+        <strong>Rules enforced:</strong><br>
         • Only <strong>1 receptionist account</strong> can exist at a time<br>
         • Only <strong>1 active session</strong> allowed simultaneously<br>
         • Login only allowed within the configured time window<br>

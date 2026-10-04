@@ -11,7 +11,6 @@
     <div style="background:#fff;border-radius:14px;padding:1.75rem 1.6rem;max-width:310px;width:90vw;
                 box-shadow:0 20px 60px rgba(0,0,0,0.22);animation:popIn .28s cubic-bezier(.34,1.56,.64,1);">
         <div style="text-align:center;margin-bottom:1rem;">
-            <div style="font-size:1.5rem;margin-bottom:0.4rem;">🔐</div>
             <div style="font-weight:700;font-size:0.98rem;color:var(--brown);" id="pgm-label">Confirm Action</div>
             <div style="font-size:0.76rem;color:var(--gray);margin-top:0.2rem;">Enter your 4-digit receptionist PIN</div>
         </div>
@@ -31,7 +30,7 @@
             <button type="button" onclick="confirmPinGate()"
                     style="flex:2;padding:0.6rem;border:none;border-radius:8px;
                            background:var(--gold);color:#fff;font-weight:700;cursor:pointer;font-size:0.88rem;">
-                ✓ Confirm
+                Confirm
             </button>
         </div>
     </div>
@@ -52,7 +51,7 @@ function openPinGate(label, form) {
     document.getElementById('pgm-pin').value = '';
     document.getElementById('pgm-error').textContent = '';
     var confirmBtn = document.querySelector('#pinGateModal button[onclick="confirmPinGate()"]');
-    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Confirm'; }
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Confirm'; }
     document.getElementById('pinGateModal').style.display = 'flex';
     setTimeout(function(){ document.getElementById('pgm-pin').focus(); }, 80);
 }
@@ -67,7 +66,7 @@ function confirmPinGate() {
         return;
     }
     var confirmBtn = document.querySelector('#pinGateModal button[onclick="confirmPinGate()"]');
-    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Verifying…'; }
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Verifying…'; }
     var cb = _pgmCallback;
     closePinGate();
     if (cb) cb(pin);
@@ -98,10 +97,15 @@ document.querySelectorAll('input[type="password"]').forEach(function(inp) {
     inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
     inp.style.paddingRight = '2.6rem';
     var btn = document.createElement('button');
-    btn.type = 'button'; btn.textContent = '👁';
+    btn.type = 'button'; btn.textContent = 'Show';
     btn.setAttribute('aria-label', 'Show password');
-    btn.style.cssText = 'position:absolute;right:.6rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;padding:0;color:#A07850;';
-    btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.textContent = s ? '🙈' : '👁'; };
+    btn.style.cssText = 'position:absolute;right:.6rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:0.72rem;font-weight:700;line-height:1;padding:0;color:#A07850;';
+    btn.onclick = function() {
+        var s = inp.type === 'password';
+        inp.type = s ? 'text' : 'password';
+        btn.textContent = s ? 'Hide' : 'Show';
+        btn.setAttribute('aria-label', s ? 'Hide password' : 'Show password');
+    };
     wrap.appendChild(btn);
 });
 </script>

@@ -23,9 +23,9 @@ if (isset($_SESSION['user_id'])) {
 
 $login_error = '';
 if (isset($_GET['ended'])) {
-    $login_error = '⚠️ Your session was ended because the account was signed in on another device.';
+    $login_error = 'Your session was ended because the account was signed in on another device.';
 } elseif (isset($_GET['hours_ended'])) {
-    $login_error = '⏰ Your session ended — receptionist login is no longer within the allowed hours.';
+    $login_error = 'Your session ended — receptionist login is no longer within the allowed hours.';
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -93,7 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                 if (!empty($existing_token) && !empty($session_started)) {
                     $session_age_hours = (time() - strtotime($session_started)) / 3600;
                     if ($session_age_hours < 8) {
-                        $login_error = '⚠️ Receptionist account is already logged in on another device. Please log out from the other session first, or contact the owner to clear it.';
+                        $login_error = 'Receptionist account is already logged in on another device. Please log out from the other session first, or contact the owner to clear it.';
                     } else {
                         $existing_token = null; // session expired — auto-clear
                     }
@@ -200,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                                    transform:translateY(-50%);background:none;
                                    border:none;cursor:pointer;font-size:1rem;
                                    color:#A07850;padding:0;line-height:1;"
-                            aria-label="Show password">👁</button>
+                            aria-label="Show password">Show</button>
                 </div>
             </div>
             <button type="submit" name="login" class="btn-primary">Login to Admin Panel</button>
@@ -220,7 +220,7 @@ function toggleAdminPwd() {
     const btn    = document.getElementById('adminPwdToggle');
     const isHide = input.type === 'password';
     input.type   = isHide ? 'text' : 'password';
-    btn.textContent = isHide ? '🙈' : '👁';
+    btn.textContent = isHide ? 'Hide' : 'Show';
     btn.setAttribute('aria-label', isHide ? 'Hide password' : 'Show password');
 }
 // ── Password eye-toggle auto-attach (skips fields already handled above) ──────
@@ -233,10 +233,10 @@ document.querySelectorAll('input[type="password"]').forEach(function(inp) {
     inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
     inp.style.paddingRight = '2.6rem';
     var btn = document.createElement('button');
-    btn.type = 'button'; btn.textContent = '👁';
+    btn.type = 'button'; btn.textContent = 'Show';
     btn.setAttribute('aria-label', 'Show password');
     btn.style.cssText = 'position:absolute;right:.6rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;padding:0;color:#A07850;';
-    btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.textContent = s ? '🙈' : '👁'; };
+    btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.textContent = s ? 'Hide' : 'Show'; };
     wrap.appendChild(btn);
 });
 </script>

@@ -44,14 +44,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_partner'])) {
             $stmt = $conn->prepare("UPDATE partners SET name=?, type=?, contact=?, notes=? WHERE id=?");
             $stmt->bind_param("ssssi", $name, $type, $contact, $notes, $pid);
             $stmt->execute(); $stmt->close();
-            $message = "✅ Partner updated."; $message_type = "success";
+            $message = "Partner updated."; $message_type = "success";
         } else {
             $stmt = $conn->prepare("INSERT INTO partners (name, type, contact, notes) VALUES (?,?,?,?)");
             $stmt->bind_param("ssss", $name, $type, $contact, $notes);
             $stmt->execute();
             $pid = $stmt->insert_id;
             $stmt->close();
-            $message = "✅ Partner <strong>" . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "</strong> added."; $message_type = "success";
+            $message = "Partner <strong>" . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "</strong> added."; $message_type = "success";
         }
     }
 }
@@ -83,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_rates'])) {
                 $stmt->execute(); $stmt->close();
             }
         }
-        $message = "✅ Rates saved."; $message_type = "success";
+        $message = "Rates saved."; $message_type = "success";
     }
 }
 
@@ -129,9 +129,9 @@ if (isset($_GET['edit'])) {
     $edit_partner = $stmt->get_result()->fetch_assoc(); $stmt->close();
 }
 
-$type_icons  = ['hotel' => '🏨', 'corporate' => '🏢', 'other' => '🤝'];
+$type_icons  = ['hotel' => '', 'corporate' => '', 'other' => ''];
 $page_title  = 'Partners & Rates';
-$page_icon   = '🤝';
+$page_icon   = '';
 $active_page = 'partners';
 require_once 'admin_header.php';
 ?>
@@ -143,7 +143,7 @@ require_once 'admin_header.php';
 <?php endif; ?>
 
 <?php if (isset($_GET['deleted'])): ?>
-<div class="alert alert-success" style="margin-bottom:1.5rem;">🗑️ Partner removed.</div>
+<div class="alert alert-success" style="margin-bottom:1.5rem;">Partner removed.</div>
 <?php endif; ?>
 
 <div style="display:grid;grid-template-columns:360px 1fr;gap:2rem;align-items:start;">
@@ -157,7 +157,7 @@ require_once 'admin_header.php';
     <div class="panel">
         <div class="panel-header">
             <span class="panel-title">
-                <?php echo $edit_partner ? '✏️ Edit Partner' : '➕ Add Partner'; ?>
+                <?php echo $edit_partner ? 'Edit Partner' : 'Add Partner'; ?>
             </span>
             <?php if ($edit_partner): ?>
             <a href="partners.php" class="btn btn-secondary btn-sm">✕ Cancel</a>
@@ -180,7 +180,7 @@ require_once 'admin_header.php';
                 <div class="form-group">
                     <label>Type</label>
                     <select name="type">
-                        <?php foreach (['hotel' => '🏨 Hotel', 'corporate' => '🏢 Corporate', 'other' => '🤝 Other'] as $val => $lbl): ?>
+                        <?php foreach (['hotel' => 'Hotel', 'corporate' => 'Corporate', 'other' => 'Other'] as $val => $lbl): ?>
                         <option value="<?php echo $val; ?>"
                             <?php echo ($edit_partner['type'] ?? 'hotel') === $val ? 'selected' : ''; ?>>
                             <?php echo $lbl; ?>
@@ -203,7 +203,7 @@ require_once 'admin_header.php';
                 </div>
 
                 <button type="submit" class="btn btn-primary btn-full">
-                    <?php echo $edit_partner ? '💾 Save Changes' : '➕ Add Partner'; ?>
+                    <?php echo $edit_partner ? 'Save Changes' : 'Add Partner'; ?>
                 </button>
             </form>
         </div>
@@ -212,7 +212,7 @@ require_once 'admin_header.php';
     <!-- Partner list -->
     <div class="panel" style="margin-top:1.5rem;">
         <div class="panel-header">
-            <span class="panel-title">🤝 All Partners (<?php echo count($partners); ?>)</span>
+            <span class="panel-title">All Partners (<?php echo count($partners); ?>)</span>
         </div>
 
         <?php if (empty($partners)): ?>
@@ -230,7 +230,7 @@ require_once 'admin_header.php';
                         border:1px solid <?php echo $is_editing ? 'var(--gold)' : 'var(--border2)'; ?>;">
 
                 <div style="font-size:1.2rem;flex-shrink:0;">
-                    <?php echo $type_icons[$p['type']] ?? '🤝'; ?>
+                    <?php echo $type_icons[$p['type']] ?? ''; ?>
                 </div>
 
                 <div style="flex:1;min-width:0;">
@@ -254,19 +254,19 @@ require_once 'admin_header.php';
                                      font-weight:700;cursor:pointer;white-space:nowrap;
                                      background:<?php echo $p['status']==='active' ? '#d1e7dd' : '#f8d7da'; ?>;
                                      color:<?php echo $p['status']==='active' ? '#0a3622' : '#842029'; ?>;">
-                            <?php echo $p['status'] === 'active' ? '✅ Active' : '❌ Inactive'; ?>
+                            <?php echo $p['status'] === 'active' ? 'Active' : 'Inactive'; ?>
                         </span>
                     </a>
                     <a href="partners.php?edit=<?php echo $p['id']; ?>"
                        class="btn btn-secondary btn-sm"
                        style="font-size:0.72rem;padding:0.2rem 0.55rem;">
-                        ✏️
+                        Edit
                     </a>
                     <a href="partners.php?delete=<?php echo $p['id']; ?>"
                        class="btn btn-danger btn-sm"
                        style="font-size:0.72rem;padding:0.2rem 0.55rem;"
                        onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($p['name'])); ?>?\nThis will also delete all their custom rates.').then(ok=>{if(ok)window.location.href=_h;})">
-                        🗑️
+                        Delete
                     </a>
                 </div>
             </div>
@@ -282,7 +282,7 @@ require_once 'admin_header.php';
 ══════════════════════════════════════════════════════════ -->
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">💰 Partner Rate Matrix</span>
+        <span class="panel-title">Partner Rate Matrix</span>
         <small style="color:var(--gray);font-size:0.73rem;">
             Set the price each partner pays per service. Leave blank = use regular price.
         </small>
@@ -306,7 +306,6 @@ require_once 'admin_header.php';
                            color:var(--brown);font-size:0.82rem;font-weight:600;
                            cursor:pointer;transition:all .15s;
                            <?php echo $p['status'] !== 'active' ? 'opacity:0.5;' : ''; ?>">
-                <?php echo $type_icons[$p['type']] ?? '🤝'; ?>
                 <?php echo htmlspecialchars($p['name']); ?>
                 <?php if ($p['rates_set'] > 0): ?>
                 <span style="background:var(--gold);color:#fff;border-radius:20px;
@@ -323,7 +322,7 @@ require_once 'admin_header.php';
              style="text-align:center;padding:2.5rem;color:var(--gray);
                     background:var(--bg3);border-radius:10px;
                     border:1px solid var(--border2);font-size:0.88rem;">
-            👆 Select a partner above to view and edit their service rates.
+            Select a partner above to view and edit their service rates.
         </div>
 
         <!-- Rate form (hidden until partner tab clicked) -->
@@ -356,7 +355,7 @@ require_once 'admin_header.php';
             <div style="margin-top:1.25rem;display:flex;align-items:center;
                         gap:1rem;flex-wrap:wrap;">
                 <button type="submit" class="btn btn-primary">
-                    💾 Save Rates
+                    Save Rates
                 </button>
                 <span style="font-size:0.78rem;color:var(--gray);">
                     Set 0 or leave blank to remove a custom rate and fall back to regular price.
@@ -382,7 +381,7 @@ const partnerNames     = <?php
 const partnerTypeIcons = <?php
     $picons = [];
     foreach ($partners as $p) {
-        $picons[$p['id']] = ['hotel'=>'🏨','corporate'=>'🏢','other'=>'🤝'][$p['type']] ?? '🤝';
+        $picons[$p['id']] = '';
     }
     echo json_encode($picons, JSON_HEX_TAG);
 ?>;
@@ -406,8 +405,7 @@ function showRates(partnerId) {
     document.getElementById('rateForm').style.display         = 'block';
     document.getElementById('rate_partner_id').value          = partnerId;
     document.getElementById('rate-partner-name').textContent  =
-        (partnerTypeIcons[partnerId] || '🤝') + ' ' +
-        (partnerNames[partnerId]     || '')   + ' — Service Rates';
+        (partnerNames[partnerId] || '') + ' — Service Rates';
 
     const saved  = savedRates[partnerId] || {};
     const rowsEl = document.getElementById('rate-rows');

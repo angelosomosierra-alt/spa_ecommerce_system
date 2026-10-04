@@ -96,7 +96,7 @@ while ($row = $result->fetch_assoc()) {
     $by_type[$row['type']][] = $row;
 }
 
-$page_title = 'Resources'; $page_icon = '🛎️'; $active_page = 'resources';
+$page_title = 'Resources'; $page_icon = ''; $active_page = 'resources';
 require_once 'admin_header.php';
 ?>
 
@@ -106,7 +106,7 @@ require_once 'admin_header.php';
 
 <!-- Add Form -->
 <div class="form-section" style="margin-bottom:1.5rem;">
-    <div class="form-section-header">➕ Add New Resource</div>
+    <div class="form-section-header">Add New Resource</div>
     <div class="form-section-body">
         <form method="POST">
             <?php echo csrf_field(); ?>
@@ -139,12 +139,11 @@ require_once 'admin_header.php';
 <!-- Resource Lists, grouped by type -->
 <div class="category-grid" style="grid-template-columns:repeat(3,1fr);">
     <?php foreach ($type_labels as $type => $label):
-        $icon = ['room' => '🚪', 'chair' => '💺', 'head_spa' => '🧖'][$type];
         $items = $by_type[$type];
     ?>
     <div class="category-panel">
         <div class="category-panel-header">
-            <?php echo $icon; ?> <?php echo $label; ?>
+            <?php echo $label; ?>
             <span style="margin-left:auto;color:var(--gray);font-size:0.72rem;"><?php echo count($items); ?> total</span>
         </div>
         <div class="category-panel-body">
@@ -157,12 +156,12 @@ require_once 'admin_header.php';
                 <span class="category-count">order: <?php echo (int)$res['sort_order']; ?></span>
                 <div class="category-actions">
                     <button class="btn btn-info btn-sm"
-                            onclick="openEdit(<?php echo $res['id']; ?>,'<?php echo htmlspecialchars(addslashes($res['name'])); ?>','<?php echo $res['type']; ?>',<?php echo (int)$res['sort_order']; ?>)">✏️</button>
+                            onclick="openEdit(<?php echo $res['id']; ?>,'<?php echo htmlspecialchars(addslashes($res['name'])); ?>','<?php echo $res['type']; ?>',<?php echo (int)$res['sort_order']; ?>)">Edit</button>
                     <?php if ($res['is_active']): ?>
                     <a href="resources.php?deactivate=<?php echo $res['id']; ?>" class="btn btn-danger btn-sm"
-                       onclick="var _h=this.href;event.preventDefault();uiConfirm('Deactivate this resource? It will no longer be assignable, but past appointments referencing it are unaffected.').then(ok=>{if(ok)window.location.href=_h;})">🗃️</a>
+                       onclick="var _h=this.href;event.preventDefault();uiConfirm('Deactivate this resource? It will no longer be assignable, but past appointments referencing it are unaffected.').then(ok=>{if(ok)window.location.href=_h;})">Deactivate</a>
                     <?php else: ?>
-                    <a href="resources.php?reactivate=<?php echo $res['id']; ?>" class="btn btn-secondary btn-sm">♻️</a>
+                    <a href="resources.php?reactivate=<?php echo $res['id']; ?>" class="btn btn-secondary btn-sm">Reactivate</a>
                     <?php endif; ?>
                 </div>
             </div>
@@ -178,7 +177,7 @@ require_once 'admin_header.php';
 <div class="modal-overlay" id="editModal">
     <div class="modal-box">
         <div class="modal-box-header">
-            <span class="modal-box-title">✏️ Edit Resource</span>
+            <span class="modal-box-title">Edit Resource</span>
             <button class="modal-box-close" onclick="document.getElementById('editModal').classList.remove('active')">✕</button>
         </div>
         <div class="modal-box-body">

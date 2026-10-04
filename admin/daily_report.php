@@ -73,7 +73,7 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $report_date) || !strtotime($report_dat
 // Receptionist can only view today's report — show notice instead of silently redirecting
 if (is_cashier() && $report_date !== date('Y-m-d')) {
     $report_date = date('Y-m-d');
-    $msg      = '⚠️ Receptionists can only view today\'s report. Showing today\'s data.';
+    $msg      = 'Receptionists can only view today\'s report. Showing today\'s data.';
     $msg_type = 'warning';
 }
 
@@ -139,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
         $nice_date = date('F j, Y', strtotime($report_date));
         $notif_link = "daily_report.php?date=$report_date";
         $notif_msg  = "Daily report for $nice_date submitted by $submitter.";
-        add_notification($conn, null, 'report_submitted', '📋 Daily Report Submitted', $notif_msg, $notif_link);
+        add_notification($conn, null, 'report_submitted', 'Daily Report Submitted', $notif_msg, $notif_link);
 
         // Best-effort email to owners — failure does not block submission
         try {
@@ -170,7 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'submi
         $rpt = $r2->get_result()->fetch_assoc(); $r2->close();
 
         $msg_type = 'success';
-        $msg = "✅ Daily report for <strong>$nice_date</strong> submitted and locked successfully.";
+        $msg = "Daily report for <strong>$nice_date</strong> submitted and locked successfully.";
     }
 }
 
@@ -186,13 +186,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_header'])) {
         if (!$LOCK_FEATURE_ENABLED || !$rpt['is_locked']) {
             $stmt = $conn->prepare("UPDATE daily_reports SET opening_cashier=?,closing_cashier=?,cash_on_hand=?,pos_reading=?,notes=? WHERE id=?");
             $stmt->bind_param("ssddsi", $oc, $cc, $coh, $pos, $notes, $rpt['id']); $stmt->execute(); $stmt->close();
-            $msg = "✅ Report header saved.";
-        } else { $msg = "⚠️ Report is locked."; $msg_type = 'warning'; }
+            $msg = "Report header saved.";
+        } else { $msg = "Report is locked."; $msg_type = 'warning'; }
     } else {
         $uid = (int)$_SESSION['user_id'];
         $stmt = $conn->prepare("INSERT INTO daily_reports (report_date,opening_cashier,closing_cashier,cash_on_hand,pos_reading,notes,created_by) VALUES (?,?,?,?,?,?,?)");
         $stmt->bind_param("sssddsi", $report_date, $oc, $cc, $coh, $pos, $notes, $uid); $stmt->execute(); $stmt->close();
-        $msg = "✅ Daily report created.";
+        $msg = "Daily report created.";
     }
     // Re-fetch after save using prepared statement
     $_rs2 = $conn->prepare("SELECT * FROM daily_reports WHERE report_date = ? LIMIT 1");
@@ -217,15 +217,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_denoms'])) {
             $stmt->execute();
         }
         $stmt->close();
-        $msg = "✅ Cash denominations saved.";
-    } elseif ($rpt && $LOCK_FEATURE_ENABLED && $rpt['is_locked']) { $msg = "⚠️ Report is locked."; $msg_type = 'warning'; }
-    else { $msg = "⚠️ Save the report header first."; $msg_type = 'warning'; }
+        $msg = "Cash denominations saved.";
+    } elseif ($rpt && $LOCK_FEATURE_ENABLED && $rpt['is_locked']) { $msg = "Report is locked."; $msg_type = 'warning'; }
+    else { $msg = "Save the report header first."; $msg_type = 'warning'; }
 }
 
 // ── SAVE GC ───────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_gc'])) {
     verify_csrf_token();
-    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "Report is locked." : "Save header first."; $msg_type='warning'; }
     else {
         $gc_type   = in_array($_POST['gc_type']??'', ['sold','redeemed']) ? $_POST['gc_type'] : 'sold';
         $gc_client = sanitize_input($_POST['gc_client'] ?? '');
@@ -239,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_gc'])) {
             $stmt = $conn->prepare("INSERT INTO gift_certificates (report_date,type,series,client_name,voucher_code,qty,amount,remarks,created_by) VALUES (?,?,?,?,?,?,?,?,?)");
             $stmt->bind_param("sssssidsi", $report_date, $gc_type, $gc_series, $gc_client, $gc_voucher, $gc_qty, $gc_amount, $gc_remark, $uid);
             $stmt->execute(); $stmt->close();
-            $msg = "✅ Gift certificate entry saved.";
+            $msg = "Gift certificate entry saved.";
         } else { $msg = "Client name and amount are required."; $msg_type='danger'; }
     }
 }
@@ -252,7 +252,7 @@ if (isset($_GET['del_gc']) && is_full_access()) {
 // ── SAVE UNPAID CORP ──────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_unpaid'])) {
     verify_csrf_token();
-    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "Report is locked." : "Save header first."; $msg_type='warning'; }
     else {
         $up_name   = sanitize_input($_POST['up_name']   ?? '');
         $up_amount = floatval($_POST['up_amount'] ?? 0);
@@ -262,7 +262,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_unpaid'])) {
             $stmt = $conn->prepare("INSERT INTO unpaids_corp (report_date,client_name,amount,series,created_by) VALUES (?,?,?,?,?)");
             $stmt->bind_param("ssdsi", $report_date, $up_name, $up_amount, $up_series, $uid);
             $stmt->execute(); $stmt->close();
-            $msg = "✅ Unpaid entry saved.";
+            $msg = "Unpaid entry saved.";
         } else { $msg = "Name and amount required."; $msg_type='danger'; }
     }
 }
@@ -275,7 +275,7 @@ if (isset($_GET['del_unpaid']) && is_full_access()) {
 // ── SAVE PRODUCT SALE ─────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_prodsale'])) {
     verify_csrf_token();
-    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "⚠️ Report is locked." : "⚠️ Save header first."; $msg_type='warning'; }
+    if (!$rpt || ($LOCK_FEATURE_ENABLED && $rpt['is_locked'])) { $msg = $rpt ? "Report is locked." : "Save header first."; $msg_type='warning'; }
     else {
         $ps_particular = sanitize_input($_POST['ps_particular'] ?? '');
         $ps_qty        = max(1, intval($_POST['ps_qty'] ?? 1));
@@ -285,7 +285,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_prodsale'])) {
             $stmt = $conn->prepare("INSERT INTO daily_product_sales (report_date,particular,qty,price,created_by) VALUES (?,?,?,?,?)");
             $stmt->bind_param("ssidi", $report_date, $ps_particular, $ps_qty, $ps_price, $uid);
             $stmt->execute(); $stmt->close();
-            $msg = "✅ Product sale saved.";
+            $msg = "Product sale saved.";
         } else { $msg = "Particular and price are required."; $msg_type='danger'; }
     }
 }
@@ -729,7 +729,7 @@ require_once __DIR__ . '/_daily_report_data.php';
 // PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 $page_title  = 'Daily Report';
-$page_icon   = '📋';
+$page_icon   = '';
 $active_page = 'daily_report';
 require_once 'admin_header.php';
 
@@ -744,7 +744,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap;">
     <form method="GET" style="display:flex;align-items:center;gap:0.5rem;">
         <input type="hidden" name="tab" value="<?php echo htmlspecialchars($active_tab); ?>">
-        <label style="font-size:0.82rem;font-weight:600;color:var(--brown);">📅 Report Date:</label>
+        <label style="font-size:0.82rem;font-weight:600;color:var(--brown);">Report Date:</label>
         <input type="date" name="date" value="<?php echo $report_date; ?>"
                style="padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;
                       background:var(--bg3);color:var(--brown);font-size:0.85rem;">
@@ -753,24 +753,24 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
     <?php if ($locked): ?>
     <span style="background:#d4edda;color:#155724;padding:0.3rem 0.85rem;border-radius:20px;
-                 font-size:0.78rem;font-weight:700;">🔒 Locked — <?php echo date('M d, Y h:i A', strtotime($rpt['locked_at'])); ?></span>
+                 font-size:0.78rem;font-weight:700;">Locked — <?php echo date('M d, Y h:i A', strtotime($rpt['locked_at'])); ?></span>
     <?php if (is_full_access()): ?>
     <a href="daily_report.php?date=<?php echo $report_date; ?>&tab=<?php echo $active_tab; ?>&lock=0"
        class="btn btn-secondary btn-sm"
-       onclick="var _h=this.href;event.preventDefault();uiConfirm('Unlock this report?').then(ok=>{if(ok)window.location.href=_h;})">🔓 Unlock</a>
+       onclick="var _h=this.href;event.preventDefault();uiConfirm('Unlock this report?').then(ok=>{if(ok)window.location.href=_h;})">Unlock</a>
     <?php endif; ?>
     <?php elseif ($rpt): ?>
     <form method="POST" id="submit-report-form" style="display:inline;">
         <?php echo csrf_field(); ?>
         <input type="hidden" name="action" value="submit_report">
         <button type="button" class="btn btn-primary btn-sm"
-                onclick="var _sb=this;uiConfirm('Submit and lock this report? It will become read-only.').then(ok=>{if(ok){_sb.disabled=true;_sb.textContent='⏳ Submitting…';document.getElementById('submit-report-form').submit();}})">📤 Submit Daily Report</button>
+                onclick="var _sb=this;uiConfirm('Submit and lock this report? It will become read-only.').then(ok=>{if(ok){_sb.disabled=true;_sb.textContent='Submitting…';document.getElementById('submit-report-form').submit();}})">Submit Daily Report</button>
     </form>
     <?php endif; ?>
 
     <div style="display:flex;gap:0.5rem;margin-left:auto;">
         <a href="export_daily_report.php?date=<?php echo $report_date; ?>"
-           class="btn btn-secondary btn-sm">📊 Export Excel</a>
+           class="btn btn-secondary btn-sm">Export Excel</a>
     </div>
 </div>
 
@@ -779,14 +779,14 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
             padding-bottom:0;flex-wrap:wrap;">
     <?php
     $tabs = [
-        'log'         => '📋 Service Log',
-        'influencer'  => '🎯 Influencer',
-        'summary'     => '💰 Cash & Summary',
-        'expenses'    => '🧾 Expenses',
-        'gc'          => '🎁 GC & Unpaids',
-        'products'    => '🛍️ Products Sold',
-        'spreadsheet' => '🧮 Spreadsheet',
-        'analysis'    => '📊 Analysis (Internal)',
+        'log'         => 'Service Log',
+        'influencer'  => 'Influencer',
+        'summary'     => 'Cash & Summary',
+        'expenses'    => 'Expenses',
+        'gc'          => 'GC & Unpaids',
+        'products'    => 'Products Sold',
+        'spreadsheet' => 'Spreadsheet',
+        'analysis'    => 'Analysis (Internal)',
     ];
     foreach ($tabs as $tk => $tl):
         $is_a = $active_tab === $tk;
@@ -812,13 +812,12 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <!-- Service transactions table -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">📋 Sales Services — <?php echo date('F d, Y', strtotime($report_date)); ?></span>
+            <span class="panel-title">Sales Services — <?php echo date('F d, Y', strtotime($report_date)); ?></span>
             <span style="font-size:0.75rem;color:var(--gray);"><?php echo count($service_rows); ?> transactions</span>
         </div>
         <div class="table-wrap" style="border:none;border-radius:0;overflow-x:auto;">
         <?php
         // ── Per-row commission-tier & totals accumulators ─────────────────────
-        $pm_icons = ['cash'=>'💵','gcash'=>'📱','maya'=>'💜','qrph'=>'📷','bank'=>'🏦','card'=>'💳','swiper'=>'💳','online'=>'💳'];
         $t_reg=$t_promo=$t_celeb=$t_dpwd=$t_c30=$t_c20=$t_c15=$t_d50=$t_net=0;
         // Commission-percent lookup for column routing -- this table used to guess
         // the tier from rate_type (regular/home/hotel), which is the customer's
@@ -924,7 +923,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="text-align:right;color:var(--rust);"><?php echo $c15 > 0 ? '₱'.number_format($c15, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $disc_50 > 0 ? '₱'.number_format($disc_50, 2) : '—'; ?></td>
                     <td style="text-align:right;font-weight:700;color:#198754;">₱<?php echo number_format($net, 2); ?></td>
-                    <td style="text-align:center;"><?php echo ($pm_icons[$display_pm] ?? '💰').' '.strtoupper($display_pm); ?></td>
+                    <td style="text-align:center;"><?php echo strtoupper($display_pm); ?></td>
                     <td style="color:var(--gray);">
                         <span style="color:<?php echo $status_color; ?>;font-weight:600;"><?php echo ucfirst($row['appt_status']); ?></span>
                         · <?php echo strtoupper($row['rate_type']); ?>
@@ -945,7 +944,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     $a_pm = $addon['payment_method'] ?? 'cash';
                 ?>
                 <tr style="background:rgba(200,164,107,0.04);border-left:3px solid var(--gold);">
-                    <td colspan="2" style="text-align:center;color:var(--gray);font-size:0.72rem;">➕ add-on</td>
+                    <td colspan="2" style="text-align:center;color:var(--gray);font-size:0.72rem;">add-on</td>
                     <td></td>
                     <td style="color:var(--gray);">↳ add-on</td>
                     <td style="color:var(--brown);">
@@ -962,7 +961,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="text-align:right;color:var(--rust);"><?php echo $a_c15>0?'₱'.number_format($a_c15,2):'—'; ?></td>
                     <td></td>
                     <td style="text-align:right;font-weight:700;color:#198754;">₱<?php echo number_format($a_net, 2); ?></td>
-                    <td style="text-align:center;"><?php echo ($pm_icons[$a_pm]??'💰').' '.strtoupper($a_pm); ?></td>
+                    <td style="text-align:center;"><?php echo strtoupper($a_pm); ?></td>
                     <td style="color:var(--gray);font-size:0.72rem;">ADD-ON</td>
                 </tr>
                 <?php endforeach; endif; ?>
@@ -990,7 +989,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <!-- Report header sidebar -->
     <div>
         <div class="panel">
-            <div class="panel-header"><span class="panel-title">📄 Report Header</span></div>
+            <div class="panel-header"><span class="panel-title">Report Header</span></div>
             <div class="panel-body" style="padding:1rem;">
                 <form method="POST">
                     <?php echo csrf_field(); ?>
@@ -1085,7 +1084,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                                   placeholder="Optional notes..."><?php echo htmlspecialchars($rpt['notes'] ?? ''); ?></textarea>
                     </div>
                     <?php if (!$locked): ?>
-                    <button type="submit" class="btn btn-primary" style="width:100%;font-size:0.82rem;">💾 Save Header</button>
+                    <button type="submit" class="btn btn-primary" style="width:100%;font-size:0.82rem;">Save Header</button>
                     <?php endif; ?>
                 </form>
             </div>
@@ -1100,7 +1099,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">🎯 Sales Services — Influencer / Marketing</span>
+        <span class="panel-title">Sales Services — Influencer / Marketing</span>
         <span style="font-size:0.75rem;color:var(--gray);"><?php echo count($influencer_rows); ?> transactions</span>
     </div>
     <div class="table-wrap" style="border:none;border-radius:0;overflow-x:auto;">
@@ -1162,7 +1161,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
     <!-- Cash Denomination Breakdown (Opening + Closing) -->
     <div class="panel" style="grid-column:1/-1;">
-        <div class="panel-header"><span class="panel-title">💵 Cash Denomination Breakdown</span></div>
+        <div class="panel-header"><span class="panel-title">Cash Denomination Breakdown</span></div>
         <div class="panel-body" style="padding:1rem;">
             <form method="POST">
                 <?php echo csrf_field(); ?>
@@ -1171,7 +1170,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
                     <!-- Closing Count -->
                     <div>
-                        <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;padding-bottom:0.3rem;border-bottom:2px solid var(--border2);">📁 Closing Count</div>
+                        <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;padding-bottom:0.3rem;border-bottom:2px solid var(--border2);">Closing Count</div>
                         <table style="width:100%;border-collapse:collapse;">
                             <thead>
                                 <tr>
@@ -1215,7 +1214,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
                 </div>
                 <?php if (!$locked): ?>
-                <button type="submit" class="btn btn-primary" style="width:100%;margin-top:0.75rem;font-size:0.82rem;">💾 Save Denominations</button>
+                <button type="submit" class="btn btn-primary" style="width:100%;margin-top:0.75rem;font-size:0.82rem;">Save Denominations</button>
                 <?php endif; ?>
             </form>
         </div>
@@ -1225,7 +1224,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <?php if (!empty($upcoming_paid)): ?>
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">📅 Upcoming Paid (paid today, future service)</span>
+            <span class="panel-title">Upcoming Paid (paid today, future service)</span>
             <span style="background:#0070f3;color:#fff;font-size:0.72rem;padding:0.2rem 0.65rem;border-radius:20px;font-weight:700;">
                 ₱<?php echo number_format(array_sum(array_column($upcoming_paid, 'final_amount')), 2); ?>
             </span>
@@ -1263,7 +1262,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <?php if (!empty($advances_received)): ?>
     <!-- Advances Received -->
     <div class="panel" style="margin-bottom:1.2rem;">
-        <div class="panel-header"><span class="panel-title">💰 Advance Payments Received</span></div>
+        <div class="panel-header"><span class="panel-title">Advance Payments Received</span></div>
         <div class="panel-body" style="padding:0;">
             <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
                 <thead>
@@ -1301,7 +1300,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
     <!-- Summary Report -->
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">📊 Summary Report</span></div>
+        <div class="panel-header"><span class="panel-title">Summary Report</span></div>
         <div class="panel-body" style="padding:0;">
             <?php
             // Exact Excel summary order
@@ -1384,10 +1383,10 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
 <div style="display:grid;grid-template-columns:360px 1fr;gap:1.5rem;align-items:start;">
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">➕ Add Expense</span></div>
+        <div class="panel-header"><span class="panel-title">Add Expense</span></div>
         <div class="panel-body" style="padding:1rem;">
             <?php if ($locked): ?>
-            <div class="alert alert-warning">🔒 Report is locked. Cannot add expenses.</div>
+            <div class="alert alert-warning">Report is locked. Cannot add expenses.</div>
             <?php else:
                 $GLOBALS['daily_report_locked']       = false;
                 $GLOBALS['expenses_widget_compact']   = true;
@@ -1398,7 +1397,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">🧾 Expenses — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
+            <span class="panel-title">Expenses — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
             <span style="background:var(--rust);color:#fff;font-size:0.72rem;padding:0.2rem 0.65rem;border-radius:20px;font-weight:700;">
                 ₱<?php echo number_format($expenses_total,2); ?> total
             </span>
@@ -1411,11 +1410,9 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 <tbody>
                 <?php if (empty($expenses)): ?>
                 <tr><td colspan="6" style="text-align:center;color:var(--gray);padding:2rem;">No expenses logged for this date.</td></tr>
-                <?php else: foreach ($expenses as $e):
-                    $cat_icons = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utilities'=>'💡','food'=>'🍱','transport'=>'🚗','maintenance'=>'🔧','misc'=>'📦'];
-                ?>
+                <?php else: foreach ($expenses as $e): ?>
                 <tr>
-                    <td><span style="font-size:0.9rem;"><?php echo $cat_icons[$e['category']] ?? '📦'; ?></span> <?php echo ucfirst($e['category']); ?></td>
+                    <td><?php echo ucfirst($e['category']); ?></td>
                     <td style="font-weight:600;"><?php echo htmlspecialchars($e['label']); ?></td>
                     <td style="text-align:right;font-weight:700;color:var(--rust);">₱<?php echo number_format($e['amount'],2); ?></td>
                     <td style="font-size:0.78rem;color:var(--gray);">
@@ -1429,11 +1426,11 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="text-align:center;white-space:nowrap;">
                         <button type="button" title="Edit this expense"
                                 onclick='openEditExpenseModal(<?php echo (int)$e["id"]; ?>, <?php echo json_encode($e["category"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo json_encode($e["label"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo (float)$e["amount"]; ?>, <?php echo json_encode($e["notes"] ?? "", JSON_HEX_APOS|JSON_HEX_QUOT); ?>)'
-                                style="color:var(--brown);background:transparent;font-size:0.78rem;padding:0.2rem 0.45rem;border-radius:4px;border:1px solid var(--border2);cursor:pointer;">✏️</button>
+                                style="color:var(--brown);background:transparent;font-size:0.78rem;padding:0.2rem 0.45rem;border-radius:4px;border:1px solid var(--border2);cursor:pointer;">Edit</button>
                         <a href="?tab=expenses&date=<?php echo urlencode($report_date); ?>&del_expense=<?php echo $e['id']; ?>" title="Delete this expense"
                            style="color:var(--red);font-size:0.78rem;text-decoration:none;padding:0.2rem 0.45rem;
                                   border-radius:4px;border:1px solid var(--red);"
-                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this expense?').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this expense?').then(ok=>{if(ok)window.location.href=_h;})">Delete</a>
                     </td>
                     <?php endif; ?>
                 </tr>
@@ -1461,7 +1458,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <!-- GC Sold -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">🎁 Service GC Sold</span>
+            <span class="panel-title">Service GC Sold</span>
             <span style="font-size:0.75rem;color:var(--gray);">Total: ₱<?php echo number_format($gc_sold_total,2); ?></span>
         </div>
         <?php if (!$locked): ?>
@@ -1478,7 +1475,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                        style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
                 <input type="number" name="gc_amount" placeholder="Amount (₱) *" required step="0.01" min="1"
                        style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
-                <button type="submit" class="btn btn-primary btn-sm" style="grid-column:1/-1;">➕ Add Sold GC</button>
+                <button type="submit" class="btn btn-primary btn-sm" style="grid-column:1/-1;">Add Sold GC</button>
             </form>
         </div>
         <?php endif; ?>
@@ -1509,7 +1506,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <!-- GC Redeemed -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">🎟️ Paid / Redeemed GC</span>
+            <span class="panel-title">Paid / Redeemed GC</span>
             <span style="font-size:0.75rem;color:var(--gray);">Total: ₱<?php echo number_format($gc_redeem_total,2); ?></span>
         </div>
         <?php if (!$locked): ?>
@@ -1526,7 +1523,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                        style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
                 <input type="number" name="gc_amount" placeholder="Amount (₱) *" required step="0.01" min="1"
                        style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
-                <button type="submit" class="btn btn-primary btn-sm" style="grid-column:1/-1;">➕ Add Redeemed GC</button>
+                <button type="submit" class="btn btn-primary btn-sm" style="grid-column:1/-1;">Add Redeemed GC</button>
             </form>
         </div>
         <?php endif; ?>
@@ -1557,7 +1554,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <!-- Unpaids Corp -->
     <div class="panel" style="grid-column:1/-1;">
         <div class="panel-header">
-            <span class="panel-title">🏢 Unpaids Corp.</span>
+            <span class="panel-title">Unpaids Corp.</span>
             <span style="font-size:0.75rem;color:var(--gray);">Total: ₱<?php echo number_format($unpaids_total,2); ?></span>
         </div>
         <?php if (!$locked): ?>
@@ -1580,7 +1577,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <input type="text" name="up_series" placeholder="e.g. INV-001"
                            style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);width:130px;">
                 </div>
-                <button type="submit" class="btn btn-primary btn-sm">➕ Add</button>
+                <button type="submit" class="btn btn-primary btn-sm">Add</button>
             </form>
         </div>
         <?php endif; ?>
@@ -1619,7 +1616,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <!-- Add form -->
     <?php if (!$locked): ?>
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">➕ Add Product Sale</span></div>
+        <div class="panel-header"><span class="panel-title">Add Product Sale</span></div>
         <div class="panel-body" style="padding:1rem;">
             <form method="POST" style="display:flex;flex-direction:column;gap:0.65rem;">
                 <?php echo csrf_field(); ?>
@@ -1649,9 +1646,9 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 </div>
                 <div style="background:rgba(25,135,84,0.07);border-left:3px solid #198754;
                             padding:0.5rem 0.75rem;border-radius:6px;font-size:0.78rem;color:var(--brown);">
-                    💡 For manual/over-the-counter sales not processed through the system.
+                    For manual/over-the-counter sales not processed through the system.
                 </div>
-                <button type="submit" class="btn btn-primary">➕ Add Product Sale</button>
+                <button type="submit" class="btn btn-primary">Add Product Sale</button>
             </form>
         </div>
     </div>
@@ -1660,7 +1657,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     <!-- Product sales list -->
     <div class="panel" style="<?php echo $locked ? 'grid-column:1/-1;' : ''; ?>">
         <div class="panel-header">
-            <span class="panel-title">🛍️ Product Sales — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
+            <span class="panel-title">Product Sales — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
             <span style="background:#198754;color:#fff;font-size:0.72rem;padding:0.2rem 0.65rem;border-radius:20px;font-weight:700;">
                 ₱<?php echo number_format($prod_sold_total,2); ?> total
             </span>
@@ -1690,9 +1687,6 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     $_sp_pm = !empty($_sp['paymongo_method'])
                             ? $_sp['paymongo_method']
                             : ($_sp['payment_method'] ?? 'cash');
-                    $_sp_icons = ['cash'=>'💵','gcash'=>'📱','maya'=>'💜',
-                                  'qrph'=>'📷','card'=>'💳','bank'=>'🏦'];
-                    $_sp_icon = $_sp_icons[$_sp_pm] ?? '💰';
                 ?>
                 <tr style="border-bottom:0.5px solid var(--border2);">
                     <td style="padding:5px 8px;"><?php echo htmlspecialchars($_sp['customer_name']); ?></td>
@@ -1700,7 +1694,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="padding:5px 8px;text-align:center;"><?php echo intval($_sp['qty']); ?></td>
                     <td style="padding:5px 8px;text-align:right;">₱<?php echo number_format($_sp['price'],2); ?></td>
                     <td style="padding:5px 8px;text-align:right;font-weight:600;color:#198754;">₱<?php echo number_format($_sp['amount'],2); ?></td>
-                    <td style="padding:5px 8px;text-align:center;font-size:0.78rem;"><?php echo $_sp_icon . ' ' . strtoupper($_sp_pm); ?></td>
+                    <td style="padding:5px 8px;text-align:center;font-size:0.78rem;"><?php echo strtoupper($_sp_pm); ?></td>
                 </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -1776,8 +1770,8 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
 <?php if (!$locked && !$can_edit): /* cashier — PIN required */ ?>
 <div class="panel" style="margin-bottom:1rem;">
     <div class="panel-header" style="flex-wrap:wrap;gap:0.5rem;">
-        <span class="panel-title">🔐 Edit Locked</span>
-        <button id="ss-unlock-btn" class="btn btn-secondary btn-sm" style="font-size:0.78rem;">🔐 Unlock Edit</button>
+        <span class="panel-title">Edit Locked</span>
+        <button id="ss-unlock-btn" class="btn btn-secondary btn-sm" style="font-size:0.78rem;">Unlock Edit</button>
         <span id="ss-edit-status" style="font-size:0.75rem;color:var(--gray);">PIN required to edit</span>
     </div>
     <div class="panel-body" style="padding:0.65rem 1rem;font-size:0.83rem;color:var(--gray);">
@@ -1786,7 +1780,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
 </div>
 <?php elseif ($locked): ?>
 <div style="margin-bottom:0.75rem;">
-    <span style="font-size:0.78rem;color:#856404;background:#fff3cd;padding:0.3rem 0.75rem;border-radius:20px;">🔒 Report is locked — no entries can be added or deleted.</span>
+    <span style="font-size:0.78rem;color:#856404;background:#fff3cd;padding:0.3rem 0.75rem;border-radius:20px;">Report is locked — no entries can be added or deleted.</span>
 </div>
 <?php endif; ?>
 
@@ -1798,9 +1792,9 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
 
 <div class="panel">
     <div class="panel-header" style="gap:0.75rem;flex-wrap:wrap;">
-        <span class="panel-title">🧮 Spreadsheet — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
+        <span class="panel-title">Spreadsheet — <?php echo date('M d, Y', strtotime($report_date)); ?></span>
         <?php if ($can_edit && $ss_editor): ?>
-        <span style="font-size:0.75rem;color:#198754;">✏️ Editing as <?php echo htmlspecialchars($ss_editor); ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
+        <span style="font-size:0.75rem;color:#198754;">Editing as <?php echo htmlspecialchars($ss_editor); ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
         <?php endif; ?>
         <span id="ss-row-count" style="font-size:0.75rem;color:var(--gray);"><?php echo count($spreadsheet_rows); ?> rows &nbsp;|&nbsp; Net Sales: ₱<span id="ss-net-total"><?php echo number_format($spreadsheet_net_total,2); ?></span></span>
     </div>
@@ -1833,7 +1827,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             <tbody id="ss-tbody">
             <?php if (empty($spreadsheet_rows)): ?>
             <tr id="ss-empty-row"><td colspan="<?php echo $locked ? 18 : 19; ?>" style="text-align:center;color:var(--gray);padding:2rem 1rem;font-size:0.85rem;">
-                No rows yet.<?php echo $can_edit ? ' Use the entry row below and click <strong>➕ Add Row</strong>.' : ''; ?>
+                No rows yet.<?php echo $can_edit ? ' Use the entry row below and click <strong>Add Row</strong>.' : ''; ?>
             </td></tr>
             <?php else: foreach ($spreadsheet_rows as $_ssr): ?>
             <?php $_is_imported = !empty($_ssr['source_appointment_id']); ?>
@@ -1867,7 +1861,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     <?php if ($can_edit): ?>
                     <button class="btn btn-secondary btn-sm ss-edit-btn"
                             style="font-size:0.65rem;padding:0.15rem 0.4rem;"
-                            title="Edit this row">✏️</button>
+                            title="Edit this row">Edit</button>
                     <?php endif; ?>
                     <?php if (!$_is_imported || is_full_access()): ?>
                     <button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;<?php echo $can_edit ? '' : 'display:none;'; ?>">✕</button>
@@ -1878,7 +1872,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;font-family:monospace;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>
-                    <?php if ($_is_imported): ?><span style="font-size:0.62rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;" title="Auto-imported from appointment #<?php echo (int)$_ssr['source_appointment_id']; ?>">📥 appt</span><?php endif; ?>
+                    <?php if ($_is_imported): ?><span style="font-size:0.62rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;" title="Auto-imported from appointment #<?php echo (int)$_ssr['source_appointment_id']; ?>">appt</span><?php endif; ?>
                 </td>
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;color:var(--gray);"><?php echo htmlspecialchars($_ssr['stylist'] ?? ''); ?></td>
@@ -1913,13 +1907,13 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 else                                          $_scr_c30 = $_scr_amt;
             ?>
             <tr style="background:rgba(217,70,239,0.05);border-bottom:1px solid var(--border2);" title="Read-only — commission for a session of a package completed on this date; not part of the editable Spreadsheet grid.">
-                <?php if (!$locked): ?><td style="padding:2px 4px;text-align:center;" title="Not editable">🔒</td><?php endif; ?>
+                <?php if (!$locked): ?><td style="padding:2px 4px;text-align:center;" title="Not editable"></td><?php endif; ?>
                 <td style="padding:0.3rem 0.5rem;"></td>
                 <td style="padding:0.3rem 0.5rem;"></td>
                 <td style="padding:0.3rem 0.5rem;"></td>
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_scr['customer_name'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_scr['service_label'] ?? ''); ?>
-                    <span style="font-size:0.62rem;background:rgba(217,70,239,0.12);color:#a21caf;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;">🔁 session</span>
+                    <span style="font-size:0.62rem;background:rgba(217,70,239,0.12);color:#a21caf;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;">session</span>
                 </td>
                 <td style="padding:0.3rem 0.5rem;color:var(--gray);"><?php echo htmlspecialchars($_scr['therapist_name'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);">—</td>
@@ -2005,7 +1999,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 <tr style="background:#fdf8f0;border-bottom:2px solid var(--gold);">
                     <td colspan="20" style="padding:0.35rem 0.5rem;">
                         <div style="display:flex;align-items:center;gap:0.75rem;">
-                            <button type="button" id="ss-add-btn" class="btn btn-primary btn-sm" style="font-weight:700;padding:0.35rem 1.1rem;">➕ Add Row</button>
+                            <button type="button" id="ss-add-btn" class="btn btn-primary btn-sm" style="font-weight:700;padding:0.35rem 1.1rem;">Add Row</button>
                             <button type="button" id="ss-cancel-edit" class="btn btn-secondary btn-sm"
                                     style="display:none;font-size:0.72rem;padding:0.3rem 0.7rem;"
                                     onclick="cancelEdit()">✕ Cancel</button>
@@ -2277,7 +2271,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         tr.style.cssText        = (isRef ? 'background:rgba(220,53,69,0.04);' : '') + 'border-bottom:1px solid var(--border2);';
         var delCell = _rptLocked ? '' :
             '<td style="padding:2px 4px;vertical-align:middle;white-space:nowrap;">' +
-            '<button class="btn btn-secondary btn-sm ss-edit-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;" title="Edit this row">✏️</button>' +
+            '<button class="btn btn-secondary btn-sm ss-edit-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;" title="Edit this row">Edit</button>' +
             '<button class="btn btn-danger btn-sm ss-del-btn" style="font-size:0.65rem;padding:0.15rem 0.4rem;">✕</button></td>';
         tr.innerHTML = delCell +
             '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_in)         + '</td>' +
@@ -2324,7 +2318,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                     .then(function(r){return r.json();})
                     .then(function(j){
                         if (j.ok) { tr.remove(); recalcTotals(); }
-                        else { btn.disabled = false; btn.textContent = '✕'; if (window.uiAlert) uiAlert('❌ '+(j.msg||'Delete failed')); }
+                        else { btn.disabled = false; btn.textContent = '✕'; if (window.uiAlert) uiAlert((j.msg||'Delete failed')); }
                     })
                     .catch(function() { btn.disabled = false; btn.textContent = '✕'; });
             });
@@ -2387,7 +2381,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             });
             // UI state
             var addBtn = document.getElementById('ss-add-btn');
-            if (addBtn) addBtn.textContent = '💾 Save Edit';
+            if (addBtn) addBtn.textContent = 'Save Edit';
             var cancelBtn = document.getElementById('ss-cancel-edit');
             if (cancelBtn) cancelBtn.style.display = 'inline-flex';
             document.querySelectorAll('.ss-row').forEach(function(r) {
@@ -2407,7 +2401,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
             errEl.style.display = 'none';
 
             if (!sfSvc || !sfSvc.value) {
-                errEl.textContent   = '⚠️ Please select a Service.';
+                errEl.textContent   = 'Please select a Service.';
                 errEl.style.display = 'block';
                 if (sfSvc) sfSvc.focus();
                 return;
@@ -2453,8 +2447,8 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 .then(function(j){
                     addBtn.disabled = false;
                     if (!j.ok) {
-                        addBtn.textContent  = _editingRowId ? '💾 Save Edit' : '➕ Add Row';
-                        errEl.textContent   = '❌ '+(j.msg||'Save failed.');
+                        addBtn.textContent  = _editingRowId ? 'Save Edit' : 'Add Row';
+                        errEl.textContent   = (j.msg||'Save failed.');
                         errEl.style.display = 'block';
                         return;
                     }
@@ -2491,7 +2485,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                         }
                         // Reset edit state
                         _editingRowId = null;
-                        addBtn.textContent = '➕ Add Row';
+                        addBtn.textContent = 'Add Row';
                         var cancelBtn = document.getElementById('ss-cancel-edit');
                         if (cancelBtn) cancelBtn.style.display = 'none';
                         document.querySelectorAll('.ss-row').forEach(function(r) { r.style.opacity = '1'; });
@@ -2500,7 +2494,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                         var emptyRow = document.getElementById('ss-empty-row');
                         if (emptyRow) emptyRow.remove();
                         document.getElementById('ss-tbody').appendChild(buildPreviewRow(d, j.row_id));
-                        addBtn.textContent = '➕ Add Row';
+                        addBtn.textContent = 'Add Row';
                     }
                     recalcTotals();
                     // Clear entry row for next entry
@@ -2531,8 +2525,8 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 })
                 .catch(function(e){
                     addBtn.disabled    = false;
-                    addBtn.textContent = _editingRowId ? '💾 Save Edit' : '➕ Add Row';
-                    errEl.textContent   = '❌ Network error.';
+                    addBtn.textContent = _editingRowId ? 'Save Edit' : 'Add Row';
+                    errEl.textContent   = 'Network error.';
                     errEl.style.display = 'block';
                     console.error('SS add', e);
                 });
@@ -2565,7 +2559,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         var refEl = document.getElementById('er-is_refund');
         if (refEl) refEl.checked = false;
         var addBtn = document.getElementById('ss-add-btn');
-        if (addBtn) addBtn.textContent = '➕ Add Row';
+        if (addBtn) addBtn.textContent = 'Add Row';
         var cancelBtn = document.getElementById('ss-cancel-edit');
         if (cancelBtn) cancelBtn.style.display = 'none';
         document.querySelectorAll('.ss-row').forEach(function(r) { r.style.opacity = '1'; });
@@ -2587,7 +2581,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                         if (j.ok) {
                             window.location.href='daily_report.php?date='+RDATE+'&tab=spreadsheet';
                         } else {
-                            if(window.uiAlert) uiAlert('❌ '+(j.msg||'Invalid PIN'));
+                            if(window.uiAlert) uiAlert((j.msg||'Invalid PIN'));
                         }
                     });
             };
@@ -2652,7 +2646,7 @@ foreach ($_kpis as [$_kl, $_kv, $_kw, $_is_money, $_kc]):
 
 <!-- Sales Mix ─────────────────────────────────────────────────────────────── -->
 <div class="panel">
-    <div class="panel-header"><span class="panel-title">🥧 Sales Mix</span></div>
+    <div class="panel-header"><span class="panel-title">Sales Mix</span></div>
     <div class="panel-body" style="padding:1rem;">
     <?php
     $_total_gross = max(1, $gross_sales);
@@ -2679,16 +2673,16 @@ foreach ($_kpis as [$_kl, $_kv, $_kw, $_is_money, $_kc]):
 
 <!-- Payment Mix ───────────────────────────────────────────────────────────── -->
 <div class="panel">
-    <div class="panel-header"><span class="panel-title">💳 Payment Mix</span></div>
+    <div class="panel-header"><span class="panel-title">Payment Mix</span></div>
     <div class="panel-body" style="padding:1rem;">
     <?php
     $_pm_display = [
-        ['💵 Cash',        ($pm_totals['cash']  ?? 0), '#198754'],
-        ['📱 GCash',       $gcash_total,               '#0070f3'],
-        ['💜 Maya',        $maya_total,                '#9333ea'],
-        ['📷 QR PH',       $qrph_total,                '#0891b2'],
-        ['💳 Card / Bank', $card_total,                '#f59e0b'],
-        ['🌐 Online',      $online_total,              '#6b7280'],
+        ['Cash',        ($pm_totals['cash']  ?? 0), '#198754'],
+        ['GCash',       $gcash_total,               '#0070f3'],
+        ['Maya',        $maya_total,                '#9333ea'],
+        ['QR PH',       $qrph_total,                '#0891b2'],
+        ['Card / Bank', $card_total,                '#f59e0b'],
+        ['Online',      $online_total,              '#6b7280'],
     ];
     $_pm_total = max(1, array_sum(array_column($_pm_display, 1)));
     foreach ($_pm_display as [$_pml, $_pmv, $_pmc]):
@@ -2714,7 +2708,7 @@ foreach ($_kpis as [$_kl, $_kv, $_kw, $_is_money, $_kc]):
 
 <!-- Daypart Performance ───────────────────────────────────────────────────── -->
 <div class="panel">
-    <div class="panel-header"><span class="panel-title">⏰ Daypart Performance</span></div>
+    <div class="panel-header"><span class="panel-title">Daypart Performance</span></div>
     <div class="panel-body" style="padding:0;">
         <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
             <thead><tr style="background:var(--bg3);">
@@ -2724,10 +2718,9 @@ foreach ($_kpis as [$_kl, $_kv, $_kw, $_is_money, $_kc]):
                 <th style="padding:7px 10px;text-align:right;font-size:0.78rem;color:var(--gray);">Revenue</th>
             </tr></thead>
             <tbody>
-            <?php $_dp_icons = ['Morning'=>'🌅','Midday'=>'☀️','Afternoon'=>'🌤️','Evening'=>'🌙']; ?>
             <?php foreach ($daypart_data as $_dpk => $_dpv): ?>
             <tr style="border-bottom:1px solid var(--border2);">
-                <td style="padding:7px 10px;font-weight:600;"><?php echo $_dp_icons[$_dpk] ?? ''; ?> <?php echo $_dpk; ?></td>
+                <td style="padding:7px 10px;font-weight:600;"><?php echo $_dpk; ?></td>
                 <td style="padding:7px 10px;font-size:0.75rem;color:var(--gray);"><?php echo $_dpv['label']; ?></td>
                 <td style="padding:7px 10px;text-align:center;"><?php echo $_dpv['txn_count']; ?></td>
                 <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--brown);font-family:monospace;">₱<?php echo number_format($_dpv['revenue'],2); ?></td>
@@ -2740,7 +2733,7 @@ foreach ($_kpis as [$_kl, $_kv, $_kw, $_is_money, $_kc]):
 
 <!-- Top Services ──────────────────────────────────────────────────────────── -->
 <div class="panel">
-    <div class="panel-header"><span class="panel-title">🏆 Top Services</span></div>
+    <div class="panel-header"><span class="panel-title">Top Services</span></div>
     <div class="panel-body" style="padding:0;">
         <?php if (empty($top_services)): ?>
         <p style="padding:1rem;color:var(--gray);font-size:0.85rem;">No service data.</p>
@@ -2769,7 +2762,7 @@ foreach ($_kpis as [$_kl, $_kv, $_kw, $_is_money, $_kc]):
 
 <!-- Therapist Productivity ─────────────────────────────────────────────────── -->
 <div class="panel" style="margin-bottom:1.25rem;">
-    <div class="panel-header"><span class="panel-title">💆 Therapist Productivity</span></div>
+    <div class="panel-header"><span class="panel-title">Therapist Productivity</span></div>
     <div class="panel-body" style="padding:0;">
         <?php if (empty($therapist_stats)): ?>
         <p style="padding:1rem;color:var(--gray);font-size:0.85rem;">No therapist data.</p>

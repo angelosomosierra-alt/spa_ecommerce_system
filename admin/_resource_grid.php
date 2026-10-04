@@ -40,7 +40,7 @@ function _resource_grid_self_heal(mysqli $conn): void {
 function render_resource_grid_html(mysqli $conn): string {
     _resource_grid_self_heal($conn);
 
-    $type_labels = ['room' => '🚪 Room', 'chair' => '💺 Chair', 'head_spa' => '🧖 Head Spa'];
+    $type_labels = ['room' => 'Room', 'chair' => 'Chair', 'head_spa' => 'Head Spa'];
 
     $resources = $conn->query("
         SELECT * FROM service_resources
@@ -49,7 +49,7 @@ function render_resource_grid_html(mysqli $conn): string {
     ")->fetch_all(MYSQLI_ASSOC);
 
     if (empty($resources)) {
-        return '<div class="panel"><div class="panel-header"><span class="panel-title">🛎️ Live Resource Grid</span></div>'
+        return '<div class="panel"><div class="panel-header"><span class="panel-title">Live Resource Grid</span></div>'
              . '<div style="padding:1.5rem;text-align:center;color:var(--gray);font-size:0.85rem;">'
              . 'No active resources configured yet. Add some in <a href="resources.php">Resources</a>.</div></div>';
     }
@@ -124,7 +124,7 @@ function render_resource_grid_html(mysqli $conn): string {
     ?>
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">🛎️ Live Resource Grid — <?php echo date('F j, Y'); ?></span>
+            <span class="panel-title">Live Resource Grid — <?php echo date('F j, Y'); ?></span>
         </div>
         <div style="overflow-x:auto;">
             <div style="min-width:<?php echo 80 + count($resources) * 150; ?>px;">

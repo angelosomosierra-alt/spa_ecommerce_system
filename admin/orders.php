@@ -57,7 +57,7 @@ if (isset($_GET['approve_order'])) {
 
         require_once __DIR__ . '/../notify.php';
         add_notification($conn, $o['user_id'], 'status',
-            '📦 Order Ready for Pick Up!',
+            'Order Ready for Pick Up!',
             'Your order #' . $id . ' (₱' . number_format($o['total_amount'],2) . ') has been approved and is ready for pick up!',
             'appointments.php#orders'
         );
@@ -82,7 +82,7 @@ if (isset($_GET['complete_order'])) {
 
         require_once __DIR__ . '/../notify.php';
         add_notification($conn, $o['user_id'], 'status',
-            '🎉 Order Completed!',
+            'Order Completed!',
             'Your order #' . $id . ' (₱' . number_format($o['total_amount'],2) . ') has been marked as completed. Thank you!',
             'appointments.php#orders'
         );
@@ -109,7 +109,7 @@ if (isset($_GET['reject_order'])) {
     if ($o) {
         require_once __DIR__ . '/../notify.php';
         add_notification($conn, $o['user_id'], 'status',
-            '❌ Order Declined',
+            'Order Declined',
             'Your order #' . $id . ' has been declined by the admin.',
             'appointments.php#orders'
         );
@@ -143,7 +143,7 @@ if (isset($_GET['decline_online'])) {
     if (!empty($order['user_id'])) {
         require_once __DIR__ . '/../notify.php';
         add_notification($conn, $order['user_id'], 'status',
-            '❌ Order Declined',
+            'Order Declined',
             'Your order #' . $id . ' has been declined by the admin.',
             'appointments.php#orders'
         );
@@ -188,22 +188,22 @@ while ($row = $result->fetch_assoc()) $orders[] = $row;
 
 // ─── LABEL HELPERS ────────────────────────────────────────────────────────────
 $status_labels = [
-    'paid'            => '✅ Paid',
-    'unpaid'          => '⏳ Unpaid',
-    'rejected'        => '❌ Rejected',
-    'refunded'        => '↩️ Refunded',
-    'pending_payment' => '💳 Awaiting Payment',
-    'cancelled'       => '🚫 Cancelled',
+    'paid'            => 'Paid',
+    'unpaid'          => 'Unpaid',
+    'rejected'        => 'Rejected',
+    'refunded'        => 'Refunded',
+    'pending_payment' => 'Awaiting Payment',
+    'cancelled'       => 'Cancelled',
 ];
 $approval_labels = [
-    'pending'   => '🕐 Pending Approval',
-    'approved'  => '📦 Ready for Pick Up',
-    'declined'  => '❌ Declined',
-    'completed' => '🎉 Completed',
+    'pending'   => 'Pending Approval',
+    'approved'  => 'Ready for Pick Up',
+    'declined'  => 'Declined',
+    'completed' => 'Completed',
 ];
 
 $page_title  = $view_order ? 'Order #' . $view_order['id'] : 'Orders';
-$page_icon   = '📦';
+$page_icon   = '';
 $active_page = 'orders';
 require_once 'admin_header.php';
 ?>
@@ -212,12 +212,12 @@ require_once 'admin_header.php';
 <div class="alert alert-<?php echo in_array($_GET['msg'],['approved','refunded','completed'])?'success':(str_contains($_GET['msg'],'failed')?'danger':'warning'); ?>" style="margin-bottom:1.5rem;">
     <?php
     $msgs = [
-        'approved'               => '📦 Order approved! Customer has been notified that their order is ready for pick up.',
-        'completed'              => '🎉 Order marked as completed! Transaction is done.',
-        'rejected'               => '❌ Order declined.',
-        'refunded'               => '↩️ Order declined and full refund issued to customer via PayMongo.',
-        'declined_no_refund'     => '❌ Order declined. No payment was collected so no refund was needed.',
-        'declined_refund_failed' => '⚠️ Order declined, but the automatic refund failed: <strong>' . htmlspecialchars($_GET['err'] ?? '') . '</strong>. Please issue the refund manually in your <a href="https://dashboard.paymongo.com" target="_blank" style="color:inherit;font-weight:bold;">PayMongo dashboard</a>.',
+        'approved'               => 'Order approved! Customer has been notified that their order is ready for pick up.',
+        'completed'              => 'Order marked as completed! Transaction is done.',
+        'rejected'               => 'Order declined.',
+        'refunded'               => 'Order declined and full refund issued to customer via PayMongo.',
+        'declined_no_refund'     => 'Order declined. No payment was collected so no refund was needed.',
+        'declined_refund_failed' => 'Order declined, but the automatic refund failed: <strong>' . htmlspecialchars($_GET['err'] ?? '') . '</strong>. Please issue the refund manually in your <a href="https://dashboard.paymongo.com" target="_blank" style="color:inherit;font-weight:bold;">PayMongo dashboard</a>.',
     ];
     echo $msgs[$_GET['msg']] ?? '';
     ?>
@@ -238,7 +238,7 @@ $vas = $view_order['approval_status'] ?? 'pending';
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">👤 Customer</span></div>
+        <div class="panel-header"><span class="panel-title">Customer</span></div>
         <div class="panel-body">
             <div style="display:flex;flex-direction:column;gap:0.6rem;">
                 <?php foreach(['customer_name'=>'Name','email'=>'Email','phone'=>'Phone','address'=>'Address'] as $k=>$l): ?>
@@ -253,7 +253,7 @@ $vas = $view_order['approval_status'] ?? 'pending';
 
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">🧾 Order Info</span>
+            <span class="panel-title">Order Info</span>
         </div>
         <div class="panel-body">
             <div style="display:flex;flex-direction:column;gap:0.75rem;">
@@ -273,13 +273,13 @@ $vas = $view_order['approval_status'] ?? 'pending';
                     <span style="color:var(--gray);font-size:0.78rem;">Payment</span>
                     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
                         <?php
-                        $vpm_icons = ['cash'=>'💵 Cash','gcash'=>'📱 GCash','maya'=>'💜 Maya',
-                                      'qrph'=>'📷 QRPH','bank'=>'🏦 Bank','card'=>'💳 Card',
-                                      'online'=>'💳 Online','onsite'=>'🏪 Onsite'];
+                        $vpm_icons = ['cash'=>'Cash','gcash'=>'GCash','maya'=>'Maya',
+                                      'qrph'=>'QRPH','bank'=>'Bank','card'=>'Card',
+                                      'online'=>'Online','onsite'=>'Onsite'];
                         $vpm_class = isset($vpm_icons[$vpm]) ? $vpm : 'onsite';
                         ?>
                         <span class="badge badge-<?php echo $vpm_class; ?>">
-                            <?php echo $vpm_icons[$vpm] ?? ('💰 '.ucfirst($vpm)); ?>
+                            <?php echo $vpm_icons[$vpm] ?? ucfirst($vpm); ?>
                         </span>
                         <span class="badge badge-<?php echo $vps; ?>" style="font-size:0.7rem;">
                             <?php echo $status_labels[$vps] ?? ucfirst($vps); ?>
@@ -301,48 +301,48 @@ $vas = $view_order['approval_status'] ?? 'pending';
 
                 <?php if (in_array($vpm, ['onsite','cash','gcash','maya','qrph','bank','card']) && $vps === 'unpaid'): ?>
                 <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:0.75rem 1rem;font-size:0.82rem;color:var(--gray);margin-bottom:0.25rem;">
-                    🏪 Onsite payment — approve to mark as ready for pick up. Payment collected when customer arrives.
+                    Onsite payment — approve to mark as ready for pick up. Payment collected when customer arrives.
                 </div>
                 <button type="button" class="btn btn-success btn-full"
-                        onclick="openOrderPinModal('approve_order','<?php echo $view_order['id']; ?>','📦 Approve Order #<?php echo $view_order['id']; ?> — mark ready for pick up?')">
-                    📦 Approve — Mark as Ready for Pick Up
+                        onclick="openOrderPinModal('approve_order','<?php echo $view_order['id']; ?>','Approve Order #<?php echo $view_order['id']; ?> — mark ready for pick up?')">
+                    Approve — Mark as Ready for Pick Up
                 </button>
                 <button type="button" class="btn btn-danger btn-full"
-                        onclick="openOrderPinModal('reject_order','<?php echo $view_order['id']; ?>','❌ Decline Order #<?php echo $view_order['id']; ?>?')">
-                    ❌ Decline Order
+                        onclick="openOrderPinModal('reject_order','<?php echo $view_order['id']; ?>','Decline Order #<?php echo $view_order['id']; ?>?')">
+                    Decline Order
                 </button>
 
                 <?php elseif ($vpm === 'online' && $vps === 'paid'): ?>
                 <div style="background:var(--gold-dim);border:1px solid var(--gold);border-radius:8px;padding:0.75rem 1rem;font-size:0.82rem;color:var(--brown);margin-bottom:0.25rem;">
-                    💳 Customer has paid <strong>₱<?php echo number_format($view_order['total_amount'],2); ?></strong> via PayMongo.
+                    Customer has paid <strong>₱<?php echo number_format($view_order['total_amount'],2); ?></strong> via PayMongo.
                 </div>
                 <button type="button" class="btn btn-success btn-full"
-                        onclick="openOrderPinModal('approve_order','<?php echo $view_order['id']; ?>','📦 Approve Order #<?php echo $view_order['id']; ?> — notify customer it\'s ready?')">
-                    📦 Approve — Mark as Ready for Pick Up
+                        onclick="openOrderPinModal('approve_order','<?php echo $view_order['id']; ?>','Approve Order #<?php echo $view_order['id']; ?> — notify customer it\'s ready?')">
+                    Approve — Mark as Ready for Pick Up
                 </button>
                 <button type="button" class="btn btn-danger btn-full"
-                        onclick="openOrderPinModal('decline_online','<?php echo $view_order['id']; ?>','↩️ Decline & REFUND ₱<?php echo number_format($view_order['total_amount'],2); ?> via PayMongo? Cannot be undone.')">
-                    ↩️ Decline & Refund via PayMongo
+                        onclick="openOrderPinModal('decline_online','<?php echo $view_order['id']; ?>','Decline & REFUND ₱<?php echo number_format($view_order['total_amount'],2); ?> via PayMongo? Cannot be undone.')">
+                    Decline & Refund via PayMongo
                 </button>
                 <?php endif; ?>
 
             <?php elseif ($vas === 'approved'): ?>
 
                 <div style="background:#d1e7dd;border:1px solid #198754;border-radius:8px;padding:0.75rem 1rem;font-size:0.82rem;color:#0a3622;margin-bottom:0.25rem;">
-                    📦 Order is ready for pick up. Mark complete once the customer has picked up.
+                    Order is ready for pick up. Mark complete once the customer has picked up.
                 </div>
                 <button type="button" class="btn btn-primary btn-full"
-                        onclick="openOrderPinModal('complete_order','<?php echo $view_order['id']; ?>','🎉 Mark Order #<?php echo $view_order['id']; ?> as completed — customer picked up?')">
-                    🎉 Mark as Completed — Customer Picked Up
+                        onclick="openOrderPinModal('complete_order','<?php echo $view_order['id']; ?>','Mark Order #<?php echo $view_order['id']; ?> as completed — customer picked up?')">
+                    Mark as Completed — Customer Picked Up
                 </button>
                 <button type="button" class="btn btn-danger btn-full"
-                        onclick="openOrderPinModal('reject_order','<?php echo $view_order['id']; ?>','❌ Decline this approved order?')">
-                    ❌ Decline Order
+                        onclick="openOrderPinModal('reject_order','<?php echo $view_order['id']; ?>','Decline this approved order?')">
+                    Decline Order
                 </button>
 
             <?php elseif ($vas === 'completed'): ?>
                 <div style="background:#cff4fc;border:1px solid #0891b2;border-radius:8px;padding:0.75rem 1rem;font-size:0.82rem;color:#055160;margin-top:0.5rem;">
-                    🎉 Order completed.
+                    Order completed.
                     <?php if (!empty($view_order['updated_by_name'])): ?>
                     <strong>by <?php echo htmlspecialchars($view_order['updated_by_name']); ?></strong>
                     <?php elseif (!empty($view_order['approved_by_name'])): ?>
@@ -352,7 +352,7 @@ $vas = $view_order['approval_status'] ?? 'pending';
 
             <?php elseif ($vas === 'declined'): ?>
                 <div style="background:var(--red-dim);border:1px solid var(--red);border-radius:8px;padding:0.75rem 1rem;font-size:0.82rem;color:#842029;margin-top:0.5rem;">
-                    ❌ Declined<?php echo $vps==='refunded' ? ' and refunded.' : '.'; ?>
+                    Declined<?php echo $vps==='refunded' ? ' and refunded.' : '.'; ?>
                     <?php if (!empty($view_order['updated_by_name'])): ?>
                     <strong>by <?php echo htmlspecialchars($view_order['updated_by_name']); ?></strong>
                     <?php endif; ?>
@@ -366,7 +366,7 @@ $vas = $view_order['approval_status'] ?? 'pending';
 </div>
 
 <div class="panel">
-    <div class="panel-header"><span class="panel-title">🛍️ Ordered Products</span></div>
+    <div class="panel-header"><span class="panel-title">Ordered Products</span></div>
     <div class="table-wrap" style="border:none;border-radius:0;">
         <table>
             <thead><tr><th>Product</th><th>Qty</th><th>Unit Price</th><th>Subtotal</th></tr></thead>
@@ -395,22 +395,22 @@ $vas = $view_order['approval_status'] ?? 'pending';
 <!-- ── ORDERS LIST ────────────────────────────────────────────────────────── -->
 
 <div class="stats-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:1.5rem;">
-    <div class="stat-card"><div class="stat-icon">📦</div><div class="stat-number"><?php echo count($orders); ?></div><div class="stat-label">Total Orders</div></div>
-    <div class="stat-card amber"><div class="stat-icon">🕐</div><div class="stat-number"><?php echo $pending_count; ?></div><div class="stat-label">Pending</div></div>
-    <div class="stat-card green"><div class="stat-icon">📦</div><div class="stat-number"><?php echo $paid_count; ?></div><div class="stat-label">Ready for Pick Up</div></div>
-    <div class="stat-card"><div class="stat-icon">🎉</div><div class="stat-number"><?php echo $completed_count; ?></div><div class="stat-label">Completed</div></div>
-    <div class="stat-card red"><div class="stat-icon">❌</div><div class="stat-number"><?php echo $rejected_count; ?></div><div class="stat-label">Declined</div></div>
-    <div class="stat-card green"><div class="stat-icon">💰</div><div class="stat-number">₱<?php echo number_format($total_revenue,0); ?></div><div class="stat-label">Revenue</div></div>
+    <div class="stat-card"><div class="stat-icon"></div><div class="stat-number"><?php echo count($orders); ?></div><div class="stat-label">Total Orders</div></div>
+    <div class="stat-card amber"><div class="stat-icon"></div><div class="stat-number"><?php echo $pending_count; ?></div><div class="stat-label">Pending</div></div>
+    <div class="stat-card green"><div class="stat-icon"></div><div class="stat-number"><?php echo $paid_count; ?></div><div class="stat-label">Ready for Pick Up</div></div>
+    <div class="stat-card"><div class="stat-icon"></div><div class="stat-number"><?php echo $completed_count; ?></div><div class="stat-label">Completed</div></div>
+    <div class="stat-card red"><div class="stat-icon"></div><div class="stat-number"><?php echo $rejected_count; ?></div><div class="stat-label">Declined</div></div>
+    <div class="stat-card green"><div class="stat-icon"></div><div class="stat-number">₱<?php echo number_format($total_revenue,0); ?></div><div class="stat-label">Revenue</div></div>
 </div>
 
 <div class="filter-tabs">
     <a href="orders.php?filter=all"       class="filter-tab <?php echo $filter==='all'?'active':''; ?>">All</a>
-    <a href="orders.php?filter=pending"   class="filter-tab <?php echo $filter==='pending'?'active':''; ?>">🕐 Pending</a>
-    <a href="orders.php?filter=approved"  class="filter-tab <?php echo $filter==='approved'?'active':''; ?>">📦 Ready for Pick Up</a>
-    <a href="orders.php?filter=completed" class="filter-tab <?php echo $filter==='completed'?'active':''; ?>">🎉 Completed</a>
-    <a href="orders.php?filter=declined"  class="filter-tab <?php echo $filter==='declined'?'active':''; ?>">❌ Declined</a>
-    <a href="orders.php?filter=walkin"    class="filter-tab <?php echo $filter==='walkin'?'active':''; ?>">🏪 Walk-in</a>
-    <a href="orders.php?filter=online"    class="filter-tab <?php echo $filter==='online'?'active':''; ?>">💳 Online</a>
+    <a href="orders.php?filter=pending"   class="filter-tab <?php echo $filter==='pending'?'active':''; ?>">Pending</a>
+    <a href="orders.php?filter=approved"  class="filter-tab <?php echo $filter==='approved'?'active':''; ?>">Ready for Pick Up</a>
+    <a href="orders.php?filter=completed" class="filter-tab <?php echo $filter==='completed'?'active':''; ?>">Completed</a>
+    <a href="orders.php?filter=declined"  class="filter-tab <?php echo $filter==='declined'?'active':''; ?>">Declined</a>
+    <a href="orders.php?filter=walkin"    class="filter-tab <?php echo $filter==='walkin'?'active':''; ?>">Walk-in</a>
+    <a href="orders.php?filter=online"    class="filter-tab <?php echo $filter==='online'?'active':''; ?>">Online</a>
 </div>
 
 <div class="table-wrap">
@@ -444,13 +444,13 @@ $vas = $view_order['approval_status'] ?? 'pending';
                 <td>
                     <div style="display:flex;flex-direction:column;gap:4px;">
                         <?php
-                        $pm_icons  = ['cash'=>'💵 Cash','gcash'=>'📱 GCash','maya'=>'💜 Maya',
-                                      'qrph'=>'📷 QRPH','bank'=>'🏦 Bank','card'=>'💳 Card',
-                                      'online'=>'💳 Online','onsite'=>'🏪 Onsite'];
+                        $pm_icons  = ['cash'=>'Cash','gcash'=>'GCash','maya'=>'Maya',
+                                      'qrph'=>'QRPH','bank'=>'Bank','card'=>'Card',
+                                      'online'=>'Online','onsite'=>'Onsite'];
                         $pm_class  = isset($pm_icons[$pm]) ? $pm : 'onsite';
                         ?>
                         <span class="badge badge-<?php echo $pm_class; ?>">
-                            <?php echo $pm_icons[$pm] ?? ('💰 '.ucfirst($pm)); ?>
+                            <?php echo $pm_icons[$pm] ?? ucfirst($pm); ?>
                         </span>
                         <span class="badge badge-<?php echo $ps; ?>" style="font-size:0.7rem;">
                             <?php echo $status_labels[$ps] ?? ucfirst($ps); ?>
@@ -463,11 +463,11 @@ $vas = $view_order['approval_status'] ?? 'pending';
                     </span>
                     <?php if (!empty($o['approved_by_name']) && in_array($as, ['approved','completed'])): ?>
                     <div style="font-size:0.72rem;color:var(--green);margin-top:3px;font-weight:600;">
-                        ✅ by <?php echo htmlspecialchars($o['approved_by_name']); ?>
+                        by <?php echo htmlspecialchars($o['approved_by_name']); ?>
                     </div>
                     <?php elseif (!empty($o['updated_by_name']) && in_array($as, ['declined','completed'])): ?>
                     <div style="font-size:0.72rem;color:var(--gray);margin-top:3px;">
-                        <?php echo $as === 'completed' ? '🎉' : '❌'; ?> by <?php echo htmlspecialchars($o['updated_by_name']); ?>
+                        by <?php echo htmlspecialchars($o['updated_by_name']); ?>
                     </div>
                     <?php endif; ?>
                 </td>
@@ -479,32 +479,32 @@ $vas = $view_order['approval_status'] ?? 'pending';
 
                     <?php if ($as === 'pending'): ?>
                         <button type="button" class="btn btn-success btn-sm"
-                                onclick="openOrderPinModal('approve_order','<?php echo $o['id']; ?>','📦 Approve Order #<?php echo $o['id']; ?> for <?php echo htmlspecialchars(addslashes($o['customer_name'])); ?>?')">
-                            📦 Approve
+                                onclick="openOrderPinModal('approve_order','<?php echo $o['id']; ?>','Approve Order #<?php echo $o['id']; ?> for <?php echo htmlspecialchars(addslashes($o['customer_name'])); ?>?')">
+                            Approve
                         </button>
                         <?php if (!is_cashier()): ?>
                             <?php if (in_array($pm, ['onsite','cash','gcash','maya','qrph','bank','card'])): ?>
                             <button type="button" class="btn btn-danger btn-sm"
-                                    onclick="openOrderPinModal('reject_order','<?php echo $o['id']; ?>','❌ Decline Order #<?php echo $o['id']; ?>?')">
-                                ❌ Decline
+                                    onclick="openOrderPinModal('reject_order','<?php echo $o['id']; ?>','Decline Order #<?php echo $o['id']; ?>?')">
+                                Decline
                             </button>
                             <?php else: ?>
                             <button type="button" class="btn btn-danger btn-sm"
-                                    onclick="openOrderPinModal('decline_online','<?php echo $o['id']; ?>','↩️ Decline & refund ₱<?php echo number_format($o['total_amount'],2); ?> via PayMongo?')">
-                                ↩️ Decline & Refund
+                                    onclick="openOrderPinModal('decline_online','<?php echo $o['id']; ?>','Decline & refund ₱<?php echo number_format($o['total_amount'],2); ?> via PayMongo?')">
+                                Decline & Refund
                             </button>
                             <?php endif; ?>
                         <?php endif; ?>
 
                     <?php elseif ($as === 'approved'): ?>
                         <button type="button" class="btn btn-primary btn-sm"
-                                onclick="openOrderPinModal('complete_order','<?php echo $o['id']; ?>','🎉 Mark Order #<?php echo $o['id']; ?> as completed?')">
-                            🎉 Complete
+                                onclick="openOrderPinModal('complete_order','<?php echo $o['id']; ?>','Mark Order #<?php echo $o['id']; ?> as completed?')">
+                            Complete
                         </button>
                         <?php if (!is_cashier()): ?>
                         <button type="button" class="btn btn-danger btn-sm"
-                                onclick="openOrderPinModal('reject_order','<?php echo $o['id']; ?>','❌ Decline Order #<?php echo $o['id']; ?>?')">
-                            ❌ Decline
+                                onclick="openOrderPinModal('reject_order','<?php echo $o['id']; ?>','Decline Order #<?php echo $o['id']; ?>?')">
+                            Decline
                         </button>
                         <?php endif; ?>
                     <?php endif; ?>
@@ -529,13 +529,13 @@ $vas = $view_order['approval_status'] ?? 'pending';
             <div style="width:52px;height:52px;border-radius:50%;
                         background:linear-gradient(135deg,var(--rust),var(--brown));
                         display:flex;align-items:center;justify-content:center;
-                        font-size:1.4rem;margin:0 auto 0.75rem;">🔐</div>
+                        font-size:1.4rem;margin:0 auto 0.75rem;"></div>
             <div style="font-size:1.05rem;font-weight:700;color:var(--brown);" id="orderPinTitle">Confirm Action</div>
         </div>
         <div id="orderPinFullNotice" style="display:none;background:rgba(25,135,84,0.08);
              border:1px solid rgba(25,135,84,0.2);border-radius:10px;padding:0.85rem 1rem;
              text-align:center;font-size:0.85rem;color:#0a3622;margin-bottom:1rem;">
-            👤 Logged in as <strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Admin'); ?></strong>. No PIN required.
+            Logged in as <strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Admin'); ?></strong>. No PIN required.
         </div>
         <div id="orderPinInputArea">
             <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;
@@ -552,10 +552,10 @@ $vas = $view_order['approval_status'] ?? 'pending';
         </div>
         <div style="display:flex;gap:0.65rem;margin-top:1.1rem;">
             <button type="button" onclick="closeOrderPinModal()" class="btn btn-secondary" style="flex:1;">Cancel</button>
-            <button type="button" id="orderPinConfirmBtn" onclick="submitOrderPinAction()" class="btn btn-primary" style="flex:2;">✅ Confirm</button>
+            <button type="button" id="orderPinConfirmBtn" onclick="submitOrderPinAction()" class="btn btn-primary" style="flex:2;">Confirm</button>
         </div>
         <div style="margin-top:0.85rem;text-align:center;font-size:0.72rem;color:var(--gray);">
-            🔒 Action recorded under your name for accountability.
+            Action recorded under your name for accountability.
         </div>
     </div>
 </div>
@@ -606,13 +606,13 @@ async function submitOrderPinAction() {
             errEl.textContent = data.error || 'Incorrect PIN.';
             document.getElementById('orderPinInput').value = '';
             document.getElementById('orderPinInput').focus();
-            btn.disabled = false; btn.textContent = '✅ Confirm'; return;
+            btn.disabled = false; btn.textContent = 'Confirm'; return;
         }
         closeOrderPinModal();
         window.location.href = 'orders.php?' + _orderPinAction + '=' + _orderPinId;
     } catch(e) {
         errEl.textContent = 'Network error. Try again.';
-        btn.disabled = false; btn.textContent = '✅ Confirm';
+        btn.disabled = false; btn.textContent = 'Confirm';
     }
 }
 document.addEventListener('keydown', e => {

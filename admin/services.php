@@ -91,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $pr_svc_del = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$pr_svc_del) {
-            $message = "⚠️ Incorrect PIN. Archive action cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Archive action cancelled."; $message_type = "danger";
             goto end_svc_delete;
         }
     }
@@ -148,7 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $pr_svc_action = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$pr_svc_action) {
-            $message = "⚠️ Incorrect PIN. Action cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Action cancelled."; $message_type = "danger";
             goto end_svc_action;
         }
     }
@@ -405,7 +405,7 @@ if (!$message && isset($_GET['saved']))   { $message = "Service updated.";      
 if (!$message && isset($_GET['success'])) { $message = "Service added successfully."; $message_type = "success"; }
 
 $page_title  = $edit_service ? 'Edit Service' : 'Services';
-$page_icon   = '💆';
+$page_icon   = '';
 $active_page = 'services';
 require_once 'admin_header.php';
 ?>
@@ -417,22 +417,22 @@ require_once 'admin_header.php';
 <?php if (!$edit_service && !isset($_GET['action'])): ?>
 <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
     <div class="stat-card">
-        <div class="stat-icon">💆</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $total_services; ?></div>
         <div class="stat-label">Total Services</div>
     </div>
     <div class="stat-card amber">
-        <div class="stat-icon">💰</div>
+        <div class="stat-icon"></div>
         <div class="stat-number">₱<?php echo number_format($avg_price, 0); ?></div>
         <div class="stat-label">Avg. Price</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">🏷️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $categorized_count; ?></div>
         <div class="stat-label">Categorized</div>
     </div>
     <div class="stat-card green">
-        <div class="stat-icon">🧴</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $with_recipe_count; ?></div>
         <div class="stat-label">With Recipe</div>
     </div>
@@ -447,7 +447,7 @@ require_once 'admin_header.php';
 
 <div class="form-section">
     <div class="form-section-header">
-        <?php echo $edit_service ? '✏️ Edit Service' : '➕ Add New Service'; ?>
+        <?php echo $edit_service ? 'Edit Service' : 'Add New Service'; ?>
     </div>
     <div class="form-section-body">
         <form method="POST" enctype="multipart/form-data" onsubmit="return validateDurationVariantsOnSubmit();">
@@ -456,7 +456,7 @@ require_once 'admin_header.php';
                 <input type="hidden" name="id" value="<?php echo $edit_service['id']; ?>">
             <?php endif; ?>
 
-            <span class="section-label-sm">🪪 Service Info</span>
+            <span class="section-label-sm">Service Info</span>
             <div class="form-grid form-grid-2" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <label>Service Name <span class="required">*</span></label>
@@ -479,7 +479,7 @@ require_once 'admin_header.php';
             </div>
 
             <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm">💰 Pricing &amp; Duration</span>
+                <span class="section-label-sm">Pricing &amp; Duration</span>
             </div>
 
             <div id="durationVariantsContainer" style="margin-bottom:1.25rem;">
@@ -528,7 +528,7 @@ require_once 'admin_header.php';
                     '<input type="number" name="variant_regular_price[]" step="0.01" min="0.01" required value="' + (regular || '') + '"></div>' +
                     '<div class="form-group"><label>Promo Price (₱)</label>' +
                     '<input type="number" name="variant_promo_price[]" step="0.01" min="0" value="' + (promo || '') + '"></div>' +
-                    '<div class="form-group"><button type="button" class="btn btn-danger btn-sm dv-remove-btn" onclick="removeDurationVariantRow(this)">✕ Remove</button></div>';
+                    '<div class="form-group"><button type="button" class="btn btn-danger btn-sm dv-remove-btn" onclick="removeDurationVariantRow(this)">Remove</button></div>';
                 wrap.appendChild(grid);
 
                 var sched = document.createElement('div');
@@ -603,7 +603,7 @@ require_once 'admin_header.php';
             </script>
 
             <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm">🏠 Availability</span>
+                <span class="section-label-sm">Availability</span>
             </div>
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
@@ -612,7 +612,7 @@ require_once 'admin_header.php';
                                id="homeServiceToggle"
                                style="width:18px;height:18px;cursor:pointer;"
                                <?php echo !empty($edit_service['is_home_service']) ? 'checked' : ''; ?>>
-                        <span>🏠 This service is available as <strong>Home Service</strong></span>
+                        <span>This service is available as <strong>Home Service</strong></span>
                     </label>
                     <small style="color:var(--gray);margin-top:0.3rem;display:block;">
                         If enabled, customers can choose between visiting the spa or booking a home visit.
@@ -624,7 +624,7 @@ require_once 'admin_header.php';
                  id="homeFeeSectionRow"
                  style="margin-bottom:1.25rem;<?php echo empty($edit_service['is_home_service']) ? 'display:none;' : ''; ?>">
                 <div class="form-group">
-                    <label>🏠 Home Service Price (₱) — Fixed Total <span class="required">*</span></label>
+                    <label>Home Service Price (₱) — Fixed Total <span class="required">*</span></label>
                     <input type="number" name="home_service_price" id="homeServicePrice"
                            step="0.01" min="0"
                            value="<?php echo floatval($edit_service['home_service_price'] ?? 0); ?>"
@@ -661,14 +661,14 @@ require_once 'admin_header.php';
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
                     <div style="padding:0.75rem 1rem;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;font-size:0.85rem;color:var(--brown);">
-                        🔁 This service still has the legacy <strong>2-Session Package</strong> enabled (Price for 2 Sessions: ₱<?php echo number_format(floatval($edit_service['session2_price'] ?? 0), 2); ?>). New services can no longer add this — it's retired in favor of Duration Options' Sessions field above. Existing bookings and this service's setting are unaffected.
+                        This service still has the legacy <strong>2-Session Package</strong> enabled (Price for 2 Sessions: ₱<?php echo number_format(floatval($edit_service['session2_price'] ?? 0), 2); ?>). New services can no longer add this — it's retired in favor of Duration Options' Sessions field above. Existing bookings and this service's setting are unaffected.
                     </div>
                 </div>
             </div>
             <?php endif; ?>
 
             <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm">🖼️ Media</span>
+                <span class="section-label-sm">Media</span>
             </div>
             <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
                 <div class="form-group">
@@ -696,7 +696,7 @@ require_once 'admin_header.php';
 
             <!-- ─── SUPPLIES USED PER SESSION ────────────────────────────────── -->
             <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm" style="color:var(--brown-md);">🧴 Supplies Used per Session</span>
+                <span class="section-label-sm" style="color:var(--brown-md);">Supplies Used per Session</span>
                 <p style="font-size:0.83rem;color:var(--gray);margin:0.4rem 0 1rem;">
                     Define which supplies are consumed per person when this service is completed.
                     Quantities are in base units (ml, g, pcs…). Leave empty if no supplies are deducted.
@@ -796,7 +796,7 @@ require_once 'admin_header.php';
                     </button>
                     <span id="recipeDupeWarning"
                           style="color:var(--rust);font-size:0.82rem;display:none;">
-                        ⚠️ Duplicate supply — each supply can only appear once per service.
+                        Duplicate supply — each supply can only appear once per service.
                     </span>
                 </div>
             </div>
@@ -878,7 +878,7 @@ require_once 'admin_header.php';
             <?php endif; ?>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">
-                    <?php echo $edit_service ? '✅ Update Service' : '✅ Add Service'; ?>
+                    <?php echo $edit_service ? 'Update Service' : 'Add Service'; ?>
                 </button>
                 <a href="services.php" class="btn btn-secondary">Cancel</a>
             </div>
@@ -892,7 +892,7 @@ require_once 'admin_header.php';
 
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">💆 All Services</span>
+        <span class="panel-title">All Services</span>
         <?php if (!isset($_GET['action'])): ?>
             <a href="services.php?action=add" class="btn btn-primary btn-sm">+ Add New Service</a>
         <?php endif; ?>
@@ -936,7 +936,7 @@ require_once 'admin_header.php';
     </style>
 
     <div class="svc-search-wrap">
-        <span class="svc-search-icon">🔍</span>
+        <span class="svc-search-icon"></span>
         <input type="search" id="serviceSearchInput" class="svc-search-input"
                placeholder="Search by name or category…"
                oninput="filterServices(this.value)"
@@ -994,9 +994,9 @@ require_once 'admin_header.php';
                         </td>
                         <td>
                             <?php if (!empty($service['is_home_service'])): ?>
-                                <span class="badge badge-online">🏠 Home</span>
+                                <span class="badge badge-online">Home</span>
                             <?php else: ?>
-                                <span class="badge badge-onsite">🏪 Onsite</span>
+                                <span class="badge badge-onsite">Onsite</span>
                             <?php endif; ?>
                         </td>
                         <td><strong style="color:var(--rust);">₱<?php echo number_format($service['price'], 2); ?></strong></td>
@@ -1004,15 +1004,15 @@ require_once 'admin_header.php';
                             <?php $_svc_durs = $svc_durations_by_service[$service['id']] ?? []; ?>
                             <?php if (!empty($_svc_durs)): ?>
                                 <?php $_svc_durs_lbl = implode(' / ', array_map(fn($d) => $d['duration_minutes'] . ($d['session_count'] > 1 ? '×' . $d['session_count'] : ''), $_svc_durs)); ?>
-                                <span style="background:rgba(13,110,253,0.1);color:#0d6efd;padding:0.1rem 0.45rem;border-radius:20px;font-size:0.68rem;font-weight:700;border:1px solid #9ec5fe;display:inline-block;">⏱ <?php echo $_svc_durs_lbl; ?> mins</span>
+                                <span style="background:rgba(13,110,253,0.1);color:#0d6efd;padding:0.1rem 0.45rem;border-radius:20px;font-size:0.68rem;font-weight:700;border:1px solid #9ec5fe;display:inline-block;"><?php echo $_svc_durs_lbl; ?> mins</span>
                             <?php else: ?>
-                                ⏱ <?php echo $service['session_time']; ?> mins
+                                <?php echo $service['session_time']; ?> mins
                             <?php endif; ?>
                         </td>
                         <td style="white-space:nowrap;">
                             <?php $rcnt = $svc_recipe_counts[$service['id']] ?? 0; ?>
                             <?php if ($rcnt > 0): ?>
-                                <span class="badge badge-completed" style="font-size:0.7rem;">🧴 <?php echo $rcnt; ?></span>
+                                <span class="badge badge-completed" style="font-size:0.7rem;"><?php echo $rcnt; ?></span>
                             <?php else: ?>
                                 <span style="color:var(--gray);font-size:0.8rem;">—</span>
                             <?php endif; ?>
@@ -1026,7 +1026,7 @@ require_once 'admin_header.php';
                                 <?php echo csrf_field(); ?>
                                 <input type="hidden" name="action" value="restore_service">
                                 <input type="hidden" name="id" value="<?php echo intval($service['id']); ?>">
-                                <button type="submit" class="btn btn-secondary btn-sm">♻️ Restore</button>
+                                <button type="submit" class="btn btn-secondary btn-sm">Restore</button>
                             </form>
                             <?php else: ?>
                             <a href="services.php?edit=<?php echo $service['id']; ?>" class="btn btn-info btn-sm">Edit</a>
@@ -1038,7 +1038,7 @@ require_once 'admin_header.php';
                                 <input type="password" name="pin" maxlength="4" placeholder="PIN" required
                                        style="width:58px;padding:0.25rem 0.4rem;border:1px solid var(--border2);border-radius:6px;font-size:0.8rem;letter-spacing:0.2em;text-align:center;vertical-align:middle;">
                                 <?php endif; ?>
-                                <button type="submit" class="btn btn-danger btn-sm">🗃️ Archive</button>
+                                <button type="submit" class="btn btn-danger btn-sm">Archive</button>
                             </form>
                             <?php endif; ?>
                         </td>

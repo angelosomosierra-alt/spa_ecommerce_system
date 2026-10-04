@@ -14,18 +14,18 @@ $rp_required   = $rp_required   ?? false;
 ?>
 <div class="resource-picker" data-prefix="<?php echo htmlspecialchars($rp_prefix); ?>">
     <div style="font-size:0.78rem;color:var(--gray);font-weight:600;margin-bottom:0.4rem;">
-        🛎️ Assign Room / Chair / Head Spa <?php if ($rp_required): ?><span class="required">*</span><?php else: ?><span style="font-weight:400;">(optional)</span><?php endif; ?>
+        Assign Room / Chair / Head Spa <?php if ($rp_required): ?><span class="required">*</span><?php else: ?><span style="font-weight:400;">(optional)</span><?php endif; ?>
     </div>
     <div style="display:flex;gap:0.4rem;margin-bottom:0.5rem;" class="rp-type-tabs">
         <button type="button" class="rp-type-btn" data-type="room"
                 onclick="rpSelectType('<?php echo $rp_prefix; ?>','room')"
-                style="padding:0.35rem 0.7rem;border:1.5px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;font-size:0.8rem;">🚪 Room<span class="rp-suggested-badge" data-type="room" style="display:none;font-size:0.65rem;font-weight:400;color:var(--gray);"> · suggested</span></button>
+                style="padding:0.35rem 0.7rem;border:1.5px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;font-size:0.8rem;">Room<span class="rp-suggested-badge" data-type="room" style="display:none;font-size:0.65rem;font-weight:400;color:var(--gray);"> · suggested</span></button>
         <button type="button" class="rp-type-btn" data-type="chair"
                 onclick="rpSelectType('<?php echo $rp_prefix; ?>','chair')"
-                style="padding:0.35rem 0.7rem;border:1.5px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;font-size:0.8rem;">💺 Chair<span class="rp-suggested-badge" data-type="chair" style="display:none;font-size:0.65rem;font-weight:400;color:var(--gray);"> · suggested</span></button>
+                style="padding:0.35rem 0.7rem;border:1.5px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;font-size:0.8rem;">Chair<span class="rp-suggested-badge" data-type="chair" style="display:none;font-size:0.65rem;font-weight:400;color:var(--gray);"> · suggested</span></button>
         <button type="button" class="rp-type-btn" data-type="head_spa"
                 onclick="rpSelectType('<?php echo $rp_prefix; ?>','head_spa')"
-                style="padding:0.35rem 0.7rem;border:1.5px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;font-size:0.8rem;">🧖 Head Spa<span class="rp-suggested-badge" data-type="head_spa" style="display:none;font-size:0.65rem;font-weight:400;color:var(--gray);"> · suggested</span></button>
+                style="padding:0.35rem 0.7rem;border:1.5px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;font-size:0.8rem;">Head Spa<span class="rp-suggested-badge" data-type="head_spa" style="display:none;font-size:0.65rem;font-weight:400;color:var(--gray);"> · suggested</span></button>
         <?php if (!$rp_required): ?>
         <button type="button" class="rp-type-btn" data-type=""
                 onclick="rpSelectNone('<?php echo $rp_prefix; ?>')"
