@@ -62,7 +62,6 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
         <li>
             <a href="<?php echo $item['file']; ?>.php"
                class="<?php echo strtolower($active_page ?? '') === strtolower($item['file']) ? 'active' : ''; ?>">
-                <span class="menu-icon"><?php echo $item['icon']; ?></span>
                 <?php echo $item['label']; ?>
             </a>
         </li>
