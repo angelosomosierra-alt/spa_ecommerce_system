@@ -101,7 +101,7 @@ if (isset($_GET['view'])) {
 }
 
 $page_title  = $view_user ? 'User: '.htmlspecialchars($view_user['full_name']) : 'Users';
-$page_icon   = '👥';
+$page_icon   = '';
 $active_page = 'users';
 require_once 'admin_header.php';
 ?>
@@ -119,7 +119,7 @@ require_once 'admin_header.php';
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">👤 Profile</span></div>
+        <div class="panel-header"><span class="panel-title">Profile</span></div>
         <div class="panel-body">
             <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem;">
                 <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--rust));display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:700;color:#fff;flex-shrink:0;">
@@ -130,7 +130,7 @@ require_once 'admin_header.php';
                     <div style="font-size:0.78rem;color:var(--gray);">@<?php echo htmlspecialchars($view_user['username']); ?></div>
                     <?php if (!empty($view_user['deleted_at'])): ?>
                     <div style="font-size:0.72rem;background:#FEE2E2;color:#991B1B;padding:0.2rem 0.5rem;border-radius:20px;display:inline-block;margin-top:0.3rem;">
-                        ⚠️ Deactivated <?php echo date('M d, Y', strtotime($view_user['deleted_at'])); ?>
+                        Deactivated <?php echo date('M d, Y', strtotime($view_user['deleted_at'])); ?>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -145,7 +145,7 @@ require_once 'admin_header.php';
     </div>
 
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">📅 Recent Appointments</span></div>
+        <div class="panel-header"><span class="panel-title">Recent Appointments</span></div>
         <div class="panel-body" style="padding:0;">
             <?php if (!empty($view_user['appointments'])): ?>
             <?php foreach (array_slice($view_user['appointments'], 0, 5) as $a): ?>
@@ -166,7 +166,7 @@ require_once 'admin_header.php';
 <!-- ── ACTIVE USERS TABLE ─────────────────────────────────────────────────── -->
 <div class="panel" style="margin-bottom:1.5rem;">
     <div class="panel-header">
-        <span class="panel-title">👥 Active Users (<?php echo count($users); ?>)</span>
+        <span class="panel-title">Active Users (<?php echo count($users); ?>)</span>
     </div>
     <div class="table-wrap" style="border:none;border-radius:0;">
         <table>
@@ -185,11 +185,11 @@ require_once 'admin_header.php';
                 <td><?php echo htmlspecialchars($u['phone']); ?></td>
                 <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($u['created_at'])); ?></td>
                 <td>
-                    <a href="users.php?view=<?php echo $u['id']; ?>" class="btn btn-secondary btn-sm">👁 View</a>
+                    <a href="users.php?view=<?php echo $u['id']; ?>" class="btn btn-secondary btn-sm">View</a>
                     <a href="users.php?delete=<?php echo $u['id']; ?>"
                        class="btn btn-danger btn-sm"
                        onclick="var _h=this.href;event.preventDefault();uiConfirm('Deactivate this user? Their order history and revenue data will be preserved.').then(ok=>{if(ok)window.location.href=_h;})">
-                       🚫 Deactivate
+                       Deactivate
                     </a>
                 </td>
             </tr>
@@ -206,7 +206,7 @@ require_once 'admin_header.php';
 <?php if (!empty($deleted_users)): ?>
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">🗄️ Deactivated Users (<?php echo count($deleted_users); ?>) — Revenue History Preserved</span>
+        <span class="panel-title">Deactivated Users (<?php echo count($deleted_users); ?>) — Revenue History Preserved</span>
     </div>
     <div class="table-wrap" style="border:none;border-radius:0;">
         <table>
@@ -224,11 +224,11 @@ require_once 'admin_header.php';
                 <td><?php echo htmlspecialchars($u['email']); ?></td>
                 <td style="font-size:0.78rem;color:var(--gray);"><?php echo date('M d, Y', strtotime($u['deleted_at'])); ?></td>
                 <td>
-                    <a href="users.php?view=<?php echo $u['id']; ?>" class="btn btn-secondary btn-sm">👁 View</a>
+                    <a href="users.php?view=<?php echo $u['id']; ?>" class="btn btn-secondary btn-sm">View</a>
                     <a href="users.php?restore=<?php echo $u['id']; ?>"
                        class="btn btn-success btn-sm"
                        onclick="var _h=this.href;event.preventDefault();uiConfirm('Restore this user account?').then(ok=>{if(ok)window.location.href=_h;})">
-                       ♻️ Restore
+                       Restore
                     </a>
                 </td>
             </tr>

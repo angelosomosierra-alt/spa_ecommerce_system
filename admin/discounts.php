@@ -123,13 +123,6 @@ foreach ($all_rows as $d) {
 }
 
 // ── Discount display maps ─────────────────────────────────────────────────────
-$disc_icons  = [
-    'voucher'    => '🎟️',
-    'senior'     => '👴',
-    'pwd'        => '♿',
-    'employee'   => '🪪',
-    'influencer' => '🌟',
-];
 $disc_labels = [
     'voucher'    => 'Voucher',
     'senior'     => 'Senior (20%)',
@@ -160,7 +153,7 @@ $status_colors = [
 ];
 
 $page_title  = 'Discounts';
-$page_icon   = '🎟️';
+$page_icon   = '';
 $active_page = 'discounts';
 require_once 'admin_header.php';
 ?>
@@ -168,42 +161,42 @@ require_once 'admin_header.php';
 <!-- ── KPI Cards ──────────────────────────────────────────────────────────── -->
 <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
     <div class="stat-card">
-        <div class="stat-icon">🎟️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $total_discounted; ?></div>
         <div class="stat-label">Total Discounted</div>
     </div>
     <div class="stat-card amber">
-        <div class="stat-icon">💰</div>
+        <div class="stat-icon"></div>
         <div class="stat-number">₱<?php echo number_format($total_disc_amount, 2); ?></div>
         <div class="stat-label">Total Discounts Given</div>
     </div>
     <div class="stat-card green">
-        <div class="stat-icon">✅</div>
+        <div class="stat-icon"></div>
         <div class="stat-number">₱<?php echo number_format($total_final, 2); ?></div>
         <div class="stat-label">Revenue After Discount</div>
     </div>
     <div class="stat-card blue">
-        <div class="stat-icon">👴</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $by_type['senior']; ?></div>
         <div class="stat-label">Senior Citizen</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">♿</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $by_type['pwd']; ?></div>
         <div class="stat-label">PWD</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">🎟️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $by_type['voucher']; ?></div>
         <div class="stat-label">Voucher</div>
     </div>
     <div class="stat-card amber">
-        <div class="stat-icon">🪪</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $by_type['employee']; ?></div>
         <div class="stat-label">Employee (50%)</div>
     </div>
     <div class="stat-card green">
-        <div class="stat-icon">🌟</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $by_type['influencer']; ?></div>
         <div class="stat-label">Influencer / Comp</div>
     </div>
@@ -231,11 +224,11 @@ require_once 'admin_header.php';
                         style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:7px;
                                background:var(--bg3);color:var(--brown);font-size:0.82rem;">
                     <option value="all"        <?php echo $type_filter==='all'        ?'selected':''; ?>>All Types</option>
-                    <option value="voucher"    <?php echo $type_filter==='voucher'    ?'selected':''; ?>>🎟️ Voucher</option>
-                    <option value="senior"     <?php echo $type_filter==='senior'     ?'selected':''; ?>>👴 Senior Citizen</option>
-                    <option value="pwd"        <?php echo $type_filter==='pwd'        ?'selected':''; ?>>♿ PWD</option>
-                    <option value="employee"   <?php echo $type_filter==='employee'   ?'selected':''; ?>>🪪 Employee (50%)</option>
-                    <option value="influencer" <?php echo $type_filter==='influencer' ?'selected':''; ?>>🌟 Influencer / Marketing</option>
+                    <option value="voucher"    <?php echo $type_filter==='voucher'    ?'selected':''; ?>>Voucher</option>
+                    <option value="senior"     <?php echo $type_filter==='senior'     ?'selected':''; ?>>Senior Citizen</option>
+                    <option value="pwd"        <?php echo $type_filter==='pwd'        ?'selected':''; ?>>PWD</option>
+                    <option value="employee"   <?php echo $type_filter==='employee'   ?'selected':''; ?>>Employee (50%)</option>
+                    <option value="influencer" <?php echo $type_filter==='influencer' ?'selected':''; ?>>Influencer / Marketing</option>
                 </select>
             </div>
             <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
@@ -268,7 +261,7 @@ require_once 'admin_header.php';
 <!-- ── Discounted Transactions Table ──────────────────────────────────────── -->
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">🎟️ Discounted Transactions</span>
+        <span class="panel-title">Discounted Transactions</span>
         <span style="font-size:0.78rem;color:var(--gray);">
             <?php echo $total_discounted; ?> record<?php echo $total_discounted !== 1 ? 's' : ''; ?>
             · <?php echo date('M d', strtotime($from)); ?> – <?php echo date('M d, Y', strtotime($to)); ?>
@@ -277,7 +270,7 @@ require_once 'admin_header.php';
 
     <?php if (empty($all_rows)): ?>
     <div class="panel-body" style="text-align:center;padding:3rem;color:var(--gray);">
-        <div style="font-size:2.5rem;margin-bottom:0.5rem;">🎟️</div>
+        <div style="font-size:2.5rem;margin-bottom:0.5rem;"></div>
         No discounted transactions in this period.
     </div>
     <?php else: ?>
@@ -329,7 +322,7 @@ require_once 'admin_header.php';
                     <span style="padding:0.2rem 0.65rem;border-radius:20px;font-size:0.75rem;font-weight:700;
                                  background:<?php echo $disc_colors[$dtype] ?? '#f3f4f6'; ?>;
                                  color:<?php echo $disc_text[$dtype]   ?? '#374151'; ?>;">
-                        <?php echo ($disc_icons[$dtype] ?? '🎟️') . ' ' . ($disc_labels[$dtype] ?? ucfirst($dtype)); ?>
+                        <?php echo ($disc_labels[$dtype] ?? ucfirst($dtype)); ?>
                     </span>
                 </td>
                 <td style="text-align:right;color:var(--gray);font-size:0.85rem;">

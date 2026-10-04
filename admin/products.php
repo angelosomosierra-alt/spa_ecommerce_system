@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $pr_prod_del = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$pr_prod_del) {
-            $message = "⚠️ Incorrect PIN. Archive action cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Archive action cancelled."; $message_type = "danger";
             goto end_prod_delete;
         }
     }
@@ -84,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $pr_prod_action = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$pr_prod_action) {
-            $message = "⚠️ Incorrect PIN. Action cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Action cancelled."; $message_type = "danger";
             goto end_prod_action;
         }
     }
@@ -218,7 +218,7 @@ $out_of_stock    = count(array_filter($products, fn($p) => $p['stock'] == 0));
 $in_stock        = $total_products - $out_of_stock;
 
 $page_title  = $edit_product ? 'Edit Product' : 'Products';
-$page_icon   = '🛍️';
+$page_icon   = '';
 $active_page = 'products';
 require_once 'admin_header.php';
 ?>
@@ -240,22 +240,22 @@ document.addEventListener('DOMContentLoaded', function() {
 <!-- ── STATS ──────────────────────────────────────────────────────────────── -->
 <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
     <div class="stat-card">
-        <div class="stat-icon">🛍️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $total_products; ?></div>
         <div class="stat-label">Total Products</div>
     </div>
     <div class="stat-card green">
-        <div class="stat-icon">✅</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $in_stock; ?></div>
         <div class="stat-label">In Stock</div>
     </div>
     <div class="stat-card amber">
-        <div class="stat-icon">⚠️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $low_stock_count; ?></div>
         <div class="stat-label">Low Stock</div>
     </div>
     <div class="stat-card red">
-        <div class="stat-icon">❌</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $out_of_stock; ?></div>
         <div class="stat-label">Out of Stock</div>
     </div>
@@ -271,7 +271,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <div class="form-section">
     <div class="form-section-header">
-        <?php echo $edit_product ? '✏️ Edit Product' : '➕ Add New Product'; ?>
+        <?php echo $edit_product ? 'Edit Product' : 'Add New Product'; ?>
     </div>
     <div class="form-section-body">
         <form method="POST" enctype="multipart/form-data">
@@ -355,7 +355,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <?php endif; ?>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">
-                    <?php echo $edit_product ? '✅ Update Product' : '✅ Add Product'; ?>
+                    <?php echo $edit_product ? 'Update Product' : 'Add Product'; ?>
                 </button>
                 <a href="products.php" class="btn btn-secondary">Cancel</a>
             </div>
@@ -370,7 +370,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">🛍️ All Products</span>
+        <span class="panel-title">All Products</span>
         <?php if (!isset($_GET['action'])): ?>
             <a href="products.php?action=add" class="btn btn-primary btn-sm">+ Add New Product</a>
         <?php endif; ?>
@@ -438,7 +438,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             <?php if ($product['stock'] == 0): ?>
                                 <span class="badge badge-rejected">Out of Stock</span>
                             <?php elseif ($product['stock'] <= 5): ?>
-                                <span class="badge badge-pending"><?php echo $product['stock']; ?> ⚠️</span>
+                                <span class="badge badge-pending"><?php echo $product['stock']; ?></span>
                             <?php else: ?>
                                 <span class="badge badge-approved"><?php echo $product['stock']; ?></span>
                             <?php endif; ?>
@@ -455,7 +455,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <?php echo csrf_field(); ?>
                                 <input type="hidden" name="action" value="restore_product">
                                 <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">
-                                <button type="submit" class="btn btn-secondary btn-sm">♻️ Restore</button>
+                                <button type="submit" class="btn btn-secondary btn-sm">Restore</button>
                             </form>
                             <?php else: ?>
                             <a href="products.php?edit=<?php echo $product['id']; ?>" class="btn btn-info btn-sm">Edit</a>
@@ -467,7 +467,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <input type="password" name="pin" maxlength="4" placeholder="PIN" required
                                        style="width:58px;padding:0.25rem 0.4rem;border:1px solid var(--border2);border-radius:6px;font-size:0.8rem;letter-spacing:0.2em;text-align:center;vertical-align:middle;">
                                 <?php endif; ?>
-                                <button type="submit" class="btn btn-danger btn-sm">🗃️ Archive</button>
+                                <button type="submit" class="btn btn-danger btn-sm">Archive</button>
                             </form>
                             <?php endif; ?>
                         </td>

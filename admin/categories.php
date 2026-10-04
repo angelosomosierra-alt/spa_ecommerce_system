@@ -83,7 +83,7 @@ while ($row = $result->fetch_assoc()) {
     else $product_cats[] = $row;
 }
 
-$page_title = 'Categories'; $page_icon = '🏷️'; $active_page = 'categories';
+$page_title = 'Categories'; $page_icon = ''; $active_page = 'categories';
 require_once 'admin_header.php';
 ?>
 
@@ -93,7 +93,7 @@ require_once 'admin_header.php';
 
 <!-- Add Form -->
 <div class="form-section" style="margin-bottom:1.5rem;">
-    <div class="form-section-header">➕ Add New Category</div>
+    <div class="form-section-header">Add New Category</div>
     <div class="form-section-body">
         <form method="POST">
             <?php echo csrf_field(); ?>
@@ -125,7 +125,7 @@ require_once 'admin_header.php';
     <!-- Service Categories -->
     <div class="category-panel">
         <div class="category-panel-header">
-            💆 Service Categories
+            Service Categories
             <span style="margin-left:auto;color:var(--gray);font-size:0.72rem;"><?php echo count($service_cats); ?> total</span>
         </div>
         <div class="category-panel-body">
@@ -134,9 +134,9 @@ require_once 'admin_header.php';
                 <span class="category-name"><?php echo htmlspecialchars($cat['name']); ?></span>
                 <span class="category-count"><?php echo $cat['service_count']; ?> service(s)</span>
                 <div class="category-actions">
-                    <button class="btn btn-info btn-sm" onclick="openEdit(<?php echo $cat['id']; ?>,'<?php echo htmlspecialchars($cat['name']); ?>','service')">✏️</button>
+                    <button class="btn btn-info btn-sm" onclick="openEdit(<?php echo $cat['id']; ?>,'<?php echo htmlspecialchars($cat['name']); ?>','service')">Edit</button>
                     <?php if ($cat['service_count']==0): ?>
-                    <a href="categories.php?delete=<?php echo $cat['id']; ?>" class="btn btn-danger btn-sm" onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete?').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
+                    <a href="categories.php?delete=<?php echo $cat['id']; ?>" class="btn btn-danger btn-sm" onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete?').then(ok=>{if(ok)window.location.href=_h;})">Delete</a>
                     <?php else: ?>
                     <span style="font-size:0.72rem;color:var(--gray);padding:0.2rem 0.4rem;">In use</span>
                     <?php endif; ?>
@@ -151,7 +151,7 @@ require_once 'admin_header.php';
     <!-- Product Categories -->
     <div class="category-panel">
         <div class="category-panel-header">
-            🛍️ Product Categories
+            Product Categories
             <span style="margin-left:auto;color:var(--gray);font-size:0.72rem;"><?php echo count($product_cats); ?> total</span>
         </div>
         <div class="category-panel-body">
@@ -160,9 +160,9 @@ require_once 'admin_header.php';
                 <span class="category-name"><?php echo htmlspecialchars($cat['name']); ?></span>
                 <span class="category-count"><?php echo $cat['product_count']; ?> product(s)</span>
                 <div class="category-actions">
-                    <button class="btn btn-info btn-sm" onclick="openEdit(<?php echo $cat['id']; ?>,'<?php echo htmlspecialchars($cat['name']); ?>','product')">✏️</button>
+                    <button class="btn btn-info btn-sm" onclick="openEdit(<?php echo $cat['id']; ?>,'<?php echo htmlspecialchars($cat['name']); ?>','product')">Edit</button>
                     <?php if ($cat['product_count']==0): ?>
-                    <a href="categories.php?delete=<?php echo $cat['id']; ?>" class="btn btn-danger btn-sm" onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete?').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
+                    <a href="categories.php?delete=<?php echo $cat['id']; ?>" class="btn btn-danger btn-sm" onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete?').then(ok=>{if(ok)window.location.href=_h;})">Delete</a>
                     <?php else: ?>
                     <span style="font-size:0.72rem;color:var(--gray);padding:0.2rem 0.4rem;">In use</span>
                     <?php endif; ?>
@@ -179,7 +179,7 @@ require_once 'admin_header.php';
 <div class="modal-overlay" id="editModal">
     <div class="modal-box">
         <div class="modal-box-header">
-            <span class="modal-box-title">✏️ Edit Category</span>
+            <span class="modal-box-title">Edit Category</span>
             <button class="modal-box-close" onclick="document.getElementById('editModal').classList.remove('active')">✕</button>
         </div>
         <div class="modal-box-body">

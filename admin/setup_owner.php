@@ -12,7 +12,7 @@ if ($count > 0) {
     .box{background:#fff;padding:2rem;border-radius:14px;max-width:420px;
     text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
     h2{color:#3B2A1A;}p{color:#666;}</style></head><body>
-    <div class="box"><h2>⚠️ Setup Already Complete</h2>
+    <div class="box"><h2>Setup Already Complete</h2>
     <p>An admin account already exists.<br>
     <strong>Delete this file for security:</strong><br>
     <code>admin/setup_owner.php</code></p></div></body></html>');
@@ -289,14 +289,14 @@ body {
 <?php if ($success): ?>
 
     <div class="success-box">
-        <div class="success-icon">✅</div>
+        <div class="success-icon"></div>
         <div class="success-title">Owner Account Created!</div>
         <p class="success-msg">
             Your owner account is ready. You can now log in to the admin panel.
         </p>
 
         <div class="delete-warning">
-            <strong>⚠️ Security: Delete this file immediately.</strong>
+            <strong>Security: Delete this file immediately.</strong>
             This setup page is no longer needed and leaving it on the server
             is a security risk. Remove the file at:<br><br>
             <code>admin/setup_owner.php</code>
@@ -362,7 +362,7 @@ body {
                        placeholder="Create a strong password"
                        autocomplete="new-password"
                        oninput="checkPwStrength(this.value)">
-                <button type="button" class="pw-eye" onclick="togglePw('password', this)" aria-label="Show password">👁</button>
+                <button type="button" class="pw-eye" onclick="togglePw('password', this)" aria-label="Show password">Show</button>
             </div>
             <div class="pw-checklist">
                 <div class="pw-rule" id="rule-len">8+ characters</div>
@@ -378,7 +378,7 @@ body {
                 <input type="password" id="confirm_password" name="confirm_password"
                        placeholder="Re-enter your password"
                        autocomplete="new-password">
-                <button type="button" class="pw-eye" onclick="togglePw('confirm_password', this)" aria-label="Show password">👁</button>
+                <button type="button" class="pw-eye" onclick="togglePw('confirm_password', this)" aria-label="Show password">Show</button>
             </div>
         </div>
 
@@ -397,7 +397,7 @@ function togglePw(id, btn) {
     var inp = document.getElementById(id);
     var show = inp.type === 'password';
     inp.type = show ? 'text' : 'password';
-    btn.textContent = show ? '🙈' : '👁';
+    btn.textContent = show ? 'Hide' : 'Show';
 }
 
 function checkPwStrength(val) {
@@ -417,7 +417,7 @@ document.querySelector('form') && document.querySelector('form').addEventListene
     if (e.defaultPrevented) return;
     var btn = this.querySelector('button[type="submit"]');
     if (!btn || btn.disabled) return;
-    setTimeout(function() { btn.disabled = true; btn.textContent = '⏳ Creating account…'; }, 10);
+    setTimeout(function() { btn.disabled = true; btn.textContent = 'Creating account…'; }, 10);
 });
 </script>
 
