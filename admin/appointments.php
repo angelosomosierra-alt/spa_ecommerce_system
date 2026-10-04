@@ -216,9 +216,9 @@ function send_approval_email($conn, $appt_id) {
         $appt_date     = date('F d, Y', strtotime($appt['appointment_date']));
         $appt_time     = date('h:i A',  strtotime($appt['appointment_date']));
         $therapist_txt = $appt['therapist_name'] ? htmlspecialchars($appt['therapist_name']) : 'To be assigned';
-        $svc_type      = $appt['service_type'] === 'home' ? '🏠 Home Service' : '🏢 On-site';
+        $svc_type      = $appt['service_type'] === 'home' ? 'Home Service' : 'On-site';
 
-        $mail->Subject = '✅ Your Appointment is Confirmed — Recovery Iloilo';
+        $mail->Subject = 'Your Appointment is Confirmed — Recovery Iloilo';
         $mail->Body    = "
         <div style='font-family:Georgia,serif;max-width:580px;margin:0 auto;background:#fff;'>
             <div style='background:linear-gradient(135deg,#3B2A1A,#C96A2C);padding:2rem;text-align:center;'>
@@ -226,7 +226,7 @@ function send_approval_email($conn, $appt_id) {
                 <p style='color:#EAD8C0;margin:0.4rem 0 0;font-size:0.9rem;letter-spacing:0.1em;'>MASSAGE · THERAPY · PAMPER</p>
             </div>
             <div style='padding:2rem;'>
-                <h2 style='color:#C96A2C;margin:0 0 0.5rem;font-size:1.3rem;'>✅ Appointment Confirmed!</h2>
+                <h2 style='color:#C96A2C;margin:0 0 0.5rem;font-size:1.3rem;'>Appointment Confirmed!</h2>
                 <p style='color:#3B2A1A;margin:0 0 1.5rem;'>
                     Hi <strong>" . htmlspecialchars($appt['full_name']) . "</strong>,<br>
                     Your appointment has been approved. You may now proceed to the spa.
@@ -234,33 +234,33 @@ function send_approval_email($conn, $appt_id) {
                 <div style='background:#FAF3E8;border-radius:12px;padding:1.25rem;border:1px solid #EAD8C0;margin-bottom:1.5rem;'>
                     <table style='width:100%;border-collapse:collapse;'>
                         <tr>
-                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;width:40%;'>📋 Service</td>
+                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;width:40%;'>Service</td>
                             <td style='padding:0.5rem 0;color:#3B2A1A;font-weight:600;'>" . htmlspecialchars($appt['service_name']) . "</td>
                         </tr>
                         <tr>
-                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>📅 Date</td>
+                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>Date</td>
                             <td style='padding:0.5rem 0;color:#3B2A1A;font-weight:600;border-top:1px solid #EAD8C0;'>{$appt_date}</td>
                         </tr>
                         <tr>
-                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>🕐 Time</td>
+                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>Time</td>
                             <td style='padding:0.5rem 0;color:#3B2A1A;font-weight:600;border-top:1px solid #EAD8C0;'>{$appt_time}</td>
                         </tr>
                         <tr>
-                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>⏱ Duration</td>
+                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>Duration</td>
                             <td style='padding:0.5rem 0;color:#3B2A1A;font-weight:600;border-top:1px solid #EAD8C0;'>" . $appt['session_time'] . " minutes</td>
                         </tr>
                         <tr>
-                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>💆 Therapist</td>
+                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>Therapist</td>
                             <td style='padding:0.5rem 0;color:#3B2A1A;font-weight:600;border-top:1px solid #EAD8C0;'>{$therapist_txt}</td>
                         </tr>
                         <tr>
-                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>🏷️ Type</td>
+                            <td style='padding:0.5rem 0;color:#888;font-size:0.85rem;border-top:1px solid #EAD8C0;'>Type</td>
                             <td style='padding:0.5rem 0;color:#3B2A1A;font-weight:600;border-top:1px solid #EAD8C0;'>{$svc_type}</td>
                         </tr>
                     </table>
                 </div>
                 <div style='background:#fff8f2;border-left:4px solid #C96A2C;padding:1rem;border-radius:0 8px 8px 0;margin-bottom:1.5rem;'>
-                    <strong style='color:#C96A2C;'>📍 Important Reminders:</strong>
+                    <strong style='color:#C96A2C;'>Important Reminders:</strong>
                     <ul style='color:#3B2A1A;margin:0.5rem 0 0;padding-left:1.2rem;font-size:0.88rem;line-height:1.8;'>
                         <li>Please arrive <strong>15–20 minutes early</strong> to prepare for your session</li>
                         <li>Wear comfortable, loose-fitting clothing</li>
@@ -369,7 +369,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
         if ($conf_count > 0) {
             $t_end   = date('h:i A', strtotime($ai_date . ' +' . $ai_end_mins . ' minutes'));
             $t_start = date('h:i A', strtotime($ai_date . ' -' . $ai_buffer . ' minutes'));
-            $message = "⚠️ Therapist is already booked during {$t_start}–{$t_end}" . ($ai_buffer ? " (incl. travel buffer)" : "") . ".";
+            $message = "Therapist is already booked during {$t_start}–{$t_end}" . ($ai_buffer ? " (incl. travel buffer)" : "") . ".";
             $message_type = "danger";
         } else {
             $ins = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, notes, commission, people_handled) VALUES (?,?,?,?,?)");
@@ -399,7 +399,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
                 $_cf_upd->bind_param("isi", $_has_cf, $_cf_json, $appt_id);
                 $_cf_upd->execute(); $_cf_upd->close();
             }
-            $message = $ok ? "✅ Therapist assigned." : "Failed.";
+            $message = $ok ? "Therapist assigned." : "Failed.";
             $message_type = $ok ? "success" : "danger";
         }
     }
@@ -442,7 +442,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
     $es_ok = true;
     $blocked_statuses = ['completed','declined','cancelled','refund_requested'];
     if (!$es_appt || in_array($es_appt['status'], $blocked_statuses)) {
-        $message = "❌ Cannot add services to a " . ($es_appt ? $es_appt['status'] : 'unknown') . " appointment.";
+        $message = "Cannot add services to a " . ($es_appt ? $es_appt['status'] : 'unknown') . " appointment.";
         $message_type = "danger"; $es_ok = false;
     } elseif (!$es_service_id) {
         $message = "Please select a service."; $message_type = "danger"; $es_ok = false;
@@ -500,7 +500,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         $es_qual_count = (int)$es_qual->get_result()->fetch_assoc()['total'];
         $es_qual->close();
         if ($es_qual_count === 0) {
-            $message = "⚠️ The selected therapist is not qualified for this service.";
+            $message = "The selected therapist is not qualified for this service.";
             $message_type = "danger"; $es_ok = false;
         }
     }
@@ -542,7 +542,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         $es_new_id = (int)$conn->insert_id;
         $es_ins->close();
 
-        $message = "✅ Extra service added for {$es_person_label}.";
+        $message = "Extra service added for {$es_person_label}.";
         $message_type = "success";
     }
 
@@ -591,7 +591,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $pr_edit = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$pr_edit) {
-            $message = "⚠️ Incorrect PIN. Edit action cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Edit action cancelled."; $message_type = "danger";
             goto skip_edit;
         }
     }
@@ -637,7 +637,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
                 0, AvailabilityEngine::ADMIN_CLOSE_HOUR
             );
             if (!$check['available']) {
-                $message = '❌ Cannot edit: ' . ($check['reason'] ?? 'Slot not available.');
+                $message = 'Cannot edit: ' . ($check['reason'] ?? 'Slot not available.');
                 $message_type = 'danger';
                 goto skip_edit;
             }
@@ -672,7 +672,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
                 if ($conf_count > 0) {
                     $ra_t_end   = date('h:i A', strtotime($booking_date . ' +' . $ra_end_mins . ' minutes'));
                     $ra_t_start = date('h:i A', strtotime($booking_date . ' -' . $ra_buffer . ' minutes'));
-                    $message = "⚠️ Therapist is already booked during {$ra_t_start}–{$ra_t_end}" . ($ra_buffer ? " (incl. travel buffer)" : "") . ".";
+                    $message = "Therapist is already booked during {$ra_t_start}–{$ra_t_end}" . ($ra_buffer ? " (incl. travel buffer)" : "") . ".";
                     $message_type = "danger";
                     goto skip_edit;
                 }
@@ -735,7 +735,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
                 WHERE id={$appt_id} AND status='assigned'");
         }
 
-        $message = '✅ Appointment updated.'; $message_type = 'success';
+        $message = 'Appointment updated.'; $message_type = 'success';
         $_actor_edit = (is_cashier() && !empty($pr_edit['full_name']))
             ? ['id' => null, 'name' => $pr_edit['full_name'], 'role' => 'receptionist']
             : null;
@@ -773,10 +773,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_s
                 $appt_ins->bind_param("iiisid",$ord['user_id'],$service_id,$new_oi_id,$booking_date,$people_count,$svc['price']);
                 $appt_ins->execute(); $appt_ins->close();
                 $conn->commit();
-                $message = '✅ Service added to order.'; $message_type = 'success';
+                $message = 'Service added to order.'; $message_type = 'success';
             } catch (Throwable $e) {
                 $conn->rollback();
-                $message = '❌ Failed: ' . $e->getMessage(); $message_type = 'danger';
+                $message = 'Failed: ' . $e->getMessage(); $message_type = 'danger';
             }
         }
     }
@@ -793,7 +793,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resch
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $pr_rs = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$pr_rs) {
-            $message = "⚠️ Incorrect PIN. Reschedule action cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Reschedule action cancelled."; $message_type = "danger";
             goto skip_reschedule;
         }
     }
@@ -819,11 +819,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resch
             $upd->execute(); $upd->close();
 
             add_notification($conn, $chk_row['user_id'], 'appointment',
-                '📅 Appointment Rescheduled',
+                'Appointment Rescheduled',
                 'Your appointment has been rescheduled to ' . date('F d, Y h:i A', strtotime($new_datetime)) . '.',
                 'appointments.php'
             );
-            $message = "📅 Appointment #$appt_id rescheduled to " . date('F d, Y h:i A', strtotime($new_datetime)) . ".";
+            $message = "Appointment #$appt_id rescheduled to " . date('F d, Y h:i A', strtotime($new_datetime)) . ".";
             $message_type = "success";
             $_actor_rs = (is_cashier() && !empty($pr_rs['full_name']))
                 ? ['id' => null, 'name' => $pr_rs['full_name'], 'role' => 'receptionist']
@@ -856,7 +856,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $pr_cn = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$pr_cn) {
-            $message = "⚠️ Incorrect PIN. Cancel action cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Cancel action cancelled."; $message_type = "danger";
             goto skip_cancel;
         }
     }
@@ -907,13 +907,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
             $conn->commit();
         } catch (Throwable $e) {
             $conn->rollback();
-            $message = "❌ Failed to cancel appointment: " . htmlspecialchars($e->getMessage());
+            $message = "Failed to cancel appointment: " . htmlspecialchars($e->getMessage());
             $message_type = "danger";
             goto skip_cancel;
         }
 
         add_notification($conn, $chk_row['user_id'], 'appointment',
-            '🚫 Appointment Cancelled',
+            'Appointment Cancelled',
             'Your ' . $chk_row['service_name'] . ' appointment has been cancelled.' . ($cancel_reason ? ' Reason: ' . $cancel_reason : ''),
             'appointments.php'
         );
@@ -926,16 +926,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
 
         if ($s2_cascaded_id) {
             add_notification($conn, $chk_row['user_id'], 'appointment',
-                '🚫 2-Session Package Cancelled',
+                '2-Session Package Cancelled',
                 'Session 2 of your ' . $chk_row['service_name'] . ' package has also been cancelled because Session 1 was a no-show.',
                 'appointments.php'
             );
             log_activity($conn, 'appointment_cancelled',
                 "Cascaded cancellation to appointment #{$s2_cascaded_id} (Session 2) — Session 1 (#{$appt_id}) was a no-show",
                 'appointment', $s2_cascaded_id, $_actor_cn);
-            $message = "🚫 Appointment #$appt_id marked as no-show — Session 2 (#$s2_cascaded_id) was also cancelled.";
+            $message = "Appointment #$appt_id marked as no-show — Session 2 (#$s2_cascaded_id) was also cancelled.";
         } else {
-            $message = "🚫 Appointment #$appt_id marked as cancelled.";
+            $message = "Appointment #$appt_id marked as cancelled.";
         }
         $message_type = "success";
     } else {
@@ -981,7 +981,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_r
             : "Cleared resource assignment for appointment #{$sr_appt_id}",
         'appointment', $sr_appt_id);
 
-    echo json_encode(['success' => true, 'message' => $sr_resource_id > 0 ? '✅ Resource assigned.' : '✅ Resource cleared.']);
+    echo json_encode(['success' => true, 'message' => $sr_resource_id > 0 ? 'Resource assigned.' : 'Resource cleared.']);
     exit();
 }
 
@@ -1023,7 +1023,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr_approve = $ps->get_result()->fetch_assoc(); $ps->close();
                 if (!$pr_approve) {
-                    $message = "⚠️ Incorrect PIN. Approve action cancelled."; $message_type = "danger";
+                    $message = "Incorrect PIN. Approve action cancelled."; $message_type = "danger";
                     goto end_action;
                 }
             }
@@ -1111,7 +1111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                             . htmlspecialchars($notif_therapist).' will be your therapist. '
                             . 'Please arrive by '.$notif_appt_time.'.';
 
-                add_notification($conn,$appt['user_id'],'appointment','✅ Appointment Confirmed!',
+                add_notification($conn,$appt['user_id'],'appointment','Appointment Confirmed!',
                     $notif_body, 'appointments.php');
 
                 send_approval_email($conn, $appt_id);
@@ -1136,7 +1136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr = $ps->get_result()->fetch_assoc(); $ps->close();
                 if (!$pr) {
-                    $message = "⚠️ Incorrect PIN. Decline action cancelled."; $message_type = "danger";
+                    $message = "Incorrect PIN. Decline action cancelled."; $message_type = "danger";
                     goto end_action;
                 }
             }
@@ -1155,7 +1155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     $upd_ord->bind_param("i", $oi_row['order_id']); $upd_ord->execute(); $upd_ord->close();
                 }
             }
-            add_notification($conn,$appt['user_id'],'appointment','❌ Appointment Declined',
+            add_notification($conn,$appt['user_id'],'appointment','Appointment Declined',
                 'Your '.$appt['service_name'].' appointment has been declined.','appointments.php');
             $message = "Appointment #$appt_id declined."; $message_type = "danger";
             $_actor_dc = (is_cashier() && !empty($pr['full_name']))
@@ -1176,7 +1176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $ci_filled = (int)$ci_fc->get_result()->fetch_assoc()['c']; $ci_fc->close();
 
             if ($ci_filled < $ci_people_needed) {
-                $message = '❌ Cannot check in — assign a therapist to all '
+                $message = 'Cannot check in — assign a therapist to all '
                          . $ci_people_needed . ' person slot(s) first ('
                          . $ci_filled . '/' . $ci_people_needed . ' assigned).';
                 $message_type = 'danger';
@@ -1195,7 +1195,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $et_q->close();
 
             if (!empty($_uc_extra)) {
-                $message = '❌ Cannot check in — assign a therapist to extra service(s): '
+                $message = 'Cannot check in — assign a therapist to extra service(s): '
                          . implode(', ', $_uc_extra) . '.';
                 $message_type = 'danger';
                 goto end_action;
@@ -1209,7 +1209,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr_ci = $ps->get_result()->fetch_assoc(); $ps->close();
                 if (!$pr_ci) {
-                    $message = "⚠️ Incorrect PIN. Check-in action cancelled."; $message_type = "danger";
+                    $message = "Incorrect PIN. Check-in action cancelled."; $message_type = "danger";
                     goto end_action;
                 }
             }
@@ -1217,7 +1217,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             // ── Pay Now / Pay Later choice ────────────────────────────────────
             $pay_choice = sanitize_input($_POST['pay_choice'] ?? '');
             if (!in_array($pay_choice, ['now', 'later'])) {
-                $message = '❌ Please choose Pay Now or Pay Later.'; $message_type = 'danger';
+                $message = 'Please choose Pay Now or Pay Later.'; $message_type = 'danger';
                 goto end_action;
             }
 
@@ -1254,7 +1254,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                                     $ci_disc_amt = round(min($ci_vchr_value, $ci_base), 2);
                                 }
                             } else {
-                                $message .= ($message ? ' ' : '') . '⚠️ Voucher amount not entered — no discount applied.';
+                                $message .= ($message ? ' ' : '') . 'Voucher amount not entered — no discount applied.';
                                 $ci_disc_type = 'none';
                             }
                         }
@@ -1323,13 +1323,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $conn->commit();
             } catch (Throwable $e) {
                 $conn->rollback();
-                $message = "❌ Failed to check in appointment: " . htmlspecialchars($e->getMessage());
+                $message = "Failed to check in appointment: " . htmlspecialchars($e->getMessage());
                 $message_type = "danger";
                 goto end_action;
             }
             // ── End atomic transaction ────────────────────────────────────────────
 
-            add_notification($conn, $appt['user_id'], 'appointment', '✅ You\'ve been checked in!',
+            add_notification($conn, $appt['user_id'], 'appointment', 'You\'ve been checked in!',
                 'You have been checked in for your '.$appt['service_name'].' appointment. Your session will begin shortly.',
                 'appointments.php');
 
@@ -1352,7 +1352,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr = $ps->get_result()->fetch_assoc(); $ps->close();
                 if (!$pr) {
-                    $message = "⚠️ Incorrect PIN. Complete action cancelled."; $message_type = "danger";
+                    $message = "Incorrect PIN. Complete action cancelled."; $message_type = "danger";
                     goto end_action;
                 }
             }
@@ -1364,7 +1364,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $cp_unresolved->bind_param("i", $appt_id); $cp_unresolved->execute();
             $cp_unresolved_count = (int)$cp_unresolved->get_result()->fetch_assoc()['c']; $cp_unresolved->close();
             if ($cp_unresolved_count > 0) {
-                $message = "⚠️ Assign a specific therapist (not \"Any Available\") to every person slot before completing — commission can't be calculated otherwise.";
+                $message = "Assign a specific therapist (not \"Any Available\") to every person slot before completing — commission can't be calculated otherwise.";
                 $message_type = "danger";
                 goto end_action;
             }
@@ -1555,7 +1555,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $conn->commit();
             } catch (Throwable $e) {
                 $conn->rollback();
-                $message = "❌ Failed to complete appointment: " . htmlspecialchars($e->getMessage());
+                $message = "Failed to complete appointment: " . htmlspecialchars($e->getMessage());
                 $message_type = "danger";
                 goto end_action;
             }
@@ -1633,7 +1633,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $upd2->bind_param("ii", $new_order, $dt['therapist_id']); $upd2->execute(); $upd2->close();
             }
 
-            add_notification($conn,$appt['user_id'],'appointment','🎉 Session Completed!',
+            add_notification($conn,$appt['user_id'],'appointment','Session Completed!',
                 'Your '.$appt['service_name'].' session is done. Thank you for visiting! Please leave a feedback.',
                 'appointments.php');
             // Send completion receipt email with full breakdown
@@ -1646,7 +1646,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     send_completion_receipt($conn, $appt_id, (int)$_ord_id_row['order_id']);
                 }
             }
-            $message = "🎉 Appointment #$appt_id completed. Therapist(s) returned to rotation."; $message_type = "success";
+            $message = "Appointment #$appt_id completed. Therapist(s) returned to rotation."; $message_type = "success";
             $_actor_cp = (is_cashier() && !empty($pr['full_name']))
                 ? ['id' => null, 'name' => $pr['full_name'], 'role' => 'receptionist']
                 : null;
@@ -1665,7 +1665,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $ps->bind_param("s", $entered_pin); $ps->execute();
                 $pr_spi = $ps->get_result()->fetch_assoc(); $ps->close();
                 if (!$pr_spi) {
-                    $message = "⚠️ Incorrect PIN. Action cancelled."; $message_type = "danger";
+                    $message = "Incorrect PIN. Action cancelled."; $message_type = "danger";
                     goto end_action;
                 }
             }
@@ -1730,7 +1730,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
 
                 // Notify customer + send approval email + approve linked order
                 add_notification($conn, $appt['user_id'], 'appointment',
-                    '💆 Therapist Assigned — Appointment Confirmed!',
+                    'Therapist Assigned — Appointment Confirmed!',
                     'Your ' . $appt['service_name'] . ' appointment on ' .
                     date('F j, Y g:i A', strtotime($appt['appointment_date'])) .
                     ' has been confirmed.',
@@ -1751,7 +1751,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     }
                 }
 
-                $message = "✅ Therapists assigned successfully."; $message_type = "success";
+                $message = "Therapists assigned successfully."; $message_type = "success";
                 $_actor_spi = (is_cashier() && !empty($pr_spi['full_name']))
                     ? ['id' => null, 'name' => $pr_spi['full_name'], 'role' => 'receptionist']
                     : null;
@@ -1765,12 +1765,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
 
         } elseif ($action === 'revert_complete') {
             if (!is_full_access()) {
-                $message = '❌ Only owner/IT can revert a completed appointment.';
+                $message = 'Only owner/IT can revert a completed appointment.';
                 $message_type = 'danger';
                 goto end_action;
             }
             if ($appt['status'] !== 'completed') {
-                $message = '❌ Appointment is not in Completed status.';
+                $message = 'Appointment is not in Completed status.';
                 $message_type = 'danger';
                 goto end_action;
             }
@@ -1779,7 +1779,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $rv_lock_chk->bind_param("s", $rv_date); $rv_lock_chk->execute();
             $rv_locked = $rv_lock_chk->get_result()->fetch_assoc(); $rv_lock_chk->close();
             if ($rv_locked) {
-                $message = '❌ Cannot revert — the daily report for ' . date('M d, Y', strtotime($rv_date)) . ' is already locked/submitted.';
+                $message = 'Cannot revert — the daily report for ' . date('M d, Y', strtotime($rv_date)) . ' is already locked/submitted.';
                 $message_type = 'danger';
                 goto end_action;
             }
@@ -1799,12 +1799,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $rv_ord->bind_param("i", $appt_id); $rv_ord->execute(); $rv_ord->close();
                 $conn->commit();
                 $svc_name = htmlspecialchars($appt['service_name']);
-                $message = "✅ Completion reverted for <strong>{$svc_name}</strong> (#{$appt_id}). Appointment is back to Assigned. Commission reset to ₱0.";
+                $message = "Completion reverted for <strong>{$svc_name}</strong> (#{$appt_id}). Appointment is back to Assigned. Commission reset to ₱0.";
                 $message_type = 'success';
                 log_activity($conn, 'revert_complete', "Reverted completion of appointment #{$appt_id} — {$appt['service_name']}", 'appointment', $appt_id, null);
             } catch (Exception $e) {
                 $conn->rollback();
-                $message = '❌ Failed to revert: ' . htmlspecialchars($e->getMessage());
+                $message = 'Failed to revert: ' . htmlspecialchars($e->getMessage());
                 $message_type = 'danger';
             }
 
@@ -1986,7 +1986,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $ap_res_upd->bind_param("ii", $ap_auto_resource_id, $appt_id);
                         $ap_res_upd->execute(); $ap_res_upd->close();
                     } else {
-                        $ap_warning = "⚠️ Approved, but no {$ap_suggested_type} was available to auto-assign — please assign a resource manually.";
+                        $ap_warning = "Approved, but no {$ap_suggested_type} was available to auto-assign — please assign a resource manually.";
                     }
                 }
             }
@@ -1998,7 +1998,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
 
             if ($ap_affected > 0) {
                 add_notification($conn, $appt['user_id'], 'appointment',
-                    '💆 Therapist Assigned — Appointment Confirmed!',
+                    'Therapist Assigned — Appointment Confirmed!',
                     'Your ' . $appt['service_name'] . ' appointment on ' .
                     date('F j, Y g:i A', strtotime($appt['appointment_date'])) .
                     ' has been confirmed.',
@@ -2060,7 +2060,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'assig
         $as_upd = $conn->prepare("UPDATE appointment_sessions SET session_date=?, therapist_id=?, status='scheduled' WHERE id=?");
         $as_upd->bind_param("sii", $as_date, $as_tid, $as_sess_id);
         $as_upd->execute(); $as_upd->close();
-        $message = "✅ Session {$as_row['session_number']} scheduled."; $message_type = "success";
+        $message = "Session {$as_row['session_number']} scheduled."; $message_type = "success";
         log_activity($conn, 'session_assigned', "Assigned date/therapist for session {$as_row['session_number']} of appointment #{$as_appt_id}", 'appointment', $as_appt_id, null);
     }
 }
@@ -2093,15 +2093,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
     if (!$cis_row) {
         $message = "Session not found."; $message_type = "danger";
     } elseif ($cis_row['appt_status'] !== 'approved') {
-        $message = "⚠️ Check in the appointment itself first before checking in individual sessions."; $message_type = "danger";
+        $message = "Check in the appointment itself first before checking in individual sessions."; $message_type = "danger";
     } elseif (!$cis_prev_ok) {
-        $message = "⚠️ Session " . ((int)$cis_row['session_number'] - 1) . " must be completed before checking in Session {$cis_row['session_number']}."; $message_type = "danger";
+        $message = "Session " . ((int)$cis_row['session_number'] - 1) . " must be completed before checking in Session {$cis_row['session_number']}."; $message_type = "danger";
     } elseif ($cis_row['status'] !== 'scheduled') {
         $message = "This session must be scheduled (date + therapist assigned) before check-in."; $message_type = "danger";
     } else {
         $cis_upd = $conn->prepare("UPDATE appointment_sessions SET status='checked_in', checked_in_at=NOW() WHERE id=?");
         $cis_upd->bind_param("i", $cis_sess_id); $cis_upd->execute(); $cis_upd->close();
-        $message = "✅ Session {$cis_row['session_number']} checked in."; $message_type = "success";
+        $message = "Session {$cis_row['session_number']} checked in."; $message_type = "success";
         log_activity($conn, 'session_checked_in', "Checked in session {$cis_row['session_number']} of appointment #{$cis_appt_id}", 'appointment', $cis_appt_id, null);
     }
 }
@@ -2119,7 +2119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $cs_pr = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$cs_pr) {
-            $message = "⚠️ Incorrect PIN. Complete Session cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Complete Session cancelled."; $message_type = "danger";
             goto skip_complete_session;
         }
     }
@@ -2144,11 +2144,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
     if (!$cs_row) {
         $message = "Session not found."; $message_type = "danger";
     } elseif ($cs_row['status'] !== 'checked_in') {
-        $message = "⚠️ Session {$cs_row['session_number']} can't be completed yet — it is " . str_replace('_', ' ', $cs_row['status']) . ". Check it in first."; $message_type = "danger";
+        $message = "Session {$cs_row['session_number']} can't be completed yet — it is " . str_replace('_', ' ', $cs_row['status']) . ". Check it in first."; $message_type = "danger";
     } elseif (empty($cs_row['session_count']) || (int)$cs_row['session_count'] <= 1) {
         $message = "This appointment is not linked to a session-count package."; $message_type = "danger";
     } elseif (empty($cs_row['therapist_id'])) {
-        $message = "⚠️ Assign a specific therapist to Session {$cs_row['session_number']} before completing it — commission can't be calculated otherwise."; $message_type = "danger";
+        $message = "Assign a specific therapist to Session {$cs_row['session_number']} before completing it — commission can't be calculated otherwise."; $message_type = "danger";
     } else {
         $session_count_total = (int)$cs_row['session_count'];
         $session_price       = round(floatval($cs_row['charged_price']) / $session_count_total, 2);
@@ -2240,14 +2240,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
             }
 
             $conn->commit();
-            $message = "🎉 Session {$cs_row['session_number']} of {$session_count_total} completed." . ($remaining === 0 ? ' All sessions done — appointment marked Completed.' : '');
+            $message = "Session {$cs_row['session_number']} of {$session_count_total} completed." . ($remaining === 0 ? ' All sessions done — appointment marked Completed.' : '');
             $message_type = "success";
             log_activity($conn, 'session_completed',
                 "Completed session {$cs_row['session_number']} of {$session_count_total} for appointment #{$cs_appt_id} — {$cs_row['service_name']}",
                 'appointment', $cs_appt_id, null);
         } catch (Throwable $e) {
             $conn->rollback();
-            $message = "❌ Failed to complete session: " . htmlspecialchars($e->getMessage());
+            $message = "Failed to complete session: " . htmlspecialchars($e->getMessage());
             $message_type = "danger";
         }
     }
@@ -2409,7 +2409,6 @@ unset($_appt_ref);
 $resource_map = [];
 $_res_rows = $conn->query("SELECT id, name, type FROM service_resources");
 if ($_res_rows) { while ($_rr = $_res_rows->fetch_assoc()) { $resource_map[(int)$_rr['id']] = $_rr; } }
-$resource_type_icons = ['room' => '🚪', 'chair' => '💺', 'head_spa' => '🧖'];
 
 // Stats — global (non-date-filtered) counts, resolved through the SAME
 // effective_status rule as the Kanban board so tab badges never diverge from
@@ -2507,7 +2506,7 @@ foreach ($all_services_list as $_sv) {
 }
 
 $page_title  = 'Appointments';
-$page_icon   = '📅';
+$page_icon   = '';
 $active_page = 'appointments';
 require_once 'admin_header.php';
 ?>
@@ -2521,11 +2520,10 @@ require_once 'admin_header.php';
 <?php endif; ?>
 
 <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:1.5rem;">
-<?php $sdefs=['pending'=>['⏳','amber','Pending'],'assigned'=>['💆','','Assigned'],'approved'=>['✅','green','Approved'],'completed'=>['🎉','','Completed'],'declined'=>['❌','red','Declined']];
-foreach ($sdefs as $st=>[$icon,$cls,$lbl]): ?>
+<?php $sdefs=['pending'=>['amber','Pending'],'assigned'=>['','Assigned'],'approved'=>['green','Approved'],'completed'=>['','Completed'],'declined'=>['red','Declined']];
+foreach ($sdefs as $st=>[$cls,$lbl]): ?>
 <a href="appointments.php?filter=<?php echo $st; ?>" style="text-decoration:none;color:inherit;">
     <div class="stat-card <?php echo $cls; ?> <?php echo $filter===$st?'active':''; ?>">
-        <div class="stat-icon"><?php echo $icon; ?></div>
         <div class="stat-number"><?php echo $stats[$st]; ?></div>
         <div class="stat-label"><?php echo $lbl; ?></div>
     </div>
@@ -2534,7 +2532,7 @@ foreach ($sdefs as $st=>[$icon,$cls,$lbl]): ?>
 </div>
 
 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1.5rem;">
-<?php $tabs=['all'=>'All','pending'=>'⏳ Pending','assigned'=>'💆 Assigned','approved'=>'✅ Approved','completed'=>'🎉 Completed','declined'=>'❌ Declined','cancelled'=>'🚫 Cancelled'];
+<?php $tabs=['all'=>'All','pending'=>'Pending','assigned'=>'Assigned','approved'=>'Approved','completed'=>'Completed','declined'=>'Declined','cancelled'=>'Cancelled'];
 foreach ($tabs as $val=>$label): ?>
 <a href="appointments.php?filter=<?php echo $val; ?><?php echo $filter_date ? '&appt_date='.urlencode($filter_date) : ''; ?>"
    style="padding:0.4rem 1.1rem;border-radius:20px;font-size:0.82rem;font-weight:600;text-decoration:none;transition:all 0.15s;
@@ -2552,7 +2550,7 @@ foreach ($tabs as $val=>$label): ?>
 <!-- ── DATE FILTER ─────────────────────────────────────────────────────────── -->
 <form method="GET" style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1.5rem;flex-wrap:wrap;">
     <input type="hidden" name="filter" value="<?php echo htmlspecialchars($filter); ?>">
-    <label style="font-size:0.82rem;color:var(--gray);font-weight:500;white-space:nowrap;">📅 Appointment Date:</label>
+    <label style="font-size:0.82rem;color:var(--gray);font-weight:500;white-space:nowrap;">Appointment Date:</label>
     <?php
     $rd_today     = date('Y-m-d');
     $rd_yesterday = date('Y-m-d', strtotime('-1 day'));
@@ -2591,7 +2589,7 @@ $history_rows  = array_values(array_filter($appointments, fn($a) => in_array($a[
 $_slotting_walkin_customer_id = get_walkin_customer_id();
 
 // ── Card renderer closure ─────────────────────────────────────────────────────
-$render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_cat, $get_qualified, $filter, $conflict_appt_ids, $_slotting_walkin_customer_id, $resource_map, $resource_type_icons): void {
+$render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_cat, $get_qualified, $filter, $conflict_appt_ids, $_slotting_walkin_customer_id, $resource_map): void {
     $status  = $a['status'];
     $people  = max(1,intval($a['people_count']));
     $appt_id = $a['id'];
@@ -2599,7 +2597,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     $slots_left_inline = max(0, $people - $t_count);
     $needs_therapist  = ($status === 'pending' && $t_count < $people);
 
-    $badge=['pending'=>['#FEF3C7','#92400E','⏳ Pending'],'assigned'=>['#cfe2ff','#084298','💆 Assigned'],'approved'=>['#D1FAE5','#065F46','✅ Approved'],'completed'=>['#E0F2FE','#0C4A6E','🎉 Completed'],'declined'=>['#FEE2E2','#991B1B','❌ Declined'],'cancelled'=>['#F3F4F6','#374151','🚫 Cancelled']];
+    $badge=['pending'=>['#FEF3C7','#92400E','Pending'],'assigned'=>['#cfe2ff','#084298','Assigned'],'approved'=>['#D1FAE5','#065F46','Approved'],'completed'=>['#E0F2FE','#0C4A6E','Completed'],'declined'=>['#FEE2E2','#991B1B','Declined'],'cancelled'=>['#F3F4F6','#374151','Cancelled']];
     [$bbg,$bfg,$blabel]=$badge[$status]??['#e2e3e5','#41464b',ucfirst($status)];
     $bdr=['pending'=>'#f59e0b','assigned'=>'#0d6efd','approved'=>'var(--green)','completed'=>'#0891b2','declined'=>'#dc3545','cancelled'=>'#6b7280'][$status]??'var(--border2)';
 
@@ -2627,9 +2625,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     // ── Pre-compute discount label for header badge ───────────────────────────
     $_disc_type_h   = $pm_row['discount_type'] ?? 'none';
     $_has_discount_h = ($_disc_type_h !== 'none' && $_disc_type_h !== '');
-    $_disc_icons_h   = ['senior'=>'👴','pwd'=>'♿','voucher'=>'🎟️','employee'=>'🪪'];
     $_disc_names_h   = ['senior'=>'Senior','pwd'=>'PWD','voucher'=>'Voucher','employee'=>'Employee'];
-    $_dico_h  = $_disc_icons_h[$_disc_type_h]  ?? '🎟️';
     $_dlbl_h  = $_disc_names_h[$_disc_type_h]  ?? ucfirst($_disc_type_h);
 
     $ts=$conn->prepare("SELECT at2.id AS at_id,at2.person_slot,at2.commission,at2.notes,t.id AS therapist_id,t.full_name,t.specialties FROM appointment_therapists at2 JOIN therapists t ON at2.therapist_id=t.id WHERE at2.appointment_id=? ORDER BY at2.person_slot ASC,at2.id ASC");
@@ -2776,23 +2772,23 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <p class="appt-name">
                 <?php echo htmlspecialchars($display_name); ?>
                 <span style="background:<?php echo $bbg;?>;color:<?php echo $bfg;?>;padding:0.15rem 0.5rem;border-radius:20px;font-size:0.67rem;font-weight:700;vertical-align:middle;margin-left:0.35rem;"><?php echo $blabel; ?></span>
-                <?php if ($is_two_session_card): ?><span style="background:rgba(217,70,239,0.1);color:#a21caf;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #e9a4f1;margin-left:0.2rem;" title="Session 2 is nested below — placement follows Session 1's status">🔁 2-Session Package</span><?php endif; ?>
-                <?php if ($_has_discount_h): ?><span style="background:#fffbeb;color:#b45309;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fcd34d;margin-left:0.2rem;" title="Customer requested <?php echo htmlspecialchars($_dlbl_h); ?> discount — verify ID/voucher at check-in"><?php echo $_dico_h . ' ' . htmlspecialchars($_dlbl_h); ?></span><?php endif; ?>
-                <?php if (isset($conflict_appt_ids[$appt_id])): ?><span style="background:#fef3c7;color:#92400e;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fbbf24;margin-left:0.2rem;animation:pulse 2s infinite;">⚠️ Conflict</span><?php endif; ?>
-                <?php if (floatval($a['advance_payment'] ?? 0) > 0): ?><span style="background:rgba(201,106,44,0.12);color:#C96A2C;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;margin-left:0.2rem;">💰 Advance: ₱<?php echo number_format(floatval($a['advance_payment']), 2); ?></span><?php endif; ?>
-                <?php if (!empty($a['has_therapist_conflict'])): $_cf_list = json_decode($a['therapist_conflict_details'] ?? '[]', true) ?: []; $_cf_tooltip = htmlspecialchars(implode("\n", array_map(function($_c){ return $_c['customer_name'] . ' — ' . $_c['service_name'] . ' at ' . date('g:i A', strtotime($_c['appointment_date'])); }, $_cf_list))); ?><span title="<?php echo $_cf_tooltip; ?>" style="display:inline-flex;align-items:center;gap:3px;padding:0.1rem 0.4rem;border-radius:20px;background:rgba(220,53,69,0.12);color:#dc3545;font-size:0.64rem;font-weight:600;margin-left:0.2rem;cursor:help;">⚠️ Therapist Conflict</span><?php endif; ?>
+                <?php if ($is_two_session_card): ?><span style="background:rgba(217,70,239,0.1);color:#a21caf;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #e9a4f1;margin-left:0.2rem;" title="Session 2 is nested below — placement follows Session 1's status">2-Session Package</span><?php endif; ?>
+                <?php if ($_has_discount_h): ?><span style="background:#fffbeb;color:#b45309;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fcd34d;margin-left:0.2rem;" title="Customer requested <?php echo htmlspecialchars($_dlbl_h); ?> discount — verify ID/voucher at check-in"><?php echo htmlspecialchars($_dlbl_h); ?></span><?php endif; ?>
+                <?php if (isset($conflict_appt_ids[$appt_id])): ?><span style="background:#fef3c7;color:#92400e;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;border:1px solid #fbbf24;margin-left:0.2rem;animation:pulse 2s infinite;">Conflict</span><?php endif; ?>
+                <?php if (floatval($a['advance_payment'] ?? 0) > 0): ?><span style="background:rgba(201,106,44,0.12);color:#C96A2C;padding:0.1rem 0.4rem;border-radius:20px;font-size:0.64rem;font-weight:700;margin-left:0.2rem;">Advance: ₱<?php echo number_format(floatval($a['advance_payment']), 2); ?></span><?php endif; ?>
+                <?php if (!empty($a['has_therapist_conflict'])): $_cf_list = json_decode($a['therapist_conflict_details'] ?? '[]', true) ?: []; $_cf_tooltip = htmlspecialchars(implode("\n", array_map(function($_c){ return $_c['customer_name'] . ' — ' . $_c['service_name'] . ' at ' . date('g:i A', strtotime($_c['appointment_date'])); }, $_cf_list))); ?><span title="<?php echo $_cf_tooltip; ?>" style="display:inline-flex;align-items:center;gap:3px;padding:0.1rem 0.4rem;border-radius:20px;background:rgba(220,53,69,0.12);color:#dc3545;font-size:0.64rem;font-weight:600;margin-left:0.2rem;cursor:help;">Therapist Conflict</span><?php endif; ?>
             </p>
             <p class="appt-svc">
                 <?php echo htmlspecialchars($a['service_name']) . htmlspecialchars($_duration_suffix); ?>
                 <?php if ($is_multi_service_card): ?>
                     <span style="color:var(--gray);font-size:0.82em;"> + <?php echo count($extra_services); ?> more</span>
-                    <span style="margin-left:0.3rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:0.08rem 0.45rem;border-radius:20px;font-size:0.63rem;font-weight:700;vertical-align:middle;">🧾 Multi-Service (<?php echo count($extra_services) + 1; ?>)</span>
+                    <span style="margin-left:0.3rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:0.08rem 0.45rem;border-radius:20px;font-size:0.63rem;font-weight:700;vertical-align:middle;">Multi-Service (<?php echo count($extra_services) + 1; ?>)</span>
                 <?php endif; ?>
             </p>
             <p class="appt-time">
-                🕐 <?php echo date('M j, g:i A', strtotime($a['appointment_date'])); ?>
-                <?php if (!empty($assigned_therapists)): ?> &middot; 💆 <?php echo htmlspecialchars($assigned_therapists[0]['full_name']); ?><?php if (count($assigned_therapists) > 1): ?> +<?php echo count($assigned_therapists)-1; ?> more<?php endif; ?><?php endif; ?>
-                <?php if ($needs_therapist): ?> &middot; <span style="color:#92400e;font-weight:700;">⚠️ Needs therapist</span><?php endif; ?>
+                <?php echo date('M j, g:i A', strtotime($a['appointment_date'])); ?>
+                <?php if (!empty($assigned_therapists)): ?> &middot; <?php echo htmlspecialchars($assigned_therapists[0]['full_name']); ?><?php if (count($assigned_therapists) > 1): ?> +<?php echo count($assigned_therapists)-1; ?> more<?php endif; ?><?php endif; ?>
+                <?php if ($needs_therapist): ?> &middot; <span style="color:#92400e;font-weight:700;">Needs therapist</span><?php endif; ?>
             </p>
         </div>
         <i class="appt-chev">▾</i>
@@ -2805,17 +2801,17 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
         <div>
             <?php if ($is_multi_service_card): ?>
-            <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.45rem;">🧾 Services</div>
+            <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.45rem;">Services</div>
             <div style="display:flex;flex-direction:column;gap:0.28rem;margin-bottom:0.4rem;">
                 <div style="font-size:0.88rem;font-weight:700;color:var(--gold);">
                     <?php echo htmlspecialchars($a['service_name']) . htmlspecialchars($_duration_suffix); ?>
-                    <?php if (!empty($assigned_therapists[0]['full_name'])): ?><span style="font-size:0.74rem;color:var(--gray);font-weight:400;"> &middot; 💆 <?php echo htmlspecialchars($assigned_therapists[0]['full_name']); ?></span><?php endif; ?>
+                    <?php if (!empty($assigned_therapists[0]['full_name'])): ?><span style="font-size:0.74rem;color:var(--gray);font-weight:400;"> &middot; <?php echo htmlspecialchars($assigned_therapists[0]['full_name']); ?></span><?php endif; ?>
                     <span style="font-size:0.63rem;background:rgba(13,110,253,0.08);color:#0d6efd;padding:0.04rem 0.35rem;border-radius:20px;margin-left:0.2rem;font-weight:700;">Primary</span>
                 </div>
                 <?php foreach ($extra_services as $_ce_detail): ?>
                 <div style="font-size:0.84rem;color:var(--brown);font-weight:600;">
                     <?php echo htmlspecialchars($_ce_detail['svc_name']); ?>
-                    <?php if (!empty($_ce_detail['therapist_name'])): ?><span style="font-size:0.74rem;color:var(--gray);font-weight:400;"> &middot; 💆 <?php echo htmlspecialchars($_ce_detail['therapist_name']); ?></span><?php endif; ?>
+                    <?php if (!empty($_ce_detail['therapist_name'])): ?><span style="font-size:0.74rem;color:var(--gray);font-weight:400;"> &middot; <?php echo htmlspecialchars($_ce_detail['therapist_name']); ?></span><?php endif; ?>
                     <span style="font-size:0.63rem;background:rgba(25,135,84,0.08);color:#198754;padding:0.04rem 0.35rem;border-radius:20px;margin-left:0.2rem;font-weight:700;">Add-on</span>
                 </div>
                 <?php endforeach; ?>
@@ -2829,14 +2825,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         </div>
         <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0;flex-wrap:wrap;">
             <?php if (isset($conflict_appt_ids[$appt_id])): ?>
-            <span style="background:#fef3c7;color:#92400e;padding:0.2rem 0.75rem;border-radius:20px;font-size:0.72rem;font-weight:700;border:1px solid #fbbf24;animation:pulse 2s infinite;">⚠️ Time Conflict</span>
+            <span style="background:#fef3c7;color:#92400e;padding:0.2rem 0.75rem;border-radius:20px;font-size:0.72rem;font-weight:700;border:1px solid #fbbf24;animation:pulse 2s infinite;">Time Conflict</span>
             <?php endif; ?>
             <?php if ($needs_therapist): ?>
-            <span style="background:#fff3cd;color:#664d03;padding:0.2rem 0.75rem;border-radius:20px;font-size:0.72rem;font-weight:700;border:1px solid #ffc107;">⚠️ Assign <?php echo $people; ?> therapist<?php echo $people > 1 ? 's' : ''; ?> first</span>
+            <span style="background:#fff3cd;color:#664d03;padding:0.2rem 0.75rem;border-radius:20px;font-size:0.72rem;font-weight:700;border:1px solid #ffc107;">Assign <?php echo $people; ?> therapist<?php echo $people > 1 ? 's' : ''; ?> first</span>
             <?php elseif ($status==='pending' && $t_count > 0 && $t_count < $people): ?>
-            <span style="background:#fff3cd;color:#664d03;padding:0.2rem 0.75rem;border-radius:20px;font-size:0.72rem;font-weight:700;border:1px solid #ffc107;">⚠️ <?php echo $t_count; ?>/<?php echo $people; ?> therapists — need <?php echo $people - $t_count; ?> more</span>
+            <span style="background:#fff3cd;color:#664d03;padding:0.2rem 0.75rem;border-radius:20px;font-size:0.72rem;font-weight:700;border:1px solid #ffc107;"><?php echo $t_count; ?>/<?php echo $people; ?> therapists — need <?php echo $people - $t_count; ?> more</span>
             <?php elseif ($status==='pending' && $t_count>=$people): ?>
-            <span style="background:#d1e7dd;color:#0a3622;padding:0.2rem 0.75rem;border-radius:20px;font-size:0.72rem;font-weight:700;">💆 All <?php echo $people; ?> therapist<?php echo $people>1?'s':''; ?> assigned — Ready to approve</span>
+            <span style="background:#d1e7dd;color:#0a3622;padding:0.2rem 0.75rem;border-radius:20px;font-size:0.72rem;font-weight:700;">All <?php echo $people; ?> therapist<?php echo $people>1?'s':''; ?> assigned — Ready to approve</span>
             <?php endif; ?>
             <span style="background:<?php echo $bbg; ?>;color:<?php echo $bfg; ?>;padding:0.28rem 0.9rem;border-radius:20px;font-size:0.78rem;font-weight:700;"><?php echo $blabel; ?></span>
         </div>
@@ -2844,21 +2840,21 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:0.8rem 1.5rem;padding:1rem;background:var(--bg3);border-radius:10px;margin-bottom:1rem;border:1px solid var(--border2);">
         <div>
-            <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">👤 Customer</div>
+            <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">Customer</div>
             <div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo htmlspecialchars($display_name); ?></div>
             <div style="font-size:0.74rem;color:var(--gray);"><?php echo htmlspecialchars($a['email']); ?></div>
             <?php if (!empty($display_phone)): ?>
             <div style="font-size:0.74rem;color:var(--brown);margin-top:0.1rem;">
                 <a href="tel:<?php echo htmlspecialchars($display_phone); ?>"
                    style="color:var(--brown);text-decoration:none;font-weight:600;">
-                    📞 <?php echo htmlspecialchars($display_phone); ?>
+                    <?php echo htmlspecialchars($display_phone); ?>
                 </a>
             </div>
             <?php endif; ?>
         </div>
-        <div><div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">📅 Date</div><div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo date('F d, Y',strtotime($a['appointment_date'])); ?></div><div style="font-size:0.74rem;color:var(--gray);"><?php echo date('h:i A',strtotime($a['appointment_date'])); ?></div></div>
-        <div><div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">👥 People</div><div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo $people; ?> person<?php echo $people>1?'s':''; ?></div></div>
-        <div><div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">⏱ Duration</div><div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo $a['session_time']; ?> mins</div></div>
+        <div><div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">Date</div><div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo date('F d, Y',strtotime($a['appointment_date'])); ?></div><div style="font-size:0.74rem;color:var(--gray);"><?php echo date('h:i A',strtotime($a['appointment_date'])); ?></div></div>
+        <div><div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">People</div><div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo $people; ?> person<?php echo $people>1?'s':''; ?></div></div>
+        <div><div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">Duration</div><div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo $a['session_time']; ?> mins</div></div>
         <?php
         // ── Pricing breakdown ─────────────────────────────────────────────────
         $_orig_price    = floatval($pm_row['total_amount'] ?: $a['service_price']);
@@ -2870,16 +2866,16 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         $_show_final    = $_has_discount && $_disc_amt > 0;
 
         $_disc_labels = [
-            'senior'  => ['👴', 'Senior (20%)'],
-            'pwd'     => ['♿', 'PWD (20%)'],
-            'voucher' => ['🎟️', 'Voucher'],
-            'employee'=> ['🪪', 'Employee'],
+            'senior'  => 'Senior (20%)',
+            'pwd'     => 'PWD (20%)',
+            'voucher' => 'Voucher',
+            'employee'=> 'Employee',
         ];
-        [$_dico, $_dlbl] = $_disc_labels[$_disc_type] ?? ['🎟️', ucfirst($_disc_type)];
+        $_dlbl = $_disc_labels[$_disc_type] ?? ucfirst($_disc_type);
         ?>
         <div>
             <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">
-                💰 Price<?php if ($is_two_session_card): ?> <span style="color:#a21caf;">— 2-Session Package Total</span><?php endif; ?>
+                Price<?php if ($is_two_session_card): ?> <span style="color:#a21caf;">— 2-Session Package Total</span><?php endif; ?>
             </div>
             <?php
             // NOTE: for a 2-session card, $_orig_price/$_final_amt below already reflect the
@@ -2900,7 +2896,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <span style="display:inline-flex;align-items:center;gap:0.2rem;margin-top:0.2rem;
                              font-size:0.68rem;font-weight:700;padding:0.1rem 0.5rem;
                              border-radius:20px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;">
-                    <?php echo $_dico . ' −₱' . number_format($_disc_amt, 2); ?>
+                    <?php echo '−₱' . number_format($_disc_amt, 2); ?>
                 </span>
                 <?php else: ?>
                 <!-- Discount type declared but amount not yet applied (pending onsite confirmation) -->
@@ -2910,7 +2906,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <span style="display:inline-flex;align-items:center;gap:0.2rem;margin-top:0.2rem;
                              font-size:0.68rem;font-weight:700;padding:0.1rem 0.5rem;
                              border-radius:20px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;">
-                    <?php echo $_dico . ' ' . $_dlbl; ?> — TBD
+                    <?php echo $_dlbl; ?> — TBD
                 </span>
                 <?php endif; ?>
             <?php else: ?>
@@ -2930,37 +2926,37 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         $_display_method = $_raw_pm ?: $_raw_method;
 
         $_method_labels = [
-            'cash'       => ['💵', 'Cash'],
-            'gcash'      => ['📱', 'GCash'],
-            'maya'       => ['💜', 'Maya'],
-            'bpi_debit'  => ['🏦', 'BPI Debit'],
-            'bpi_credit' => ['💳', 'BPI Credit'],
-            'qrph'       => ['📷', 'QRPH'],
-            'bank'       => ['🏦', 'Bank Transfer'],
-            'card'       => ['💳', 'Card'],
-            'swiper'     => ['💳', 'Swiper'],
-            'online'     => ['💳', 'Online'],
-            'onsite'     => ['🏪', 'Onsite'],
+            'cash'       => 'Cash',
+            'gcash'      => 'GCash',
+            'maya'       => 'Maya',
+            'bpi_debit'  => 'BPI Debit',
+            'bpi_credit' => 'BPI Credit',
+            'qrph'       => 'QRPH',
+            'bank'       => 'Bank Transfer',
+            'card'       => 'Card',
+            'swiper'     => 'Swiper',
+            'online'     => 'Online',
+            'onsite'     => 'Onsite',
         ];
-        [$_mico, $_mlbl] = $_method_labels[$_display_method] ?? ['💰', ucfirst($_display_method)];
+        $_mlbl = $_method_labels[$_display_method] ?? ucfirst($_display_method);
 
-        $_channel_label = ($_raw_method === 'online') ? '🌐 Online' : '🏪 Onsite';
+        $_channel_label = ($_raw_method === 'online') ? 'Online' : 'Onsite';
         $_channel_color = ($_raw_method === 'online') ? '#0070f3' : '#3B2A1A';
 
         $_status_map = [
-            'paid'            => ['✅ Paid',            '#0a3622','#d1e7dd'],
-            'unpaid'          => ['⏳ Unpaid',           '#664d03','#fff3cd'],
-            'pending_payment' => ['💳 Awaiting Payment', '#084298','#cfe2ff'],
-            'refunded'        => ['↩️ Refunded',         '#842029','#f8d7da'],
+            'paid'            => ['Paid',            '#0a3622','#d1e7dd'],
+            'unpaid'          => ['Unpaid',           '#664d03','#fff3cd'],
+            'pending_payment' => ['Awaiting Payment', '#084298','#cfe2ff'],
+            'refunded'        => ['Refunded',         '#842029','#f8d7da'],
         ];
         [$_slbl, $_sfg, $_sbg] = $_status_map[$_pay_status] ?? [ucfirst($_pay_status), '#555', '#eee'];
         ?>
         <div>
-            <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">💳 Payment</div>
+            <div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">Payment</div>
             <!-- Channel: Onsite / Online -->
             <div style="font-size:0.72rem;font-weight:600;color:<?php echo $_channel_color; ?>;margin-bottom:0.18rem;"><?php echo $_channel_label; ?></div>
             <!-- Specific method -->
-            <div style="font-size:0.88rem;color:var(--brown);font-weight:700;"><?php echo $_mico . ' ' . $_mlbl; ?></div>
+            <div style="font-size:0.88rem;color:var(--brown);font-weight:700;"><?php echo $_mlbl; ?></div>
             <!-- Payment status badge -->
             <span style="display:inline-block;margin-top:0.22rem;font-size:0.68rem;font-weight:700;
                          padding:0.1rem 0.5rem;border-radius:20px;
@@ -2968,7 +2964,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php echo $_slbl; ?>
             </span>
         </div>
-        <div><div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">🏷️ Type</div><div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo $a['service_type']==='home'?'🏠 Home':'🏢 On-site'; ?></div><?php if($a['service_type']==='home'&&!empty($a['home_address'])): ?><div style="font-size:0.74rem;color:var(--gray);"><?php echo htmlspecialchars($a['home_address']); ?></div><?php endif; ?></div>
+        <div><div style="font-size:0.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.22rem;">Type</div><div style="font-size:0.88rem;color:var(--brown);font-weight:600;"><?php echo $a['service_type']==='home'?'Home':'On-site'; ?></div><?php if($a['service_type']==='home'&&!empty($a['home_address'])): ?><div style="font-size:0.74rem;color:var(--gray);"><?php echo htmlspecialchars($a['home_address']); ?></div><?php endif; ?></div>
     </div>
 
     <!-- ══ THERAPIST SECTION ══════════════════════════════════════════════ -->
@@ -3005,7 +3001,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     ?>
     <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:1rem 1.1rem;margin-bottom:1rem;">
         <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;display:flex;align-items:center;justify-content:space-between;">
-            <span>💆 Therapist Assignment
+            <span>Therapist Assignment
                 <span data-filled-counter data-total-required="<?php echo $people; ?>"
                       style="font-weight:400;color:<?php echo $t_count>=$people?'var(--green)':'var(--gold)'; ?>;">
                     — <?php echo $t_count; ?>/<?php echo $people; ?> filled
@@ -3028,7 +3024,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <div class="therapist-slot-row" data-person-slot="<?php echo $p; ?>"
                  style="display:flex;align-items:center;gap:0.5rem;">
                 <?php if (in_array($status, ['pending', 'assigned'])): ?>
-                <span style="font-size:0.78rem;font-weight:600;color:var(--gray);white-space:nowrap;">👤 Person <?php echo $p; ?></span>
+                <span style="font-size:0.78rem;font-weight:600;color:var(--gray);white-space:nowrap;">Person <?php echo $p; ?></span>
                 <select data-person-slot="<?php echo $p; ?>"
                         onchange="autoSaveSlot(this)"
                         style="flex:1;padding:0.4rem 0.6rem;border:1px solid #c8a46e;border-radius:7px;background:#fff;color:#1a1a1a;font-size:0.82rem;">
@@ -3042,7 +3038,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                         if ($_topt['has_specialty'] <= 0 && !$_is_current) continue;
                         $_lbl = htmlspecialchars($_topt['full_name']);
                         if (!$_topt['on_duty']) $_lbl .= ' — Off duty';
-                        if ($_topt['has_specialty'] <= 0) $_lbl .= ' ⚠️ No longer qualified';
+                        if ($_topt['has_specialty'] <= 0) $_lbl .= ' No longer qualified';
                         $_selected = $_is_current;
                     ?>
                     <option value="<?php echo $_topt['id']; ?>" <?php echo $_selected ? 'selected' : ''; ?>>
@@ -3057,7 +3053,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <div style="width:30px;height:30px;border-radius:50%;flex-shrink:0;background:linear-gradient(135deg,var(--gold),var(--rust));display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:0.82rem;"><?php echo strtoupper(substr($_st['full_name'],0,1)); ?></div>
                     <div>
                         <div style="font-size:0.85rem;font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($_st['full_name']); ?></div>
-                        <div style="font-size:0.7rem;color:var(--gray);"><?php echo htmlspecialchars($_st['specialties']?:'General'); ?><?php if($_st['notes']): ?>&nbsp;·&nbsp; 📝 <?php echo htmlspecialchars($_st['notes']); ?><?php endif; ?></div>
+                        <div style="font-size:0.7rem;color:var(--gray);"><?php echo htmlspecialchars($_st['specialties']?:'General'); ?><?php if($_st['notes']): ?>&nbsp;·&nbsp; <?php echo htmlspecialchars($_st['notes']); ?><?php endif; ?></div>
                     </div>
                 </div>
                 <?php else: ?>
@@ -3083,7 +3079,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         <?php if ($pref_th_name): ?>
         <div style="margin-top:0.5rem;padding:0.6rem 0.9rem;background:#fefce8;border:1px solid #fde68a;
                     border-radius:9px;font-size:0.8rem;color:#78350f;">
-            ⭐ Customer's preferred therapist: <strong><?php echo htmlspecialchars($pref_th_name); ?></strong>
+            Customer's preferred therapist: <strong><?php echo htmlspecialchars($pref_th_name); ?></strong>
         </div>
         <?php endif; ?>
 
@@ -3119,11 +3115,11 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         $_pkg_appt_checked_in = ($status === 'approved');
         ?>
         <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">
-            🔁 Session Package — <?php echo $_pkg_done; ?>/<?php echo $_pkg_total; ?> sessions completed
+            Session Package — <?php echo $_pkg_done; ?>/<?php echo $_pkg_total; ?> sessions completed
         </div>
         <?php if (!$_pkg_appt_checked_in): ?>
         <div style="font-size:0.75rem;color:#92400e;background:#fef9f0;border:1px solid #fcd34d;border-radius:8px;padding:0.5rem 0.7rem;margin-bottom:0.75rem;">
-            ⚠️ Check in the appointment itself (below) before any session can be checked in or completed.
+            Check in the appointment itself (below) before any session can be checked in or completed.
         </div>
         <?php endif; ?>
         <div style="display:flex;flex-direction:column;gap:0.6rem;">
@@ -3158,7 +3154,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php if ($_ps['status'] === 'completed'): ?>
                 <div style="font-size:0.78rem;color:var(--gray);">
                     <?php echo $_ps['session_date'] ? date('M j, Y g:i A', strtotime($_ps['session_date'])) : '—'; ?>
-                    <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php endif; ?>
+                    <?php if ($_sess_therapist_name): ?> · <?php echo htmlspecialchars($_sess_therapist_name); ?><?php endif; ?>
                     · Commission: ₱<?php echo number_format(floatval($_ps['commission']), 2); ?>
                     · Completed by <?php echo htmlspecialchars($_ps['completed_by_name'] ?? '—'); ?><?php if ($_ps['completed_at']): ?> on <?php echo date('M j, g:i A', strtotime($_ps['completed_at'])); ?><?php endif; ?>
                 </div>
@@ -3183,41 +3179,41 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <button type="submit" class="btn btn-primary btn-sm">📅 Assign Date &amp; Therapist</button>
+                    <button type="submit" class="btn btn-primary btn-sm">Assign Date &amp; Therapist</button>
                 </form>
                 <div style="margin-top:0.4rem;display:flex;align-items:center;gap:0.5rem;">
-                    <button type="button" class="btn btn-primary btn-sm" disabled title="Check in first" style="opacity:0.5;cursor:not-allowed;">🎉 Complete Session</button>
+                    <button type="button" class="btn btn-primary btn-sm" disabled title="Check in first" style="opacity:0.5;cursor:not-allowed;">Complete Session</button>
                     <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Check in first</span>
                 </div>
 
                 <?php elseif ($_ps['status'] === 'scheduled'): ?>
                 <div style="font-size:0.78rem;color:var(--gray);margin-bottom:0.5rem;">
                     <?php echo $_ps['session_date'] ? date('M j, Y g:i A', strtotime($_ps['session_date'])) : '—'; ?>
-                    <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php else: ?> · <span style="font-style:italic;">Unassigned therapist</span><?php endif; ?>
+                    <?php if ($_sess_therapist_name): ?> · <?php echo htmlspecialchars($_sess_therapist_name); ?><?php else: ?> · <span style="font-style:italic;">Unassigned therapist</span><?php endif; ?>
                 </div>
                 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
                     <?php if ($_pi === 0): ?>
-                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">✅ Checked in together with the appointment — use the main Check In button below.</span>
+                    <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Checked in together with the appointment — use the main Check In button below.</span>
                     <?php elseif ($_pkg_can_checkin): ?>
                     <form method="POST" style="margin:0;">
                         <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="checkin_session">
                         <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
                         <input type="hidden" name="session_id" value="<?php echo $_ps['id']; ?>">
-                        <button type="submit" class="btn btn-success btn-sm">✅ Check In</button>
+                        <button type="submit" class="btn btn-success btn-sm">Check In</button>
                     </form>
                     <?php else: ?>
                     <button type="button" class="btn btn-success btn-sm" disabled
                             title="<?php echo !$_pkg_appt_checked_in ? 'Check in the appointment first' : 'Complete Session ' . ((int)$_ps['session_number'] - 1) . ' first'; ?>"
-                            style="opacity:0.5;cursor:not-allowed;">✅ Check In</button>
+                            style="opacity:0.5;cursor:not-allowed;">Check In</button>
                     <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">
                         <?php echo !$_pkg_appt_checked_in ? 'Check in the appointment first' : 'Session ' . ((int)$_ps['session_number'] - 1) . ' must be completed first'; ?>
                     </span>
                     <?php endif; ?>
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleSessionReassign(<?php echo $_ps['id']; ?>)">✏️ Edit</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleSessionReassign(<?php echo $_ps['id']; ?>)">Edit</button>
                 </div>
                 <div style="margin-top:0.4rem;display:flex;align-items:center;gap:0.5rem;">
-                    <button type="button" class="btn btn-primary btn-sm" disabled title="Check in first" style="opacity:0.5;cursor:not-allowed;">🎉 Complete Session</button>
+                    <button type="button" class="btn btn-primary btn-sm" disabled title="Check in first" style="opacity:0.5;cursor:not-allowed;">Complete Session</button>
                     <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Check in first</span>
                 </div>
                 <div id="session-reassign-<?php echo $_ps['id']; ?>" style="display:none;margin-top:0.5rem;">
@@ -3248,12 +3244,12 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php elseif ($_ps['status'] === 'checked_in'): ?>
                 <div style="font-size:0.78rem;color:var(--gray);margin-bottom:0.5rem;">
                     <?php echo $_ps['session_date'] ? date('M j, Y g:i A', strtotime($_ps['session_date'])) : '—'; ?>
-                    <?php if ($_sess_therapist_name): ?> · 💆 <?php echo htmlspecialchars($_sess_therapist_name); ?><?php endif; ?>
+                    <?php if ($_sess_therapist_name): ?> · <?php echo htmlspecialchars($_sess_therapist_name); ?><?php endif; ?>
                     <?php if ($_ps['checked_in_at']): ?> · Checked in <?php echo date('g:i A', strtotime($_ps['checked_in_at'])); ?><?php endif; ?>
                 </div>
                 <?php if (empty($_ps['therapist_id'])): ?>
                 <div style="display:flex;align-items:center;gap:0.5rem;">
-                    <button type="button" class="btn btn-primary btn-sm" disabled title="Assign a specific therapist first" style="opacity:0.5;cursor:not-allowed;">🎉 Complete Session</button>
+                    <button type="button" class="btn btn-primary btn-sm" disabled title="Assign a specific therapist first" style="opacity:0.5;cursor:not-allowed;">Complete Session</button>
                     <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
                 </div>
                 <?php else: ?>
@@ -3266,7 +3262,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <input type="password" name="pin" maxlength="4" placeholder="PIN" required
                            style="width:70px;padding:0.3rem 0.4rem;border:1px solid var(--border2);border-radius:6px;font-size:0.78rem;letter-spacing:0.2em;text-align:center;">
                     <?php endif; ?>
-                    <button type="submit" class="btn btn-primary btn-sm">🎉 Complete Session</button>
+                    <button type="submit" class="btn btn-primary btn-sm">Complete Session</button>
                 </form>
                 <?php endif; ?>
                 <?php endif; ?>
@@ -3288,7 +3284,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <!-- Therapists -->
             <div style="flex:1;min-width:0;">
                 <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">
-                    💆 Therapist<?php echo count($assigned_therapists)>1?'s':''; ?>
+                    Therapist<?php echo count($assigned_therapists)>1?'s':''; ?>
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
                 <?php foreach ($assigned_therapists as $at): ?>
@@ -3302,11 +3298,11 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </div>
             <!-- Audit Trail -->
             <div style="flex-shrink:0;min-width:180px;">
-                <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem;">📋 Action Log</div>
+                <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem;">Action Log</div>
                 <div style="display:flex;flex-direction:column;gap:0.35rem;">
                     <?php if (!empty($a['rescheduled_by_name'])): ?>
                     <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:#0891b2;">📅 Rescheduled by:</span><br>
+                        <span style="font-weight:700;color:#0891b2;">Rescheduled by:</span><br>
                         <span style="color:var(--brown);"><?php echo htmlspecialchars($a['rescheduled_by_name']); ?></span>
                         <?php if (!empty($a['rescheduled_at'])): ?>
                         <span style="color:var(--gray);font-size:0.68rem;"> · <?php echo date('M d, h:i A', strtotime($a['rescheduled_at'])); ?></span>
@@ -3315,25 +3311,25 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php endif; ?>
                     <?php if (!empty($a['approved_by_name'])): ?>
                     <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:var(--green);">✅ Approved by:</span><br>
+                        <span style="font-weight:700;color:var(--green);">Approved by:</span><br>
                         <span style="color:var(--brown);"><?php echo htmlspecialchars($a['approved_by_name']); ?></span>
                     </div>
                     <?php endif; ?>
                     <?php if (!empty($a['completed_by_name'])): ?>
                     <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:#0d6efd;">🎉 Completed by:</span><br>
+                        <span style="font-weight:700;color:#0d6efd;">Completed by:</span><br>
                         <span style="color:var(--brown);"><?php echo htmlspecialchars($a['completed_by_name']); ?></span>
                     </div>
                     <?php endif; ?>
                     <?php if (!empty($a['declined_by_name'])): ?>
                     <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:#dc3545;">❌ Declined by:</span><br>
+                        <span style="font-weight:700;color:#dc3545;">Declined by:</span><br>
                         <span style="color:var(--brown);"><?php echo htmlspecialchars($a['declined_by_name']); ?></span>
                     </div>
                     <?php endif; ?>
                     <?php if (!empty($a['cancelled_by_name'])): ?>
                     <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:#6b7280;">🚫 Cancelled by:</span><br>
+                        <span style="font-weight:700;color:#6b7280;">Cancelled by:</span><br>
                         <span style="color:var(--brown);"><?php echo htmlspecialchars($a['cancelled_by_name']); ?></span>
                     </div>
                     <?php endif; ?>
@@ -3349,10 +3345,10 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     if (in_array($status, ['approved','assigned']) && $has_audit):
     ?>
     <div style="margin-bottom:1rem;padding:0.6rem 1rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);display:flex;flex-wrap:wrap;gap:1rem;">
-        <div style="font-size:0.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;width:100%;margin-bottom:0.1rem;">📋 Action Log</div>
+        <div style="font-size:0.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;width:100%;margin-bottom:0.1rem;">Action Log</div>
         <?php if (!empty($a['rescheduled_by_name'])): ?>
         <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:#0891b2;">📅 Rescheduled by:</span>
+            <span style="font-weight:700;color:#0891b2;">Rescheduled by:</span>
             <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['rescheduled_by_name']); ?></span>
             <?php if (!empty($a['rescheduled_at'])): ?>
             <span style="color:var(--gray);font-size:0.68rem;"> · <?php echo date('M d, h:i A', strtotime($a['rescheduled_at'])); ?></span>
@@ -3361,7 +3357,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         <?php endif; ?>
         <?php if (!empty($a['approved_by_name'])): ?>
         <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:var(--green);">✅ Approved by:</span>
+            <span style="font-weight:700;color:var(--green);">Approved by:</span>
             <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['approved_by_name']); ?></span>
         </div>
         <?php endif; ?>
@@ -3371,22 +3367,22 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <!-- Audit trail for cancelled appointments -->
     <?php if ($status === 'cancelled'): ?>
     <div style="margin-bottom:1rem;padding:0.6rem 1rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);display:flex;flex-wrap:wrap;gap:1rem;">
-        <div style="font-size:0.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;width:100%;margin-bottom:0.1rem;">📋 Action Log</div>
+        <div style="font-size:0.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;width:100%;margin-bottom:0.1rem;">Action Log</div>
         <?php if (!empty($a['rescheduled_by_name'])): ?>
         <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:#0891b2;">📅 Rescheduled by:</span>
+            <span style="font-weight:700;color:#0891b2;">Rescheduled by:</span>
             <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['rescheduled_by_name']); ?></span>
         </div>
         <?php endif; ?>
         <?php if (!empty($a['approved_by_name'])): ?>
         <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:var(--green);">✅ Approved by:</span>
+            <span style="font-weight:700;color:var(--green);">Approved by:</span>
             <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['approved_by_name']); ?></span>
         </div>
         <?php endif; ?>
         <?php if (!empty($a['cancelled_by_name'])): ?>
         <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:#6b7280;">🚫 Cancelled by:</span>
+            <span style="font-weight:700;color:#6b7280;">Cancelled by:</span>
             <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['cancelled_by_name']); ?></span>
         </div>
         <?php endif; ?>
@@ -3398,18 +3394,18 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <div style="margin-bottom:1rem;">
         <?php if (!empty($extra_services)): ?>
         <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.6rem;">
-            <div style="font-size:0.75rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">➕ Extra Services (<?php echo count($extra_services); ?>)</div>
-            <?php $extra_total = 0; foreach ($extra_services as $es): $extra_total += floatval($es['charged_price']); $pay_icons = ['cash'=>'💵','card'=>'💳','qrph'=>'📱']; ?>
+            <div style="font-size:0.75rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">Extra Services (<?php echo count($extra_services); ?>)</div>
+            <?php $extra_total = 0; foreach ($extra_services as $es): $extra_total += floatval($es['charged_price']); ?>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.5rem 0.6rem;margin-bottom:0.3rem;background:var(--bg2);border-radius:8px;border:1px solid var(--border);flex-wrap:wrap;">
                 <div style="display:flex;align-items:center;gap:0.55rem;flex:1;min-width:0;">
-                    <div style="width:28px;height:28px;border-radius:8px;flex-shrink:0;background:linear-gradient(135deg,#0d6efd22,#0d6efd44);display:flex;align-items:center;justify-content:center;font-size:0.75rem;">➕</div>
+                    <div style="width:28px;height:28px;border-radius:8px;flex-shrink:0;background:linear-gradient(135deg,#0d6efd22,#0d6efd44);display:flex;align-items:center;justify-content:center;font-size:0.75rem;"></div>
                     <div style="min-width:0;">
                         <div style="font-size:0.85rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($es['svc_name']); ?></div>
                         <div style="font-size:0.7rem;color:var(--gray);">
                         <?php echo htmlspecialchars($es['person_label']); ?>
-                        &nbsp;·&nbsp; <?php echo $pay_icons[$es['payment_method']] ?? '💵'; ?> <?php echo ucfirst($es['payment_method']); ?>
+                        &nbsp;·&nbsp; <?php echo ucfirst($es['payment_method']); ?>
                         <?php if (!empty($es['commission']) && floatval($es['commission']) > 0): ?> &nbsp;·&nbsp; Comm: <strong>₱<?php echo number_format(floatval($es['commission']), 2); ?></strong><?php endif; ?>
-                        <?php if ($es['notes']): ?> &nbsp;·&nbsp; 📝 <?php echo htmlspecialchars($es['notes']); ?><?php endif; ?>
+                        <?php if ($es['notes']): ?> &nbsp;·&nbsp; <?php echo htmlspecialchars($es['notes']); ?><?php endif; ?>
                         </div>
                         <?php if (in_array($status, ['pending', 'assigned'])): ?>
                         <?php
@@ -3448,7 +3444,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                                     $_est_sel = $_est_is_current ? 'selected' : '';
                                     $_est_lbl = htmlspecialchars($_est['full_name']);
                                     if (!$_est['on_duty']) $_est_lbl .= ' — Off duty';
-                                    if ($_est['has_specialty'] <= 0) $_est_lbl .= ' ⚠️ No longer qualified';
+                                    if ($_est['has_specialty'] <= 0) $_est_lbl .= ' No longer qualified';
                                 ?>
                                 <option value="<?php echo $_est['id']; ?>" <?php echo $_est_sel; ?>><?php echo $_est_lbl; ?></option>
                                 <?php endforeach; ?>
@@ -3456,7 +3452,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                             <span class="slot-saved-indicator" style="font-size:0.72rem;color:#2d8a4e;font-weight:600;min-height:1em;display:block;"></span>
                         </div>
                         <?php elseif (!empty($es['therapist_name'])): ?>
-                        <div style="font-size:0.72rem;color:var(--gray);margin-top:0.15rem;">💆 <?php echo htmlspecialchars($es['therapist_name']); ?></div>
+                        <div style="font-size:0.72rem;color:var(--gray);margin-top:0.15rem;"><?php echo htmlspecialchars($es['therapist_name']); ?></div>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -3479,12 +3475,12 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 style="padding:0.38rem 0.9rem;border-radius:7px;border:1.5px dashed var(--gold);background:rgba(201,106,44,0.06);color:var(--gold);font-size:0.82rem;font-weight:700;cursor:pointer;transition:all .15s;"
                 onmouseover="this.style.background='rgba(201,106,44,0.12)'"
                 onmouseout="this.style.background='rgba(201,106,44,0.06)'">
-            ➕ Add Service
+            Add Service
         </button>
 
         <div id="addservice-<?php echo $appt_id; ?>" style="display:none;margin-top:0.75rem;padding:1.1rem;background:var(--bg3);border-radius:10px;border:1px solid var(--border2);">
             <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.85rem;display:flex;justify-content:space-between;">
-                <span>➕ Add Extra Service</span>
+                <span>Add Extra Service</span>
                 <?php $rate_labels = ['regular'=>'Regular','home'=>'Home','hotel'=>'Hotel','influencer'=>'Influencer']; $rt = $a['rate_type'] ?? 'regular'; ?>
                 <span style="font-size:0.7rem;background:var(--bg2);padding:0.15rem 0.55rem;border-radius:20px;color:var(--gray);font-weight:400;text-transform:none;">Rate: <?php echo $rate_labels[$rt] ?? 'Regular'; ?></span>
             </div>
@@ -3541,10 +3537,10 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                            style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.83rem;box-sizing:border-box;">
                 </div>
                 <div style="margin-bottom:0.85rem;padding:0.6rem 0.8rem;background:rgba(201,106,44,0.06);border:1px dashed var(--gold);border-radius:8px;font-size:0.75rem;color:#78350f;">
-                    💡 Payment for extra services is collected when you mark the session complete.
+                    Payment for extra services is collected when you mark the session complete.
                 </div>
                 <div style="display:flex;gap:0.6rem;">
-                    <button type="submit" id="extra-confirm-<?php echo $appt_id; ?>" class="btn btn-primary btn-sm" disabled style="opacity:0.5;cursor:not-allowed;">✅ Confirm Add Service</button>
+                    <button type="submit" id="extra-confirm-<?php echo $appt_id; ?>" class="btn btn-primary btn-sm" disabled style="opacity:0.5;cursor:not-allowed;">Confirm Add Service</button>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="toggleAddService(<?php echo $appt_id; ?>)">Cancel</button>
                 </div>
             </form>
@@ -3587,14 +3583,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php if ($t_count < $people): ?>
                     disabled title="Select a therapist (or Any Available) for all <?php echo $people; ?> slot(s) first"
                     style="opacity:0.5;cursor:not-allowed;"
-                    <?php endif; ?>>✅ Approve / Assign</button>
+                    <?php endif; ?>>Approve / Assign</button>
             <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>❌ Decline</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>Decline</button>
             </form>
 
         <?php elseif ($status === 'assigned'): ?>
@@ -3603,14 +3599,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             // 2-session package, the customer pays the FULL combined package total here
             // (charged_price on this row is only Session 1's own split, e.g. ₱459 of a
             // ₱899 package) — $pm_row['total_amount'] already equals the combined total
-            // by construction (Step 3), same figure the card's own "💰 Price" box shows.
+            // by construction (Step 3), same figure the card's own "Price" box shows.
             // Normal appointments, and a 2-session service booked in "1 Session" mode,
             // are completely unaffected — still their own charged_price, as always.
             $_bill_lines = $is_two_session_card
                 ? [['name' => $a['service_name'] . ' (2-Session Package)', 'price' => floatval($pm_row['total_amount'] ?? 0)]]
                 : [['name' => $a['service_name'], 'price' => floatval($a['charged_price'] ?? 0)]];
             foreach ($extra_services as $_be) { $_bill_lines[] = ['name' => $_be['svc_name'], 'price' => floatval($_be['charged_price'])]; }
-            $_checkin_bill_title = $is_two_session_card ? '🧾 Buong Bill (2-Session Package)' : '🧾 Buong Bill';
+            $_checkin_bill_title = $is_two_session_card ? 'Buong Bill (2-Session Package)' : 'Buong Bill';
             ?>
             <script>
             (window._apptExtras = window._apptExtras || {})[<?php echo $appt_id; ?>] = <?php echo json_encode(array_map(function($e){ return ['id'=>(int)$e['id'],'name'=>$e['svc_name'],'price'=>(float)$e['charged_price']]; }, $extra_services)); ?>;
@@ -3621,14 +3617,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <?php if ($_has_unassigned_therapist): ?>
                     disabled title="Assign a specific therapist to all services first"
                     style="opacity:0.5;cursor:not-allowed;"
-                    <?php endif; ?>>✅ Check In</button>
+                    <?php endif; ?>>Check In</button>
             <form method="POST" style="margin:0;display:flex;align-items:center;gap:0.4rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="decline">
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>❌ Decline</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>Decline</button>
             </form>
 
         <?php elseif ($status === 'approved'): ?>
@@ -3680,11 +3676,11 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php if ($_cp_unassigned): ?>
                 <button type="button" class="btn btn-primary btn-sm" disabled
                         title="Assign a specific therapist (not &quot;Any Available&quot;) first"
-                        style="opacity:0.5;cursor:not-allowed;">🎉 Mark Complete</button>
+                        style="opacity:0.5;cursor:not-allowed;">Mark Complete</button>
                 <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
                 <?php else: ?>
                 <button type="button" class="btn btn-primary btn-sm"
-                        onclick="openCompleteModal(<?php echo $appt_id; ?>)">🎉 Mark Complete</button>
+                        onclick="openCompleteModal(<?php echo $appt_id; ?>)">Mark Complete</button>
                 <?php endif; ?>
             <?php else: ?>
             <span style="font-size:0.78rem;color:var(--gray);font-style:italic;">Use "Complete Session" above to progress this package.</span>
@@ -3695,7 +3691,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>❌ Decline</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Decline this appointment?').then(ok=>{if(!ok)return;openPinGate('Decline Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Decline this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>Decline</button>
             </form>
 
         <?php elseif ($status === 'completed' && is_full_access()): ?>
@@ -3706,13 +3702,13 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <button type="button" class="btn btn-secondary btn-sm"
                         style="background:transparent;border:1px solid #6b7280;color:#6b7280;"
                         onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Revert completion for this appointment?\n\nThis will reset it to Assigned, zero the commission, and remove any daily report rows for this appointment.').then(ok=>{if(ok)_f.submit()})">
-                    ↩️ Revert Completion
+                    Revert Completion
                 </button>
             </form>
         <?php endif; ?>
 
         <?php if (in_array($status, ['pending','assigned'])): ?>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $appt_id; ?>)">📅 Reschedule</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $appt_id; ?>)">Reschedule</button>
         <button type="button"
                 onclick="openEditModal(
                     <?php echo $appt_id; ?>,
@@ -3724,11 +3720,11 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     '<?php echo htmlspecialchars(addslashes(implode(', ', array_column($assigned_therapists, 'full_name'))), ENT_QUOTES, 'UTF-8'); ?>',
                     '<?php echo $status; ?>'
                 )"
-                class="btn btn-secondary btn-sm">✏️ Edit</button>
+                class="btn btn-secondary btn-sm">Edit</button>
         <button type="button"
                 onclick="toggleCancel(<?php echo $appt_id; ?>)"
                 style="padding:0.35rem 0.8rem;border-radius:7px;border:1px solid #6b7280;background:transparent;color:#6b7280;font-size:0.82rem;font-weight:600;cursor:pointer;">
-            ✏️ Cancel Booking
+            Cancel Booking
         </button>
         <?php if ($status === 'assigned'): ?>
         <form method="POST" style="margin:0;display:inline;">
@@ -3740,7 +3736,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
                     style="padding:0.35rem 0.8rem;border-radius:7px;border:1px solid #d97706;background:transparent;color:#d97706;font-size:0.82rem;font-weight:600;cursor:pointer;"
                     <?php if (is_cashier()): ?>onclick="uiConfirm('Mark this appointment as a no-show?\n\nThe appointment will be cancelled and the customer will be notified. This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Mark No-Show',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Mark this appointment as a no-show?\n\nThe appointment will be cancelled and the customer will be notified. This cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>
-                ⚠️ No-Show
+                No-Show
             </button>
         </form>
         <?php endif; ?>
@@ -3750,11 +3746,11 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             $_ra_duration  = (int)($a['duration_minutes'] ?: $a['session_time'] ?: 60);
             $_ra_suggested = suggest_resource_type_for_service((int)$a['service_id']);
             $_ra_res       = !empty($a['resource_id']) ? ($resource_map[(int)$a['resource_id']] ?? null) : null;
-            $_ra_label     = $_ra_res ? trim(($resource_type_icons[$_ra_res['type']] ?? '') . ' ' . $_ra_res['name']) : '';
+            $_ra_label     = $_ra_res ? $_ra_res['name'] : '';
         ?>
         <button type="button" class="btn btn-secondary btn-sm"
                 onclick="openResourceAssignModal(<?php echo $appt_id; ?>, '<?php echo $a['appointment_date']; ?>', <?php echo $_ra_duration; ?>, '<?php echo $_ra_suggested; ?>', '<?php echo htmlspecialchars(addslashes($_ra_label), ENT_QUOTES, 'UTF-8'); ?>')">
-            <?php echo $_ra_label ? '🛎️ ' . htmlspecialchars($_ra_label) : '🛎️ Assign Room/Chair/HS'; ?>
+            <?php echo $_ra_label ? htmlspecialchars($_ra_label) : 'Assign Room/Chair/HS'; ?>
         </button>
         <?php endif; ?>
     </div>
@@ -3762,7 +3758,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <?php if (in_array($status, ['pending','assigned'])): ?>
     <!-- Reschedule inline form -->
     <div id="reschedule-<?php echo $appt_id; ?>" style="display:none;margin-top:0.85rem;padding:1rem 1.1rem;background:var(--bg3);border-radius:10px;border:1px solid var(--border2);">
-        <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">📅 Reschedule Appointment</div>
+        <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">Reschedule Appointment</div>
         <form method="POST" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end;">
             <?php echo csrf_field(); ?>
             <input type="hidden" name="action"  value="reschedule">
@@ -3779,14 +3775,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             </div>
             <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
             <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary btn-sm"
-                    <?php if (is_cashier()): ?>onclick="uiConfirm('Reschedule this appointment?').then(ok=>{if(!ok)return;openPinGate('Reschedule Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Reschedule this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>💾 Confirm Reschedule</button>
+                    <?php if (is_cashier()): ?>onclick="uiConfirm('Reschedule this appointment?').then(ok=>{if(!ok)return;openPinGate('Reschedule Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Reschedule this appointment?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>Confirm Reschedule</button>
             <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $appt_id; ?>)">Cancel</button>
         </form>
     </div>
 
     <!-- Cancel inline form -->
     <div id="cancel-<?php echo $appt_id; ?>" style="display:none;margin-top:0.85rem;padding:1rem 1.1rem;background:#fef2f2;border-radius:10px;border:1px solid #fecaca;">
-        <div style="font-size:0.78rem;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">✏️ Cancel Booking — Admin Correction</div>
+        <div style="font-size:0.78rem;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">Cancel Booking — Admin Correction</div>
         <form method="POST" style="display:flex;flex-direction:column;gap:0.6rem;">
             <?php echo csrf_field(); ?>
             <input type="hidden" name="action"  value="cancel">
@@ -3799,7 +3795,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
             <div style="display:flex;gap:0.6rem;">
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                        <?php if (is_cashier()): ?>onclick="uiConfirm('Cancel this booking as an admin correction?\n\nUse this only for booking mistakes, not for missed appointments. This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Cancel Booking',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Cancel this booking as an admin correction?\n\nUse this only for booking mistakes, not for missed appointments. This cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>✏️ Confirm Cancellation</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Cancel this booking as an admin correction?\n\nUse this only for booking mistakes, not for missed appointments. This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Cancel Booking',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Cancel this booking as an admin correction?\n\nUse this only for booking mistakes, not for missed appointments. This cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>Confirm Cancellation</button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCancel(<?php echo $appt_id; ?>)">Back</button>
             </div>
         </form>
@@ -3810,7 +3806,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
     <?php if ($status === 'cancelled' && !empty($a['cancel_reason'])): ?>
     <div style="margin-top:0.75rem;padding:0.6rem 0.85rem;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;font-size:0.8rem;color:#374151;">
-        🚫 <strong>Cancellation reason:</strong> <?php echo htmlspecialchars($a['cancel_reason']); ?>
+        <strong>Cancellation reason:</strong> <?php echo htmlspecialchars($a['cancel_reason']); ?>
     </div>
     <?php endif; ?>
 
@@ -3827,20 +3823,20 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     <div class="nested-session-block" data-appt-id="<?php echo $s2_id; ?>"
          style="margin-top:0.9rem;padding:0.95rem 1.05rem;background:#fdf4ff;border:1.5px dashed #e9a4f1;border-radius:12px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.65rem;flex-wrap:wrap;">
-            <span style="font-size:0.78rem;font-weight:700;color:#a21caf;text-transform:uppercase;letter-spacing:0.05em;">🔁 Session 2</span>
+            <span style="font-size:0.78rem;font-weight:700;color:#a21caf;text-transform:uppercase;letter-spacing:0.05em;">Session 2</span>
             <span style="background:<?php echo $_s2bbg; ?>;color:<?php echo $_s2bfg; ?>;padding:0.2rem 0.7rem;border-radius:20px;font-size:0.72rem;font-weight:700;"><?php echo $_s2blabel; ?></span>
         </div>
         <div style="font-size:0.88rem;color:var(--brown);font-weight:600;margin-bottom:0.15rem;">
-            📅 <?php echo date('F d, Y — h:i A', strtotime($_session2['appointment_date'])); ?>
+            <?php echo date('F d, Y — h:i A', strtotime($_session2['appointment_date'])); ?>
         </div>
         <?php if ($s2_status === 'pending'): ?>
-        <div style="font-size:0.76rem;color:#92400e;margin-bottom:0.6rem;">⏳ No therapist assigned yet</div>
+        <div style="font-size:0.76rem;color:#92400e;margin-bottom:0.6rem;">No therapist assigned yet</div>
         <?php endif; ?>
 
         <?php if (in_array($s2_status, ['pending','assigned'])): ?>
         <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:0.85rem 0.95rem;margin-bottom:0.6rem;">
             <div style="font-size:0.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
-                <span>💆 Therapist Assignment
+                <span>Therapist Assignment
                     <span data-filled-counter data-total-required="<?php echo $_s2_people; ?>"
                           style="font-weight:400;color:<?php echo $_s2_t_count>=$_s2_people?'var(--green)':'var(--gold)'; ?>;">
                         — <?php echo $_s2_t_count; ?>/<?php echo $_s2_people; ?> filled
@@ -3860,7 +3856,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 $_s2_st = $_s2_slot_therapist_map[$_s2p] ?? null;
             ?>
                 <div class="therapist-slot-row" data-person-slot="<?php echo $_s2p; ?>" style="display:flex;align-items:center;gap:0.5rem;">
-                    <span style="font-size:0.76rem;font-weight:600;color:var(--gray);white-space:nowrap;">👤 Person <?php echo $_s2p; ?></span>
+                    <span style="font-size:0.76rem;font-weight:600;color:var(--gray);white-space:nowrap;">Person <?php echo $_s2p; ?></span>
                     <select data-person-slot="<?php echo $_s2p; ?>"
                             onchange="autoSaveSlot(this, <?php echo $s2_id; ?>)"
                             style="flex:1;padding:0.35rem 0.55rem;border:1px solid #c8a46e;border-radius:7px;background:#fff;color:#1a1a1a;font-size:0.8rem;">
@@ -3874,7 +3870,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                             if ($_s2topt['has_specialty'] <= 0 && !$_s2_is_current) continue;
                             $_s2_lbl = htmlspecialchars($_s2topt['full_name']);
                             if (!$_s2topt['on_duty']) $_s2_lbl .= ' — Off duty';
-                            if ($_s2topt['has_specialty'] <= 0) $_s2_lbl .= ' ⚠️ No longer qualified';
+                            if ($_s2topt['has_specialty'] <= 0) $_s2_lbl .= ' No longer qualified';
                             $_s2_selected = $_s2_is_current;
                         ?>
                         <option value="<?php echo $_s2topt['id']; ?>" <?php echo $_s2_selected ? 'selected' : ''; ?>>
@@ -3898,7 +3894,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     style="width:100%;<?php echo $_s2_t_count < $_s2_people ? 'opacity:0.5;cursor:not-allowed;' : ''; ?>"
                     <?php if ($_s2_t_count < $_s2_people): ?>
                     disabled title="Select a therapist (or Any Available) for all <?php echo $_s2_people; ?> slot(s) first"
-                    <?php endif; ?>>✅ Approve / Assign</button>
+                    <?php endif; ?>>Approve / Assign</button>
             <?php endif; ?>
         </div>
         <?php endif; ?>
@@ -3951,17 +3947,17 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             <?php if ($_s2_cp_unassigned): ?>
             <button type="button" class="btn btn-primary btn-sm" disabled
                     title="Assign a specific therapist (not &quot;Any Available&quot;) first"
-                    style="opacity:0.5;cursor:not-allowed;">🎉 Mark Complete</button>
+                    style="opacity:0.5;cursor:not-allowed;">Mark Complete</button>
             <span style="font-size:0.72rem;color:var(--gray);font-style:italic;">Assign a specific therapist first</span>
             <?php else: ?>
-            <button type="button" class="btn btn-primary btn-sm" onclick="openCompleteModal(<?php echo $s2_id; ?>)">🎉 Mark Complete</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="openCompleteModal(<?php echo $s2_id; ?>)">Mark Complete</button>
             <?php endif; ?>
         <?php endif; ?>
 
         <?php if ($s2_status === 'assigned'): ?>
             <button type="button" class="btn btn-success btn-sm"
                     onclick="openCheckinModal(<?php echo $s2_id; ?>, '<?php echo htmlspecialchars(addslashes($display_name)); ?>', <?php echo json_encode([['name' => $a['service_name'] . ' (Session 2)', 'price' => floatval($_session2['charged_price'] ?? 0)]]); ?>, null, <?php echo floatval($_session2['advance_payment'] ?? 0); ?>)">
-                ✅ Check In
+                Check In
             </button>
             <form method="POST" style="margin:0;display:inline;">
                 <?php echo csrf_field(); ?>
@@ -3972,17 +3968,17 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
                         style="padding:0.35rem 0.8rem;border-radius:7px;border:1px solid #d97706;background:transparent;color:#d97706;font-size:0.82rem;font-weight:600;cursor:pointer;"
                         <?php if (is_cashier()): ?>onclick="uiConfirm('Mark Session 2 as a no-show?\n\nThe appointment will be cancelled and the customer will be notified. This cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Mark No-Show',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Mark Session 2 as a no-show?\n\nThe appointment will be cancelled and the customer will be notified. This cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>
-                    ⚠️ No-Show
+                    No-Show
                 </button>
             </form>
         <?php endif; ?>
 
         <?php if (in_array($s2_status, ['pending','assigned'])): ?>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $s2_id; ?>)">📅 Reschedule</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $s2_id; ?>)">Reschedule</button>
             <button type="button"
                     onclick="toggleCancel(<?php echo $s2_id; ?>)"
                     style="padding:0.35rem 0.8rem;border-radius:7px;border:1px solid #6b7280;background:transparent;color:#6b7280;font-size:0.82rem;font-weight:600;cursor:pointer;">
-                ✏️ Cancel Booking
+                Cancel Booking
             </button>
         <?php endif; ?>
         </div>
@@ -3990,7 +3986,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         <?php if (in_array($s2_status, ['pending','assigned'])): ?>
         <!-- Session 2 reschedule inline form -->
         <div id="reschedule-<?php echo $s2_id; ?>" style="display:none;margin-top:0.75rem;padding:0.85rem 0.95rem;background:var(--bg2);border-radius:10px;border:1px solid var(--border2);">
-            <div style="font-size:0.75rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.55rem;">📅 Reschedule Session 2</div>
+            <div style="font-size:0.75rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.55rem;">Reschedule Session 2</div>
             <form method="POST" style="display:flex;gap:0.65rem;flex-wrap:wrap;align-items:flex-end;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="reschedule">
@@ -4007,14 +4003,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 </div>
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary btn-sm"
-                        <?php if (is_cashier()): ?>onclick="uiConfirm('Reschedule Session 2?').then(ok=>{if(!ok)return;openPinGate('Reschedule Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Reschedule Session 2?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>💾 Confirm Reschedule</button>
+                        <?php if (is_cashier()): ?>onclick="uiConfirm('Reschedule Session 2?').then(ok=>{if(!ok)return;openPinGate('Reschedule Appointment',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Reschedule Session 2?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>Confirm Reschedule</button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="toggleReschedule(<?php echo $s2_id; ?>)">Cancel</button>
             </form>
         </div>
 
         <!-- Session 2 cancel inline form -->
         <div id="cancel-<?php echo $s2_id; ?>" style="display:none;margin-top:0.75rem;padding:0.85rem 0.95rem;background:#fef2f2;border-radius:10px;border:1px solid #fecaca;">
-            <div style="font-size:0.75rem;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.55rem;">✏️ Cancel Session 2 — Admin Correction</div>
+            <div style="font-size:0.75rem;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.55rem;">Cancel Session 2 — Admin Correction</div>
             <form method="POST" style="display:flex;flex-direction:column;gap:0.5rem;">
                 <?php echo csrf_field(); ?>
                 <input type="hidden" name="action"  value="cancel">
@@ -4027,7 +4023,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <div style="display:flex;gap:0.5rem;">
                     <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-danger btn-sm"
-                            <?php if (is_cashier()): ?>onclick="uiConfirm('Cancel Session 2 as an admin correction?\n\nThis cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Cancel Booking',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Cancel Session 2 as an admin correction?\n\nThis cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>✏️ Confirm Cancellation</button>
+                            <?php if (is_cashier()): ?>onclick="uiConfirm('Cancel Session 2 as an admin correction?\n\nThis cannot be undone.').then(ok=>{if(!ok)return;openPinGate('Cancel Booking',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Cancel Session 2 as an admin correction?\n\nThis cannot be undone.').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>Confirm Cancellation</button>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCancel(<?php echo $s2_id; ?>)">Back</button>
                 </div>
             </form>
@@ -4036,7 +4032,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
         <?php if (!empty($_session2['cancel_reason']) && in_array($s2_status, ['cancelled','declined'])): ?>
         <div style="margin-top:0.65rem;padding:0.5rem 0.75rem;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;font-size:0.78rem;color:#374151;">
-            🚫 <strong>Cancellation reason:</strong> <?php echo htmlspecialchars($_session2['cancel_reason']); ?>
+            <strong>Cancellation reason:</strong> <?php echo htmlspecialchars($_session2['cancel_reason']); ?>
         </div>
         <?php endif; ?>
     </div>
@@ -4050,14 +4046,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
 if (empty($appointments)): ?>
 <div class="panel"><div class="panel-body" style="text-align:center;padding:3rem;color:var(--gray);">
-    <div style="font-size:2.5rem;margin-bottom:0.75rem;">📅</div>
+    <div style="font-size:2.5rem;margin-bottom:0.75rem;"></div>
     <p>No appointments found<?php echo $filter_date ? ' on '.date('F d, Y', strtotime($filter_date)) : ''; ?>.</p>
 </div></div>
 <?php else: ?>
 
 <!-- ── CUSTOMER SEARCH ────────────────────────────────────────────────────── -->
 <div class="appt-search-wrap">
-    <span class="appt-search-icon">🔍</span>
+    <span class="appt-search-icon"></span>
     <input type="search" id="apptSearchInput" class="appt-search-input"
            placeholder="Search by name, service, or date…"
            oninput="filterAdminAppointments(this.value)"
@@ -4074,7 +4070,7 @@ if (empty($appointments)): ?>
     <!-- ── PENDING ──────────────────────────────────────────────────────────── -->
     <div data-kanban-col="pending" style="background:var(--bg3);border-radius:14px;border:1.5px solid #f59e0b55;overflow:hidden;">
         <div style="padding:0.85rem 1.1rem;background:#fef9f0;border-bottom:1.5px solid #f59e0b55;display:flex;align-items:center;gap:0.6rem;">
-            <span style="font-size:1rem;">⏳</span>
+            <span style="font-size:1rem;"></span>
             <div>
                 <span style="font-weight:800;color:#92400e;font-size:0.9rem;text-transform:uppercase;letter-spacing:0.06em;">Pending</span>
                 <p style="font-size:0.72rem;color:var(--gray);margin:2px 0 0;font-weight:400;">Awaiting therapist assignment</p>
@@ -4091,7 +4087,7 @@ if (empty($appointments)): ?>
     <!-- ── ASSIGNED ─────────────────────────────────────────────────────────── -->
     <div data-kanban-col="assigned" style="background:var(--bg3);border-radius:14px;border:1.5px solid #0d6efd55;overflow:hidden;">
         <div style="padding:0.85rem 1.1rem;background:#f0f4ff;border-bottom:1.5px solid #0d6efd55;display:flex;align-items:center;gap:0.6rem;">
-            <span style="font-size:1rem;">💆</span>
+            <span style="font-size:1rem;"></span>
             <div>
                 <span style="font-weight:800;color:#084298;font-size:0.9rem;text-transform:uppercase;letter-spacing:0.06em;">Assigned</span>
                 <p style="font-size:0.72rem;color:var(--gray);margin:2px 0 0;font-weight:400;">Awaiting customer arrival</p>
@@ -4108,7 +4104,7 @@ if (empty($appointments)): ?>
     <!-- ── APPROVED ─────────────────────────────────────────────────────────── -->
     <div data-kanban-col="approved" style="background:var(--bg3);border-radius:14px;border:1.5px solid #16a34a55;overflow:hidden;">
         <div style="padding:0.85rem 1.1rem;background:#f0fff4;border-bottom:1.5px solid #16a34a55;display:flex;align-items:center;gap:0.6rem;">
-            <span style="font-size:1rem;">✅</span>
+            <span style="font-size:1rem;"></span>
             <div>
                 <span style="font-weight:800;color:#065f46;font-size:0.9rem;text-transform:uppercase;letter-spacing:0.06em;">Approved</span>
                 <p style="font-size:0.72rem;color:var(--gray);margin:2px 0 0;font-weight:400;">Customer checked in</p>
@@ -4128,7 +4124,7 @@ if (empty($appointments)): ?>
 <?php if (!empty($history_rows)): ?>
 <details id="history-section" style="margin-bottom:1.5rem;" <?php echo in_array($filter, ['completed','declined','cancelled']) ? 'open' : ''; ?>>
     <summary style="cursor:pointer;padding:0.85rem 1.1rem;background:var(--bg3);border-radius:12px;border:1px solid var(--border2);display:flex;align-items:center;gap:0.6rem;list-style:none;font-weight:700;color:var(--brown);font-size:0.9rem;user-select:none;">
-        📋 History — completed, declined &amp; cancelled
+        History — completed, declined &amp; cancelled
         <span style="margin-left:0.4rem;background:#6b7280;color:#fff;border-radius:20px;padding:0.1rem 0.55rem;font-size:0.72rem;font-weight:700;"><?php echo count($history_rows); ?></span>
         <span style="margin-left:auto;font-size:0.75rem;font-weight:400;color:var(--gray);">click to toggle</span>
     </summary>
@@ -4262,7 +4258,7 @@ function updateExtraTherapist(apptId, svcId) {
             const o = document.createElement('option');
             o.value = t.id;
             let lbl = t.name;
-            if (t.on_break) lbl += ' ☕ On break';
+            if (t.on_break) lbl += ' On break';
             else if (t.out) lbl += ' — Checked out';
             o.textContent = lbl;
             o.disabled = t.on_break || t.out;
@@ -4300,7 +4296,7 @@ function previewExtraPrice(selectEl, apptId) {
                 formula = 'Partner rate';
             } else {
                 charged = regPrice;
-                formula = partnerId ? '⚠️ No partner rate — using regular' : 'Regular price';
+                formula = partnerId ? 'No partner rate — using regular' : 'Regular price';
             }
             break;
         case 'influencer':
@@ -4421,7 +4417,7 @@ function clearApptSearch() {
             banner.onclick = function() { window.location.reload(); };
             document.body.appendChild(banner);
         }
-        banner.textContent = '🆕 ' + count + ' new appointment' + (count === 1 ? '' : 's') + ' — Click to view';
+        banner.textContent = '' + count + ' new appointment' + (count === 1 ? '' : 's') + ' — Click to view';
     }
 
     function pollNewAppts() {
@@ -4516,10 +4512,10 @@ function cmRecompute() {
         if (dtype === 'celebration') cdLabel += ' (' + (parseFloat(document.getElementById('cm-celeb-pct')?.value)||0) + '% off)';
         html += '<div style="' + rs + '"><span style="' + amber + '">' + cdLabel + '</span><span style="' + amber + '">−₱' + cmFmt(cdAmt) + '</span></div>';
     }
-    if (advPay > 0) html += '<div style="' + rs + '"><span style="' + rust + '">💰 Advance (pre-recorded)</span><span style="' + rust + '">−₱' + cmFmt(advPay) + '</span></div>';
+    if (advPay > 0) html += '<div style="' + rs + '"><span style="' + rust + '">Advance (pre-recorded)</span><span style="' + rust + '">−₱' + cmFmt(advPay) + '</span></div>';
     if (already > 0) {
         var alrStyle = cmState.isPaid ? 'color:#198754;font-weight:600;' : gray;
-        var alrLabel = cmState.isPaid ? '✅ Paid at check-in' : 'Already paid';
+        var alrLabel = cmState.isPaid ? 'Paid at check-in' : 'Already paid';
         html += '<div style="' + rs + '"><span style="' + alrStyle + '">' + alrLabel + '</span><span style="' + alrStyle + '">−₱' + cmFmt(already) + '</span></div>';
     }
     var tcolor = totalDue > 0 ? 'var(--brown)' : '#198754';
@@ -4561,7 +4557,7 @@ function openCompleteModal(apptId) {
     var noticeText = document.getElementById('cm-booking-disc-text');
     if (data.bookingDisc > 0) {
         noticeEl.style.display = 'block';
-        noticeText.textContent = '🎟️ Already applied at booking: ' + cmDiscLabel(data.bookingDiscType) + ' −₱' + cmFmt(data.bookingDisc);
+        noticeText.textContent = 'Already applied at booking: ' + cmDiscLabel(data.bookingDiscType) + ' −₱' + cmFmt(data.bookingDisc);
     } else {
         noticeEl.style.display = 'none';
     }
@@ -4614,7 +4610,7 @@ function cmSelectPayment(method) {
 
 function submitComplete() {
     var confirmBtn = document.getElementById('cm-confirm-btn');
-    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Processing…'; }
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Processing…'; }
     var pinInp = document.getElementById('cm-pin-input');
     var pinErr = document.getElementById('cm-pin-error');
     if (pinErr) pinErr.textContent = '';
@@ -4672,21 +4668,20 @@ function submitComplete() {
                 max-width:420px;width:92vw;box-shadow:0 24px 60px rgba(0,0,0,0.2);
                 animation:popIn .3s cubic-bezier(.34,1.56,.64,1);">
         <div style="text-align:center;margin-bottom:1.25rem;">
-            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;">🎟️</div>
+            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;"></div>
             <div style="font-size:1.05rem;font-weight:700;color:var(--brown);">Assign Therapist</div>
             <div style="font-size:0.8rem;color:var(--gray);margin-top:0.3rem;" id="discModalCustomer"></div>
         </div>
         <div id="modal-online-paid-info" style="display:none;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.2);border-radius:10px;padding:0.85rem;text-align:center;font-size:0.85rem;color:#0a3622;margin-bottom:1rem;">
-            ✅ This appointment was paid online via <strong id="modal-online-method-label"></strong>. Verify and assign the therapist.
+            This appointment was paid online via <strong id="modal-online-method-label"></strong>. Verify and assign the therapist.
         </div>
         <div id="modal-discount-section" style="display:none;">
         <p style="font-size:0.82rem;color:var(--gray);text-align:center;margin-bottom:1rem;">Does this customer have a discount or voucher?</p>
         <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:0.4rem;margin-bottom:1rem;">
-            <?php foreach (['none'=>['🚫','None',''],'senior'=>['👴','Senior','20% off'],'pwd'=>['♿','PWD','20% off'],'employee'=>['🪪','Staff','50% off']] as $dtype => [$dico, $dlbl, $dsub]): ?>
+            <?php foreach (['none'=>['None',''],'senior'=>['Senior','20% off'],'pwd'=>['PWD','20% off'],'employee'=>['Staff','50% off']] as $dtype => [$dlbl, $dsub]): ?>
             <div id="dmod-btn-<?php echo $dtype; ?>"
                  onclick="selectDiscModal('<?php echo $dtype; ?>')"
                  style="padding:0.6rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;<?php echo $dtype==='none'?'border-color:#C96A2C;background:#fff8f2;':''; ?>">
-                <div style="font-size:1rem;"><?php echo $dico; ?></div>
                 <div style="font-size:0.72rem;font-weight:700;margin-top:2px;"><?php echo $dlbl; ?></div>
                 <?php if ($dsub): ?><div style="font-size:0.65rem;color:#6b7280;"><?php echo $dsub; ?></div><?php endif; ?>
             </div>
@@ -4695,13 +4690,13 @@ function submitComplete() {
                     style="padding:0.55rem 0.4rem;border:2px solid #e5e7eb;border-radius:8px;
                            background:#fff;cursor:pointer;font-size:0.75rem;font-weight:600;
                            color:#374151;text-align:center;transition:all .15s;">
-                🎟️<br>Voucher
+                <br>Voucher
             </button>
             <button type="button" id="dmod-btn-gift_card" onclick="selectDiscModal('gift_card')"
                     style="padding:0.55rem 0.4rem;border:2px solid #e5e7eb;border-radius:8px;
                            background:#fff;cursor:pointer;font-size:0.75rem;font-weight:600;
                            color:#374151;text-align:center;transition:all .15s;">
-                🎁<br>Gift Card
+                <br>Gift Card
             </button>
         </div>
         <div id="dmod-voucher-area" style="display:none;background:#fef9f0;
@@ -4736,42 +4731,42 @@ function submitComplete() {
 
         <!-- Payment method selection (hidden — payment collected at check-in) -->
         <div id="modal-payment-section" style="display:none;margin-bottom:1rem;">
-            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Payment Method</div>
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">Payment Method</div>
             <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:0.4rem;">
                 <div id="dmod-pay-cash"
                      onclick="selectPayModal('cash')"
                      style="padding:0.6rem 0.3rem;border:2px solid #C96A2C;background:#fff8f2;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">💵</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.68rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Cash</div>
                 </div>
                 <div id="dmod-pay-qrph"
                      onclick="selectPayModal('qrph')"
                      style="padding:0.6rem 0.3rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">📷</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.68rem;font-weight:700;margin-top:2px;color:#3B2A1A;">QR Ph</div>
                 </div>
                 <div id="dmod-pay-gcash"
                      onclick="selectPayModal('gcash')"
                      style="padding:0.6rem 0.3rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">📱</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.68rem;font-weight:700;margin-top:2px;color:#3B2A1A;">GCash</div>
                 </div>
                 <div id="dmod-pay-maya"
                      onclick="selectPayModal('maya')"
                      style="padding:0.6rem 0.3rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">💜</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.68rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Maya</div>
                 </div>
                 <div id="dmod-pay-bpi_debit"
                      onclick="selectPayModal('bpi_debit')"
                      style="padding:0.6rem 0.3rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">🏦</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.68rem;font-weight:700;margin-top:2px;color:#3B2A1A;">BPI Debit</div>
                 </div>
                 <div id="dmod-pay-bpi_credit"
                      onclick="selectPayModal('bpi_credit')"
                      style="padding:0.6rem 0.3rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">💳</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.68rem;font-weight:700;margin-top:2px;color:#3B2A1A;">BPI Credit</div>
                 </div>
             </div>
@@ -4780,7 +4775,7 @@ function submitComplete() {
            style="font-size:0.83rem;color:var(--gray);text-align:center;
                   margin:0 0 1rem;padding:0.6rem;
                   background:var(--bg3,#f5f5f5);border-radius:8px;">
-            💡 Discount and payment will be collected when the customer arrives for Check In.
+            Discount and payment will be collected when the customer arrives for Check In.
         </p>
         <div id="dmod-preview" style="display:none;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.3);border-radius:8px;padding:0.6rem 0.85rem;font-size:0.82rem;color:#15803d;margin-bottom:0.85rem;"></div>
         <div style="display:flex;gap:0.65rem;margin-top:0.5rem;">
@@ -4798,13 +4793,13 @@ function submitComplete() {
                 max-width:380px;width:92vw;box-shadow:0 24px 60px rgba(0,0,0,0.22);
                 animation:popIn .3s cubic-bezier(.34,1.56,.64,1);">
         <div style="text-align:center;margin-bottom:1.25rem;">
-            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--rust),var(--brown));display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;">🔐</div>
+            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--rust),var(--brown));display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;"></div>
             <div style="font-size:1.05rem;font-weight:700;color:var(--brown);">Confirm Approval</div>
             <div style="font-size:0.8rem;color:var(--gray);margin-top:0.3rem;" id="pinModalDesc"></div>
         </div>
         <?php if (!is_cashier()): ?>
         <div style="background:rgba(25,135,84,0.08);border:1px solid rgba(25,135,84,0.2);border-radius:10px;padding:0.85rem;text-align:center;font-size:0.85rem;color:#0a3622;margin-bottom:1rem;">
-            👑 Logged in as <strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Admin'); ?></strong>. No PIN required.
+            Logged in as <strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Admin'); ?></strong>. No PIN required.
         </div>
         <?php else: ?>
         <div id="pinInputArea">
@@ -4817,9 +4812,9 @@ function submitComplete() {
         <?php endif; ?>
         <div style="display:flex;gap:0.65rem;margin-top:1.1rem;">
             <button type="button" onclick="closePinModal()" class="btn btn-secondary" style="flex:1;">← Back</button>
-            <button type="button" id="pinConfirmBtn" onclick="submitApproval()" class="btn btn-primary" style="flex:2;">✅ Approve</button>
+            <button type="button" id="pinConfirmBtn" onclick="submitApproval()" class="btn btn-primary" style="flex:2;">Approve</button>
         </div>
-        <div style="margin-top:0.85rem;text-align:center;font-size:0.72rem;color:var(--gray);">🔒 Action recorded under your name for accountability.</div>
+        <div style="margin-top:0.85rem;text-align:center;font-size:0.72rem;color:var(--gray);">Action recorded under your name for accountability.</div>
     </div>
 </div>
 
@@ -4831,20 +4826,20 @@ function submitComplete() {
                 max-width:400px;width:92vw;box-shadow:0 24px 60px rgba(0,0,0,0.2);
                 animation:popIn .3s cubic-bezier(.34,1.56,.64,1);">
         <div style="text-align:center;margin-bottom:1.25rem;">
-            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#22c55e,#16a34a);display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;">✅</div>
+            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#22c55e,#16a34a);display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;"></div>
             <div style="font-size:1.05rem;font-weight:700;color:var(--brown);">Customer Check-In</div>
             <div style="font-size:0.8rem;color:var(--gray);margin-top:0.3rem;" id="ciCustomerName"></div>
         </div>
 
         <!-- Bill summary -->
         <div id="checkin-bill-summary" style="margin-bottom:1rem;padding:0.8rem;background:var(--bg3);border-radius:10px;">
-            <div id="checkin-bill-title" style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">🧾 Buong Bill</div>
+            <div id="checkin-bill-title" style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">Buong Bill</div>
             <div id="checkin-bill-lines"></div>
             <div id="checkin-discount-line" style="display:none;justify-content:space-between;font-size:0.8rem;color:#dc3545;margin-top:0.25rem;">
                 <span>Discount</span><span class="disc-amt">−₱0.00</span>
             </div>
             <div id="checkin-advance-line" style="display:none;justify-content:space-between;font-size:0.8rem;color:#C96A2C;margin-top:0.25rem;">
-                <span>💰 Advance (pre-recorded)</span><span class="adv-amt">−₱0.00</span>
+                <span>Advance (pre-recorded)</span><span class="adv-amt">−₱0.00</span>
             </div>
             <div style="display:flex;justify-content:space-between;font-weight:800;padding-top:0.5rem;border-top:1px solid var(--border2);margin-top:0.4rem;font-size:0.88rem;">
                 <span>Total<span id="checkin-total-label" style="font-weight:400;font-size:0.7rem;color:var(--gray);display:none;"> (remaining to collect)</span></span>
@@ -4853,15 +4848,15 @@ function submitComplete() {
         </div>
 
         <!-- Pay Now / Pay Later toggle -->
-        <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Payment Timing</div>
+        <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">Payment Timing</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem;">
             <button type="button" id="ci-pay-now-btn" onclick="setCheckinPayMode('now')"
                     style="padding:0.65rem 0.5rem;border:2px solid var(--border2);border-radius:10px;background:#fff;font-size:0.85rem;font-weight:600;cursor:pointer;transition:all .15s;">
-                💵 Pay Now
+                Pay Now
             </button>
             <button type="button" id="ci-pay-later-btn" onclick="setCheckinPayMode('later')"
                     style="padding:0.65rem 0.5rem;border:2px solid var(--border2);border-radius:10px;background:#fff;font-size:0.85rem;font-weight:600;cursor:pointer;transition:all .15s;">
-                ⏳ Pay Later
+                Pay Later
             </button>
         </div>
 
@@ -4870,15 +4865,15 @@ function submitComplete() {
             <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:0.4rem;">Payment Method</label>
             <select id="ci-pay-method-select"
                     style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.88rem;color:#1a1a1a;">
-                <option value="cash">💵 Cash</option>
-                <option value="swiper">💳 Swiper</option>
-                <option value="gcash">📱 GCash</option>
-                <option value="maya">📱 Maya</option>
-                <option value="card">💳 Card</option>
-                <option value="qrph">📷 QR Ph</option>
+                <option value="cash">Cash</option>
+                <option value="swiper">Swiper</option>
+                <option value="gcash">GCash</option>
+                <option value="maya">Maya</option>
+                <option value="card">Card</option>
+                <option value="qrph">QR Ph</option>
             </select>
             <div style="margin-top:0.65rem;">
-                <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:0.4rem;">🎟️ Discount</label>
+                <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:0.4rem;">Discount</label>
                 <select id="ci-discount-type" onchange="ciToggleVoucherInput()"
                         style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.88rem;color:#1a1a1a;">
                     <option value="none">None</option>
@@ -4910,7 +4905,7 @@ function submitComplete() {
 
         <!-- Pay Later notice -->
         <div id="ci-pay-later-notice" style="display:none;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;padding:0.75rem 0.9rem;font-size:0.82rem;color:#92400e;margin-bottom:1rem;">
-            ⏳ Payment will be collected when the session is completed.
+            Payment will be collected when the session is completed.
         </div>
 
         <form id="checkinForm" method="POST" style="display:none;">
@@ -4936,7 +4931,7 @@ function submitComplete() {
 
         <div style="display:flex;gap:0.65rem;margin-top:0.5rem;">
             <button type="button" onclick="closeCheckinModal()" class="btn btn-secondary" style="flex:1;">Cancel</button>
-            <button type="button" onclick="submitCheckin()" class="btn btn-success" style="flex:2;">✅ Confirm Check-In</button>
+            <button type="button" onclick="submitCheckin()" class="btn btn-success" style="flex:2;">Confirm Check-In</button>
         </div>
     </div>
 </div>
@@ -4949,7 +4944,7 @@ function submitComplete() {
                 max-width:440px;width:92vw;box-shadow:0 24px 60px rgba(0,0,0,0.2);
                 animation:popIn .3s cubic-bezier(.34,1.56,.64,1);">
         <div style="text-align:center;margin-bottom:1.25rem;">
-            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;">🎉</div>
+            <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);display:flex;align-items:center;justify-content:center;font-size:1.4rem;margin:0 auto 0.75rem;"></div>
             <div style="font-size:1.05rem;font-weight:700;color:var(--brown);">Mark Session Complete</div>
             <div style="font-size:0.8rem;color:var(--gray);margin-top:0.3rem;" id="cm-customer-name"></div>
         </div>
@@ -4962,22 +4957,22 @@ function submitComplete() {
 
         <!-- Completion discount selector -->
         <div id="cm-disc-section" style="margin-bottom:0.65rem;">
-            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">🎟️ Completion Discount</div>
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">Completion Discount</div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.35rem;margin-bottom:0.35rem;">
                 <button type="button" id="cm-discbtn-none"     onclick="cmSetDiscount('none')"
-                    style="padding:0.5rem 0.2rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🚫 None</button>
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--gold);border-radius:8px;background:#fff8f2;cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">None</button>
                 <button type="button" id="cm-discbtn-voucher"  onclick="cmSetDiscount('voucher')"
-                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🎟️ Voucher</button>
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">Voucher</button>
                 <button type="button" id="cm-discbtn-celebration" onclick="cmSetDiscount('celebration')"
-                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🎉 Celebration<br><small style="font-weight:400;">% off</small></button>
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">Celebration<br><small style="font-weight:400;">% off</small></button>
             </div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.35rem;">
                 <button type="button" id="cm-discbtn-senior"   onclick="cmSetDiscount('senior')"
-                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">👴 Senior<br><small style="font-weight:400;">20%</small></button>
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">Senior<br><small style="font-weight:400;">20%</small></button>
                 <button type="button" id="cm-discbtn-pwd"      onclick="cmSetDiscount('pwd')"
-                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">♿ PWD<br><small style="font-weight:400;">20%</small></button>
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">PWD<br><small style="font-weight:400;">20%</small></button>
                 <button type="button" id="cm-discbtn-employee" onclick="cmSetDiscount('employee')"
-                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">🪪 Staff<br><small style="font-weight:400;">50%</small></button>
+                    style="padding:0.5rem 0.2rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.72rem;font-weight:600;">Staff<br><small style="font-weight:400;">50%</small></button>
             </div>
         </div>
 
@@ -4988,7 +4983,7 @@ function submitComplete() {
                     <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;">Voucher Type</label>
                     <select id="cm-voucher-type" onchange="cmRecompute()"
                             style="width:100%;padding:0.45rem 0.6rem;border:1px solid var(--border2);border-radius:7px;font-size:0.82rem;background:var(--bg3);">
-                        <option value="cash">💵 Cash Off (₱)</option>
+                        <option value="cash">Cash Off (₱)</option>
                         <option value="percent">% Percentage Off</option>
                     </select>
                 </div>
@@ -5003,7 +4998,7 @@ function submitComplete() {
 
         <!-- Celebration discount inputs (shown only when celebration selected) -->
         <div id="cm-celeb-inputs" style="display:none;background:#fef0ff;border:1px solid #d946ef;border-radius:8px;padding:0.75rem;margin-bottom:0.65rem;">
-            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">🎉 Enter discount percentage for this celebration</div>
+            <div style="font-size:0.72rem;color:#7e22ce;font-weight:600;margin-bottom:0.4rem;">Enter discount percentage for this celebration</div>
             <div style="display:flex;align-items:center;gap:0.5rem;">
                 <input type="number" id="cm-celeb-pct" min="0" max="100" step="0.01" placeholder="e.g. 10" value=""
                        oninput="cmRecompute()"
@@ -5016,7 +5011,7 @@ function submitComplete() {
         <div id="cm-advance-row" style="display:none;margin-bottom:0.65rem;background:#fff8f2;border:1px solid rgba(201,106,44,0.3);border-radius:10px;padding:0.6rem 0.85rem;">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
                 <div>
-                    <span style="font-size:0.78rem;font-weight:700;color:#C96A2C;">💰 Advance Payment</span>
+                    <span style="font-size:0.78rem;font-weight:700;color:#C96A2C;">Advance Payment</span>
                     <span style="font-size:0.72rem;color:var(--gray);margin-left:0.35rem;">(recorded on booking)</span>
                 </div>
                 <input type="number" id="cm-advance-pay" step="0.01" min="0" value="0"
@@ -5030,37 +5025,37 @@ function submitComplete() {
 
         <!-- No payment needed -->
         <div id="cm-no-payment" style="display:none;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.2);border-radius:10px;padding:0.85rem;text-align:center;font-size:0.85rem;color:#0a3622;margin-bottom:1rem;">
-            ✅ All payments already collected. No outstanding balance.
+            All payments already collected. No outstanding balance.
         </div>
 
         <!-- Payment method selector (shown only when TOTAL DUE > 0) -->
         <div id="cm-payment-section" style="display:none;margin-bottom:1rem;">
-            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">💳 Payment Method</div>
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">Payment Method</div>
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;">
                 <div id="cm-pay-cash" onclick="cmSelectPayment('cash')"
                      style="padding:0.7rem 0.4rem;border:2px solid #C96A2C;background:#fff8f2;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">💵</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Cash</div>
                 </div>
                 <div id="cm-pay-swiper" onclick="cmSelectPayment('swiper')"
                      style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">💳</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Swiper</div>
                 </div>
                 <div id="cm-pay-qrph" onclick="cmSelectPayment('qrph')"
                      style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">📷</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">QR Ph</div>
                 </div>
                 <div id="cm-pay-bank" onclick="cmSelectPayment('bank')"
                      style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
-                    <div style="font-size:1rem;">🏦</div>
+                    <div style="font-size:1rem;"></div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Bank Transfer</div>
                 </div>
             </div>
             <div id="cm-pay-unpaid" onclick="cmSelectPayment('unpaid')"
                  style="margin-top:0.5rem;padding:0.6rem 0.75rem;border:2px dashed #e5e7eb;border-radius:10px;cursor:pointer;transition:all .15s;">
-                <div style="font-size:0.82rem;font-weight:700;color:#92400e;">🧾 Unpaid — Charge to Account</div>
+                <div style="font-size:0.82rem;font-weight:700;color:#92400e;">Unpaid — Charge to Account</div>
                 <div style="font-size:0.7rem;color:var(--gray);margin-top:2px;">Corporate/hotel billing — records this as a receivable in Unpaids Corp instead of collecting payment now.</div>
             </div>
             <div id="cm-unpaid-name-wrap" style="display:none;margin-top:0.6rem;">
@@ -5083,9 +5078,9 @@ function submitComplete() {
 
         <div style="display:flex;gap:0.65rem;margin-top:0.5rem;">
             <button type="button" onclick="closeCompleteModal()" class="btn btn-secondary" style="flex:1;">Cancel</button>
-            <button type="button" onclick="submitComplete()" class="btn btn-primary" style="flex:2;" id="cm-confirm-btn">🎉 Complete Session</button>
+            <button type="button" onclick="submitComplete()" class="btn btn-primary" style="flex:2;" id="cm-confirm-btn">Complete Session</button>
         </div>
-        <div style="margin-top:0.85rem;text-align:center;font-size:0.72rem;color:var(--gray);">🔒 Action recorded under your name for accountability.</div>
+        <div style="margin-top:0.85rem;text-align:center;font-size:0.72rem;color:var(--gray);">Action recorded under your name for accountability.</div>
     </div>
 </div>
 
@@ -5284,7 +5279,7 @@ function selectDiscModal(type) {
     const isVoucherLike = (type === 'voucher' || type === 'gift_card');
     document.getElementById('dmod-voucher-area').style.display = isVoucherLike ? 'block' : 'none';
     if (isVoucherLike) {
-        const label = type === 'gift_card' ? '🎁 Gift Card Details' : '🎟️ Voucher Details';
+        const label = type === 'gift_card' ? 'Gift Card Details' : 'Voucher Details';
         document.getElementById('dmod-voucher-label').textContent = label;
         const hint = type === 'gift_card'
             ? 'Enter the gift card value to deduct from total.'
@@ -5300,16 +5295,16 @@ function updateDiscModalPreview() {
     if (!orig || _discountType === 'none') { preview.style.display = 'none'; return; }
     let discAmt = 0, label = '';
     if (_discountType === 'senior') {
-        discAmt = orig * 0.20; label = '👴 Senior Citizen Discount (20%)';
+        discAmt = orig * 0.20; label = 'Senior Citizen Discount (20%)';
     } else if (_discountType === 'pwd') {
-        discAmt = orig * 0.20; label = '♿ PWD Discount (20%)';
+        discAmt = orig * 0.20; label = 'PWD Discount (20%)';
     } else if (_discountType === 'employee') {
-        discAmt = orig * 0.50; label = '🪪 Employee Discount (50%)';
+        discAmt = orig * 0.50; label = 'Employee Discount (50%)';
     } else if (_discountType === 'voucher' || _discountType === 'gift_card') {
         const vType = document.getElementById('dmod-voucher-type').value;
         const vVal  = parseFloat(document.getElementById('dmod-voucher-value').value || 0);
         discAmt = vType === 'percent' ? orig * (vVal / 100) : Math.min(vVal, orig);
-        const icon = _discountType === 'gift_card' ? '🎁 Gift Card' : '🎟️ Voucher';
+        const icon = _discountType === 'gift_card' ? 'Gift Card' : 'Voucher';
         label = vType === 'percent' ? `${icon} (${vVal}% off)` : `${icon} (₱${vVal} off)`;
     }
     const final = Math.max(0, orig - discAmt);
@@ -5332,8 +5327,8 @@ function proceedToPIN() {
     closeDiscountModal();
 
     const orig    = _apptOrderAmounts[_approveApptId] || 0;
-    const _payLabels = {cash:'💵 Cash', gcash:'📱 GCash', maya:'💜 Maya', bpi_debit:'🏦 BPI Debit', bpi_credit:'💳 BPI Credit'};
-    const payLabel = _payLabels[_paymentMethod] || '💵 Cash';
+    const _payLabels = {cash:'Cash', gcash:'GCash', maya:'Maya', bpi_debit:'BPI Debit', bpi_credit:'BPI Credit'};
+    const payLabel = _payLabels[_paymentMethod] || 'Cash';
     let desc = `Approving · ${payLabel}`;
     if (_discountType !== 'none') {
         const vv = parseFloat(vVal || 0);
@@ -5344,7 +5339,7 @@ function proceedToPIN() {
         else if (_discountType === 'voucher' || _discountType === 'gift_card')
             discAmt = vt === 'percent' ? orig * (vv / 100) : Math.min(vv, orig);
         const final = Math.max(0, orig - discAmt);
-        const icon = _discountType === 'gift_card' ? '🎁 Gift Card' : _discountType === 'voucher' ? '🎟️ Voucher' : _discountType;
+        const icon = _discountType === 'gift_card' ? 'Gift Card' : _discountType === 'voucher' ? 'Voucher' : _discountType;
         desc = `Approving · ${payLabel} · ${icon} discount — Final: ₱${final.toLocaleString('en-PH',{minimumFractionDigits:2})}`;
     }
     document.getElementById('pinModalDesc').textContent = desc;
@@ -5387,7 +5382,7 @@ async function submitApproval() {
             if (errEl) errEl.textContent = data.error || 'Incorrect PIN.';
             if (document.getElementById('pinInput')) document.getElementById('pinInput').value = '';
             document.getElementById('pinInput')?.focus();
-            btn.disabled = false; btn.textContent = '✅ Approve'; return;
+            btn.disabled = false; btn.textContent = 'Approve'; return;
         }
         closePinModal();
         // Pass PIN to hidden form field for server-side re-verification (cashier only)
@@ -5396,7 +5391,7 @@ async function submitApproval() {
         document.getElementById('appt-approve-form').submit();
     } catch(e) {
         if (errEl) errEl.textContent = 'Network error. Try again.';
-        btn.disabled = false; btn.textContent = '✅ Assign Therapist';
+        btn.disabled = false; btn.textContent = 'Assign Therapist';
     }
 }
 
@@ -5420,7 +5415,7 @@ function openCheckinModal(apptId, customerName, billLines, billTitle, advanceAmo
     document.getElementById('ci-pay-choice').value = '';
 
     var titleEl = document.getElementById('checkin-bill-title');
-    if (titleEl) titleEl.textContent = billTitle || '🧾 Buong Bill';
+    if (titleEl) titleEl.textContent = billTitle || 'Buong Bill';
 
     window._ciAdvance = parseFloat(advanceAmount) || 0;
     var advLineEl = document.getElementById('checkin-advance-line');
@@ -5822,13 +5817,13 @@ function submitResourceAssign() {
                 location.reload();
             } else {
                 var errEl = document.getElementById('resAssignError');
-                errEl.textContent = '⚠️ ' + (data.message || 'Could not save resource assignment.');
+                errEl.textContent = '' + (data.message || 'Could not save resource assignment.');
                 errEl.style.display = 'block';
             }
         })
         .catch(() => {
             var errEl = document.getElementById('resAssignError');
-            errEl.textContent = '⚠️ Could not save resource assignment. Please try again.';
+            errEl.textContent = 'Could not save resource assignment. Please try again.';
             errEl.style.display = 'block';
         });
 }
@@ -5970,7 +5965,7 @@ function loadAddSvcSlots() {
     const people = parseInt(document.getElementById('add_svc_people').value)||1;
     if (!svcId || !date) return;
     const grid = document.getElementById('add-svc-slot-grid');
-    grid.innerHTML = '<div style="color:var(--gray);font-size:0.82rem;">⏳ Loading...</div>';
+    grid.innerHTML = '<div style="color:var(--gray);font-size:0.82rem;">Loading...</div>';
     fetch(`slots.php?service_id=${svcId}&date=${date}&people=${people}`)
         .then(r => r.json())
         .then(data => {
@@ -6000,14 +5995,14 @@ function loadAddSvcSlots() {
 <div id="resAssignModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem;">
     <div style="background:var(--bg2);border-radius:16px;padding:1.5rem;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <span style="font-weight:800;font-size:1rem;color:var(--brown);">🛎️ Assign Room / Chair / Head Spa</span>
+            <span style="font-weight:800;font-size:1rem;color:var(--brown);">Assign Room / Chair / Head Spa</span>
             <button onclick="closeResAssignModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);">✕</button>
         </div>
         <div id="resAssignCurrent" style="font-size:0.78rem;color:var(--gray);margin-bottom:0.85rem;"></div>
         <?php $rp_prefix = 'resAssign'; $rp_field_name = 'resAssignResourceId'; $rp_required = false; include __DIR__ . '/_resource_picker.php'; ?>
         <div id="resAssignError" style="display:none;font-size:0.78rem;color:var(--rust);margin-top:0.6rem;"></div>
         <div style="display:flex;gap:0.75rem;margin-top:1.25rem;">
-            <button type="button" class="btn btn-primary" onclick="submitResourceAssign()" style="flex:1;">💾 Save</button>
+            <button type="button" class="btn btn-primary" onclick="submitResourceAssign()" style="flex:1;">Save</button>
             <button type="button" class="btn btn-secondary" onclick="closeResAssignModal()">Cancel</button>
         </div>
     </div>
@@ -6018,16 +6013,16 @@ function loadAddSvcSlots() {
 <div id="editModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem;">
     <div style="background:var(--bg2);border-radius:16px;padding:1.5rem;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
-            <span style="font-weight:800;font-size:1rem;color:var(--brown);">✏️ Edit Appointment</span>
+            <span style="font-weight:800;font-size:1rem;color:var(--brown);">Edit Appointment</span>
             <button onclick="closeEditModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);">✕</button>
         </div>
         <!-- ── Extra Services section (populated by openEditModal via window._apptExtras) ── -->
         <div style="margin-bottom:1rem;padding:0.7rem;background:var(--bg3);border-radius:10px;">
-            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">➕ Extra Services</div>
+            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.5rem;">Extra Services</div>
             <div id="edit-extra-services-list"></div>
             <button type="button" id="edit-add-extra-btn" onclick="openAddExtraServiceInEdit()"
                     style="margin-top:0.5rem;width:100%;padding:0.5rem;background:transparent;border:1px dashed var(--gold);border-radius:8px;color:var(--gold);font-weight:600;font-size:0.8rem;cursor:pointer;">
-                ➕ Magdagdag ng Serbisyo
+                Magdagdag ng Serbisyo
             </button>
             <?php $_edit_svcs = $conn->query("SELECT id, name, price FROM services ORDER BY name ASC")->fetch_all(MYSQLI_ASSOC); ?>
             <!-- Inline add-extra form (hidden by default) -->
@@ -6048,7 +6043,7 @@ function loadAddSvcSlots() {
                 <div style="display:flex;gap:0.5rem;">
                     <button type="button" onclick="submitAddExtraInEdit()"
                             style="flex:1;padding:0.4rem;background:#C96A2C;color:#fff;border:none;border-radius:7px;font-size:0.8rem;font-weight:600;cursor:pointer;">
-                        ✓ Idagdag
+                        Idagdag
                     </button>
                     <button type="button" onclick="document.getElementById('edit-add-extra-wrap').style.display='none';"
                             style="padding:0.4rem 0.75rem;background:transparent;border:1px solid var(--border2);border-radius:7px;font-size:0.8rem;cursor:pointer;">
@@ -6125,7 +6120,7 @@ function loadAddSvcSlots() {
             </div>
             <div style="margin-bottom:0.85rem;">
                 <label style="font-size:0.78rem;font-weight:700;color:var(--brown);display:block;margin-bottom:4px;">Available Time Slots</label>
-                <div id="edit-slot-loading" style="display:none;font-size:0.8rem;color:var(--gray);">⏳ Loading slots...</div>
+                <div id="edit-slot-loading" style="display:none;font-size:0.8rem;color:var(--gray);">Loading slots...</div>
                 <div id="edit-slot-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem;"></div>
             </div>
             <div style="margin-bottom:1rem;">
@@ -6137,7 +6132,7 @@ function loadAddSvcSlots() {
             <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
             <div style="display:flex;gap:0.75rem;">
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary" style="flex:1;"
-                        <?php if (is_cashier()): ?>onclick="openPinGate('Save Changes',this.closest('form'))"<?php endif; ?>>💾 Save Changes</button>
+                        <?php if (is_cashier()): ?>onclick="openPinGate('Save Changes',this.closest('form'))"<?php endif; ?>>Save Changes</button>
                 <button type="button" onclick="closeEditModal()" class="btn btn-secondary">Cancel</button>
             </div>
         </form>
@@ -6148,7 +6143,7 @@ function loadAddSvcSlots() {
 <div id="addServiceModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem;">
     <div style="background:var(--bg2);border-radius:16px;padding:1.5rem;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
-            <span style="font-weight:800;font-size:1rem;color:var(--brown);">➕ Add Service to Order</span>
+            <span style="font-weight:800;font-size:1rem;color:var(--brown);">Add Service to Order</span>
             <button onclick="closeAddServiceModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);">✕</button>
         </div>
         <div style="font-size:0.8rem;color:var(--gray);margin-bottom:1rem;" id="addSvcCustomerName"></div>
@@ -6202,7 +6197,7 @@ function loadAddSvcSlots() {
                 <div style="font-size:0.72rem;color:var(--gray);margin-top:4px;">Added to existing order record</div>
             </div>
             <div style="display:flex;gap:0.75rem;">
-                <button type="submit" class="btn btn-primary" style="flex:1;">➕ Add Service</button>
+                <button type="submit" class="btn btn-primary" style="flex:1;">Add Service</button>
                 <button type="button" onclick="closeAddServiceModal()" class="btn btn-secondary">Cancel</button>
             </div>
         </form>
@@ -6213,7 +6208,7 @@ function loadAddSvcSlots() {
 <div id="pmModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9000;align-items:center;justify-content:center;padding:1rem;">
   <div style="background:#fff;border-radius:16px;padding:1.5rem;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.28);max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
-      <span id="pmModalTitle" style="font-weight:800;font-size:1rem;color:#3B2A1A;">💳 Online Payment</span>
+      <span id="pmModalTitle" style="font-weight:800;font-size:1rem;color:#3B2A1A;">Online Payment</span>
       <button onclick="closePmModal()" id="pmModalCloseBtn" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#6b7280;">✕</button>
     </div>
     <div id="pm-step-1">
@@ -6266,7 +6261,7 @@ function loadAddSvcSlots() {
       </div>
     </div>
     <div id="pm-step-2" style="display:none;text-align:center;padding:0.5rem 0;">
-      <div style="font-size:2.5rem;margin-bottom:0.65rem;">⏳</div>
+      <div style="font-size:2.5rem;margin-bottom:0.65rem;"></div>
       <div style="font-weight:700;color:#3B2A1A;margin-bottom:0.5rem;">Awaiting Authorization</div>
       <div id="pm-step2-msg" style="color:#6b7280;font-size:0.85rem;line-height:1.5;margin-bottom:1rem;"></div>
       <a id="pm-redirect-link" href="#" target="_blank"
@@ -6279,13 +6274,13 @@ function loadAddSvcSlots() {
       </button>
     </div>
     <div id="pm-step-3" style="display:none;text-align:center;padding:0.5rem 0;">
-      <div style="font-size:2.5rem;margin-bottom:0.65rem;">❌</div>
+      <div style="font-size:2.5rem;margin-bottom:0.65rem;"></div>
       <div style="font-weight:700;color:#b91c1c;margin-bottom:0.5rem;" id="pm-err-title">Payment Failed</div>
       <div style="color:#6b7280;font-size:0.85rem;" id="pm-err-msg"></div>
       <button onclick="pmBackToStep1()" style="width:100%;padding:0.6rem;background:transparent;border:1px solid #d1d5db;color:#6b7280;border-radius:9px;font-size:0.82rem;cursor:pointer;margin-top:1rem;">← Try Again</button>
     </div>
     <div id="pm-step-4" style="display:none;text-align:center;padding:0.5rem 0;">
-      <div style="font-size:3rem;margin-bottom:0.65rem;">✅</div>
+      <div style="font-size:3rem;margin-bottom:0.65rem;"></div>
       <div style="font-weight:800;color:#15803d;font-size:1.1rem;margin-bottom:0.5rem;">Payment Confirmed!</div>
       <div id="pm-done-msg" style="color:#6b7280;font-size:0.85rem;"></div>
     </div>
@@ -6297,17 +6292,17 @@ function loadAddSvcSlots() {
 <div id="qrphModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9000;align-items:center;justify-content:center;padding:1rem;">
   <div style="background:#fff;border-radius:16px;padding:1.5rem;max-width:320px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.28);text-align:center;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-      <span style="font-weight:800;font-size:1rem;color:#3B2A1A;">📷 QR Ph Payment</span>
+      <span style="font-weight:800;font-size:1rem;color:#3B2A1A;">QR Ph Payment</span>
       <button onclick="closeQrphModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#6b7280;">✕</button>
     </div>
     <p style="font-size:0.82rem;color:#6b7280;margin-bottom:0.85rem;line-height:1.5;">
       Customer scans with any Philippine banking app<br>(GCash, Maya, BPI, BDO, UnionBank, etc.)
     </p>
     <div id="qrphImageContainer" style="margin:0 auto 0.85rem;width:280px;height:auto;min-height:180px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border-radius:10px;border:1px solid #EAD8C0;">
-      <span style="color:#6b7280;font-size:0.82rem;">⏳ Generating…</span>
+      <span style="color:#6b7280;font-size:0.82rem;">Generating…</span>
     </div>
     <div id="qrphAmount" style="font-size:1.3rem;font-weight:800;color:#3B2A1A;margin-bottom:0.4rem;"></div>
-    <div id="qrphStatus" style="font-size:0.85rem;color:#C96A2C;margin-bottom:1rem;">⏳ Waiting for payment…</div>
+    <div id="qrphStatus" style="font-size:0.85rem;color:#C96A2C;margin-bottom:1rem;">Waiting for payment…</div>
     <button onclick="closeQrphModal()" style="padding:0.55rem 1.5rem;border:1.5px solid #d1d5db;border-radius:8px;background:#fff;color:#6b7280;font-size:0.85rem;cursor:pointer;font-family:inherit;">Cancel</button>
   </div>
 </div>
@@ -6349,9 +6344,7 @@ function openAddonPaymentModal(form, method, amount) {
     pmState.method   = method;
     pmState.amount   = parseFloat(amount) || 0;
     pmState.addonForm = form;
-    var icons  = {gcash:'📱', maya:'💜', card:'💳'};
     var labels = {gcash:'GCash', maya:'Maya', card:'Credit/Debit Card'};
-    document.getElementById('pm-method-icon').textContent    = icons[method]  || '💳';
     document.getElementById('pm-amount-display').textContent = '₱' + pmState.amount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
     document.getElementById('pm-method-label').textContent   = labels[method] || method;
     var isCard = method === 'card';
@@ -6379,7 +6372,7 @@ function pmShowStep(n) {
 
 function pmError(msg) {
     var el = document.getElementById('pm-error-banner');
-    el.textContent = '⚠️ ' + msg; el.style.display = '';
+    el.textContent = '' + msg; el.style.display = '';
     var btn = document.getElementById('pmSendBtn');
     if (btn) { btn.disabled = false; btn.textContent = '▶ Proceed to Payment'; }
 }
@@ -6391,7 +6384,7 @@ function pmGetCsrf() {
 
 function pmSendOtp() {
     var btn = document.getElementById('pmSendBtn');
-    btn.disabled = true; btn.textContent = '⏳ Processing…';
+    btn.disabled = true; btn.textContent = 'Processing…';
     document.getElementById('pm-error-banner').style.display = 'none';
     var phone = (document.getElementById('pm-phone-input')?.value || '').trim();
     var email = '';
@@ -6545,8 +6538,8 @@ function openAddonQrphModal(form, amount) {
     document.getElementById('qrphAmount').textContent =
         '₱' + qrphAddonState.amount.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
     document.getElementById('qrphImageContainer').innerHTML =
-        '<span style="color:#6b7280;font-size:0.82rem;">⏳ Generating QR code…</span>';
-    document.getElementById('qrphStatus').textContent = '⏳ Waiting for payment…';
+        '<span style="color:#6b7280;font-size:0.82rem;">Generating QR code…</span>';
+    document.getElementById('qrphStatus').textContent = 'Waiting for payment…';
     document.getElementById('qrphStatus').style.color = '#C96A2C';
 
     var _qrOid = '0';
@@ -6565,7 +6558,7 @@ function openAddonQrphModal(form, amount) {
         .then(function(data) {
             if (!data.success) {
                 document.getElementById('qrphImageContainer').innerHTML =
-                    '<span style="color:#b91c1c;font-size:0.82rem;">❌ ' + (data.error || 'Failed to generate QR code') + '</span>';
+                    '<span style="color:#b91c1c;font-size:0.82rem;">' + (data.error || 'Failed to generate QR code') + '</span>';
                 return;
             }
             qrphAddonState.sessionId   = data.session_id;
@@ -6576,7 +6569,7 @@ function openAddonQrphModal(form, amount) {
             cont.style.minHeight = '180px';
             cont.innerHTML =
                 '<div style="text-align:center;padding:1.5rem;">'
-              + '<div style="font-size:2.5rem;margin-bottom:0.75rem;">📷</div>'
+              + '<div style="font-size:2.5rem;margin-bottom:0.75rem;"></div>'
               + '<p style="font-size:0.85rem;color:#3B2A1A;margin-bottom:1rem;line-height:1.5;">'
               + 'Click below to open the QR Ph payment page in a new window.</p>'
               + '<button type="button" onclick="window.open(qrphAddonState.checkoutUrl,\'paymongo_qrph\',\'width=420,height=700\')" '
@@ -6588,7 +6581,7 @@ function openAddonQrphModal(form, amount) {
                 cont.innerHTML =
                     '<div style="text-align:center;padding:1.5rem;">'
                   + '<p style="font-size:0.85rem;color:#b91c1c;margin-bottom:1rem;">'
-                  + '⚠️ Popup blocked by browser. Click below to open manually:</p>'
+                  + 'Popup blocked by browser. Click below to open manually:</p>'
                   + '<button type="button" onclick="window.open(qrphAddonState.checkoutUrl,\'_blank\')" '
                   + 'style="padding:0.7rem 1.5rem;background:#C96A2C;color:#fff;'
                   + 'border:none;border-radius:8px;font-weight:700;cursor:pointer;">Open Payment Page</button>'
@@ -6598,7 +6591,7 @@ function openAddonQrphModal(form, amount) {
         })
         .catch(function(err) {
             document.getElementById('qrphImageContainer').innerHTML =
-                '<span style="color:#b91c1c;font-size:0.82rem;">❌ ' + err.message + '</span>';
+                '<span style="color:#b91c1c;font-size:0.82rem;">' + err.message + '</span>';
         });
 }
 
@@ -6608,7 +6601,7 @@ function startAddonQrphPolling() {
         pollCount++;
         if (pollCount > 60) {
             clearInterval(qrphAddonState.pollTimer);
-            document.getElementById('qrphStatus').textContent = '⏰ Timed out. Please cancel and try again.';
+            document.getElementById('qrphStatus').textContent = 'Timed out. Please cancel and try again.';
             document.getElementById('qrphStatus').style.color = '#b91c1c';
             return;
         }
@@ -6622,7 +6615,7 @@ function startAddonQrphPolling() {
             .then(function(data) {
                 if (data.success && data.paid) {
                     clearInterval(qrphAddonState.pollTimer);
-                    document.getElementById('qrphStatus').textContent = '✅ Payment received!';
+                    document.getElementById('qrphStatus').textContent = 'Payment received!';
                     document.getElementById('qrphStatus').style.color = '#15803d';
                     qrphDoneAddon(data.reference || qrphAddonState.sessionId);
                 }
@@ -6641,7 +6634,7 @@ function qrphDoneAddon(reference) {
     }
     injectHidden('paymongo_reference', reference);
     injectHidden('paymongo_method',    'qrph');
-    document.getElementById('qrphStatus').textContent = '✅ Confirmed! Submitting…';
+    document.getElementById('qrphStatus').textContent = 'Confirmed! Submitting…';
     setTimeout(function() {
         document.getElementById('qrphModal').style.display = 'none';
         form.submit();
