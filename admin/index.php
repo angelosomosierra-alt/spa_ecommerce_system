@@ -385,6 +385,7 @@ function render_quick_book_services_html(mysqli $conn): string {
                      data-service-name="<?php echo htmlspecialchars($svc['name'], ENT_QUOTES, 'UTF-8'); ?>"
                      data-price="<?php echo (float)$svc['price']; ?>"
                      data-minutes="<?php echo (int)$svc['session_time']; ?>"
+                     data-home-price="<?php echo (float)($svc['home_service_price'] ?? 0); ?>"
                      onclick="qbSelectService(this)">
                     <span class="qb-svc-row-name"><?php echo htmlspecialchars($svc['name']); ?></span>
                     <span class="qb-svc-row-meta"><?php echo (int)$svc['session_time']; ?> min</span>
@@ -419,6 +420,19 @@ function quick_book_qualified_therapists(mysqli $conn, int $service_id): array {
 
 function quick_book_active_resources(mysqli $conn): array {
     return $conn->query("SELECT id, name, type FROM service_resources WHERE is_active = 1 ORDER BY FIELD(type,'room','chair','head_spa'), sort_order, name")->fetch_all(MYSQLI_ASSOC);
+}
+
+function quick_book_partners(mysqli $conn): array {
+    return $conn->query("SELECT id, name, type FROM partners WHERE status = 'active' ORDER BY name")->fetch_all(MYSQLI_ASSOC);
+}
+
+function quick_book_partner_rate(mysqli $conn, int $partner_id, int $service_id): ?float {
+    $stmt = $conn->prepare("SELECT price FROM partner_rates WHERE partner_id = ? AND service_id = ? LIMIT 1");
+    $stmt->bind_param("ii", $partner_id, $service_id);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ? (float)$row['price'] : null;
 }
 
 // ── AJAX endpoint: access-protected, outputs ONLY the three panels, then exits ─
@@ -461,6 +475,17 @@ if (($_GET['ajax'] ?? '') === 'quick_book_pickers') {
     exit;
 }
 
+if (($_GET['ajax'] ?? '') === 'quick_book_partner_rate') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    $service_id = (int)($_GET['service_id'] ?? 0);
+    $partner_id = (int)($_GET['partner_id'] ?? 0);
+    $rate = ($service_id > 0 && $partner_id > 0) ? quick_book_partner_rate($conn, $partner_id, $service_id) : null;
+    echo json_encode(['rate' => $rate]);
+    exit;
+}
+
 if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_if_not_admin();
     ob_clean();
@@ -472,8 +497,21 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $service_id     = (int)($_POST['service_id'] ?? 0);
     $therapist_id   = (int)($_POST['therapist_id'] ?? 0);
     $resource_id    = (int)($_POST['resource_id'] ?? 0);
+    $rate_type      = $_POST['rate_type'] ?? 'regular';
+    $partner_id     = (int)($_POST['partner_id'] ?? 0);
+    $customer_name  = sanitize_input($_POST['customer_name'] ?? '');
+    $phone          = sanitize_input($_POST['phone'] ?? '');
+    $customer_note  = sanitize_input($_POST['customer_note'] ?? '');
+    $discount_type  = $_POST['discount_type'] ?? 'none';
+    $voucher_type_i = $_POST['voucher_type'] ?? 'cash';
+    $voucher_value  = max(0.0, floatval($_POST['voucher_value'] ?? 0));
     $payment_method = $_POST['payment_method'] ?? '';
-    $valid_payment_methods = ['cash', 'gcash', 'maya', 'qrph', 'bank', 'card'];
+    $advance_payment = max(0.0, floatval($_POST['advance_payment'] ?? 0));
+    $advance_pm      = $_POST['advance_payment_method'] ?? 'cash';
+
+    $valid_payment_methods = ['cash', 'gcash', 'maya', 'qrph', 'card', 'swiper'];
+    $valid_rate_types      = ['regular', 'home', 'hotel', 'influencer'];
+    $valid_discount_types  = ['none', 'voucher', 'senior', 'pwd', 'employee', 'celebration'];
 
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || !preg_match('/^\d{2}:\d{2}$/', $time)) {
         echo json_encode(['ok' => false, 'message' => 'Please choose a valid date and time.']); exit;
@@ -481,7 +519,14 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     if ($service_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a service.']); exit; }
     if ($therapist_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a therapist.']); exit; }
     if ($resource_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a room, chair, or head spa.']); exit; }
+    if (!in_array($rate_type, $valid_rate_types, true)) { $rate_type = 'regular'; }
+    if ($rate_type === 'hotel' && $partner_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please select a hotel/partner for the Hotel rate.']); exit; }
+    if (empty($customer_name)) { echo json_encode(['ok' => false, 'message' => 'Please enter the customer\'s name.']); exit; }
+    if (!in_array($discount_type, $valid_discount_types, true)) { $discount_type = 'none'; }
+    if ($discount_type === 'voucher' && $voucher_value <= 0) { echo json_encode(['ok' => false, 'message' => 'Please enter the voucher amount, or select None if no voucher is used.']); exit; }
+    if ($discount_type === 'celebration' && $voucher_value <= 0) { echo json_encode(['ok' => false, 'message' => 'Please enter the celebration discount percentage, or select None if no discount is used.']); exit; }
     if (!in_array($payment_method, $valid_payment_methods, true)) { echo json_encode(['ok' => false, 'message' => 'Please choose a payment method.']); exit; }
+    if (!in_array($advance_pm, $valid_payment_methods, true)) { $advance_pm = 'cash'; }
 
     $stmt = $conn->prepare("SELECT * FROM services WHERE id = ? AND deleted_at IS NULL");
     $stmt->bind_param("i", $service_id);
@@ -490,40 +535,71 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $stmt->close();
     if (!$service) { echo json_encode(['ok' => false, 'message' => 'That service is no longer available.']); exit; }
 
-    $price             = (float)$service['price'];
+    switch ($rate_type) {
+        case 'home':       $charged_price = (float)($service['home_service_price'] ?? 0); break;
+        case 'hotel':      $charged_price = quick_book_partner_rate($conn, $partner_id, $service_id) ?? (float)$service['price']; break;
+        case 'influencer': $charged_price = 0.00; break;
+        default:           $charged_price = (float)$service['price']; break;
+    }
+
+    $discount_amount_calc = 0.00;
+    if ($discount_type === 'senior' || $discount_type === 'pwd') {
+        $discount_amount_calc = round($charged_price * 0.20, 2);
+    } elseif ($discount_type === 'employee') {
+        $discount_amount_calc = round($charged_price * 0.50, 2);
+    } elseif ($discount_type === 'celebration' && $voucher_value > 0) {
+        $discount_amount_calc = round($charged_price * ($voucher_value / 100), 2);
+    } elseif ($discount_type === 'voucher' && $voucher_value > 0) {
+        $discount_amount_calc = $voucher_type_i === 'percent'
+            ? round($charged_price * ($voucher_value / 100), 2)
+            : min($voucher_value, $charged_price);
+    }
+    $final_amount = max(0.00, $charged_price - $discount_amount_calc - $advance_payment);
+
     $duration_minutes  = (int)$service['session_time'];
     $appointment_date  = $date . ' ' . $time . ':00';
+    $svc_type_val      = ($rate_type === 'home') ? 'home' : 'onsite';
+    $appt_partner_id   = ($rate_type === 'hotel' && $partner_id > 0) ? $partner_id : null;
     $walkin_user_id    = get_walkin_customer_id();
+    $adv_pm_val        = $advance_payment > 0 ? $advance_pm : 'cash';
+    $adv_date          = $advance_payment > 0 ? date('Y-m-d') : null;
 
     $conn->begin_transaction();
     try {
-        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, 'Walk-in Customer', 'N/A', ?, ?, ?, 'paid', 'approved', 'none', 0, ?, NULL)");
-        $stmt->bind_param("isdsd", $walkin_user_id, $appointment_date, $price, $payment_method, $price);
+        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, 'paid', 'approved', ?, ?, ?, NULL)");
+        $stmt->bind_param("isssdssdd", $walkin_user_id, $customer_name, $phone, $appointment_date, $charged_price, $payment_method, $discount_type, $discount_amount_calc, $final_amount);
         $stmt->execute();
         $order_id = $stmt->insert_id;
         $stmt->close();
 
         $stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, 1, ?, ?)");
-        $stmt->bind_param("iidd", $order_id, $service_id, $price, $price);
+        $stmt->bind_param("iidd", $order_id, $service_id, $charged_price, $charged_price);
         $stmt->execute();
         $order_item_id = $stmt->insert_id;
         $stmt->close();
 
-        $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, charged_price, resource_id, duration_minutes) VALUES (?, ?, ?, ?, 'assigned', 1, 'onsite', 'regular', ?, ?, ?)");
-        $stmt->bind_param("iiisdii", $walkin_user_id, $service_id, $order_item_id, $appointment_date, $price, $resource_id, $duration_minutes);
+        $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method, resource_id, duration_minutes) VALUES (?, ?, ?, ?, 'assigned', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("iiisssidsdssii", $walkin_user_id, $service_id, $order_item_id, $appointment_date, $svc_type_val, $rate_type, $appt_partner_id, $charged_price, $customer_note, $advance_payment, $adv_date, $adv_pm_val, $resource_id, $duration_minutes);
         $stmt->execute();
         $appointment_id = $stmt->insert_id;
         $stmt->close();
 
         $commission = 0.00;
-        $cm = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+        $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
         $cm->bind_param("ii", $therapist_id, $service_id);
         $cm->execute();
         $cm_row = $cm->get_result()->fetch_assoc();
         $cm->close();
         if ($cm_row) {
-            $comm_base  = get_commission_base_price($service_id, null, $price);
-            $commission = round($comm_base * (float)$cm_row['commission_percent'] / 100, 2);
+            if ($rate_type === 'influencer') {
+                $commission = (float)$cm_row['influencer_flat_rate'];
+            } elseif ($rate_type === 'hotel') {
+                $commission = round((float)$service['price'] * (float)$cm_row['commission_percent'] / 100, 2);
+            } else {
+                $disc_frac = $charged_price > 0 ? ($discount_amount_calc / $charged_price) : 0.0;
+                $comm_base = get_commission_base_price($service_id, null, $charged_price);
+                $commission = round($comm_base * (1 - $disc_frac) * (float)$cm_row['commission_percent'] / 100, 2);
+            }
         }
 
         $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
@@ -644,31 +720,23 @@ require_once 'admin_header.php';
         </div>
         <div class="modal-box-body" style="padding:0;">
             <div class="qb-steps">
-                <span class="qb-step" data-step="1">1. Date &amp; Time</span>
-                <span class="qb-step" data-step="2">2. Service</span>
-                <span class="qb-step" data-step="3">3. Therapist &amp; Room</span>
-                <span class="qb-step" data-step="4">4. Payment</span>
+                <span class="qb-step" data-step="1" onclick="qbStepClick(1)">1. Service</span>
+                <span class="qb-step" data-step="2" onclick="qbStepClick(2)">2. Time, Therapist &amp; Room</span>
+                <span class="qb-step" data-step="3" onclick="qbStepClick(3)">3. Customer</span>
+                <span class="qb-step" data-step="4" onclick="qbStepClick(4)">4. Payment</span>
             </div>
 
             <div class="qb-panel" id="qbPanel1">
+                <?php echo render_quick_book_services_html($conn); ?>
+            </div>
+
+            <div class="qb-panel" id="qbPanel2" style="display:none;">
+                <div class="qb-booking-date" id="qbBookingDateLabel"></div>
                 <div class="qb-field-row">
-                    <div class="qb-field">
-                        <label for="qbDate">Date</label>
-                        <input type="date" id="qbDate">
-                    </div>
                     <div class="qb-field">
                         <label for="qbTime">Time</label>
                         <input type="time" id="qbTime">
                     </div>
-                </div>
-            </div>
-
-            <div class="qb-panel" id="qbPanel2" style="display:none;">
-                <?php echo render_quick_book_services_html($conn); ?>
-            </div>
-
-            <div class="qb-panel" id="qbPanel3" style="display:none;">
-                <div class="qb-field-row">
                     <div class="qb-field">
                         <label for="qbTherapist">Therapist</label>
                         <select id="qbTherapist"><option value="">Loading&hellip;</option></select>
@@ -678,28 +746,116 @@ require_once 'admin_header.php';
                         <select id="qbResource"><option value="">Loading&hellip;</option></select>
                     </div>
                 </div>
+
+                <div class="qb-field" style="margin-top:1.25rem;">
+                    <label>Rate Type</label>
+                    <div class="qb-rate-grid">
+                        <button type="button" class="qb-rate-btn selected" data-rate="regular" onclick="qbSelectRateType(this)">
+                            <span class="qb-rate-title">Regular</span><span class="qb-rate-sub">Standard price</span>
+                        </button>
+                        <button type="button" class="qb-rate-btn" data-rate="home" onclick="qbSelectRateType(this)">
+                            <span class="qb-rate-title">Home Service</span><span class="qb-rate-sub">Fixed total price</span>
+                        </button>
+                        <button type="button" class="qb-rate-btn" data-rate="hotel" onclick="qbSelectRateType(this)">
+                            <span class="qb-rate-title">Hotel / Partner</span><span class="qb-rate-sub">Partner rate</span>
+                        </button>
+                        <button type="button" class="qb-rate-btn" data-rate="influencer" onclick="qbSelectRateType(this)">
+                            <span class="qb-rate-title">Influencer / PR</span><span class="qb-rate-sub">Free — ₱0</span>
+                        </button>
+                    </div>
+                    <div class="qb-field" id="qbPartnerBlock" style="display:none;margin-top:0.85rem;">
+                        <label for="qbPartner">Select Partner</label>
+                        <select id="qbPartner" onchange="qbPartnerChanged()">
+                            <option value="">— Select partner —</option>
+                            <?php foreach (quick_book_partners($conn) as $p): ?>
+                            <option value="<?php echo $p['id']; ?>"><?php echo htmlspecialchars($p['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="qb-panel" id="qbPanel3" style="display:none;">
+                <div class="qb-field-row">
+                    <div class="qb-field">
+                        <label for="qbCustomerName">Customer Name</label>
+                        <input type="text" id="qbCustomerName" placeholder="Enter full name">
+                    </div>
+                    <div class="qb-field">
+                        <label for="qbCustomerPhone">Phone Number <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                        <input type="tel" id="qbCustomerPhone" placeholder="09XXXXXXXXX">
+                    </div>
+                </div>
+                <div class="qb-field" style="margin-top:1.25rem;">
+                    <label for="qbCustomerNote">Notes <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                    <textarea id="qbCustomerNote" placeholder="e.g. Female therapist, light pressure, VIP guest…"></textarea>
+                </div>
+                <div class="qb-field" style="margin-top:1.5rem;">
+                    <label>Appointment Details</label>
+                    <div class="qb-summary" id="qbReviewSummary"></div>
+                </div>
             </div>
 
             <div class="qb-panel" id="qbPanel4" style="display:none;">
-                <div class="qb-summary" id="qbSummary"></div>
-                <div class="qb-field" style="margin-top:1.25rem;">
-                    <label>Payment Method</label>
-                    <div class="qb-pay-grid">
-                        <button type="button" class="qb-pay-btn" data-method="cash" onclick="qbSelectPayment(this)">Cash</button>
-                        <button type="button" class="qb-pay-btn" data-method="gcash" onclick="qbSelectPayment(this)">GCash</button>
-                        <button type="button" class="qb-pay-btn" data-method="maya" onclick="qbSelectPayment(this)">Maya</button>
-                        <button type="button" class="qb-pay-btn" data-method="qrph" onclick="qbSelectPayment(this)">QRPH</button>
-                        <button type="button" class="qb-pay-btn" data-method="bank" onclick="qbSelectPayment(this)">Bank</button>
-                        <button type="button" class="qb-pay-btn" data-method="card" onclick="qbSelectPayment(this)">Card</button>
+                <div class="qb-field">
+                    <label>Discount / Voucher</label>
+                    <div class="qb-disc-grid">
+                        <button type="button" class="qb-disc-btn selected" data-discount="none" onclick="qbSelectDiscount(this)">None</button>
+                        <button type="button" class="qb-disc-btn" data-discount="voucher" onclick="qbSelectDiscount(this)">Voucher</button>
+                        <button type="button" class="qb-disc-btn" data-discount="celebration" onclick="qbSelectDiscount(this)">Celebration<br><small>% off</small></button>
+                        <button type="button" class="qb-disc-btn" data-discount="senior" onclick="qbSelectDiscount(this)">Senior<br><small>20% off</small></button>
+                        <button type="button" class="qb-disc-btn" data-discount="pwd" onclick="qbSelectDiscount(this)">PWD<br><small>20% off</small></button>
+                        <button type="button" class="qb-disc-btn" data-discount="employee" onclick="qbSelectDiscount(this)">Staff<br><small>50% off</small></button>
+                    </div>
+                    <div class="qb-sub-box" id="qbVoucherInputs" style="display:none;">
+                        <div class="qb-field-row">
+                            <div class="qb-field">
+                                <label for="qbVoucherType">Voucher Type</label>
+                                <select id="qbVoucherType" onchange="qbRecalc()">
+                                    <option value="cash">Cash Off (₱)</option>
+                                    <option value="percent">Percentage Off</option>
+                                </select>
+                            </div>
+                            <div class="qb-field">
+                                <label for="qbVoucherAmount">Amount</label>
+                                <input type="number" id="qbVoucherAmount" min="0" step="0.01" value="0" oninput="qbRecalc()">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="qb-sub-box" id="qbCelebInputs" style="display:none;">
+                        <label for="qbCelebPct">Discount percentage for this celebration</label>
+                        <input type="number" id="qbCelebPct" min="0" max="100" step="0.01" value="0" oninput="qbRecalc()" style="max-width:160px;">
                     </div>
                 </div>
+
+                <div class="qb-summary" id="qbPriceSummary" style="margin-top:1.25rem;"></div>
+
+                <div class="qb-field" style="margin-top:1.25rem;">
+                    <label>Payment Method</label>
+                    <div class="qb-pay-grid" id="qbPayGrid"></div>
+                    <?php if (!ONLINE_PAYMENT_ENABLED): ?>
+                    <div class="qb-notice">Online payment is coming soon — please complete payment onsite for now.</div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="qb-field-row" style="margin-top:1rem;">
+                    <div class="qb-field">
+                        <label for="qbAdvancePayment">Advance Payment (₱) <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                        <input type="number" id="qbAdvancePayment" min="0" step="0.01" value="0" oninput="qbRecalc()">
+                    </div>
+                    <div class="qb-field">
+                        <label>Advance Payment Method</label>
+                        <div class="qb-pay-grid" id="qbAdvPayGrid"></div>
+                    </div>
+                </div>
+
                 <div id="qbError" class="qb-error" style="display:none;"></div>
             </div>
         </div>
         <div class="modal-box-footer">
             <button type="button" class="btn btn-secondary" id="qbBackBtn" onclick="qbBack()" style="display:none;">Back</button>
             <button type="button" class="btn btn-primary" id="qbNextBtn" onclick="qbNext()">Next</button>
-            <button type="button" class="btn btn-primary" id="qbConfirmBtn" onclick="qbSubmit()" style="display:none;">Confirm Booking</button>
+            <button type="button" class="btn btn-primary" id="qbConfirmBtn" onclick="qbSubmit()" style="display:none;">Book Walk-In</button>
         </div>
     </div>
 </div>
@@ -735,24 +891,56 @@ function apptCalShowDay(dateStr, el) {
 
 <script>
 var QB_CSRF = '<?php echo generate_csrf_token(); ?>';
+var QB_PAYMENT_METHODS = <?php
+    $pm_wk = ['cash' => 'Cash', 'gcash' => 'GCash', 'maya' => 'Maya', 'qrph' => 'QR Ph', 'card' => 'Card', 'swiper' => 'Swiper'];
+    $online_pm = ['gcash', 'maya', 'card', 'qrph'];
+    $qb_pm_list = [];
+    foreach ($pm_wk as $pmv => $pml) {
+        if (!ONLINE_PAYMENT_ENABLED && in_array($pmv, $online_pm, true)) continue;
+        if (ONLINE_PAYMENT_ENABLED && in_array($pmv, ['gcash', 'maya'], true) && !SHOW_GCASH_MAYA) continue;
+        $qb_pm_list[] = ['value' => $pmv, 'label' => $pml];
+    }
+    echo json_encode($qb_pm_list);
+?>;
 var qbState = {};
 var qbStep  = 1;
+var qbMaxStepReached = 1;
 
 function openQuickBook(prefillDate) {
-    qbState = { date: prefillDate || '', time: '', service_id: 0, service_name: '', price: 0, minutes: 0,
-                therapist_id: 0, therapist_name: '', resource_id: 0, resource_name: '', payment_method: '' };
-    document.getElementById('qbDate').value = prefillDate || new Date().toISOString().slice(0, 10);
+    qbState = {
+        date: prefillDate || new Date().toISOString().slice(0, 10), time: '',
+        service_id: 0, service_name: '', price: 0, home_price: 0, minutes: 0,
+        therapist_id: 0, therapist_name: '', resource_id: 0, resource_name: '',
+        rate_type: 'regular', partner_id: 0, partner_name: '', partner_rate: null,
+        customer_name: '', phone: '', customer_note: '',
+        discount_type: 'none', voucher_type: 'cash', voucher_value: 0,
+        payment_method: '', advance_payment: 0, advance_payment_method: ''
+    };
     var now = new Date();
     document.getElementById('qbTime').value = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+    document.getElementById('qbCustomerName').value  = '';
+    document.getElementById('qbCustomerPhone').value = '';
+    document.getElementById('qbCustomerNote').value  = '';
+    document.getElementById('qbVoucherAmount').value = 0;
+    document.getElementById('qbCelebPct').value      = 0;
+    document.getElementById('qbAdvancePayment').value = 0;
+    document.getElementById('qbPartnerBlock').style.display = 'none';
+    document.getElementById('qbVoucherInputs').style.display = 'none';
+    document.getElementById('qbCelebInputs').style.display   = 'none';
     document.querySelectorAll('.qb-svc-row.selected').forEach(function (r) { r.classList.remove('selected'); });
-    document.querySelectorAll('.qb-pay-btn.selected').forEach(function (b) { b.classList.remove('selected'); });
+    document.querySelectorAll('.qb-rate-btn').forEach(function (b) { b.classList.toggle('selected', b.getAttribute('data-rate') === 'regular'); });
+    document.querySelectorAll('.qb-disc-btn').forEach(function (b) { b.classList.toggle('selected', b.getAttribute('data-discount') === 'none'); });
     document.getElementById('qbTherapist').innerHTML = '<option value="">Select therapist&hellip;</option>';
     document.getElementById('qbResource').innerHTML  = '<option value="">Select room/chair&hellip;</option>';
-    document.getElementById('qbSummary').innerHTML = '';
+    document.getElementById('qbReviewSummary').innerHTML = '';
+    document.getElementById('qbPriceSummary').innerHTML  = '';
     document.getElementById('qbError').style.display = 'none';
+    qbBuildPayGrid('qbPayGrid', 'payment_method');
+    qbBuildPayGrid('qbAdvPayGrid', 'advance_payment_method');
     var confirmBtn = document.getElementById('qbConfirmBtn');
     confirmBtn.disabled = false;
-    confirmBtn.textContent = 'Confirm Booking';
+    confirmBtn.textContent = 'Book Walk-In';
+    qbMaxStepReached = 1;
     qbGotoStep(1);
     document.getElementById('quickBookModal').classList.add('active');
 }
@@ -761,37 +949,58 @@ function closeQuickBook() { document.getElementById('quickBookModal').classList.
 
 function qbGotoStep(n) {
     qbStep = n;
+    if (n > qbMaxStepReached) qbMaxStepReached = n;
     for (var i = 1; i <= 4; i++) {
         document.getElementById('qbPanel' + i).style.display = (i === n) ? '' : 'none';
         var stepEl = document.querySelector('.qb-step[data-step="' + i + '"]');
         stepEl.classList.toggle('active', i === n);
         stepEl.classList.toggle('done', i < n);
+        stepEl.classList.toggle('reachable', i <= qbMaxStepReached && i !== n);
     }
     document.getElementById('qbBackBtn').style.display    = (n === 1) ? 'none' : '';
     document.getElementById('qbNextBtn').style.display    = (n === 4) ? 'none' : '';
     document.getElementById('qbConfirmBtn').style.display = (n === 4) ? '' : 'none';
+    if (n === 2) {
+        var dt = new Date(qbState.date + 'T00:00');
+        document.getElementById('qbBookingDateLabel').textContent =
+            'Booking for ' + dt.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    if (n === 3) qbBuildReviewSummary();
+    var scrollBody = document.querySelector('#quickBookModal .modal-box-body');
+    if (scrollBody) scrollBody.scrollTop = 0;
+}
+
+function qbStepClick(n) {
+    if (n === qbStep || n > qbMaxStepReached) return;
+    qbGotoStep(n);
 }
 
 function qbBack() { if (qbStep > 1) qbGotoStep(qbStep - 1); }
 
 function qbNext() {
     if (qbStep === 1) {
-        var d = document.getElementById('qbDate').value, t = document.getElementById('qbTime').value;
-        if (!d || !t) { uiAlert('Please choose a date and time.'); return; }
-        qbState.date = d; qbState.time = t;
-        qbGotoStep(2);
-    } else if (qbStep === 2) {
         if (!qbState.service_id) { uiAlert('Please choose a service.'); return; }
         qbLoadPickers();
-    } else if (qbStep === 3) {
+    } else if (qbStep === 2) {
+        var t = document.getElementById('qbTime').value;
         var thSel = document.getElementById('qbTherapist'), rsSel = document.getElementById('qbResource');
+        if (!t) { uiAlert('Please choose a time.'); return; }
         if (!thSel.value) { uiAlert('Please choose a therapist.'); return; }
         if (!rsSel.value) { uiAlert('Please choose a room, chair, or head spa.'); return; }
-        qbState.therapist_id   = thSel.value;
-        qbState.therapist_name = thSel.options[thSel.selectedIndex].text;
-        qbState.resource_id    = rsSel.value;
-        qbState.resource_name  = rsSel.options[rsSel.selectedIndex].text;
-        qbBuildSummary();
+        if (qbState.rate_type === 'hotel' && !qbState.partner_id) { uiAlert('Please select a hotel/partner for the Hotel rate.'); return; }
+        qbState.time            = t;
+        qbState.therapist_id    = thSel.value;
+        qbState.therapist_name  = thSel.options[thSel.selectedIndex].text;
+        qbState.resource_id     = rsSel.value;
+        qbState.resource_name   = rsSel.options[rsSel.selectedIndex].text;
+        qbGotoStep(3);
+    } else if (qbStep === 3) {
+        var name = document.getElementById('qbCustomerName').value.trim();
+        if (!name) { uiAlert("Please enter the customer's name."); return; }
+        qbState.customer_name  = name;
+        qbState.phone          = document.getElementById('qbCustomerPhone').value.trim();
+        qbState.customer_note  = document.getElementById('qbCustomerNote').value.trim();
+        qbRecalc();
         qbGotoStep(4);
     }
 }
@@ -802,13 +1011,14 @@ function qbSelectService(el) {
     qbState.service_id   = el.getAttribute('data-service-id');
     qbState.service_name = el.getAttribute('data-service-name');
     qbState.price         = parseFloat(el.getAttribute('data-price'));
+    qbState.home_price    = parseFloat(el.getAttribute('data-home-price'));
     qbState.minutes        = parseInt(el.getAttribute('data-minutes'), 10);
 }
 
 function qbLoadPickers() {
     document.getElementById('qbTherapist').innerHTML = '<option value="">Loading&hellip;</option>';
     document.getElementById('qbResource').innerHTML  = '<option value="">Loading&hellip;</option>';
-    qbGotoStep(3);
+    qbGotoStep(2);
     fetch('index.php?ajax=quick_book_pickers&service_id=' + encodeURIComponent(qbState.service_id), { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
         .then(function (data) {
@@ -825,26 +1035,111 @@ function qbLoadPickers() {
         .catch(function () { uiAlert('Could not load therapists/rooms. Please try again.'); });
 }
 
-function qbBuildSummary() {
+function qbSelectRateType(el) {
+    document.querySelectorAll('.qb-rate-btn').forEach(function (b) { b.classList.remove('selected'); });
+    el.classList.add('selected');
+    qbState.rate_type = el.getAttribute('data-rate');
+    document.getElementById('qbPartnerBlock').style.display = (qbState.rate_type === 'hotel') ? '' : 'none';
+    if (qbState.rate_type !== 'hotel') { qbState.partner_id = 0; qbState.partner_rate = null; }
+}
+
+function qbPartnerChanged() {
+    var sel = document.getElementById('qbPartner');
+    qbState.partner_id   = sel.value;
+    qbState.partner_name = sel.value ? sel.options[sel.selectedIndex].text : '';
+    qbState.partner_rate = null;
+    if (!sel.value) return;
+    fetch('index.php?ajax=quick_book_partner_rate&service_id=' + encodeURIComponent(qbState.service_id) + '&partner_id=' + encodeURIComponent(sel.value), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) { qbState.partner_rate = data.rate; });
+}
+
+function qbComputeBasePrice() {
+    switch (qbState.rate_type) {
+        case 'home':       return qbState.home_price || 0;
+        case 'hotel':      return (qbState.partner_rate !== null && qbState.partner_rate !== undefined) ? qbState.partner_rate : qbState.price;
+        case 'influencer': return 0;
+        default:           return qbState.price;
+    }
+}
+
+function qbRateTypeLabel() {
+    return { regular: 'Regular', home: 'Home Service', hotel: 'Hotel / Partner', influencer: 'Influencer / PR' }[qbState.rate_type] || 'Regular';
+}
+
+function qbBuildReviewSummary() {
     var dt = new Date(qbState.date + 'T' + qbState.time);
     var dateLabel = dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     var timeLabel = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    document.getElementById('qbSummary').innerHTML =
+    document.getElementById('qbReviewSummary').innerHTML =
         '<div class="qb-summary-row"><span>Date &amp; Time</span><strong>' + dateLabel + ', ' + timeLabel + '</strong></div>' +
         '<div class="qb-summary-row"><span>Service</span><strong>' + qbState.service_name + ' (' + qbState.minutes + ' min)</strong></div>' +
         '<div class="qb-summary-row"><span>Therapist</span><strong>' + qbState.therapist_name + '</strong></div>' +
         '<div class="qb-summary-row"><span>Room</span><strong>' + qbState.resource_name + '</strong></div>' +
-        '<div class="qb-summary-row qb-summary-total"><span>Total</span><strong>₱' + qbState.price.toFixed(2) + '</strong></div>';
+        '<div class="qb-summary-row"><span>Rate Type</span><strong>' + qbRateTypeLabel() + (qbState.partner_name ? ' — ' + qbState.partner_name : '') + '</strong></div>';
 }
 
-function qbSelectPayment(el) {
-    document.querySelectorAll('.qb-pay-btn.selected').forEach(function (b) { b.classList.remove('selected'); });
+function qbSelectDiscount(el) {
+    document.querySelectorAll('.qb-disc-btn').forEach(function (b) { b.classList.remove('selected'); });
     el.classList.add('selected');
-    qbState.payment_method = el.getAttribute('data-method');
+    qbState.discount_type = el.getAttribute('data-discount');
+    document.getElementById('qbVoucherInputs').style.display = (qbState.discount_type === 'voucher') ? '' : 'none';
+    document.getElementById('qbCelebInputs').style.display   = (qbState.discount_type === 'celebration') ? '' : 'none';
+    qbRecalc();
+}
+
+function qbComputeDiscount(base) {
+    switch (qbState.discount_type) {
+        case 'senior': case 'pwd': return Math.round(base * 0.20 * 100) / 100;
+        case 'employee': return Math.round(base * 0.50 * 100) / 100;
+        case 'celebration': {
+            var pct = parseFloat(document.getElementById('qbCelebPct').value) || 0;
+            return pct > 0 ? Math.round(base * (pct / 100) * 100) / 100 : 0;
+        }
+        case 'voucher': {
+            var vtype = document.getElementById('qbVoucherType').value;
+            var vamt  = parseFloat(document.getElementById('qbVoucherAmount').value) || 0;
+            if (vamt <= 0) return 0;
+            return vtype === 'percent' ? Math.round(base * (vamt / 100) * 100) / 100 : Math.min(vamt, base);
+        }
+        default: return 0;
+    }
+}
+
+function qbRecalc() {
+    var base     = qbComputeBasePrice();
+    var discount = qbComputeDiscount(base);
+    var advance  = parseFloat(document.getElementById('qbAdvancePayment').value) || 0;
+    var final    = Math.max(0, base - discount - advance);
+    var rows = '<div class="qb-summary-row"><span>' + qbRateTypeLabel() + ' Price</span><strong>₱' + base.toFixed(2) + '</strong></div>';
+    if (discount > 0) rows += '<div class="qb-summary-row"><span>Discount</span><strong>&minus;₱' + discount.toFixed(2) + '</strong></div>';
+    if (advance > 0)  rows += '<div class="qb-summary-row"><span>Advance Payment</span><strong>&minus;₱' + advance.toFixed(2) + '</strong></div>';
+    rows += '<div class="qb-summary-row qb-summary-total"><span>Balance Due</span><strong>₱' + final.toFixed(2) + '</strong></div>';
+    document.getElementById('qbPriceSummary').innerHTML = rows;
+}
+
+function qbBuildPayGrid(containerId, field) {
+    var container = document.getElementById(containerId);
+    container.innerHTML = QB_PAYMENT_METHODS.map(function (pm, i) {
+        return '<button type="button" class="qb-pay-btn' + (i === 0 ? ' selected' : '') + '" data-method="' + pm.value + '" onclick="qbSelectPayment(this, \'' + field + '\')">' + pm.label + '</button>';
+    }).join('');
+    if (QB_PAYMENT_METHODS.length) qbState[field] = QB_PAYMENT_METHODS[0].value;
+}
+
+function qbSelectPayment(el, field) {
+    el.parentNode.querySelectorAll('.qb-pay-btn.selected').forEach(function (b) { b.classList.remove('selected'); });
+    el.classList.add('selected');
+    qbState[field] = el.getAttribute('data-method');
 }
 
 function qbSubmit() {
     if (!qbState.payment_method) { uiAlert('Please choose a payment method.'); return; }
+    if (qbState.discount_type === 'voucher' && (parseFloat(document.getElementById('qbVoucherAmount').value) || 0) <= 0) {
+        uiAlert('Please enter the voucher amount, or select None if no voucher is used.'); return;
+    }
+    if (qbState.discount_type === 'celebration' && (parseFloat(document.getElementById('qbCelebPct').value) || 0) <= 0) {
+        uiAlert('Please enter the celebration discount percentage, or select None if no discount is used.'); return;
+    }
     var errEl = document.getElementById('qbError');
     errEl.style.display = 'none';
     var confirmBtn = document.getElementById('qbConfirmBtn');
@@ -854,7 +1149,16 @@ function qbSubmit() {
     var body = new URLSearchParams({
         date: qbState.date, time: qbState.time, service_id: qbState.service_id,
         therapist_id: qbState.therapist_id, resource_id: qbState.resource_id,
-        payment_method: qbState.payment_method
+        rate_type: qbState.rate_type, partner_id: qbState.partner_id,
+        customer_name: qbState.customer_name, phone: qbState.phone, customer_note: qbState.customer_note,
+        discount_type: qbState.discount_type,
+        voucher_type: document.getElementById('qbVoucherType').value,
+        voucher_value: qbState.discount_type === 'celebration'
+            ? (document.getElementById('qbCelebPct').value || 0)
+            : (document.getElementById('qbVoucherAmount').value || 0),
+        payment_method: qbState.payment_method,
+        advance_payment: document.getElementById('qbAdvancePayment').value || 0,
+        advance_payment_method: qbState.advance_payment_method
     });
 
     fetch('index.php?ajax=quick_book_submit', {
@@ -871,14 +1175,14 @@ function qbSubmit() {
                 errEl.textContent = data.message || 'Could not save the booking.';
                 errEl.style.display = '';
                 confirmBtn.disabled = false;
-                confirmBtn.textContent = 'Confirm Booking';
+                confirmBtn.textContent = 'Book Walk-In';
             }
         })
         .catch(function () {
             errEl.textContent = 'Network error. Please try again.';
             errEl.style.display = '';
             confirmBtn.disabled = false;
-            confirmBtn.textContent = 'Confirm Booking';
+            confirmBtn.textContent = 'Book Walk-In';
         });
 }
 
@@ -934,13 +1238,25 @@ function qbSubmit() {
 .badge-assigned { background:#cfe2ff; color:#084298; }
 
 /* ── Quick Book modal ───────────────────────────────────────────────── */
-.qb-steps { display:flex; border-bottom:1px solid var(--border); background:var(--bg3); }
+#quickBookModal .modal-box, #apptCalendarModal .modal-box {
+    max-height:90vh; display:flex; flex-direction:column;
+}
+#quickBookModal .modal-box-body, #apptCalendarModal .modal-box-body {
+    flex:1; overflow-y:auto;
+}
+.qb-steps {
+    display:flex; height:52px; border-bottom:1px solid var(--border); background:var(--bg3);
+    position:sticky; top:0; z-index:5;
+}
 .qb-step {
-    flex:1; text-align:center; padding:1rem 0.5rem; font-size:0.85rem; font-weight:600;
-    color:var(--gray); border-bottom:3px solid transparent;
+    flex:1; display:flex; align-items:center; justify-content:center; text-align:center;
+    padding:0 0.5rem; font-size:0.85rem; font-weight:600;
+    color:var(--gray); border-bottom:3px solid transparent; cursor:default;
 }
 .qb-step.active { color:var(--brown); border-bottom-color:#C96A2C; }
 .qb-step.done { color:var(--brown); }
+.qb-step.reachable { cursor:pointer; }
+.qb-step.reachable:hover { background:rgba(201,106,44,0.08); }
 .qb-panel { padding:1.75rem; min-height:420px; }
 .qb-field-row { display:flex; gap:1.5rem; flex-wrap:wrap; }
 .qb-field { flex:1; min-width:220px; }
@@ -950,15 +1266,44 @@ function qbSubmit() {
     font-family:inherit; font-size:1.05rem; color:var(--brown); background:#fff; box-sizing:border-box;
 }
 .qb-field input:focus, .qb-field select:focus { outline:none; border-color:#C96A2C; }
+.qb-field textarea {
+    width:100%; padding:0.85rem 1rem; border:1.5px solid var(--border); border-radius:10px;
+    font-family:inherit; font-size:1rem; color:var(--brown); background:#fff; box-sizing:border-box;
+    resize:vertical; min-height:80px;
+}
+.qb-field textarea:focus { outline:none; border-color:#C96A2C; }
+.qb-booking-date { font-size:0.95rem; font-weight:700; color:var(--brown); margin-bottom:1.25rem; }
 
-.qb-svc-layout { display:grid; grid-template-columns:220px 1fr; gap:0; min-height:420px; max-height:60vh; }
-.qb-svc-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--border); overflow-y:auto; }
+.qb-rate-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem; }
+.qb-rate-btn {
+    display:flex; flex-direction:column; align-items:center; gap:0.25rem; padding:1rem 0.5rem;
+    border:1.5px solid var(--border); border-radius:10px; background:#fff; cursor:pointer;
+}
+.qb-rate-btn:hover { background:var(--bg3); }
+.qb-rate-btn.selected { background:#FDE8D8; border-color:#C96A2C; }
+.qb-rate-title { font-weight:700; color:var(--brown); font-size:0.9rem; }
+.qb-rate-sub { font-size:0.75rem; color:var(--gray); }
+
+.qb-disc-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.6rem; margin-bottom:0.75rem; }
+.qb-disc-btn {
+    padding:0.75rem 0.5rem; border:1.5px solid var(--border); border-radius:10px; background:#fff;
+    font-size:0.85rem; font-weight:600; color:var(--brown); cursor:pointer; text-align:center; line-height:1.4;
+}
+.qb-disc-btn small { font-weight:400; color:var(--gray); }
+.qb-disc-btn:hover { background:var(--bg3); }
+.qb-disc-btn.selected { background:#C96A2C; color:#fff; border-color:#C96A2C; }
+.qb-disc-btn.selected small { color:#fdece0; }
+.qb-sub-box { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:0.75rem; }
+.qb-notice { margin-top:0.6rem; padding:0.7rem 1rem; background:#fff8f2; border-left:3px solid #C96A2C; border-radius:6px; font-size:0.85rem; color:#92400e; }
+
+.qb-svc-layout { display:grid; grid-template-columns:220px 1fr; gap:0; align-items:start; }
+.qb-svc-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--border); position:sticky; top:52px; background:#fff; }
 .qb-svc-cat-btn {
     padding:0.9rem 1.25rem; font-weight:600; color:var(--brown); text-decoration:none;
     border-bottom:1px solid var(--border); border-left:3px solid transparent;
 }
 .qb-svc-cat-btn:hover { background:var(--bg3); }
-.qb-svc-content { overflow-y:auto; padding:0 1.5rem; }
+.qb-svc-content { padding:0 1.5rem; }
 .qb-svc-cat-title { font-size:1rem; font-weight:700; color:var(--brown); margin:1.25rem 0 0.5rem; }
 .qb-svc-row {
     display:flex; align-items:center; gap:1rem; padding:0.9rem 0.75rem; border-radius:10px;
@@ -983,9 +1328,12 @@ function qbSubmit() {
 .qb-pay-btn.selected { background:#C96A2C; color:#fff; border-color:#C96A2C; }
 .qb-error { margin-top:1rem; padding:0.85rem 1rem; background:#f8d7da; color:#842029; border-radius:10px; font-size:0.9rem; }
 @media (max-width:640px) {
-    .qb-svc-layout { grid-template-columns:1fr; max-height:none; }
+    .qb-svc-layout { grid-template-columns:1fr; }
+    .qb-svc-sidebar { position:static; }
     .qb-svc-sidebar { flex-direction:row; flex-wrap:wrap; overflow-x:auto; }
     .qb-pay-grid { grid-template-columns:repeat(2,1fr); }
+    .qb-rate-grid { grid-template-columns:repeat(2,1fr); }
+    .qb-disc-grid { grid-template-columns:repeat(2,1fr); }
 }
 </style>
 <div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:0.35rem;">
