@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_per_person'])) {
         $ps->bind_param("s", $entered_pin); $ps->execute();
         $pin_row = $ps->get_result()->fetch_assoc(); $ps->close();
         if (!$pin_row) {
-            $message = "⚠️ Incorrect PIN. Assignment cancelled."; $message_type = "danger";
+            $message = "Incorrect PIN. Assignment cancelled."; $message_type = "danger";
             goto end_assign;
         }
         $assign_actor_name = $pin_row['full_name'];
@@ -127,7 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_per_person'])) {
         }
 
         if (!empty($errors)) {
-            $message = "⚠️ " . implode(" ", $errors); $message_type = "danger";
+            $message = implode(" ", $errors); $message_type = "danger";
         } else {
             // Replace all existing assignments with the new grouped set
             $del = $conn->prepare("DELETE FROM appointment_therapists WHERE appointment_id=?");
@@ -151,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_per_person'])) {
 
             require_once __DIR__ . '/../notify.php';
             add_notification($conn, $appt['user_id'], 'appointment',
-                '💆 Therapist Assigned!',
+                'Therapist Assigned!',
                 'Your appointment for "' . $appt['service_name'] . '" has been assigned to ' . implode(' & ', $therapist_names) . '.',
                 'appointments.php'
             );
@@ -333,7 +333,7 @@ $form_t_stmt = $conn->query("
 $form_therapists = $form_t_stmt->fetch_all(MYSQLI_ASSOC);
 
 $page_title  = 'Assign Therapist';
-$page_icon   = '💆';
+$page_icon   = '';
 $active_page = 'appointments';
 require_once 'admin_header.php';
 ?>
@@ -342,10 +342,10 @@ require_once 'admin_header.php';
 <div class="alert alert-<?php echo $message_type; ?>" style="margin-bottom:1.25rem;"><?php echo $message; ?></div>
 <?php endif; ?>
 <?php if (isset($_GET['msg']) && $_GET['msg']==='removed'): ?>
-<div class="alert alert-success" style="margin-bottom:1.25rem;">✅ Therapist removed from this appointment.</div>
+<div class="alert alert-success" style="margin-bottom:1.25rem;">Therapist removed from this appointment.</div>
 <?php endif; ?>
 <?php if (isset($_GET['msg']) && $_GET['msg']==='assigned'): ?>
-<div class="alert alert-success" style="margin-bottom:1.25rem;">✅ Therapist assignments saved successfully.</div>
+<div class="alert alert-success" style="margin-bottom:1.25rem;">Therapist assignments saved successfully.</div>
 <?php endif; ?>
 
 <div style="display:grid;grid-template-columns:1fr 1.1fr;gap:1.5rem;align-items:start;">
@@ -356,7 +356,7 @@ require_once 'admin_header.php';
     <!-- Appointment Details card -->
     <div class="panel" style="margin-bottom:1.25rem;">
         <div class="panel-header">
-            <span class="panel-title">📅 Appointment #<?php echo $appt_id; ?></span>
+            <span class="panel-title">Appointment #<?php echo $appt_id; ?></span>
             <a href="appointments.php" style="font-size:0.78rem;color:var(--gold);">← Back to list</a>
         </div>
         <div class="panel-body" style="padding:1.1rem;display:grid;gap:0.65rem;">
@@ -366,11 +366,11 @@ require_once 'admin_header.php';
                 <?php
                 $s = $appt['status'];
                 $badge_map = [
-                    'pending'  => ['#fff3cd','#664d03','⏳ Pending'],
-                    'approved' => ['#d1e7dd','#0a3622','✅ Approved'],
-                    'assigned' => ['#cfe2ff','#084298','💆 Assigned'],
-                    'completed'=> ['#cff4fc','#055160','🎉 Completed'],
-                    'declined' => ['#f8d7da','#842029','❌ Declined'],
+                    'pending'  => ['#fff3cd','#664d03','Pending'],
+                    'approved' => ['#d1e7dd','#0a3622','Approved'],
+                    'assigned' => ['#cfe2ff','#084298','Assigned'],
+                    'completed'=> ['#cff4fc','#055160','Completed'],
+                    'declined' => ['#f8d7da','#842029','Declined'],
                 ];
                 [$bg,$fg,$label] = $badge_map[$s] ?? ['#e2e3e5','#41464b',$s];
                 ?>
@@ -398,7 +398,7 @@ require_once 'admin_header.php';
             <?php if ($appt['service_type'] === 'home'): ?>
             <div style="display:flex;justify-content:space-between;">
                 <span style="font-size:0.78rem;color:var(--gray);">Type</span>
-                <span style="font-size:0.85rem;color:var(--cream);">🏠 Home Service — <?php echo htmlspecialchars($appt['home_address'] ?? ''); ?></span>
+                <span style="font-size:0.85rem;color:var(--cream);">Home Service — <?php echo htmlspecialchars($appt['home_address'] ?? ''); ?></span>
             </div>
             <?php endif; ?>
 
@@ -422,7 +422,7 @@ require_once 'admin_header.php';
     <!-- Assigned Therapists -->
     <div class="panel">
         <div class="panel-header">
-            <span class="panel-title">💆 Assigned Therapists (<?php echo $slots_filled; ?>/<?php echo $people; ?> people covered)</span>
+            <span class="panel-title">Assigned Therapists (<?php echo $slots_filled; ?>/<?php echo $people; ?> people covered)</span>
         </div>
         <div class="panel-body" style="padding:1rem;">
             <?php if (empty($assigned_therapists)): ?>
@@ -443,13 +443,13 @@ require_once 'admin_header.php';
                         <div style="font-weight:700;color:var(--cream);font-size:0.88rem;"><?php echo htmlspecialchars($at['full_name']); ?></div>
                         <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($at['specialties'] ?: 'General'); ?></div>
                         <?php if ($at['notes']): ?>
-                        <div style="font-size:0.72rem;color:var(--gold);margin-top:0.15rem;">📝 <?php echo htmlspecialchars($at['notes']); ?></div>
+                        <div style="font-size:0.72rem;color:var(--gold);margin-top:0.15rem;"><?php echo htmlspecialchars($at['notes']); ?></div>
                         <?php endif; ?>
                         <div style="font-size:0.72rem;color:var(--gold);margin-top:0.15rem;">
-                            👥 Handles: <?php echo $at['people_handled']; ?> person<?php echo $at['people_handled']>1?'s':''; ?>
+                            Handles: <?php echo $at['people_handled']; ?> person<?php echo $at['people_handled']>1?'s':''; ?>
                         </div>
                         <div style="font-size:0.72rem;color:#a3e6a3;margin-top:0.1rem;">
-                            💵 Commission: ₱<?php echo number_format($at['commission'] ?? 0, 2); ?>
+                            Commission: ₱<?php echo number_format($at['commission'] ?? 0, 2); ?>
                         </div>
                     </div>
                 </div>
@@ -457,7 +457,7 @@ require_once 'admin_header.php';
                    onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove <?php echo htmlspecialchars(addslashes($at['full_name'])); ?> from this appointment?').then(ok=>{if(ok)window.location.href=_h;})"
                    style="font-size:0.75rem;padding:0.3rem 0.65rem;background:rgba(220,53,69,0.15);color:#ff6b7a;
                           border-radius:6px;text-decoration:none;white-space:nowrap;border:1px solid rgba(220,53,69,0.25);">
-                    ✕ Remove
+                    Remove
                 </a>
             </div>
             <?php endforeach; ?>
@@ -473,10 +473,10 @@ require_once 'admin_header.php';
     <!-- Assign Form — per-person rows -->
     <div class="panel" style="margin-bottom:1.25rem;">
         <div class="panel-header">
-            <span class="panel-title">💆 Assign Therapists</span>
+            <span class="panel-title">Assign Therapists</span>
             <?php if ($slots_left <= 0): ?>
             <span style="font-size:0.75rem;background:rgba(25,135,84,0.15);color:var(--green);
-                         padding:0.2rem 0.65rem;border-radius:20px;font-weight:600;">All <?php echo $people; ?> people covered ✓</span>
+                         padding:0.2rem 0.65rem;border-radius:20px;font-weight:600;">All <?php echo $people; ?> people covered</span>
             <?php else: ?>
             <span style="font-size:0.75rem;background:rgba(201,106,44,0.15);color:var(--gold);
                          padding:0.2rem 0.65rem;border-radius:20px;font-weight:600;"><?php echo $slots_left; ?> person<?php echo $slots_left>1?'s':''; ?> unassigned</span>
@@ -487,14 +487,14 @@ require_once 'admin_header.php';
         <?php if ($pref_th_name): ?>
         <div style="margin-bottom:1rem;padding:0.6rem 0.9rem;background:#fefce8;border:1px solid #fde68a;
                     border-radius:9px;font-size:0.8rem;color:#78350f;font-family:'DM Sans',sans-serif;">
-            ⭐ Customer's preferred therapist: <strong><?php echo htmlspecialchars($pref_th_name); ?></strong>
+            Customer's preferred therapist: <strong><?php echo htmlspecialchars($pref_th_name); ?></strong>
         </div>
         <?php endif; ?>
 
         <?php if ($slots_left <= 0): ?>
         <div style="margin-bottom:1rem;padding:0.7rem 0.9rem;background:rgba(25,135,84,0.08);
                     border:1px solid rgba(25,135,84,0.2);border-radius:8px;font-size:0.85rem;color:var(--green);">
-            ✅ All <?php echo $people; ?> people are covered. You may reassign below if needed.
+            All <?php echo $people; ?> people are covered. You may reassign below if needed.
         </div>
         <?php endif; ?>
 
@@ -513,7 +513,7 @@ require_once 'admin_header.php';
         <div style="display:grid;grid-template-columns:90px 1fr;align-items:center;gap:0.75rem;
                     padding:0.65rem 0.85rem;background:var(--bg3);border:1px solid var(--border2);
                     border-radius:8px;">
-            <div style="font-size:0.82rem;font-weight:600;color:var(--gold);">👤 Person <?php echo $p; ?></div>
+            <div style="font-size:0.82rem;font-weight:600;color:var(--gold);">Person <?php echo $p; ?></div>
             <select name="therapist_ids[]" required
                     style="padding:0.45rem 0.65rem;border:1px solid var(--border2);border-radius:7px;
                            background:var(--bg2);color:var(--cream);font-size:0.85rem;width:100%;">
@@ -525,11 +525,11 @@ require_once 'admin_header.php';
                     $onbreak   = $t['is_on_break'];
                     $out       = !empty($t['time_out']);
                     $label     = htmlspecialchars($t['full_name']);
-                    if (!$qualified)  $label .= ' — ❌ Not qualified';
-                    elseif ($busy)    $label .= ' — ⚠️ Busy';
-                    elseif ($onbreak) $label .= ' — ☕ On break';
-                    elseif ($out)     $label .= ' — 🏁 Checked out';
-                    else              $label .= ' — ✅ Available';
+                    if (!$qualified)  $label .= ' — Not qualified';
+                    elseif ($busy)    $label .= ' — Busy';
+                    elseif ($onbreak) $label .= ' — On break';
+                    elseif ($out)     $label .= ' — Checked out';
+                    else              $label .= ' — Available';
                 ?>
                 <option value="<?php echo $t['id']; ?>" <?php echo $selected; ?> <?php echo !$qualified ? 'disabled' : ''; ?>>
                     <?php echo $label; ?>
@@ -543,7 +543,7 @@ require_once 'admin_header.php';
         <?php if (empty($form_therapists)): ?>
         <div style="padding:0.65rem;background:rgba(220,53,69,0.1);border-radius:8px;font-size:0.82rem;
                     color:#ff6b7a;border:1px solid rgba(220,53,69,0.25);margin-bottom:1rem;">
-            ⚠️ No therapists found. <a href="therapists.php" style="color:var(--gold);">Check therapist roster.</a>
+            No therapists found. <a href="therapists.php" style="color:var(--gold);">Check therapist roster.</a>
         </div>
         <?php endif; ?>
 
@@ -557,7 +557,7 @@ require_once 'admin_header.php';
         </div>
         <?php endif; ?>
         <button type="submit" name="save_per_person" class="btn btn-primary" style="width:100%;">
-            💾 Save All Assignments
+            Save All Assignments
         </button>
         </form>
 
@@ -566,7 +566,7 @@ require_once 'admin_header.php';
 
     <!-- Full roster with availability status -->
     <div class="panel">
-        <div class="panel-header"><span class="panel-title"><?php echo $appt_is_today ? '📋 Today\'s Roster — Availability' : '📋 Qualified Therapists — Availability'; ?></span></div>
+        <div class="panel-header"><span class="panel-title"><?php echo $appt_is_today ? 'Today\'s Roster — Availability' : 'Qualified Therapists — Availability'; ?></span></div>
         <div class="panel-body" style="padding:1rem;">
         <?php if (empty($available_therapists) && empty($assigned_therapists)): ?>
             <p style="color:var(--gray);font-size:0.85rem;text-align:center;padding:1rem 0;"><?php echo $appt_is_today ? 'No therapists are on duty today.' : 'No qualified therapists found for this service.'; ?></p>

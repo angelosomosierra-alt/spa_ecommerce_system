@@ -75,44 +75,44 @@ $result = $conn->query("SELECT o.*, COUNT(oi.id) as ic FROM orders o LEFT JOIN o
 while ($r=$result->fetch_assoc()) $recent_orders[]=$r;
 
 $extra_head = '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>';
-$page_title = 'Analytics'; $page_icon = '📊'; $active_page = 'analytics';
+$page_title = 'Analytics'; $page_icon = ''; $active_page = 'analytics';
 require_once 'admin_header.php';
 ?>
 
 <!-- Stats -->
 <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
-    <div class="stat-card green"><div class="stat-icon">💰</div><div class="stat-number">₱<?php echo number_format($total_revenue,0); ?></div><div class="stat-label">Total Revenue</div></div>
-    <div class="stat-card blue"><div class="stat-icon">📦</div><div class="stat-number"><?php echo $total_orders; ?></div><div class="stat-label">Approved Orders</div></div>
-    <div class="stat-card"><div class="stat-icon">🧾</div><div class="stat-number">₱<?php echo number_format($avg_order,0); ?></div><div class="stat-label">Avg Order Value</div></div>
-    <div class="stat-card amber"><div class="stat-icon">⏳</div><div class="stat-number"><?php echo $pending_orders; ?></div><div class="stat-label">Pending Approval</div></div>
-    <div class="stat-card blue"><div class="stat-icon">📅</div><div class="stat-number"><?php echo $total_appts; ?></div><div class="stat-label">Confirmed Appts</div></div>
-    <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-number"><?php echo $total_customers; ?></div><div class="stat-label">Customers</div></div>
-    <div class="stat-card green"><div class="stat-icon">💆</div><div class="stat-number">₱<?php echo number_format($service_revenue,0); ?></div><div class="stat-label">Services Revenue</div></div>
-    <div class="stat-card"><div class="stat-icon">🛍️</div><div class="stat-number">₱<?php echo number_format($product_revenue,0); ?></div><div class="stat-label">Products Revenue</div></div>
+    <div class="stat-card green"><div class="stat-icon"></div><div class="stat-number">₱<?php echo number_format($total_revenue,0); ?></div><div class="stat-label">Total Revenue</div></div>
+    <div class="stat-card blue"><div class="stat-icon"></div><div class="stat-number"><?php echo $total_orders; ?></div><div class="stat-label">Approved Orders</div></div>
+    <div class="stat-card"><div class="stat-icon"></div><div class="stat-number">₱<?php echo number_format($avg_order,0); ?></div><div class="stat-label">Avg Order Value</div></div>
+    <div class="stat-card amber"><div class="stat-icon"></div><div class="stat-number"><?php echo $pending_orders; ?></div><div class="stat-label">Pending Approval</div></div>
+    <div class="stat-card blue"><div class="stat-icon"></div><div class="stat-number"><?php echo $total_appts; ?></div><div class="stat-label">Confirmed Appts</div></div>
+    <div class="stat-card"><div class="stat-icon"></div><div class="stat-number"><?php echo $total_customers; ?></div><div class="stat-label">Customers</div></div>
+    <div class="stat-card green"><div class="stat-icon"></div><div class="stat-number">₱<?php echo number_format($service_revenue,0); ?></div><div class="stat-label">Services Revenue</div></div>
+    <div class="stat-card"><div class="stat-icon"></div><div class="stat-number">₱<?php echo number_format($product_revenue,0); ?></div><div class="stat-label">Products Revenue</div></div>
     <?php if ($best_day): ?>
-    <div class="stat-card amber"><div class="stat-icon">🏆</div><div class="stat-number" style="font-size:1.2rem;"><?php echo $best_day['d']; ?></div><div class="stat-label">Best Sales Day</div></div>
+    <div class="stat-card amber"><div class="stat-icon"></div><div class="stat-number" style="font-size:1.2rem;"><?php echo $best_day['d']; ?></div><div class="stat-label">Best Sales Day</div></div>
     <?php endif; ?>
-    <div class="stat-card green"><div class="stat-icon">🔮</div><div class="stat-number" style="font-size:1.1rem;">₱<?php echo number_format(array_sum($forecast_data)/3,0); ?></div><div class="stat-label">Forecast Avg/Month</div></div>
+    <div class="stat-card green"><div class="stat-icon"></div><div class="stat-number" style="font-size:1.1rem;">₱<?php echo number_format(array_sum($forecast_data)/3,0); ?></div><div class="stat-label">Forecast Avg/Month</div></div>
 </div>
 
 <!-- Export Bar -->
 <div class="export-bar" style="margin-bottom:1.5rem;">
-    <span class="export-bar-label">📥 Export:</span>
-    <a class="btn-export green"  href="export_sales.php?type=all">📊 Full Report</a>
-    <a class="btn-export blue"   href="export_sales.php?type=orders_only">📦 Orders</a>
-    <a class="btn-export orange" href="export_sales.php?type=monthly">📅 Monthly</a>
-    <a class="btn-export gold"   href="export_sales.php?type=products">🛍️ Products</a>
-    <a class="btn-export purple" href="export_sales.php?type=services">💆 Services</a>
+    <span class="export-bar-label">Export:</span>
+    <a class="btn-export green"  href="export_sales.php?type=all">Full Report</a>
+    <a class="btn-export blue"   href="export_sales.php?type=orders_only">Orders</a>
+    <a class="btn-export orange" href="export_sales.php?type=monthly">Monthly</a>
+    <a class="btn-export gold"   href="export_sales.php?type=products">Products</a>
+    <a class="btn-export purple" href="export_sales.php?type=services">Services</a>
 </div>
 
 <!-- Sales Chart -->
 <div class="chart-card">
-    <h3>📈 Sales Trend
+    <h3>Sales Trend
         <div class="chart-tabs" style="margin-left:auto;margin-bottom:0;">
             <button class="chart-tab active" onclick="switchSales('daily',this)">Daily</button>
             <button class="chart-tab" onclick="switchSales('weekly',this)">Weekly</button>
             <button class="chart-tab" onclick="switchSales('monthly',this)">Monthly</button>
-            <button class="chart-tab" onclick="switchSales('forecast',this)">🔮 Forecast <span class="forecast-badge">AI</span></button>
+            <button class="chart-tab" onclick="switchSales('forecast',this)">Forecast <span class="forecast-badge">AI</span></button>
         </div>
     </h3>
     <canvas id="salesChart" height="90"></canvas>
@@ -121,7 +121,7 @@ require_once 'admin_header.php';
 <!-- Top lists + pie charts -->
 <div class="two-col">
     <div class="chart-card">
-        <h3>🛍️ Top Products</h3>
+        <h3>Top Products</h3>
         <?php if (!empty($top_products)):
             $max = max(array_column($top_products,'tq'));
             foreach ($top_products as $i=>$p):
@@ -144,7 +144,7 @@ require_once 'admin_header.php';
         <?php endif; ?>
     </div>
     <div class="chart-card">
-        <h3>💆 Top Services</h3>
+        <h3>Top Services</h3>
         <?php if (!empty($top_services)):
             $max = max(array_column($top_services,'tb'));
             foreach ($top_services as $i=>$s):
@@ -170,7 +170,7 @@ require_once 'admin_header.php';
 
 <!-- Forecast Table -->
 <div class="chart-card">
-    <h3>🔮 Sales Forecast — Next 3 Months</h3>
+    <h3>Sales Forecast — Next 3 Months</h3>
     <div class="table-wrap" style="border:none;border-radius:0;">
         <table>
             <thead><tr><th>Month</th><th>Forecast Revenue</th><th>Confidence</th><th>Trend</th></tr></thead>
@@ -195,7 +195,7 @@ require_once 'admin_header.php';
                     </td>
                     <td>
                         <span style="color:<?php echo $up?'var(--green)':'var(--red)'; ?>;font-weight:700;font-size:0.85rem;">
-                            <?php echo $up?'▲ +':'▼ -'; ?><?php echo number_format(abs($chg),1); ?>%
+                            <?php echo $up?'+':'-'; ?><?php echo number_format(abs($chg),1); ?>%
                         </span>
                     </td>
                 </tr>
@@ -207,24 +207,24 @@ require_once 'admin_header.php';
 
 <!-- Recent Orders -->
 <div class="chart-card">
-    <h3>🕐 Recent Orders</h3>
+    <h3>Recent Orders</h3>
     <div class="table-wrap" style="border:none;border-radius:0;">
         <table>
             <thead><tr><th>ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Approval</th><th>Date</th></tr></thead>
             <tbody>
                 <?php
                 $pay_labels = [
-                    'paid'            => '✅ Paid',
-                    'unpaid'          => '⏳ Unpaid',
-                    'rejected'        => '❌ Rejected',
-                    'refunded'        => '↩️ Refunded',
-                    'pending_payment' => '💳 Awaiting',
-                    'cancelled'       => '🚫 Cancelled',
+                    'paid'            => 'Paid',
+                    'unpaid'          => 'Unpaid',
+                    'rejected'        => 'Rejected',
+                    'refunded'        => 'Refunded',
+                    'pending_payment' => 'Awaiting',
+                    'cancelled'       => 'Cancelled',
                 ];
                 $apv_labels = [
-                    'pending'  => '🕐 Pending',
-                    'approved' => '✅ Approved',
-                    'declined' => '❌ Declined',
+                    'pending'  => 'Pending',
+                    'approved' => 'Approved',
+                    'declined' => 'Declined',
                 ];
                 foreach ($recent_orders as $o):
                     $ps  = $o['payment_status']  ?? 'unpaid';
@@ -240,7 +240,7 @@ require_once 'admin_header.php';
                     <td><strong style="color:var(--rust);">₱<?php echo number_format($o['total_amount'],2); ?></strong></td>
                     <td>
                         <div style="display:flex;flex-direction:column;gap:3px;">
-                            <span class="badge badge-<?php echo $pm; ?>" style="font-size:0.7rem;"><?php echo $pm==='online'?'💳 Online':'🏪 Onsite'; ?></span>
+                            <span class="badge badge-<?php echo $pm; ?>" style="font-size:0.7rem;"><?php echo $pm==='online'?'Online':'Onsite'; ?></span>
                             <span class="badge badge-<?php echo $ps; ?>" style="font-size:0.7rem;"><?php echo $psl; ?></span>
                         </div>
                     </td>

@@ -15,7 +15,7 @@
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])) {
     // Guard: block saves when called from a locked daily report
     if (!empty($GLOBALS['daily_report_locked'])) {
-        $GLOBALS['widget_msg']      = '🔒 Report is locked. Expense not saved.';
+        $GLOBALS['widget_msg']      = 'Report is locked. Expense not saved.';
         $GLOBALS['widget_msg_type'] = 'warning';
         goto skip_save_expense;
     }
@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])
         if ($pin_check->get_result()->num_rows > 0) {
             $pin_used = $entered_pin;
         } else {
-            $GLOBALS['widget_msg']      = '⚠️ Incorrect PIN. Expense not saved.';
+            $GLOBALS['widget_msg']      = 'Incorrect PIN. Expense not saved.';
             $GLOBALS['widget_msg_type'] = 'danger';
             goto skip_save_expense;
         }
@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])
         ");
         $stmt->bind_param("ssdssi", $category, $label, $amount, $notes, $added_by, $pin_used);
         $ok = $stmt->execute(); $stmt->close();
-        $GLOBALS['widget_msg']      = $ok ? "✅ Expense recorded." : "DB error.";
+        $GLOBALS['widget_msg']      = $ok ? "Expense recorded." : "DB error.";
         $GLOBALS['widget_msg_type'] = $ok ? "success" : "danger";
     } else {
         $GLOBALS['widget_msg']      = "Amount and description required.";
@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])
 // ── Handle EDIT business expense ───────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_edit_expense']) && is_owner()) {
     if (!empty($GLOBALS['daily_report_locked'])) {
-        $GLOBALS['widget_msg']      = '🔒 Report is locked. Expense not updated.';
+        $GLOBALS['widget_msg']      = 'Report is locked. Expense not updated.';
         $GLOBALS['widget_msg_type'] = 'warning';
         goto skip_edit_expense;
     }
@@ -81,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_edit_expense']
         $stmt = $conn->prepare("UPDATE business_expenses SET category=?, label=?, amount=?, notes=? WHERE id=?");
         $stmt->bind_param("ssdsi", $edit_category, $edit_label, $edit_amount, $edit_notes, $edit_id);
         $ok = $stmt->execute(); $stmt->close();
-        $GLOBALS['widget_msg']      = $ok ? "✅ Expense updated." : "DB error.";
+        $GLOBALS['widget_msg']      = $ok ? "Expense updated." : "DB error.";
         $GLOBALS['widget_msg_type'] = $ok ? "success" : "danger";
     } else {
         $GLOBALS['widget_msg']      = "Amount and description required.";
@@ -116,8 +116,8 @@ $today_expenses = $conn->query("
 $today_exp_total = array_sum(array_column($today_expenses, 'amount'));
 
 $biz_categories = ['water','laundry','supplies','utilities','food','transport','maintenance','misc'];
-$cat_icons      = ['water'=>'💧','laundry'=>'🧺','supplies'=>'🛒','utilities'=>'💡',
-                   'food'=>'🍱','transport'=>'🚗','maintenance'=>'🔧','misc'=>'📦'];
+$cat_icons      = ['water'=>'','laundry'=>'','supplies'=>'','utilities'=>'',
+                   'food'=>'','transport'=>'','maintenance'=>'','misc'=>''];
 // Compact mode: bare add-form only, no outer panel/header and no embedded
 // "Today's list" -- used when the caller (Daily Report's Expenses tab)
 // already provides its own panel wrapper and its own properly date-filtered
@@ -130,7 +130,7 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
 <div class="panel" style="margin-top:1.5rem;" id="expenses-widget">
 
     <div class="panel-header">
-        <span class="panel-title">🧾 Today's Business Expenses</span>
+        <span class="panel-title">Today's Business Expenses</span>
         <span style="background:var(--rust);color:#fff;font-size:0.72rem;padding:0.2rem 0.65rem;border-radius:20px;font-weight:700;">
             ₱<?php echo number_format($today_exp_total, 2); ?> today
         </span>
@@ -148,7 +148,7 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
             <!-- Add form -->
             <div>
                 <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.65rem;">
-                    ➕ Log an Expense
+                    Log an Expense
                 </div>
                 <form method="POST">
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.5rem;">
@@ -184,7 +184,7 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
                     <div style="margin-bottom:0.75rem;padding:0.65rem;background:rgba(0,112,243,0.07);
                                 border:1px solid rgba(0,112,243,0.2);border-radius:8px;">
                         <label style="font-size:0.72rem;color:#0070f3;font-weight:700;display:block;margin-bottom:4px;">
-                            🔐 Enter your 4-digit PIN to confirm
+                            Enter your 4-digit PIN to confirm
                         </label>
                         <input type="password" name="we_pin" maxlength="4" pattern="\d{4}" required
                                inputmode="numeric" placeholder="••••"
@@ -195,7 +195,7 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
                     <?php endif; ?>
 
                     <button type="submit" name="widget_add_expense" class="btn btn-primary btn-sm" style="width:100%;font-size:0.82rem;">
-                        ➕ Add Expense
+                        Add Expense
                     </button>
                 </form>
             </div>
@@ -204,19 +204,19 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
             <!-- Today's list -->
             <div>
                 <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.65rem;">
-                    📋 Today's Log (<?php echo date('M d, Y'); ?>)
+                    Today's Log (<?php echo date('M d, Y'); ?>)
                 </div>
                 <?php if (empty($today_expenses)): ?>
                 <div style="text-align:center;padding:1.5rem;color:var(--gray);font-size:0.82rem;
                             background:var(--bg3);border-radius:8px;border:1px solid var(--border2);">
-                    <div style="font-size:1.5rem;margin-bottom:0.3rem;">🧾</div>No expenses yet today.
+                    <div style="font-size:1.5rem;margin-bottom:0.3rem;"></div>No expenses yet today.
                 </div>
                 <?php else: ?>
                 <div style="display:flex;flex-direction:column;gap:0.35rem;max-height:260px;overflow-y:auto;">
                     <?php foreach ($today_expenses as $e): ?>
                     <div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.6rem;
                                 background:var(--bg3);border-radius:7px;border:1px solid var(--border2);">
-                        <span style="font-size:0.9rem;flex-shrink:0;"><?php echo $cat_icons[$e['category']] ?? '📦'; ?></span>
+                        <span style="font-size:0.9rem;flex-shrink:0;"><?php echo $cat_icons[$e['category']] ?? ''; ?></span>
                         <div style="flex:1;min-width:0;">
                             <div style="font-size:0.82rem;font-weight:600;color:var(--brown);
                                         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
@@ -226,7 +226,7 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
                                 <?php echo ucfirst($e['category']); ?>
                                 &nbsp;·&nbsp;by <?php echo htmlspecialchars($e['by_name'] ?? '?'); ?>
                                 <?php if ($e['verified_by_pin']): ?>
-                                <span style="color:#0070f3;">🔐 PIN verified</span>
+                                <span style="color:#0070f3;">PIN verified</span>
                                 <?php endif; ?>
                                 &nbsp;·&nbsp;<?php echo date('h:i A', strtotime($e['created_at'])); ?>
                             </div>
@@ -238,11 +238,11 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
                         <div style="display:flex;gap:0.3rem;flex-shrink:0;">
                             <button type="button" title="Edit this expense"
                                     onclick='openEditExpenseModal(<?php echo (int)$e["id"]; ?>, <?php echo json_encode($e["category"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo json_encode($e["label"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo (float)$e["amount"]; ?>, <?php echo json_encode($e["notes"] ?? "", JSON_HEX_APOS|JSON_HEX_QUOT); ?>)'
-                                    style="color:var(--brown);background:transparent;font-size:0.78rem;padding:0.2rem 0.45rem;border-radius:4px;border:1px solid var(--border2);cursor:pointer;">✏️</button>
+                                    style="color:var(--brown);background:transparent;font-size:0.78rem;padding:0.2rem 0.45rem;border-radius:4px;border:1px solid var(--border2);cursor:pointer;">Edit</button>
                             <a href="?del_expense=<?php echo $e['id']; ?>" title="Delete this expense"
                                style="color:var(--red);font-size:0.78rem;text-decoration:none;padding:0.2rem 0.45rem;
                                       border-radius:4px;border:1px solid var(--red);flex-shrink:0;"
-                               onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this expense?').then(ok=>{if(ok)window.location.href=_h;})">🗑️</a>
+                               onclick="var _h=this.href;event.preventDefault();uiConfirm('Delete this expense?').then(ok=>{if(ok)window.location.href=_h;})">Delete</a>
                         </div>
                         <?php endif; ?>
                     </div>
@@ -266,7 +266,7 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
 <div id="editExpenseModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(30,20,10,0.55);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:1rem;">
     <div style="background:#fff;border-radius:14px;width:100%;max-width:420px;padding:1.5rem;box-shadow:0 20px 60px rgba(0,0,0,0.22);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <span style="font-weight:700;font-size:1rem;color:var(--brown);">✏️ Edit Expense</span>
+            <span style="font-weight:700;font-size:1rem;color:var(--brown);">Edit Expense</span>
             <button type="button" onclick="closeEditExpenseModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);">✕</button>
         </div>
         <form method="POST">
@@ -293,7 +293,7 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
                        style="width:100%;padding:0.5rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
             </div>
             <div style="display:flex;gap:0.6rem;">
-                <button type="submit" class="btn btn-primary btn-sm" style="flex:1;">💾 Save Changes</button>
+                <button type="submit" class="btn btn-primary btn-sm" style="flex:1;">Save Changes</button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="closeEditExpenseModal()">Cancel</button>
             </div>
         </form>

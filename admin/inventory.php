@@ -431,17 +431,17 @@ if ($active_tab === 'count' && $count_mode === 'history') {
 // ─── FLASH MESSAGES ───────────────────────────────────────────────────────────
 $ok_flash = $_GET['ok'] ?? '';
 if (!$msg) {
-    if     ($ok_flash === 'added')    { $msg = '✅ Supply added.';           $msg_type = 'success'; }
-    elseif ($ok_flash === 'updated')  { $msg = '✅ Supply updated.';         $msg_type = 'success'; }
-    elseif ($ok_flash === 'archived') { $msg = '🗃️ Supply archived.';       $msg_type = 'success'; }
-    elseif ($ok_flash === 'restored') { $msg = '♻️ Supply restored.';       $msg_type = 'success'; }
-    elseif ($ok_flash === 'logged')   { $msg = '✅ Delivery logged. Stock updated.'; $msg_type = 'success'; }
+    if     ($ok_flash === 'added')    { $msg = 'Supply added.';           $msg_type = 'success'; }
+    elseif ($ok_flash === 'updated')  { $msg = 'Supply updated.';         $msg_type = 'success'; }
+    elseif ($ok_flash === 'archived') { $msg = 'Supply archived.';       $msg_type = 'success'; }
+    elseif ($ok_flash === 'restored') { $msg = 'Supply restored.';       $msg_type = 'success'; }
+    elseif ($ok_flash === 'logged')   { $msg = 'Delivery logged. Stock updated.'; $msg_type = 'success'; }
     elseif ($ok_flash === 'counted' && isset($_SESSION['count_flash'])) {
         $cf  = $_SESSION['count_flash'];
         $nv  = $cf['net_peso'];
         $sign = $nv >= 0 ? '+' : '';
         $word = $nv >= 0 ? 'surplus' : 'shortage';
-        $msg = '✅ Count submitted: ' . $cf['n'] . ' item' . ($cf['n'] !== 1 ? 's' : '')
+        $msg = 'Count submitted: ' . $cf['n'] . ' item' . ($cf['n'] !== 1 ? 's' : '')
              . ' | Net variance: ' . $sign . '₱' . number_format(abs($nv), 2) . ' ' . $word;
         unset($_SESSION['count_flash']);
         $msg_type = 'success';
@@ -449,7 +449,7 @@ if (!$msg) {
 }
 
 $page_title  = 'Inventory';
-$page_icon   = '🧴';
+$page_icon   = '';
 $active_page = 'inventory';
 require_once 'admin_header.php';
 ?>
@@ -461,7 +461,7 @@ require_once 'admin_header.php';
 <!-- ── TABS ──────────────────────────────────────────────────────────────────── -->
 <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;
             border-bottom:2px solid var(--border2);padding-bottom:0;flex-wrap:wrap;">
-<?php foreach (['supplies'=>'🧴 Supplies','deliveries'=>'🚚 Deliveries','count'=>'📋 Physical Count'] as $tk=>$tl):
+<?php foreach (['supplies'=>'Supplies','deliveries'=>'Deliveries','count'=>'Physical Count'] as $tk=>$tl):
     $ia = ($active_tab === $tk); ?>
     <a href="inventory.php?tab=<?php echo $tk; ?>"
        style="padding:0.6rem 1.25rem;font-size:0.85rem;font-weight:700;text-decoration:none;
@@ -476,16 +476,16 @@ require_once 'admin_header.php';
 <!-- ════════════════ TAB: SUPPLIES ════════════════════════════════════════════ -->
 <?php if ($active_tab === 'supplies'): ?>
 <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1.5rem;">
-    <div class="stat-card"><div class="stat-icon">🧴</div><div class="stat-number"><?php echo $total_items;?></div><div class="stat-label">Total Items</div></div>
-    <div class="stat-card amber"><div class="stat-icon">⚠️</div><div class="stat-number"><?php echo $low_stock_n;?></div><div class="stat-label">Low Stock</div></div>
-    <div class="stat-card"><div class="stat-icon">🚫</div><div class="stat-number" style="<?php echo $out_of_stock_n>0?'color:#dc2626;':'';?>"><?php echo $out_of_stock_n;?></div><div class="stat-label">Out of Stock</div></div>
+    <div class="stat-card"><div class="stat-icon"></div><div class="stat-number"><?php echo $total_items;?></div><div class="stat-label">Total Items</div></div>
+    <div class="stat-card amber"><div class="stat-icon"></div><div class="stat-number"><?php echo $low_stock_n;?></div><div class="stat-label">Low Stock</div></div>
+    <div class="stat-card"><div class="stat-icon"></div><div class="stat-number" style="<?php echo $out_of_stock_n>0?'color:#dc2626;':'';?>"><?php echo $out_of_stock_n;?></div><div class="stat-label">Out of Stock</div></div>
 </div>
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">🧴 Supplies</span>
+        <span class="panel-title">Supplies</span>
         <div style="display:flex;gap:0.5rem;">
-            <a href="inventory.php?export=supplies" class="btn btn-secondary btn-sm">📊 Export to Excel</a>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="openDeliveryModal(null)">🚚 Log Delivery</button>
+            <a href="inventory.php?export=supplies" class="btn btn-secondary btn-sm">Export to Excel</a>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="openDeliveryModal(null)">Log Delivery</button>
             <button type="button" class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Supply</button>
         </div>
     </div>
@@ -500,7 +500,7 @@ require_once 'admin_header.php';
     .inv-cat-hdr td{padding:.45rem 1rem!important;font-size:.76rem;font-weight:700;color:var(--gray,#6b7280);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border2,#e5e0d8);}
     </style>
     <div class="inv-search-wrap">
-        <span class="inv-search-icon">🔍</span>
+        <span class="inv-search-icon"></span>
         <input type="search" id="invSearchInput" class="inv-search-input"
                placeholder="Search by name or category…" oninput="filterInvSupplies(this.value)" autocomplete="off">
         <button type="button" id="invSearchClear" class="inv-search-clear" onclick="clearInvSearch()" style="display:none;">✕</button>
@@ -513,13 +513,13 @@ require_once 'admin_header.php';
                 <tr><td colspan="7" style="text-align:center;color:var(--gray);padding:2.5rem;">No supplies yet. Click <strong>+ Add Supply</strong> to get started.</td></tr>
             <?php else: ?>
                 <?php foreach ($grouped as $cat => $rows): ?>
-                <tr class="inv-cat-hdr"><td colspan="7">📦 <?php echo htmlspecialchars($cat);?> <span style="font-weight:400;opacity:.7;">(<?php echo count($rows);?>)</span></td></tr>
+                <tr class="inv-cat-hdr"><td colspan="7"><?php echo htmlspecialchars($cat);?> <span style="font-weight:400;opacity:.7;">(<?php echo count($rows);?>)</span></td></tr>
                 <?php foreach ($rows as $s):
                     $stock=$s['current_stock']; $cpu_s=max(0.0001,(float)$s['content_per_unit']);
                     $uc_html=(float)$s['supplier_price']>0?'₱'.number_format($s['supplier_price']/$cpu_s,4).' <small style="color:var(--gray);">/ '.htmlspecialchars($s['base_unit_label']).'</small>':'<span style="color:var(--gray);">—</span>';
-                    if($stock<=0) $badge='<span class="badge" style="background:#dc2626;color:#fff;">🚫 Out of Stock</span>';
-                    elseif($s['reorder_level']!==null&&$stock<=$s['reorder_level']) $badge='<span class="badge" style="background:#d97706;color:#fff;">⚠️ Low Stock</span>';
-                    else $badge='<span class="badge badge-approved">✅ OK</span>';
+                    if($stock<=0) $badge='<span class="badge" style="background:#dc2626;color:#fff;">Out of Stock</span>';
+                    elseif($s['reorder_level']!==null&&$stock<=$s['reorder_level']) $badge='<span class="badge" style="background:#d97706;color:#fff;">Low Stock</span>';
+                    else $badge='<span class="badge badge-approved">OK</span>';
                     $has_inner_s = !empty($s['has_inner_level']);
                     $sj=htmlspecialchars(json_encode([
                         'id'              => (int)$s['id'],
@@ -543,7 +543,7 @@ require_once 'admin_header.php';
                 <tr class="inv-supply-row" data-search="<?php echo htmlspecialchars(strtolower($s['name'].' '.$s['category']));?>">
                     <td>
                         <strong><?php echo htmlspecialchars($s['name']);?></strong>
-                        <?php if($has_inner_s): ?><br><small style="color:#9333ea;font-size:.72rem;">📦 <?php echo (float)$s['inners_per_case'];?> inners/case · <?php echo (float)$s['pieces_per_inner'];?> <?php echo htmlspecialchars($s['base_unit_label']);?>/inner</small><?php endif;?>
+                        <?php if($has_inner_s): ?><br><small style="color:#9333ea;font-size:.72rem;"><?php echo (float)$s['inners_per_case'];?> inners/case · <?php echo (float)$s['pieces_per_inner'];?> <?php echo htmlspecialchars($s['base_unit_label']);?>/inner</small><?php endif;?>
                     </td>
                     <td style="color:var(--gray);"><?php echo htmlspecialchars($s['uom_label']);?></td>
                     <td style="text-align:right;font-variant-numeric:tabular-nums;"><?php echo number_format((float)$stock,2);?> <small style="color:var(--gray);"><?php echo htmlspecialchars($s['base_unit_label']);?></small></td>
@@ -551,13 +551,13 @@ require_once 'admin_header.php';
                     <td style="text-align:right;font-variant-numeric:tabular-nums;"><?php echo $uc_html;?></td>
                     <td><?php echo $badge;?></td>
                     <td style="white-space:nowrap;">
-                        <button type="button" class="btn btn-secondary btn-sm" title="Log delivery" onclick="openDeliveryModal(<?php echo (int)$s['id'];?>)">🚚</button>
-                        <button type="button" class="btn btn-info btn-sm" data-supply="<?php echo $sj;?>" onclick="openEditModal(this)">✏️</button>
+                        <button type="button" class="btn btn-secondary btn-sm" title="Log delivery" onclick="openDeliveryModal(<?php echo (int)$s['id'];?>)">Log</button>
+                        <button type="button" class="btn btn-info btn-sm" data-supply="<?php echo $sj;?>" onclick="openEditModal(this)">Edit</button>
                         <form method="POST" style="display:inline;" onsubmit="event.preventDefault();uiConfirm(<?php echo json_encode($_arc_msg); ?>).then(function(ok){if(ok)this.submit();}.bind(this));">
                             <?php echo csrf_field();?>
                             <input type="hidden" name="action" value="archive_supply">
                             <input type="hidden" name="id" value="<?php echo (int)$s['id'];?>">
-                            <button type="submit" class="btn btn-danger btn-sm" title="Archive">🗃️</button>
+                            <button type="submit" class="btn btn-danger btn-sm" title="Archive">Archive</button>
                         </form>
                     </td>
                 </tr>
@@ -575,7 +575,7 @@ require_once 'admin_header.php';
 <?php if ($active_tab === 'deliveries'): ?>
 <div class="panel" style="margin-bottom:1.25rem;">
     <div class="panel-header">
-        <span class="panel-title">🚚 Delivery Log</span>
+        <span class="panel-title">Delivery Log</span>
         <button type="button" class="btn btn-primary btn-sm" onclick="openDeliveryModal(null)">+ Log Delivery</button>
     </div>
     <div style="padding:.75rem 1.5rem;border-bottom:1px solid var(--border2);display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap;">
@@ -629,11 +629,11 @@ require_once 'admin_header.php';
 <div style="display:flex;gap:0.5rem;margin-bottom:1.25rem;align-items:center;">
     <a href="inventory.php?tab=count&mode=new"
        class="btn btn-sm" style="background:<?php echo $count_mode==='new'?'var(--brown)':'var(--bg3)';?>;color:<?php echo $count_mode==='new'?'#fff':'var(--brown)';?>;border:1.5px solid var(--border2);font-weight:700;">
-        📝 New Count
+        New Count
     </a>
     <a href="inventory.php?tab=count&mode=history"
        class="btn btn-sm" style="background:<?php echo $count_mode==='history'?'var(--brown)':'var(--bg3)';?>;color:<?php echo $count_mode==='history'?'#fff':'var(--brown)';?>;border:1.5px solid var(--border2);font-weight:700;">
-        📋 Count History
+        Count History
     </a>
 </div>
 
@@ -658,7 +658,7 @@ require_once 'admin_header.php';
 
 <div class="panel" style="margin-bottom:0;">
     <div class="panel-header">
-        <span class="panel-title">📋 New Physical Count</span>
+        <span class="panel-title">New Physical Count</span>
         <div style="display:flex;align-items:center;gap:.75rem;">
             <label style="font-size:.82rem;font-weight:600;color:var(--brown);">Count Date:</label>
             <input type="date" name="count_date" id="cnt_date" required
@@ -694,7 +694,7 @@ require_once 'admin_header.php';
             <?php if (empty($supplies)): ?>
                 <tr><td colspan="7" style="text-align:center;color:var(--gray);padding:2.5rem;">No active supplies found.</td></tr>
             <?php else: foreach ($grouped as $cat => $rows): ?>
-                <tr class="cnt-cat-hdr"><td colspan="7">📦 <?php echo htmlspecialchars($cat);?> (<?php echo count($rows);?>)</td></tr>
+                <tr class="cnt-cat-hdr"><td colspan="7"><?php echo htmlspecialchars($cat);?> (<?php echo count($rows);?>)</td></tr>
                 <?php foreach ($rows as $s):
                     $cpu_c      = max(0.0001,(float)$s['content_per_unit']);
                     $exp_units  = (float)$s['current_stock'] / $cpu_c;
@@ -708,7 +708,7 @@ require_once 'admin_header.php';
                         <strong><?php echo htmlspecialchars($s['name']);?></strong>
                         <br><small style="color:var(--gray);">
                         <?php if($has_inner_c): ?>
-                            <span style="color:#9333ea;">📦 case=<?php echo $ipc_c;?> inners · inner=<?php echo $ppi_c;?> <?php echo htmlspecialchars($s['base_unit_label']);?></span>
+                            <span style="color:#9333ea;">case=<?php echo $ipc_c;?> inners · inner=<?php echo $ppi_c;?> <?php echo htmlspecialchars($s['base_unit_label']);?></span>
                         <?php else: ?>
                             <?php echo htmlspecialchars($s['uom_label']);?> · <?php echo htmlspecialchars($s['base_unit_label']);?>
                         <?php endif; ?>
@@ -768,7 +768,7 @@ require_once 'admin_header.php';
     <!-- Submit bar -->
     <div style="padding:1rem 1.5rem;border-top:1px solid var(--border2);display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
         <button type="submit" class="btn btn-primary" onclick="return confirmCountSubmit()">
-            ✅ Submit Count
+            Submit Count
         </button>
         <button type="button" class="btn btn-secondary" onclick="clearCountForm()">Clear All</button>
         <span style="font-size:.78rem;color:var(--gray);">Only rows with values entered will be saved.</span>
@@ -782,7 +782,7 @@ require_once 'admin_header.php';
 <?php if ($count_mode === 'history'): ?>
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">📋 Count History</span>
+        <span class="panel-title">Count History</span>
         <a href="inventory.php?tab=count&mode=new" class="btn btn-primary btn-sm">+ New Count</a>
     </div>
 
@@ -833,7 +833,7 @@ require_once 'admin_header.php';
                 <td colspan="5" style="padding:0;">
                     <div style="background:var(--bg3);border-bottom:2px solid var(--border2);">
                         <div style="padding:.5rem .75rem;text-align:right;">
-                            <a href="inventory.php?export=count&date=<?php echo urlencode($date); ?>" class="btn btn-secondary btn-sm">📊 Export this count (Actual Count / Variance / Amount)</a>
+                            <a href="inventory.php?export=count&date=<?php echo urlencode($date); ?>" class="btn btn-secondary btn-sm">Export this count (Actual Count / Variance / Amount)</a>
                         </div>
                         <table style="width:100%;font-size:.82rem;">
                             <thead><tr style="background:var(--surface);">
@@ -946,7 +946,7 @@ require_once 'admin_header.php';
                     <div class="form-group" style="grid-column:1/-1;margin-bottom:.5rem;"><label>Notes <small style="color:var(--gray);">(optional)</small></label><textarea id="inv_notes" name="notes" rows="2" placeholder="Brand, supplier, storage notes…"></textarea></div>
                 </div>
                 <div class="form-actions" style="margin-top:1rem;">
-                    <button type="submit" id="invModalSubmit" class="btn btn-primary">✅ Add Supply</button>
+                    <button type="submit" id="invModalSubmit" class="btn btn-primary">Add Supply</button>
                     <button type="button" class="btn btn-secondary" onclick="closeInvModal()">Cancel</button>
                 </div>
             </form>
@@ -959,7 +959,7 @@ require_once 'admin_header.php';
 <div id="invDelivModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(30,20,10,.55);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:1rem;">
     <div style="background:#fff;border-radius:16px;width:100%;max-width:480px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.22);animation:popIn .28s cubic-bezier(.34,1.56,.64,1);">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:1.1rem 1.5rem;border-bottom:1px solid var(--border2);flex-shrink:0;">
-            <span style="font-weight:700;font-size:1rem;color:var(--brown);">🚚 Log Delivery</span>
+            <span style="font-weight:700;font-size:1rem;color:var(--brown);">Log Delivery</span>
             <button type="button" onclick="closeDelivModal()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--gray);line-height:1;padding:.2rem .4rem;border-radius:6px;">✕</button>
         </div>
         <div style="overflow-y:auto;padding:1.25rem 1.5rem 1.5rem;flex:1;">
@@ -1015,7 +1015,7 @@ require_once 'admin_header.php';
                 <div id="del_base_preview" style="display:none;background:var(--bg3);border:1.5px solid var(--border2);border-radius:10px;padding:.6rem 1rem;margin-bottom:1rem;font-size:.88rem;color:var(--brown);font-weight:600;text-align:center;"></div>
                 <div class="form-group" style="margin-bottom:.5rem;"><label>Notes <small style="color:var(--gray);">(optional)</small></label><textarea id="del_notes" name="notes" rows="2" placeholder="Supplier, invoice #…"></textarea></div>
                 <div class="form-actions" style="margin-top:1rem;">
-                    <button type="submit" class="btn btn-primary">✅ Log Delivery</button>
+                    <button type="submit" class="btn btn-primary">Log Delivery</button>
                     <button type="button" class="btn btn-secondary" onclick="closeDelivModal()">Cancel</button>
                 </div>
             </form>
@@ -1086,10 +1086,10 @@ function computeInnerCPU() {
 }
 
 function openAddModal(){
-    document.getElementById('invModalTitle').textContent = '➕ Add Supply';
+    document.getElementById('invModalTitle').textContent = 'Add Supply';
     document.getElementById('invAction').value = 'add_supply';
     document.getElementById('invId').value = '';
-    document.getElementById('invModalSubmit').textContent = '✅ Add Supply';
+    document.getElementById('invModalSubmit').textContent = 'Add Supply';
     document.getElementById('invModalForm').reset();
     document.getElementById('inv_has_inner').checked = false;
     document.getElementById('inv_inner_fields').style.display = 'none';
@@ -1103,10 +1103,10 @@ function openAddModal(){
 }
 function openEditModal(btn){
     var d = JSON.parse(btn.getAttribute('data-supply'));
-    document.getElementById('invModalTitle').textContent = '✏️ Edit Supply';
+    document.getElementById('invModalTitle').textContent = 'Edit Supply';
     document.getElementById('invAction').value = 'edit_supply';
     document.getElementById('invId').value = d.id;
-    document.getElementById('invModalSubmit').textContent = '✅ Update Supply';
+    document.getElementById('invModalSubmit').textContent = 'Update Supply';
     document.getElementById('inv_name').value     = d.name     || '';
     document.getElementById('inv_uom').value      = d.uom_label|| '';
     document.getElementById('inv_bul').value      = d.base_unit_label || '';
