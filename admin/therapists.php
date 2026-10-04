@@ -41,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_today'])) {
                 $stmt = $conn->prepare("INSERT INTO therapist_attendance (therapist_id, duty_date, time_in, rotation_order) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE time_in=VALUES(time_in)");
                 $stmt->bind_param("issi", $tid, $date, $time_in, $rot);
                 $ok = $stmt->execute(); $stmt->close();
-                $message      = $ok ? "✅ " . htmlspecialchars($row['full_name'], ENT_QUOTES, 'UTF-8') . " checked in." : "Error checking in.";
+                $message      = $ok ? htmlspecialchars($row['full_name'], ENT_QUOTES, 'UTF-8') . " checked in." : "Error checking in.";
                 $message_type = $ok ? "success" : "danger";
                 if ($ok) log_activity($conn, 'therapist_login',
                     "{$row['full_name']} clocked in for duty",
@@ -66,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reorder'])) {
 }
 
 if (isset($_GET['reordered'])) {
-    $message = "✅ Rotation order saved."; $message_type = "success";
+    $message = "Rotation order saved."; $message_type = "success";
 }
 
 // ── CHECK OUT ────────────────────────────────────────────────────────────────
@@ -361,7 +361,7 @@ $all_therapists = $conn->query("
     ORDER BY t.full_name ASC
 ")->fetch_all(MYSQLI_ASSOC);
 
-$page_title = 'Therapists'; $page_icon = '💆'; $active_page = 'therapists';
+$page_title = 'Therapists'; $page_icon = ''; $active_page = 'therapists';
 
 // ── Pre-load specialties for all therapists on today's roster ─────────────────
 $roster_ids      = array_column($today_roster, 'therapist_id');
@@ -557,7 +557,7 @@ require_once 'admin_header.php';
                     <?php echo htmlspecialchars($history_therapist['full_name']); ?>
                 </div>
                 <?php if ($history_therapist['phone']): ?>
-                <div style="font-size:0.78rem;color:var(--gray);">📞 <?php echo htmlspecialchars($history_therapist['phone']); ?></div>
+                <div style="font-size:0.78rem;color:var(--gray);"><?php echo htmlspecialchars($history_therapist['phone']); ?></div>
                 <?php endif; ?>
             </div>
             <div style="display:flex;gap:2rem;flex-wrap:wrap;">
@@ -605,11 +605,11 @@ require_once 'admin_header.php';
 <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
     <a href="?history=<?php echo $hist_id; ?>&hist_status=worked<?php echo !empty($hist_from) ? '&hist_from='.urlencode($hist_from) : ''; ?><?php echo !empty($hist_to) ? '&hist_to='.urlencode($hist_to) : ''; ?>"
        class="btn btn-sm <?php echo $hist_status==='worked' ? 'btn-primary' : 'btn-secondary'; ?>">
-       ✅ Approved + Completed
+       Approved + Completed
     </a>
     <a href="?history=<?php echo $hist_id; ?>&hist_status=completed_only<?php echo !empty($hist_from) ? '&hist_from='.urlencode($hist_from) : ''; ?><?php echo !empty($hist_to) ? '&hist_to='.urlencode($hist_to) : ''; ?>"
        class="btn btn-sm <?php echo $hist_status==='completed_only' ? 'btn-primary' : 'btn-secondary'; ?>">
-       🏁 Completed Only
+       Completed Only
     </a>
     <a href="?history=<?php echo $hist_id; ?>&hist_status=all<?php echo !empty($hist_from) ? '&hist_from='.urlencode($hist_from) : ''; ?><?php echo !empty($hist_to) ? '&hist_to='.urlencode($hist_to) : ''; ?>"
        class="btn btn-sm <?php echo $hist_status==='all' ? 'btn-primary' : 'btn-secondary'; ?>">
@@ -618,10 +618,10 @@ require_once 'admin_header.php';
 </div>
 
 <div class="panel">
-    <div class="panel-header"><span class="panel-title">📋 Session History (<?php echo $total_sessions; ?>)</span></div>
+    <div class="panel-header"><span class="panel-title">Session History (<?php echo $total_sessions; ?>)</span></div>
     <?php if (empty($history_records)): ?>
     <div class="panel-body" style="text-align:center;padding:2.5rem;color:var(--gray);">
-        <div style="font-size:2rem;margin-bottom:0.5rem;">📭</div>No sessions recorded yet.
+        <div style="font-size:2rem;margin-bottom:0.5rem;"></div>No sessions recorded yet.
     </div>
     <?php else: ?>
     <div class="table-wrap" style="border:none;border-radius:0;">
@@ -646,9 +646,9 @@ require_once 'admin_header.php';
             ?>
             <tr>
                 <td>
-                    <div style="font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($rec['service_name']); ?><?php if (($rec['source'] ?? '') === 'package_session'): ?> — Session <?php echo (int)$rec['session_number']; ?> of <?php echo (int)$rec['session_total']; ?> <span style="font-size:0.65rem;background:#fdf4ff;color:#a21caf;border:1px solid #d946ef;padding:0.05rem 0.4rem;border-radius:20px;white-space:nowrap;">🔁 Session Package</span><?php endif; ?></div>
+                    <div style="font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($rec['service_name']); ?><?php if (($rec['source'] ?? '') === 'package_session'): ?> — Session <?php echo (int)$rec['session_number']; ?> of <?php echo (int)$rec['session_total']; ?> <span style="font-size:0.65rem;background:#fdf4ff;color:#a21caf;border:1px solid #d946ef;padding:0.05rem 0.4rem;border-radius:20px;white-space:nowrap;">Session Package</span><?php endif; ?></div>
                     <?php if ($rec['therapist_notes']): ?>
-                    <div style="font-size:0.72rem;color:var(--gray);">📝 <?php echo htmlspecialchars($rec['therapist_notes']); ?></div>
+                    <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($rec['therapist_notes']); ?></div>
                     <?php endif; ?>
                 </td>
                 <td style="white-space:nowrap;">
@@ -656,7 +656,7 @@ require_once 'admin_header.php';
                     <div style="font-size:0.75rem;color:var(--gray);"><?php echo date('h:i A', strtotime($rec['appointment_date'])); ?></div>
                 </td>
                 <td style="color:var(--brown);"><?php echo htmlspecialchars($rec['customer_name']); ?></td>
-                <td style="font-size:0.8rem;"><?php echo $rec['service_type']==='home'?'🏠 Home':'🏢 On-site'; ?></td>
+                <td style="font-size:0.8rem;"><?php echo $rec['service_type']==='home'?'Home':'On-site'; ?></td>
                 <td style="color:var(--gray);font-size:0.85rem;"><?php echo $rec['session_time']; ?> min</td>
                 <td>
                     <span style="background:<?php echo $sbg; ?>;color:<?php echo $sfg; ?>;
@@ -676,11 +676,11 @@ require_once 'admin_header.php';
                     <?php if (is_full_access()): ?>
                     <button type="button" class="comm-edit-btn" onclick="toggleCommEdit(this)"
                             style="margin-left:4px;background:none;border:none;cursor:pointer;font-size:0.85rem;"
-                            title="I-edit ang commission">✏️</button>
+                            title="I-edit ang commission">Edit</button>
                     <button type="button" class="comm-save-btn" style="display:none;margin-left:4px;
                             background:none;border:none;cursor:pointer;color:#2d8a4e;font-size:0.85rem;"
                             onclick="saveCommEdit(this, <?php echo $_is_pkg_row ? (int)$rec['aps_id'] : (int)$rec['at_id']; ?>, '<?php echo $_is_pkg_row ? 'package_session' : 'appointment_therapist'; ?>')"
-                            title="I-save">💾</button>
+                            title="I-save">Save</button>
                     <button type="button" class="comm-cancel-btn" style="display:none;margin-left:2px;
                             background:none;border:none;cursor:pointer;color:#dc3545;font-size:0.85rem;"
                             onclick="cancelCommEdit(this)" title="Kanselahin">✕</button>
@@ -711,7 +711,7 @@ require_once 'admin_header.php';
 </div>
 
 <div class="panel" style="margin-top:1.5rem;">
-    <div class="panel-header"><span class="panel-title">💸 Cash Advance / Deductions (<?php echo count($deductions); ?>)</span></div>
+    <div class="panel-header"><span class="panel-title">Cash Advance / Deductions (<?php echo count($deductions); ?>)</span></div>
     <?php if (empty($deductions)): ?>
     <div class="panel-body" style="text-align:center;padding:1.5rem;color:var(--gray);">
         No deductions recorded<?php echo ($hist_from || $hist_to) ? ' for this period' : ''; ?>.
@@ -736,7 +736,7 @@ require_once 'admin_header.php';
                         <span style="padding:0.2rem 0.6rem;border-radius:20px;font-size:0.72rem;font-weight:600;
                             background:<?php echo $d['type']==='ca' ? '#fff3cd' : '#f8d7da'; ?>;
                             color:<?php echo $d['type']==='ca' ? '#664d03' : '#842029'; ?>;">
-                            <?php echo $d['type']==='ca' ? '💵 Cash Advance' : '📝 Deduction'; ?>
+                            <?php echo $d['type']==='ca' ? 'Cash Advance' : 'Deduction'; ?>
                         </span>
                     </td>
                     <td><?php echo htmlspecialchars($d['label'] ?? '—'); ?></td>
@@ -829,27 +829,27 @@ function saveCommEdit(btn, recId, source) {
 <!-- ── STATS ──────────────────────────────────────────────────────────────── -->
 <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:1.5rem;">
     <div class="stat-card green">
-        <div class="stat-icon">🟢</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $on_duty; ?></div>
         <div class="stat-label">On Duty</div>
     </div>
     <div class="stat-card" style="border-top-color:var(--green);">
-        <div class="stat-icon">✅</div>
+        <div class="stat-icon"></div>
         <div class="stat-number" style="color:var(--green);"><?php echo $available; ?></div>
         <div class="stat-label">Available</div>
     </div>
     <div class="stat-card rust">
-        <div class="stat-icon">💆</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $serving_now; ?></div>
         <div class="stat-label">Serving Now</div>
     </div>
     <div class="stat-card amber">
-        <div class="stat-icon">☕</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $on_break; ?></div>
         <div class="stat-label">On Break</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">💰</div>
+        <div class="stat-icon"></div>
         <div class="stat-number">₱<?php echo number_format($total_comm,2); ?></div>
         <div class="stat-label">Today's Commission</div>
     </div>
@@ -860,7 +860,7 @@ function saveCommEdit(btn, recId, source) {
 <!-- ── TODAY'S ROTATION ROSTER ───────────────────────────────────────────── -->
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">🔄 Today's Rotation — <?php echo date('F d, Y (l)'); ?></span>
+        <span class="panel-title">Today's Rotation — <?php echo date('F d, Y (l)'); ?></span>
         <?php if (count($today_roster) > 1): ?>
         <small style="color:var(--gray);font-size:0.73rem;">Drag to reorder · Resets daily</small>
         <?php endif; ?>
@@ -869,14 +869,14 @@ function saveCommEdit(btn, recId, source) {
 
         <?php if (empty($today_roster)): ?>
         <div style="text-align:center;padding:2rem;color:var(--gray);">
-            <div style="font-size:2.5rem;margin-bottom:0.5rem;">📋</div>
+            <div style="font-size:2.5rem;margin-bottom:0.5rem;"></div>
             <p>No therapists added for today yet.</p>
         </div>
 
         <?php else: ?>
         <div style="background:rgba(201,106,44,0.08);border:1px solid rgba(201,106,44,0.2);
                     border-radius:8px;padding:0.65rem 1rem;margin-bottom:1rem;font-size:0.78rem;color:var(--cream2);">
-            🔄 <strong style="color:var(--gold);">Rotation queue</strong> —
+            <strong style="color:var(--gold);">Rotation queue</strong> —
             the next available therapist (not serving, not on break) is at the top.
             Drag cards to reorder.
         </div>
@@ -887,25 +887,25 @@ function saveCommEdit(btn, recId, source) {
             // Determine status using junction table data
             if (!empty($r['time_out'])) {
                 $status      = 'done';
-                $statusLabel = '🏁 Done';
+                $statusLabel = 'Done';
                 $statusColor = 'var(--amber)';
                 $statusBg    = 'var(--amber-dim)';
                 $cardBorder  = 'var(--border2)';
             } elseif ($r['is_on_break']) {
                 $status      = 'break';
-                $statusLabel = '☕ On Break';
+                $statusLabel = 'On Break';
                 $statusColor = '#0070f3';
                 $statusBg    = '#cfe2ff';
                 $cardBorder  = '#0070f3';
             } elseif ($r['is_assigned']) {
                 $status      = 'on_service';
-                $statusLabel = '🔴 On Service';
+                $statusLabel = 'On Service';
                 $statusColor = '#fff';
                 $statusBg    = '#dc3545';
                 $cardBorder  = '#dc3545';
             } else {
                 $status      = 'available';
-                $statusLabel = '✅ Available';
+                $statusLabel = 'Available';
                 $statusColor = 'var(--green)';
                 $statusBg    = 'var(--green-dim)';
                 $cardBorder  = 'var(--green)';
@@ -1005,7 +1005,7 @@ function saveCommEdit(btn, recId, source) {
                                 font-size:0.7rem;background:rgba(169,79,29,0.12);
                                 border:1px solid rgba(169,79,29,0.25);
                                 border-radius:6px;padding:0.2rem 0.55rem;color:var(--rust);">
-                        <span>📋 <?php echo htmlspecialchars($r['current_service']); ?></span>
+                        <span><?php echo htmlspecialchars($r['current_service']); ?></span>
                         <span style="opacity:0.6;">·</span>
                         <span><?php echo date('h:i A', strtotime($r['current_appt_time'])); ?></span>
                         <span style="opacity:0.6;">·</span>
@@ -1034,7 +1034,7 @@ function saveCommEdit(btn, recId, source) {
                     <a href="therapists.php?history=<?php echo $r['therapist_id']; ?>"
                        class="btn btn-secondary btn-sm"
                        style="font-size:0.72rem;padding:0.25rem 0.5rem;"
-                       title="View history">📋</a>
+                       title="View history">History</a>
                     <form method="POST" action="therapists.php" style="display:inline;margin:0;">
                         <?php echo csrf_field(); ?>
                         <input type="hidden" name="action"       value="toggle_break">
@@ -1045,7 +1045,7 @@ function saveCommEdit(btn, recId, source) {
                                 style="font-size:0.72rem;padding:0.25rem 0.5rem;"
                                 title="<?php echo $r['is_on_break'] ? 'End break' : 'Set on break'; ?>"
                                 <?php if (is_cashier()): ?>onclick="openPinGate('<?php echo $r['is_on_break'] ? 'End Break' : 'Set Break'; ?>',this.closest('form'))"<?php endif; ?>>
-                            ☕
+                            Break
                         </button>
                     </form>
                     <form method="POST" action="therapists.php" style="display:inline;margin:0;">
@@ -1074,12 +1074,12 @@ function saveCommEdit(btn, recId, source) {
                     <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>"
                             class="btn btn-secondary btn-sm" style="font-size:0.75rem;"
                             <?php if (is_cashier()): ?>onclick="uiConfirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?').then(ok=>{if(!ok)return;openPinGate('Check Out Therapist',this.closest('form'))})"<?php else: ?>onclick="var _f=this.closest('form');event.preventDefault();uiConfirm('Check out <?php echo htmlspecialchars(addslashes($r['full_name'])); ?>?').then(ok=>{if(ok)_f.submit()})"<?php endif; ?>>
-                        🏁 Out
+                        Out
                     </button>
                 </form>
                 <?php else: ?>
                 <span style="font-size:0.72rem;color:var(--gray);">
-                    🏁 Checked out <?php echo date('g:i A', strtotime($r['time_out'])); ?>
+                    Checked out <?php echo date('g:i A', strtotime($r['time_out'])); ?>
                 </span>
                 <?php endif; ?>
             </div>
@@ -1095,7 +1095,7 @@ function saveCommEdit(btn, recId, source) {
         <?php if (count($today_roster) > 1): ?>
         <button type="submit" name="reorder" id="saveRotationBtn"
                 class="btn btn-primary btn-sm" style="margin-top:0.75rem;width:100%;">
-            💾 Save New Rotation Order
+            Save New Rotation Order
         </button>
         <?php endif; ?>
         </form>
@@ -1108,7 +1108,7 @@ function saveCommEdit(btn, recId, source) {
 
     <!-- Next in Rotation highlight card -->
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">⚡ Next in Rotation</span></div>
+        <div class="panel-header"><span class="panel-title">Next in Rotation</span></div>
         <div class="panel-body" style="padding:1rem;">
             <?php if ($next): ?>
             <div style="display:flex;align-items:center;gap:0.75rem;
@@ -1135,7 +1135,7 @@ function saveCommEdit(btn, recId, source) {
             </div>
             <?php else: ?>
             <div style="text-align:center;padding:1.25rem;color:var(--gray);font-size:0.85rem;">
-                <div style="font-size:1.8rem;margin-bottom:0.4rem;">😔</div>
+                <div style="font-size:1.8rem;margin-bottom:0.4rem;"></div>
                 No therapist available right now.<br>
                 <small>All are serving, on break, or checked out.</small>
             </div>
@@ -1165,14 +1165,14 @@ function saveCommEdit(btn, recId, source) {
 
     <!-- Add Therapist Form -->
     <div class="panel">
-        <div class="panel-header"><span class="panel-title">➕ Check In Therapist</span></div>
+        <div class="panel-header"><span class="panel-title">Check In Therapist</span></div>
         <div class="panel-body" style="padding:1rem;">
             <form method="POST">
                 <?php echo csrf_field(); ?>
                 <div style="padding:0.55rem 0.85rem;background:rgba(0,112,243,0.07);
                             border:1px solid rgba(0,112,243,0.2);border-radius:8px;
                             font-size:0.78rem;color:#084298;margin-bottom:0.85rem;line-height:1.5;">
-                    💡 To add a new therapist go to
+                    To add a new therapist go to
                     <a href="staff.php?tab=therapists" style="color:#0070f3;font-weight:700;">Staff → Therapists</a>.
                 </div>
 
@@ -1206,7 +1206,7 @@ function saveCommEdit(btn, recId, source) {
                 <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary" style="width:100%;"
                         <?php if (is_cashier()): ?>onclick="openPinGate('Check In Therapist',this.closest('form'))"<?php endif; ?>>
-                    ➕ Check In to Today's Roster
+                    Check In to Today's Roster
                 </button>
             </form>
         </div><!-- end panel-body -->
