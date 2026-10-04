@@ -70,7 +70,7 @@ $r = $conn->query("
 while ($row = $r->fetch_assoc()) $order_feedback[] = $row;
 
 $page_title  = 'Customer Feedback';
-$page_icon   = '⭐';
+$page_icon   = '';
 $active_page = 'feedback';
 require_once 'admin_header.php';
 ?>
@@ -78,28 +78,28 @@ require_once 'admin_header.php';
 <!-- ── KPI CARDS ──────────────────────────────────────────────────────────── -->
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:1.5rem;">
     <div class="stat-card amber">
-        <div class="stat-icon">⭐</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $avg_rating ?: '—'; ?></div>
         <div class="stat-label">Overall Rating</div>
         <div style="font-size:0.72rem;margin-top:0.3rem;opacity:0.8;">out of 5.0</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">💬</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo $total_fb; ?></div>
         <div class="stat-label">Total Reviews</div>
     </div>
     <div class="stat-card blue">
-        <div class="stat-icon">💆</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo count($appt_feedback); ?></div>
         <div class="stat-label">Service Reviews</div>
     </div>
     <div class="stat-card green">
-        <div class="stat-icon">🛍️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo count($order_feedback); ?></div>
         <div class="stat-label">Product Reviews</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon">✉️</div>
+        <div class="stat-icon"></div>
         <div class="stat-number"><?php echo count($contact_msgs); ?></div>
         <div class="stat-label">Contact Messages</div>
     </div>
@@ -160,7 +160,7 @@ require_once 'admin_header.php';
 <!-- ── Service Feedback Table ─────────────────────────────────────────────── -->
 <div class="panel" style="margin-bottom:1.5rem;">
     <div class="panel-header">
-        <span class="panel-title">💆 Service Feedback</span>
+        <span class="panel-title">Service Feedback</span>
         <span class="badge badge-completed"><?php echo count($appt_feedback); ?> reviews</span>
     </div>
     <div class="table-wrap" style="border:none;border-radius:0;">
@@ -214,7 +214,7 @@ require_once 'admin_header.php';
 <!-- ── Product Order Feedback Table ──────────────────────────────────────── -->
 <div class="panel">
     <div class="panel-header">
-        <span class="panel-title">🛍️ Product Order Feedback</span>
+        <span class="panel-title">Product Order Feedback</span>
         <span class="badge badge-approved"><?php echo count($order_feedback); ?> reviews</span>
     </div>
     <div class="table-wrap" style="border:none;border-radius:0;">
@@ -271,7 +271,7 @@ require_once 'admin_header.php';
 <!-- ── Contact Messages Table ─────────────────────────────────────────────── -->
 <div class="panel" style="margin-top:1.5rem;">
     <div class="panel-header">
-        <span class="panel-title">✉️ Contact Messages</span>
+        <span class="panel-title">Contact Messages</span>
         <span class="badge badge-pending"><?php echo count($contact_msgs); ?> message<?php echo count($contact_msgs) !== 1 ? 's' : ''; ?></span>
     </div>
     <div class="table-wrap" style="border:none;border-radius:0;">

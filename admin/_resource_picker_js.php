@@ -101,7 +101,7 @@ function rpRefresh(prefix) {
             if (data.error) { optionsEl.innerHTML = '<div style="font-size:0.78rem;color:var(--rust);">' + data.error + '</div>'; return; }
             var resources = data.resources || [];
             if (!resources.length) {
-                optionsEl.innerHTML = '<div style="font-size:0.78rem;color:#b45309;">⚠️ No ' + st.type.replace('_', ' ') + ' available for this time.</div>';
+                optionsEl.innerHTML = '<div style="font-size:0.78rem;color:#b45309;">No ' + st.type.replace('_', ' ') + ' available for this time.</div>';
                 return;
             }
             var html = '';
@@ -156,7 +156,7 @@ function rpValidateRequired(prefix) {
     var sel = rpGetSelected(prefix);
     var errEl = document.getElementById('rp-error-' + prefix);
     if (!sel) {
-        if (errEl) { errEl.textContent = '⚠️ Please assign a Room / Chair / Head Spa before approving.'; errEl.style.display = 'block'; }
+        if (errEl) { errEl.textContent = 'Please assign a Room / Chair / Head Spa before approving.'; errEl.style.display = 'block'; }
         return false;
     }
     return true;

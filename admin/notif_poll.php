@@ -18,7 +18,7 @@ ob_start();
 if (empty($notifications)): ?>
 <div style="padding:1.5rem;text-align:center;color:#aaa;font-size:0.82rem;">No notifications yet</div>
 <?php else:
-$an_icons = ['order'=>'🛍️','appointment'=>'📅','status'=>'🔔','general'=>'💬'];
+$an_icons = ['order'=>'','appointment'=>'','status'=>'','general'=>''];
 foreach ($notifications as $n):
     $diff = time() - strtotime($n['created_at']);
     if ($diff < 60)        $n_time = 'Just now';
@@ -33,7 +33,7 @@ foreach ($notifications as $n):
           background:<?php echo $n['is_read'] ? '#fff' : '#fff8f3'; ?>;
           transition:background 0.15s;">
     <span style="font-size:1.2rem;flex-shrink:0;margin-top:1px;">
-        <?php echo $an_icons[$n['type']] ?? '🔔'; ?>
+        <?php echo $an_icons[$n['type']] ?? ''; ?>
     </span>
     <div style="flex:1;min-width:0;">
         <div style="font-weight:600;font-size:0.82rem;color:#3B2A1A;

@@ -221,7 +221,7 @@ $method_label   = $method_labels[$pm_method ?? $order['payment_method']] ?? strt
     <?php endif; ?>
     <div class="detail-row">
       <span>Status</span>
-      <strong style="color:#15803d;">✅ Paid</strong>
+      <strong style="color:#15803d;">Paid</strong>
     </div>
   </div>
 
@@ -247,7 +247,7 @@ setTimeout(() => {
     // Fallback if close() is blocked
     if (!window.closed) {
         document.body.innerHTML = '<div style="font-family:sans-serif;padding:2rem;text-align:center;">'
-            + '<p style="color:#166534;font-size:1.1rem;">✅ Payment confirmed! You can close this window.</p></div>';
+            + '<p style="color:#166534;font-size:1.1rem;">Payment confirmed! You can close this window.</p></div>';
     }
 }, 3000);
 </script>
