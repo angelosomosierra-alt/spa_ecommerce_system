@@ -38,6 +38,13 @@ $msg = ''; $msg_type = 'success';
 $can_manage_accounts = in_array(current_admin_role(), ['owner', 'it']);
 
 $conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS is_generalist TINYINT(1) NOT NULL DEFAULT 0");
+// Fixed-salary therapists (e.g. ₱550/day flat, no undertime/overtime): pay_type
+// opts them out of the per-service Commission Matrix entirely — the sales
+// report and commission math are untouched, since a 'fixed' therapist simply
+// never gets a therapist_commission row, so every existing commission lookup
+// already resolves to 0 for them with no code changes needed there.
+$conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS pay_type ENUM('commission','fixed') NOT NULL DEFAULT 'commission'");
+$conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS fixed_daily_rate DECIMAL(10,2) NOT NULL DEFAULT 0");
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // POST HANDLERS
@@ -249,13 +256,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
     $sel_cat_ids      = array_map('intval', $_POST['th_cat_ids'] ?? []);
     $sel_svc_ids      = array_map('intval', $_POST['th_svc_ids'] ?? []);
     $is_generalist    = isset($_POST['th_is_generalist']) ? 1 : 0;
+    $pay_type         = ($_POST['th_pay_type'] ?? 'commission') === 'fixed' ? 'fixed' : 'commission';
+    $fixed_daily_rate = max(0, floatval($_POST['th_fixed_rate'] ?? 0));
 
     if (empty($full_name)) {
         $msg = 'Therapist name is required.'; $msg_type = 'danger';
     } else {
         if ($tid > 0) {
-            $stmt = $conn->prepare("UPDATE therapists SET full_name=?, phone=?, specialties=?, is_generalist=? WHERE id=?");
-            $stmt->bind_param("sssii", $full_name, $phone, $specialties_text, $is_generalist, $tid);
+            $stmt = $conn->prepare("UPDATE therapists SET full_name=?, phone=?, specialties=?, is_generalist=?, pay_type=?, fixed_daily_rate=? WHERE id=?");
+            $stmt->bind_param("sssisdi", $full_name, $phone, $specialties_text, $is_generalist, $pay_type, $fixed_daily_rate, $tid);
             $stmt->execute(); $stmt->close();
             $msg = "Therapist <strong>" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "</strong> updated.";
             log_activity($conn, 'therapist_updated', "Updated therapist: {$full_name}", 'therapist', $tid);
@@ -266,13 +275,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
                 $msg = "A therapist named \"" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "\" already exists.";
                 $msg_type = 'danger'; $tid = -1;
             } else {
-                $stmt = $conn->prepare("INSERT INTO therapists (full_name, phone, specialties, is_generalist) VALUES (?,?,?,?)");
-                $stmt->bind_param("sssi", $full_name, $phone, $specialties_text, $is_generalist);
+                $stmt = $conn->prepare("INSERT INTO therapists (full_name, phone, specialties, is_generalist, pay_type, fixed_daily_rate) VALUES (?,?,?,?,?,?)");
+                $stmt->bind_param("sssisd", $full_name, $phone, $specialties_text, $is_generalist, $pay_type, $fixed_daily_rate);
                 $stmt->execute(); $tid = $conn->insert_id; $stmt->close();
                 $msg = "Therapist <strong>" . htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') . "</strong> added.";
                 log_activity($conn, 'therapist_added', "Added therapist: {$full_name}", 'therapist', (int)$tid);
             }
             $chk->close();
+        }
+
+        if ($tid > 0 && $pay_type === 'fixed') {
+            // Guarantees "no commission ever" holds even when converting an
+            // existing commission-based therapist to a fixed rate, not just
+            // for brand-new ones.
+            $clr = $conn->prepare("DELETE FROM therapist_commission WHERE therapist_id = ?");
+            $clr->bind_param("i", $tid); $clr->execute(); $clr->close();
         }
 
         if ($tid > 0) {
@@ -320,7 +337,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
             $all_svc_ids_stmt->close();
 
             // ── Check for missing commissions on newly assigned specialties ────
-            if (!empty($sel_svc_ids)) {
+            // Skipped for fixed-salary therapists — they never earn commission.
+            if ($pay_type !== 'fixed' && !empty($sel_svc_ids)) {
                 $svc_ids_str = implode(',', array_map('intval', $sel_svc_ids));
                 $missing_comm = $conn->query("
                     SELECT s.name
@@ -524,7 +542,7 @@ $receptionist_pins = $conn->query("SELECT * FROM receptionist_pins ORDER BY full
 
 // All therapists with date-range commission + ratings
 $_at = $conn->prepare("
-    SELECT t.id, t.full_name, t.phone, t.specialties,
+    SELECT t.id, t.full_name, t.phone, t.specialties, t.pay_type, t.fixed_daily_rate,
            IFNULL(AVG(tr.rating), 0) AS avg_rating,
            COUNT(tr.id)              AS total_ratings,
            IFNULL((
@@ -540,19 +558,32 @@ $_at = $conn->prepare("
                WHERE aes.therapist_id = t.id
                  AND ap2.status = 'completed'
                  AND DATE(ap2.appointment_date) BETWEEN ? AND ?
-           ), 0) AS addon_commission
+           ), 0) AS addon_commission,
+           IFNULL((
+               SELECT COUNT(*)
+               FROM therapist_attendance ta
+               WHERE ta.therapist_id = t.id
+                 AND ta.time_in IS NOT NULL AND ta.time_out IS NOT NULL
+                 AND ta.duty_date BETWEEN ? AND ?
+           ), 0) AS days_worked
     FROM therapists t
     LEFT JOIN therapist_ratings tr ON tr.therapist_id = t.id
     GROUP BY t.id
     ORDER BY t.full_name ASC
 ");
 $cf = $comm_from; $ct = $comm_to;
-$_at->bind_param("ssss", $cf, $ct, $cf, $ct);
+$_at->bind_param("ssssss", $cf, $ct, $cf, $ct, $cf, $ct);
 $_at->execute();
 $all_therapists = $_at->get_result()->fetch_all(MYSQLI_ASSOC);
 $_at->close();
 foreach ($all_therapists as &$_th) {
     $_th['period_commission'] = (float)$_th['base_commission'] + (float)$_th['addon_commission'];
+    // Fixed-salary therapists never earn commission (see pay_type self-heal
+    // note above) — their period pay is attendance-based instead: a flat
+    // rate for each day they have both a time-in and time-out on record.
+    $_th['period_salary'] = ($_th['pay_type'] === 'fixed')
+        ? (float)$_th['fixed_daily_rate'] * (int)$_th['days_worked']
+        : 0.0;
 }
 unset($_th);
 
@@ -632,6 +663,35 @@ if (!empty($all_therapists)) {
             ($ded_commission_by_therapist[$r['therapist_id']] ?? 0) + (float)$r['addon_comm'];
     }
     $_ac->close();
+}
+
+// Per-therapist fixed-salary pay for the same pay period — attendance-based,
+// parallel to $ded_commission_by_therapist above but for pay_type='fixed'
+// therapists, who earn no commission at all (see the pay_type self-heal note).
+$ded_salary_by_therapist = [];
+if (!empty($all_therapists)) {
+    $tids_for_salary = implode(',', array_map(fn($t) => intval($t['id']), $all_therapists));
+    $_sal = $conn->prepare("
+        SELECT ta.therapist_id, COUNT(*) AS days_worked
+        FROM therapist_attendance ta
+        WHERE ta.therapist_id IN ($tids_for_salary)
+          AND ta.time_in IS NOT NULL AND ta.time_out IS NOT NULL
+          AND ta.duty_date BETWEEN ? AND ?
+        GROUP BY ta.therapist_id
+    ");
+    $_sal->bind_param("ss", $period_start, $period_end);
+    $_sal->execute();
+    $_sal_rows = $_sal->get_result();
+    $_days_worked_by_therapist = [];
+    while ($r = $_sal_rows->fetch_assoc()) {
+        $_days_worked_by_therapist[$r['therapist_id']] = (int)$r['days_worked'];
+    }
+    $_sal->close();
+    foreach ($all_therapists as $_t) {
+        if ($_t['pay_type'] === 'fixed') {
+            $ded_salary_by_therapist[$_t['id']] = (float)$_t['fixed_daily_rate'] * ($_days_worked_by_therapist[$_t['id']] ?? 0);
+        }
+    }
 }
 
 // Commission matrix data
@@ -1510,6 +1570,54 @@ document.addEventListener('DOMContentLoaded', () => {
                                   font-size:0.85rem;box-sizing:border-box;">
                 </div>
 
+                <?php
+                $et_pay_type   = $edit_therapist['pay_type'] ?? 'commission';
+                $et_fixed_rate = $edit_therapist['fixed_daily_rate'] ?? '';
+                ?>
+                <div>
+                    <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">
+                        Pay Type <span style="color:var(--rust);">*</span>
+                    </label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.6rem;">
+                        <button type="button" id="payTypeCommissionBtn" onclick="selectPayType('commission')"
+                                style="padding:0.6rem;border-radius:8px;border:1.5px solid <?php echo $et_pay_type === 'commission' ? 'var(--rust)' : 'var(--border2)'; ?>;
+                                       background:<?php echo $et_pay_type === 'commission' ? 'rgba(201,106,44,0.08)' : 'var(--bg3)'; ?>;
+                                       text-align:left;cursor:pointer;font-family:inherit;">
+                            <div style="font-size:0.8rem;font-weight:700;color:var(--brown);">Commission-based</div>
+                            <div style="font-size:0.68rem;color:var(--gray);">% per service, set in Commission Matrix</div>
+                        </button>
+                        <button type="button" id="payTypeFixedBtn" onclick="selectPayType('fixed')"
+                                style="padding:0.6rem;border-radius:8px;border:1.5px solid <?php echo $et_pay_type === 'fixed' ? 'var(--rust)' : 'var(--border2)'; ?>;
+                                       background:<?php echo $et_pay_type === 'fixed' ? 'rgba(201,106,44,0.08)' : 'var(--bg3)'; ?>;
+                                       text-align:left;cursor:pointer;font-family:inherit;">
+                            <div style="font-size:0.8rem;font-weight:700;color:var(--brown);">Fixed Daily Rate</div>
+                            <div style="font-size:0.68rem;color:var(--gray);">Flat ₱ per day clocked in, no commission</div>
+                        </button>
+                    </div>
+                    <input type="hidden" name="th_pay_type" id="payTypeInput" value="<?php echo htmlspecialchars($et_pay_type); ?>">
+                    <div id="fixedRateBox" style="<?php echo $et_pay_type === 'fixed' ? '' : 'display:none;'; ?>
+                                background:rgba(200,164,107,0.15);border:1px solid var(--gold);border-radius:8px;padding:0.75rem;">
+                        <label style="font-size:0.72rem;font-weight:600;color:var(--brown);display:block;margin-bottom:4px;">Daily Rate (₱) *</label>
+                        <input type="number" name="th_fixed_rate" step="1" min="0" placeholder="e.g. 550"
+                               value="<?php echo htmlspecialchars((string)$et_fixed_rate); ?>"
+                               style="width:140px;padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:7px;
+                                      background:#fff;color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
+                        <div style="font-size:0.7rem;color:var(--brown-md);margin-top:0.4rem;line-height:1.5;">
+                            Paid once for any day with both a time-in and time-out recorded — flat amount regardless of hours worked or number of clients. No undertime or overtime. Specialties below still apply for booking &amp; assignment; no commission is ever recorded for this therapist.
+                        </div>
+                    </div>
+                </div>
+                <script>
+                function selectPayType(type) {
+                    document.getElementById('payTypeInput').value = type;
+                    document.getElementById('payTypeCommissionBtn').style.borderColor = type === 'commission' ? 'var(--rust)' : 'var(--border2)';
+                    document.getElementById('payTypeCommissionBtn').style.background  = type === 'commission' ? 'rgba(201,106,44,0.08)' : 'var(--bg3)';
+                    document.getElementById('payTypeFixedBtn').style.borderColor = type === 'fixed' ? 'var(--rust)' : 'var(--border2)';
+                    document.getElementById('payTypeFixedBtn').style.background  = type === 'fixed' ? 'rgba(201,106,44,0.08)' : 'var(--bg3)';
+                    document.getElementById('fixedRateBox').style.display = type === 'fixed' ? '' : 'none';
+                }
+                </script>
+
                 <!-- ── Specialty Accordion ──────────────────────────────── -->
                 <div>
                     <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin-bottom:6px;">
@@ -1712,11 +1820,22 @@ document.addEventListener('DOMContentLoaded', () => {
                         <?php endif; ?>
                     </td>
                     <td style="text-align:right;color:var(--green);font-weight:700;">
+                        <?php if ($t['pay_type'] === 'fixed'): ?>
+                        <span style="display:inline-block;background:rgba(200,164,107,0.2);color:#92400e;
+                                     font-size:0.65rem;font-weight:700;padding:0.1rem 0.5rem;border-radius:20px;margin-bottom:0.2rem;">
+                            Fixed ₱<?php echo number_format($t['fixed_daily_rate'],0); ?>/day
+                        </span>
+                        <div>₱<?php echo number_format($t['period_salary'],2); ?></div>
+                        <div style="font-size:0.68rem;font-weight:400;color:var(--gray);">
+                            <?php echo (int)$t['days_worked']; ?> day<?php echo (int)$t['days_worked'] === 1 ? '' : 's'; ?> worked
+                        </div>
+                        <?php else: ?>
                         ₱<?php echo number_format($t['period_commission'],2); ?>
                         <?php if ($t['addon_commission'] > 0): ?>
                         <div style="font-size:0.68rem;font-weight:400;color:var(--gray);">
                             +₱<?php echo number_format($t['addon_commission'],2); ?> add-ons
                         </div>
+                        <?php endif; ?>
                         <?php endif; ?>
                     </td>
                     <td style="font-size:0.78rem;max-width:200px;">
@@ -1842,7 +1961,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 $t_svc_ids_all = array_unique($t_svc_ids_all);
 
-                if (!empty($t_svc_ids_all)) {
+                // Fixed-salary therapists never earn commission, so a missing
+                // rate isn't actually missing for them — skip the check entirely.
+                if ($t['pay_type'] !== 'fixed' && !empty($t_svc_ids_all)) {
                     foreach ($t_svc_ids_all as $sid) {
                         $has_comm = isset($saved_commissions[$t['id']][$sid])
                             && ($saved_commissions[$t['id']][$sid]['pct'] > 0 || $saved_commissions[$t['id']][$sid]['flat'] > 0);
@@ -1935,6 +2056,16 @@ const therapistNames   = <?php
     foreach ($all_therapists as $t) $tnames[$t['id']] = $t['full_name'];
     echo json_encode($tnames, JSON_HEX_TAG);
 ?>;
+const therapistPayTypes = <?php
+    $tptypes = [];
+    foreach ($all_therapists as $t) $tptypes[$t['id']] = $t['pay_type'];
+    echo json_encode($tptypes, JSON_HEX_TAG);
+?>;
+const therapistFixedRates = <?php
+    $trates = [];
+    foreach ($all_therapists as $t) $trates[$t['id']] = (float)$t['fixed_daily_rate'];
+    echo json_encode($trates, JSON_HEX_TAG);
+?>;
 
 // Map: therapist_id → array of service_ids they have specialty for
 // Combines both direct service specialties AND all services under their specialty categories
@@ -2007,6 +2138,22 @@ function showCommission(therapistId) {
     rowsEl.innerHTML    = '';
     document.getElementById('commServiceSearch').value = '';
     document.getElementById('commServiceNoMatch').style.display = 'none';
+
+    // Fixed-salary therapists have no per-service commission — show a notice
+    // instead of the %-matrix and skip building it entirely.
+    document.getElementById('commServiceSearch').style.display = (therapistPayTypes[therapistId] === 'fixed') ? 'none' : '';
+    if (therapistPayTypes[therapistId] === 'fixed') {
+        const existingWarn = document.getElementById('commission-missing-warn');
+        if (existingWarn) existingWarn.remove();
+        const rate = therapistFixedRates[therapistId] || 0;
+        const notice = document.createElement('div');
+        notice.style.cssText = 'background:rgba(200,164,107,0.15);border:1px solid var(--gold);border-radius:10px;padding:1.25rem;';
+        notice.innerHTML = '<strong style="color:var(--brown);">' + (therapistNames[therapistId] || '') + ' is on a Fixed Daily Rate — ₱' + rate.toFixed(0) + '/day.</strong>' +
+            '<div style="margin-top:0.5rem;font-size:0.85rem;color:var(--brown-md);line-height:1.6;">No per-service commission applies to this therapist. Specialties are still used only to decide which services they can be assigned to.</div>';
+        rowsEl.appendChild(notice);
+        return;
+    }
+
     const iStyle        = 'width:100%;padding:0.35rem 0.5rem;border:1px solid var(--border2);border-radius:6px;background:var(--bg2);color:var(--brown);font-size:0.85rem;text-align:center;box-sizing:border-box;';
 
     let missingCount  = 0;
@@ -2187,7 +2334,9 @@ function updateCommPreview(sel) {
             <?php foreach ($all_therapists as $t):
                 $deds        = $ded_totals_by_therapist[$t['id']] ?? ['total_all'=>0,'total_ca'=>0,'total_expense'=>0];
                 $total_ded   = floatval($deds['total_all']);
-                $comm_period = $ded_commission_by_therapist[$t['id']] ?? 0.0;
+                $comm_period = ($t['pay_type'] === 'fixed')
+                    ? ($ded_salary_by_therapist[$t['id']] ?? 0.0)
+                    : ($ded_commission_by_therapist[$t['id']] ?? 0.0);
                 $net_period  = $comm_period - $total_ded;
             ?>
             <tr>
@@ -2207,6 +2356,9 @@ function updateCommPreview(sel) {
                 </td>
                 <td style="text-align:right;font-weight:700;color:var(--green);">
                     ₱<?php echo number_format($comm_period, 2); ?>
+                    <?php if ($t['pay_type'] === 'fixed'): ?>
+                    <div style="font-size:0.62rem;font-weight:400;color:var(--gray);">fixed salary</div>
+                    <?php endif; ?>
                 </td>
                 <td style="text-align:right;
                            color:<?php echo $deds['total_ca']>0?'var(--rust)':'var(--gray)'; ?>;
