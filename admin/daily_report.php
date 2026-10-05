@@ -425,26 +425,102 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
     echo json_encode(['ok'=>true]); exit;
 }
 
-// ── BACKFILL: give already-imported row_order=0 rows a real grouping key ──────
-// One-time fix for rows inserted before row_order was set to the source
-// appointment_id (see the imports below) -- harmless to run on every page
-// load since it only ever touches rows still sitting at the old default of 0.
+// ── Grouping key: order_id first, slip number as a fallback ───────────────────
+// The Service Log tab (ORDER BY o.id, oi.id, a few hundred lines below) already
+// proves order_id ties together multiple order_items under one real order —
+// that's the primary signal. But staff can ALSO type the same slip number
+// across several separately-submitted walk-in orders for one visit (e.g.
+// Chrome Design + Gel Manicure + Nail Cleaning each its own order, same slip
+// written on all three) — those have different order_ids, so slip_no is a
+// second, weaker grouping signal for exactly that case.
+$conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN IF NOT EXISTS order_id INT NULL DEFAULT NULL");
+
+/**
+ * Resolve the row_order for a new import row belonging to $order_id / $slip_no.
+ * Checks order_id first (same real order), then slip_no (separate orders,
+ * same hand-typed slip) — whichever already has a row today wins. Returns
+ * null when this starts a brand-new cluster; the caller then anchors
+ * row_order to this new row's own id, so a cluster's position in the list
+ * reflects when it was FIRST detected as completed (the only time imports
+ * ever run), not booking time or time-in/time-out.
+ */
+$ss_resolve_cluster_row_order = function($order_id, $slip_no) use ($conn, $report_date) {
+    $slip_no = trim((string)$slip_no);
+    if ($order_id > 0) {
+        $q = $conn->prepare("SELECT row_order FROM daily_report_spreadsheet_rows WHERE report_date=? AND order_id=? ORDER BY id ASC LIMIT 1");
+        $q->bind_param("si", $report_date, $order_id);
+        $q->execute();
+        $row = $q->get_result()->fetch_assoc();
+        $q->close();
+        if ($row) return (int)$row['row_order'];
+    }
+    if ($slip_no !== '') {
+        $q = $conn->prepare("SELECT row_order FROM daily_report_spreadsheet_rows WHERE report_date=? AND slip_no=? ORDER BY id ASC LIMIT 1");
+        $q->bind_param("ss", $report_date, $slip_no);
+        $q->execute();
+        $row = $q->get_result()->fetch_assoc();
+        $q->close();
+        if ($row) return (int)$row['row_order'];
+    }
+    return null;
+};
+
+// ── BACKFILL: give already-imported rows a real order_id + re-cluster them ────
+// One-time fix for rows inserted before this scheme existed -- harmless to
+// run on every page load since each step only ever touches rows that still
+// need it (nothing left to do once a row has order_id set and shares its
+// cluster's row_order).
 $conn->query("
-    UPDATE daily_report_spreadsheet_rows
-    SET row_order = source_appointment_id
-    WHERE row_order = 0 AND source_appointment_id IS NOT NULL
+    UPDATE daily_report_spreadsheet_rows d
+    JOIN appointments a ON a.id = d.source_appointment_id
+    JOIN order_items oi ON oi.id = a.order_item_id
+    SET d.order_id = oi.order_id
+    WHERE d.order_id IS NULL AND d.source_appointment_id IS NOT NULL
 ");
 $conn->query("
     UPDATE daily_report_spreadsheet_rows d
     JOIN appointment_extra_services es ON es.id = d.source_extra_service_id
-    SET d.row_order = es.appointment_id
-    WHERE d.row_order = 0 AND d.source_extra_service_id IS NOT NULL
+    JOIN appointments a ON a.id = es.appointment_id
+    JOIN order_items oi ON oi.id = a.order_item_id
+    SET d.order_id = oi.order_id
+    WHERE d.order_id IS NULL AND d.source_extra_service_id IS NOT NULL
 ");
+// Pass 1: cluster by order_id (the strong signal).
+$ss_recluster1 = $conn->prepare("
+    UPDATE daily_report_spreadsheet_rows d
+    JOIN (
+        SELECT order_id, MIN(row_order) AS anchor
+        FROM daily_report_spreadsheet_rows
+        WHERE report_date = ? AND order_id IS NOT NULL
+        GROUP BY order_id
+    ) anc ON anc.order_id = d.order_id
+    SET d.row_order = anc.anchor
+    WHERE d.report_date = ? AND d.order_id IS NOT NULL
+");
+$ss_recluster1->bind_param("ss", $report_date, $report_date);
+$ss_recluster1->execute();
+$ss_recluster1->close();
+// Pass 2: merge further by slip_no (separate orders sharing a typed slip) —
+// runs after pass 1 so an entire order_id-cluster moves together as one unit.
+$ss_recluster2 = $conn->prepare("
+    UPDATE daily_report_spreadsheet_rows d
+    JOIN (
+        SELECT slip_no, MIN(row_order) AS anchor
+        FROM daily_report_spreadsheet_rows
+        WHERE report_date = ? AND slip_no IS NOT NULL AND slip_no != ''
+        GROUP BY slip_no
+    ) anc ON anc.slip_no = d.slip_no
+    SET d.row_order = anc.anchor
+    WHERE d.report_date = ? AND d.slip_no IS NOT NULL AND d.slip_no != ''
+");
+$ss_recluster2->bind_param("ss", $report_date, $report_date);
+$ss_recluster2->execute();
+$ss_recluster2->close();
 
 // ── AUTO-IMPORT: Completed appointments → spreadsheet rows ────────────────────
 // Idempotent — safe on every page load. Skips any appointment already present
 // via source_appointment_id. Never modifies live appointment records.
-(function() use ($conn, $report_date) {
+(function() use ($conn, $report_date, $ss_resolve_cluster_row_order) {
     // Duration Variants — this function JOINs to service_durations below, so
     // make sure it exists regardless of page load order (this IIFE runs
     // before _daily_report_data.php's own self-heal, further down the file).
@@ -495,6 +571,7 @@ $conn->query("
             -- bucket, even though the peso amount itself (summed from at2 below)
             -- was already correct.
             MIN(at2.therapist_id)     AS appt_therapist_id,
+            o.id                      AS order_id,
             o.customer_name,
             o.slip_number,
             o.payment_method,
@@ -557,8 +634,8 @@ $conn->query("
              regular_price, promo_price, celeb_10,
              disc_20_pwd, comm_30, comm_20, comm_15, comm_25, disc_50_staff,
              net_sales, mode_of_payment, remarks, is_refund, created_by_name,
-             source_appointment_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             source_appointment_id, order_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
 
     foreach ($imp_appts as $ap) {
@@ -602,15 +679,13 @@ $conn->query("
         $net_sales   = $charged_amount - $total_comm;
         $raw_mop     = strtolower(trim($ap['payment_method'] ?? ''));
         $mode_of_pay = $mop_map[$raw_mop] ?? 'Cash';
-        // Grouping key, not a literal sort-by-time value: an extra service's
-        // row_order (below) is set to this SAME appointment_id, so — combined
-        // with the existing "ORDER BY row_order ASC, id ASC" and this row
-        // always being inserted before that appointment's extras (this loop
-        // runs to completion before the extras loop below even starts) —
-        // every extra always sorts immediately after its own main service row
-        // instead of wherever it happened to get auto-imported.
-        $row_order   = $appt_id;
+        $order_id    = (int)($ap['order_id'] ?? 0);
         $slip_no     = $ap['slip_number']   ?? '';
+        // Join this order's/slip's existing cluster if one was already started
+        // today (e.g. a sibling service on the same order or slip, or this
+        // row's own extra services imported on an earlier page load); null
+        // means this is the first row for it, anchored to its own id below.
+        $row_order   = $ss_resolve_cluster_row_order($order_id, $slip_no);
         $client_name = $ap['customer_name'] ?? '';
         $svc_name    = $ap['service_name']  ?? '';
         // Duration Variants — freeze the booked duration (and, for a
@@ -628,21 +703,26 @@ $conn->query("
         $remarks     = '';
         $is_refund   = 0;
         $created_by  = 'import';
+        $row_order_insert = $row_order ?? 0; // placeholder; anchored to own id below if this starts a new cluster
 
-        $ins->bind_param("sisssssisiddddddddddssisi",
-            $report_date, $row_order, $time_in, $time_out, $slip_no, $client_name,
+        $ins->bind_param("sisssssisiddddddddddssisii",
+            $report_date, $row_order_insert, $time_in, $time_out, $slip_no, $client_name,
             $svc_name, $service_id, $stylist, $therapist_id,
             $regular_price, $promo_price, $celeb_10,
             $disc_20_pwd, $comm_30, $comm_20, $comm_15, $comm_25, $disc_50_staff,
             $net_sales, $mode_of_pay, $remarks, $is_refund, $created_by,
-            $appt_id);
+            $appt_id, $order_id);
         $ins->execute();
+        if ($row_order === null) {
+            $new_id = $conn->insert_id;
+            $conn->query("UPDATE daily_report_spreadsheet_rows SET row_order = $new_id WHERE id = $new_id");
+        }
     }
     $ins->close();
 })();
 
 // ── AUTO-IMPORT: Extra services → spreadsheet rows (one row per extra service) ─
-(function() use ($conn, $report_date) {
+(function() use ($conn, $report_date, $ss_resolve_cluster_row_order) {
     // Fetch paid extra services for completed appointments on this date
     $esq = $conn->prepare("
         SELECT
@@ -657,6 +737,7 @@ $conn->query("
             COALESCE(s.name, '[Deleted Service]') AS service_name,
             s.price              AS regular_price,
             t.full_name          AS therapist_name,
+            o.id                 AS order_id,
             o.customer_name,
             o.slip_number,
             a.appointment_date
@@ -694,8 +775,8 @@ $conn->query("
              regular_price, promo_price, celeb_10,
              disc_20_pwd, comm_30, comm_20, comm_15, comm_25, disc_50_staff,
              net_sales, mode_of_payment, remarks, is_refund, created_by_name,
-             source_extra_service_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             source_extra_service_id, order_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
 
     // Pre-load commission percents for column routing
@@ -730,21 +811,27 @@ $conn->query("
         $svc_name      = $ex['service_name']  ?? '';
         $stylist       = $ex['therapist_name'] ?? '';
         $remarks       = $ex['person_label']  ?? '';
-        // Same grouping key as the extra's own parent appointment's main row
-        // (see the comment on $row_order in the main-row import above), so
-        // this row always sorts directly under that main service row.
-        $row_order = (int)$ex['appointment_id'];
+        $order_id      = (int)($ex['order_id'] ?? 0);
+        // Joins the same order/slip cluster its parent appointment's main row
+        // (or an earlier sibling) already established, so this always sorts
+        // within that group — see $ss_resolve_cluster_row_order above.
+        $row_order = $ss_resolve_cluster_row_order($order_id, $slip_no);
         $celeb_10 = 0.0; $disc_20_pwd = 0.0; $disc_50_staff = 0.0;
         $is_refund = 0; $created_by = 'import'; $time_out = '';
+        $row_order_insert = $row_order ?? 0;
 
-        $eins->bind_param("sisssssisiddddddddddssisi",
-            $report_date, $row_order, $time_in, $time_out, $slip_no, $client_name,
+        $eins->bind_param("sisssssisiddddddddddssisii",
+            $report_date, $row_order_insert, $time_in, $time_out, $slip_no, $client_name,
             $svc_name, $service_id, $stylist, $therapist_id,
             $regular_price, $promo_price, $celeb_10,
             $disc_20_pwd, $comm_30, $comm_20, $comm_15, $comm_25, $disc_50_staff,
             $net_sales, $mode_of_pay, $remarks, $is_refund, $created_by,
-            $extra_id);
+            $extra_id, $order_id);
         $eins->execute();
+        if ($row_order === null) {
+            $new_id = $conn->insert_id;
+            $conn->query("UPDATE daily_report_spreadsheet_rows SET row_order = $new_id WHERE id = $new_id");
+        }
     }
     $eins->close();
     skip_extra_import:;
