@@ -185,8 +185,15 @@ foreach ($spreadsheet_rows as $sr) {
     if ($r  > 0) $cv('R' . $data_row, $r);
     if ($s  > 0) $cv('S' . $data_row, $s);
 
-    // T = net sales formula: =L-SUM(O:R)  (all four commission columns deducted)
-    $cv('T' . $data_row, "=L{$data_row}-SUM(O{$data_row}:R{$data_row})");
+    // T = net sales — written as the actual computed value, not a formula.
+    // An =L-SUM(O:R) formula assumes L (Promo Price) is what the customer was
+    // charged, which isn't always true: L shows the service's defined promo
+    // price for reference even when the customer paid regular (commission is
+    // always promo-based by policy regardless) — see $spreadsheet_rows'
+    // net_sales in daily_report.php, which is correctly based on what was
+    // actually charged. Recomputing from L here silently reintroduced that
+    // same bug into the Excel export even after it was fixed at the source.
+    $cv('T' . $data_row, (float)($sr['net_sales'] ?? 0));
     // U = mode of payment, V = advance payment, W = secondary MOP (blank), X = remarks
     $cv('U' . $data_row, $sr['mode_of_payment'] ?? '');
     if ($adv > 0) $cv('V' . $data_row, $adv);
