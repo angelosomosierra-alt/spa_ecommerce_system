@@ -73,13 +73,30 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
         .acd-back:hover, .acd-close:hover { background: rgba(255,255,255,.25); }
         #adminChatListView, #adminChatThreadView { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         #adminChatThreadList { flex: 1; overflow-y: auto; }
-        #adminChatMessages { flex: 1; overflow-y: auto; padding: 1.1rem 1rem; }
+        #adminChatMessages { flex: 1; overflow-y: auto; padding: 1.1rem 1rem; background: var(--bg); }
         #adminChatMessages::-webkit-scrollbar, #adminChatThreadList::-webkit-scrollbar { width: 5px; }
         #adminChatMessages::-webkit-scrollbar-thumb, #adminChatThreadList::-webkit-scrollbar-thumb { background: rgba(201,106,44,.25); border-radius: 4px; }
         .acd-send-bar {
-            display: flex; gap: .6rem; align-items: flex-end;
+            display: flex; gap: .5rem; align-items: flex-end;
             padding: .85rem 1rem; border-top: 1px solid var(--border2);
             background: var(--bg2); flex-shrink: 0;
+        }
+        .acd-attach-btn {
+            width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px;
+            border: 1px solid var(--border2); background: var(--bg3); color: var(--brown-md);
+            font-size: 1.05rem; cursor: pointer; transition: background .15s;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .acd-attach-btn:hover { background: var(--bg4); }
+        .acd-attach-preview {
+            display: none; align-items: center; gap: .4rem;
+            padding: .3rem .6rem; margin: 0 1rem .5rem; border-radius: 8px;
+            background: var(--gold-dim); font-size: .75rem; color: var(--brown-md);
+        }
+        .acd-attach-preview.show { display: flex; }
+        .acd-attach-preview button {
+            margin-left: auto; background: none; border: none; cursor: pointer;
+            color: var(--red); font-size: .85rem; padding: 0;
         }
         .acd-send-bar textarea {
             flex: 1; resize: none; max-height: 90px;
@@ -87,12 +104,12 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
             font: inherit; font-size: .85rem; color: var(--brown); outline: none;
         }
         .acd-send-bar textarea:focus { border-color: var(--rust); }
-        .acd-send-bar button {
+        .acd-send-bar button[type="submit"] {
             padding: .6rem 1.1rem; border: none; border-radius: 10px;
             background: var(--rust); color: #fff; font-weight: 700; font-size: .85rem;
             cursor: pointer; transition: background .15s; flex-shrink: 0;
         }
-        .acd-send-bar button:hover { background: #A94F1D; }
+        .acd-send-bar button[type="submit"]:hover { background: #A94F1D; }
         .acd-send-bar button:disabled { opacity: .6; cursor: default; }
     </style>
     <?php if (isset($extra_head)) echo $extra_head; ?>
@@ -287,8 +304,15 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                         <button class="acd-close" onclick="closeAdminChat()" title="Close">✕</button>
                     </div>
                     <div id="adminChatMessages"></div>
-                    <form id="adminChatSendForm" class="acd-send-bar">
-                        <textarea id="adminChatInput" placeholder="Type a reply…" rows="1" required></textarea>
+                    <div id="adminChatAttachPreview" class="acd-attach-preview">
+                        <span>📎</span>
+                        <span id="adminChatAttachName"></span>
+                        <button type="button" onclick="clearAdminChatAttachment()" title="Remove">✕</button>
+                    </div>
+                    <form id="adminChatSendForm" class="acd-send-bar" enctype="multipart/form-data">
+                        <button type="button" class="acd-attach-btn" onclick="document.getElementById('adminChatAttachInput').click()" title="Attach file or photo">📎</button>
+                        <input type="file" id="adminChatAttachInput" accept="image/*,.pdf,.doc,.docx,.xlsx,.xls,.txt" style="display:none;">
+                        <textarea id="adminChatInput" placeholder="Type a reply…" rows="1"></textarea>
                         <button type="submit">Send</button>
                     </form>
                 </div>
@@ -306,10 +330,26 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                 const form       = document.getElementById('adminChatSendForm');
                 const input      = document.getElementById('adminChatInput');
                 const badge      = document.getElementById('adminChatBadge');
+                const attachInput   = document.getElementById('adminChatAttachInput');
+                const attachPreview = document.getElementById('adminChatAttachPreview');
+                const attachName    = document.getElementById('adminChatAttachName');
 
                 let activeCustomerId = null;
                 let pollTimer        = null;
                 let drawerIsOpen     = false;
+
+                window.clearAdminChatAttachment = function() {
+                    attachInput.value = '';
+                    attachPreview.classList.remove('show');
+                };
+                attachInput.addEventListener('change', function() {
+                    if (attachInput.files.length) {
+                        attachName.textContent = attachInput.files[0].name;
+                        attachPreview.classList.add('show');
+                    } else {
+                        attachPreview.classList.remove('show');
+                    }
+                });
 
                 window.openAdminChat = function() {
                     overlay.classList.add('open');
@@ -387,22 +427,29 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                 form.addEventListener('submit', function(e) {
                     e.preventDefault();
                     const text = input.value.trim();
-                    if (!text || !activeCustomerId) return;
-                    const btn = form.querySelector('button');
+                    const hasFile = attachInput.files.length > 0;
+                    if ((!text && !hasFile) || !activeCustomerId) return;
+                    const btn = form.querySelector('button[type="submit"]');
                     btn.disabled = true;
                     input.disabled = true;
+                    const fd = new FormData();
+                    fd.append('customer_id', activeCustomerId);
+                    fd.append('message', text);
+                    if (hasFile) fd.append('attachment', attachInput.files[0]);
                     fetch('chat_api.php?action=send', {
                         method: 'POST',
                         credentials: 'same-origin',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: 'customer_id=' + encodeURIComponent(activeCustomerId) + '&message=' + encodeURIComponent(text)
+                        body: fd
                     })
                     .then(r => r.json())
                     .then(data => {
                         if (data && data.ok) {
                             input.value = '';
+                            clearAdminChatAttachment();
                             msgs.innerHTML = data.messages_html;
                             msgs.scrollTop = msgs.scrollHeight;
+                        } else if (data && data.error) {
+                            uiAlert ? uiAlert(data.error) : alert(data.error);
                         }
                     })
                     .catch(() => {})

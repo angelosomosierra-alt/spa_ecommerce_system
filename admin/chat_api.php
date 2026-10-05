@@ -20,13 +20,18 @@ $admin_id    = (int)$_SESSION['user_id'];
 $admin_name  = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Staff');
 
 if ($action === 'send' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $message = trim($_POST['message'] ?? '');
-    if ($customer_id <= 0 || $message === '') {
+    $message    = trim($_POST['message'] ?? '');
+    $attachment = chat_handle_upload($_FILES['attachment'] ?? null);
+    if (isset($attachment['error'])) {
+        echo json_encode(['ok' => false, 'error' => $attachment['error']]);
+        exit;
+    }
+    if ($customer_id <= 0 || ($message === '' && !$attachment)) {
         echo json_encode(['ok' => false, 'error' => 'Message is empty.']);
         exit;
     }
     if (mb_strlen($message) > 2000) $message = mb_substr($message, 0, 2000);
-    chat_send($conn, $customer_id, $admin_id, 'admin', $admin_name, $message);
+    chat_send($conn, $customer_id, $admin_id, 'admin', $admin_name, $message, $attachment);
     echo json_encode([
         'ok'            => true,
         'messages_html' => chat_render_messages_html(chat_get_messages($conn, $customer_id), 'admin'),

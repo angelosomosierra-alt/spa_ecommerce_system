@@ -25,16 +25,66 @@ $conn->query("CREATE TABLE IF NOT EXISTS customer_messages (
     INDEX idx_customer_time (customer_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
-function chat_send($conn, $customer_id, $sender_id, $sender_role, $sender_name, $message) {
+$conn->query("ALTER TABLE customer_messages
+    ADD COLUMN IF NOT EXISTS attachment_path VARCHAR(255) NULL,
+    ADD COLUMN IF NOT EXISTS attachment_name VARCHAR(255) NULL,
+    ADD COLUMN IF NOT EXISTS attachment_type VARCHAR(20) NULL");
+
+define('CHAT_UPLOAD_DIR', __DIR__ . '/uploads/chat/');
+define('CHAT_UPLOAD_URL_BASE', 'uploads/chat/'); // relative to site root; callers prefix as needed
+define('CHAT_MAX_UPLOAD_BYTES', 8 * 1024 * 1024); // 8MB
+const CHAT_IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+const CHAT_FILE_EXTS  = ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'txt'];
+
+/**
+ * Validate and move an uploaded $_FILES[...] entry into uploads/chat/.
+ * Returns ['path'=>relative-path-from-site-root, 'name'=>original filename, 'type'=>'image'|'file']
+ * or ['error'=>message] on failure. Returns null if no file was actually submitted.
+ */
+function chat_handle_upload(?array $file): ?array {
+    if (empty($file) || !isset($file['error']) || $file['error'] === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        return ['error' => 'Upload failed.'];
+    }
+    if ($file['size'] > CHAT_MAX_UPLOAD_BYTES) {
+        return ['error' => 'File is too large (max 8MB).'];
+    }
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    $isImage = in_array($ext, CHAT_IMAGE_EXTS, true);
+    $isFile  = in_array($ext, CHAT_FILE_EXTS, true);
+    if (!$isImage && !$isFile) {
+        return ['error' => 'That file type is not allowed.'];
+    }
+    if (!is_dir(CHAT_UPLOAD_DIR)) {
+        mkdir(CHAT_UPLOAD_DIR, 0755, true);
+    }
+    $storedName = uniqid('chat_', true) . '.' . $ext;
+    if (!move_uploaded_file($file['tmp_name'], CHAT_UPLOAD_DIR . $storedName)) {
+        return ['error' => 'Could not save the uploaded file.'];
+    }
+    return [
+        'path' => CHAT_UPLOAD_URL_BASE . $storedName,
+        'name' => basename($file['name']),
+        'type' => $isImage ? 'image' : 'file',
+    ];
+}
+
+function chat_send($conn, $customer_id, $sender_id, $sender_role, $sender_name, $message, ?array $attachment = null) {
     // A sender has trivially already "read" their own message.
     $is_read_customer = $sender_role === 'customer' ? 1 : 0;
     $is_read_admin    = $sender_role === 'admin'    ? 1 : 0;
+    $att_path = $attachment['path'] ?? null;
+    $att_name = $attachment['name'] ?? null;
+    $att_type = $attachment['type'] ?? null;
     $stmt = $conn->prepare("
         INSERT INTO customer_messages
-            (customer_id, sender_id, sender_role, sender_name, message, is_read_by_customer, is_read_by_admin)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (customer_id, sender_id, sender_role, sender_name, message, is_read_by_customer, is_read_by_admin,
+             attachment_path, attachment_name, attachment_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    $stmt->bind_param("iisssii", $customer_id, $sender_id, $sender_role, $sender_name, $message, $is_read_customer, $is_read_admin);
+    $stmt->bind_param("iisssiisss", $customer_id, $sender_id, $sender_role, $sender_name, $message, $is_read_customer, $is_read_admin, $att_path, $att_name, $att_type);
     $stmt->execute();
     $id = $stmt->insert_id;
     $stmt->close();
@@ -43,7 +93,8 @@ function chat_send($conn, $customer_id, $sender_id, $sender_role, $sender_name, 
 
 function chat_get_messages($conn, $customer_id, $limit = 300) {
     $stmt = $conn->prepare("
-        SELECT id, sender_id, sender_role, sender_name, message, created_at
+        SELECT id, sender_id, sender_role, sender_name, message, created_at,
+               attachment_path, attachment_name, attachment_type
         FROM customer_messages
         WHERE customer_id = ?
         ORDER BY created_at ASC, id ASC
@@ -91,9 +142,10 @@ function chat_get_threads($conn, $limit = 50) {
     $sql = "
         SELECT u.id AS customer_id,
                COALESCE(NULLIF(u.full_name,''), u.username) AS customer_name,
-               lm.message      AS last_message,
-               lm.sender_role  AS last_sender_role,
-               lm.created_at   AS last_time,
+               lm.message         AS last_message,
+               lm.attachment_type AS last_attachment_type,
+               lm.sender_role     AS last_sender_role,
+               lm.created_at      AS last_time,
                (SELECT COUNT(*) FROM customer_messages cm2
                 WHERE cm2.customer_id = u.id AND cm2.sender_role='customer' AND cm2.is_read_by_admin=0) AS unread
         FROM (
@@ -118,27 +170,57 @@ function chat_get_threads($conn, $limit = 50) {
 
 function chat_render_messages_html(array $messages, string $viewer_role): string {
     if (empty($messages)) {
-        return '<div style="padding:2.5rem 1rem;text-align:center;color:#9a7c68;font-size:0.85rem;">No messages yet. Say hello!</div>';
+        return '<div style="padding:2.5rem 1rem;text-align:center;color:var(--brown-lt,#9a7c68);font-size:0.85rem;">No messages yet. Say hello!</div>';
     }
     ob_start();
     foreach ($messages as $m):
         $mine = $m['sender_role'] === $viewer_role;
         $time = date('M d, h:i A', strtotime($m['created_at']));
+        $hasAttachment = !empty($m['attachment_path']);
+        $hasText       = trim($m['message']) !== '';
+        // Stored root-relative (e.g. "uploads/chat/xxx.jpg") so it resolves
+        // correctly whether rendered from a page under /user/ or /admin/.
+        $attUrl = $hasAttachment ? BASE_URL . $m['attachment_path'] : '';
     ?>
-    <div style="display:flex;flex-direction:column;align-items:<?php echo $mine ? 'flex-end' : 'flex-start'; ?>;margin-bottom:0.7rem;">
+    <div style="display:flex;flex-direction:column;align-items:<?php echo $mine ? 'flex-end' : 'flex-start'; ?>;margin-bottom:0.8rem;">
         <?php if (!$mine): ?>
-        <div style="font-size:0.68rem;font-weight:700;color:#9a7c68;margin-bottom:2px;padding:0 0.2rem;">
+        <div style="font-size:0.68rem;font-weight:700;color:var(--brown-lt,#9a7c68);margin-bottom:3px;padding:0 0.2rem;">
             <?php echo htmlspecialchars($m['sender_name']); ?>
         </div>
         <?php endif; ?>
+
+        <?php if ($hasAttachment && $m['attachment_type'] === 'image'): ?>
+        <a href="<?php echo htmlspecialchars($attUrl); ?>" target="_blank" rel="noopener noreferrer"
+           style="display:block;max-width:220px;border-radius:14px;overflow:hidden;margin-bottom:<?php echo $hasText ? '4px' : '0'; ?>;
+                  box-shadow:0 1px 6px rgba(0,0,0,.15);border-bottom-<?php echo $mine ? 'right' : 'left'; ?>-radius:4px;">
+            <img src="<?php echo htmlspecialchars($attUrl); ?>" alt="attachment" style="display:block;width:100%;height:auto;">
+        </a>
+        <?php elseif ($hasAttachment): ?>
+        <a href="<?php echo htmlspecialchars($attUrl); ?>" target="_blank" rel="noopener noreferrer"
+           style="display:flex;align-items:center;gap:0.5rem;max-width:220px;padding:0.55rem 0.7rem;border-radius:14px;
+                  margin-bottom:<?php echo $hasText ? '4px' : '0'; ?>;text-decoration:none;
+                  background:<?php echo $mine ? 'var(--rust,#C96A2C)' : 'var(--bg3,#f1e7da)'; ?>;
+                  color:<?php echo $mine ? '#fff' : 'var(--brown,#3B2A1A)'; ?>;
+                  border-bottom-<?php echo $mine ? 'right' : 'left'; ?>-radius:4px;">
+            <span style="font-size:1.1rem;flex-shrink:0;">📎</span>
+            <span style="font-size:0.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                <?php echo htmlspecialchars($m['attachment_name']); ?>
+            </span>
+        </a>
+        <?php endif; ?>
+
+        <?php if ($hasText): ?>
         <div style="max-width:78%;padding:0.55rem 0.8rem;border-radius:14px;
                     font-size:0.85rem;line-height:1.45;word-break:break-word;white-space:pre-wrap;
-                    background:<?php echo $mine ? '#C96A2C' : '#f1e7da'; ?>;
-                    color:<?php echo $mine ? '#fff' : '#3B2A1A'; ?>;
+                    box-shadow:0 1px 3px rgba(0,0,0,.06);
+                    background:<?php echo $mine ? 'var(--rust,#C96A2C)' : 'var(--bg3,#f1e7da)'; ?>;
+                    color:<?php echo $mine ? '#fff' : 'var(--brown,#3B2A1A)'; ?>;
                     border-bottom-<?php echo $mine ? 'right' : 'left'; ?>-radius:4px;">
             <?php echo htmlspecialchars($m['message']); ?>
         </div>
-        <div style="font-size:0.65rem;color:#b3a28e;margin-top:2px;padding:0 0.2rem;">
+        <?php endif; ?>
+
+        <div style="font-size:0.65rem;color:var(--brown-lt,#b3a28e);margin-top:3px;padding:0 0.2rem;">
             <?php echo $time; ?>
         </div>
     </div>
@@ -157,7 +239,11 @@ function chat_render_threads_html(array $threads): string {
         elseif ($diff < 3600)  $tt = floor($diff / 60) . 'm ago';
         elseif ($diff < 86400) $tt = floor($diff / 3600) . 'h ago';
         else                   $tt = date('M d', strtotime($t['last_time']));
-        $preview = mb_strlen($t['last_message']) > 42 ? mb_substr($t['last_message'], 0, 42) . '…' : $t['last_message'];
+        if (trim($t['last_message']) === '' && !empty($t['last_attachment_type'])) {
+            $preview = $t['last_attachment_type'] === 'image' ? '📷 Photo' : '📎 File';
+        } else {
+            $preview = mb_strlen($t['last_message']) > 42 ? mb_substr($t['last_message'], 0, 42) . '…' : $t['last_message'];
+        }
         $prefix  = $t['last_sender_role'] === 'admin' ? 'You: ' : '';
     ?>
     <div onclick='openChatThread(<?php echo (int)$t['customer_id']; ?>, <?php echo json_encode($t['customer_name'], JSON_HEX_APOS | JSON_HEX_QUOT); ?>)'

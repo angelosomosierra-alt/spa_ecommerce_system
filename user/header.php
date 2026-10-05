@@ -101,15 +101,52 @@ $current_page = basename($_SERVER['PHP_SELF']);
             overflow: hidden;
         }
         #chatSlideDrawer.open { display: flex; }
+        .ccd-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 1rem 1.4rem;
+            background: #3B2A1A; color: #FAF6F0;
+            flex-shrink: 0;
+        }
+        .ccd-header h2 {
+            font-size: 1.05rem; font-weight: 700; margin: 0;
+            display: flex; align-items: center; gap: .5rem;
+            color: #FAF6F0;
+        }
+        .ccd-close {
+            width: 32px; height: 32px; border-radius: 50%;
+            border: none; background: rgba(255,255,255,.14); color: #FAF6F0;
+            cursor: pointer; font-size: .95rem;
+            display: flex; align-items: center; justify-content: center;
+            transition: background .2s;
+        }
+        .ccd-close:hover { background: rgba(255,255,255,.26); }
         #chatMessages {
             flex: 1; overflow-y: auto; padding: 1.1rem 1rem;
+            background: #FAF6F0;
         }
         #chatMessages::-webkit-scrollbar { width: 5px; }
         #chatMessages::-webkit-scrollbar-thumb { background: rgba(201,106,44,.25); border-radius: 4px; }
         .chat-send-bar {
-            display: flex; gap: .6rem; align-items: flex-end;
+            display: flex; gap: .5rem; align-items: flex-end;
             padding: .85rem 1rem; border-top: 1px solid #EAD8C0;
             background: #fff; flex-shrink: 0;
+        }
+        .chat-attach-btn {
+            width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px;
+            border: 1px solid #EAD8C0; background: #fdfaf6; color: #6B4C30;
+            font-size: 1.05rem; cursor: pointer; transition: background .15s;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .chat-attach-btn:hover { background: #f1e7da; }
+        .chat-attach-preview {
+            display: none; align-items: center; gap: .4rem;
+            padding: .3rem .6rem; margin: 0 1rem .5rem; border-radius: 8px;
+            background: #fdf3e0; font-size: .75rem; color: #6B4C30;
+        }
+        .chat-attach-preview.show { display: flex; }
+        .chat-attach-preview button {
+            margin-left: auto; background: none; border: none; cursor: pointer;
+            color: #c0392b; font-size: .85rem; padding: 0;
         }
         .chat-send-bar textarea {
             flex: 1; resize: none; max-height: 90px;
@@ -118,12 +155,12 @@ $current_page = basename($_SERVER['PHP_SELF']);
             outline: none;
         }
         .chat-send-bar textarea:focus { border-color: #C96A2C; }
-        .chat-send-bar button {
+        .chat-send-bar button[type="submit"] {
             padding: .6rem 1.1rem; border: none; border-radius: 10px;
             background: #C96A2C; color: #fff; font-weight: 700; font-size: .85rem;
             cursor: pointer; transition: background .15s; flex-shrink: 0;
         }
-        .chat-send-bar button:hover { background: #A94F1D; }
+        .chat-send-bar button[type="submit"]:hover { background: #A94F1D; }
         .chat-send-bar button:disabled { opacity: .6; cursor: default; }
 
         /* ── Drawer header bar ── */
@@ -806,13 +843,20 @@ $_logout_url = (strpos($_SERVER['PHP_SELF'], '/user/') !== false)
 <div id="chatSlideOverlay" onclick="closeChatDrawer()"></div>
 
 <div id="chatSlideDrawer" role="dialog" aria-label="Message Us">
-    <div class="csd-header">
+    <div class="ccd-header">
         <h2>💬 Message Us</h2>
-        <button class="csd-close" onclick="closeChatDrawer()" title="Close">✕</button>
+        <button class="ccd-close" onclick="closeChatDrawer()" title="Close">✕</button>
     </div>
     <div id="chatMessages"></div>
-    <form id="chatSendForm" class="chat-send-bar">
-        <textarea id="chatInput" placeholder="Type your message…" rows="1" required></textarea>
+    <div id="chatAttachPreview" class="chat-attach-preview">
+        <span>📎</span>
+        <span id="chatAttachName"></span>
+        <button type="button" onclick="clearChatAttachment()" title="Remove">✕</button>
+    </div>
+    <form id="chatSendForm" class="chat-send-bar" enctype="multipart/form-data">
+        <button type="button" class="chat-attach-btn" onclick="document.getElementById('chatAttachInput').click()" title="Attach file or photo">📎</button>
+        <input type="file" id="chatAttachInput" accept="image/*,.pdf,.doc,.docx,.xlsx,.xls,.txt" style="display:none;">
+        <textarea id="chatInput" placeholder="Type your message…" rows="1"></textarea>
         <button type="submit">Send</button>
     </form>
 </div>
@@ -1281,8 +1325,24 @@ document.addEventListener('submit', function(e) {
     const chatForm     = document.getElementById('chatSendForm');
     const chatInput    = document.getElementById('chatInput');
     const chatBadge    = document.getElementById('chatBadge');
+    const chatAttachInput   = document.getElementById('chatAttachInput');
+    const chatAttachPreview = document.getElementById('chatAttachPreview');
+    const chatAttachName    = document.getElementById('chatAttachName');
     let chatPollTimer  = null;
     let chatOpen       = false;
+
+    window.clearChatAttachment = function() {
+        chatAttachInput.value = '';
+        chatAttachPreview.classList.remove('show');
+    };
+    chatAttachInput.addEventListener('change', function() {
+        if (chatAttachInput.files.length) {
+            chatAttachName.textContent = chatAttachInput.files[0].name;
+            chatAttachPreview.classList.add('show');
+        } else {
+            chatAttachPreview.classList.remove('show');
+        }
+    });
 
     window.openChatDrawer = function() {
         chatOverlay.classList.add('open');
@@ -1318,22 +1378,28 @@ document.addEventListener('submit', function(e) {
     chatForm.addEventListener('submit', function(e) {
         e.preventDefault();
         const text = chatInput.value.trim();
-        if (!text) return;
-        const btn = chatForm.querySelector('button');
+        const hasFile = chatAttachInput.files.length > 0;
+        if (!text && !hasFile) return;
+        const btn = chatForm.querySelector('button[type="submit"]');
         btn.disabled = true;
         chatInput.disabled = true;
+        const fd = new FormData();
+        fd.append('message', text);
+        if (hasFile) fd.append('attachment', chatAttachInput.files[0]);
         fetch('chat_api.php?action=send', {
             method: 'POST',
             credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'message=' + encodeURIComponent(text)
+            body: fd
         })
         .then(r => r.json())
         .then(data => {
             if (data && data.ok) {
                 chatInput.value = '';
+                clearChatAttachment();
                 chatMsgs.innerHTML = data.messages_html;
                 chatMsgs.scrollTop = chatMsgs.scrollHeight;
+            } else if (data && data.error) {
+                uiAlert(data.error);
             }
         })
         .catch(() => {})
