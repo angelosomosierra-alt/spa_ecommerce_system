@@ -21,7 +21,7 @@ $result = ['products' => [], 'services' => []];
 
 // ── Search products ────────────────────────────────────────────────────────────
 $stmt = $conn->prepare("
-    SELECT id, name, price, image, stock
+    SELECT id, name, price, image, stock, category_id
     FROM products
     WHERE (name LIKE ? OR description LIKE ?)
       AND deleted_at IS NULL
@@ -38,7 +38,7 @@ $stmt->close();
 
 // ── Search services ────────────────────────────────────────────────────────────
 $stmt = $conn->prepare("
-    SELECT id, name, price, image, session_time
+    SELECT id, name, price, image, session_time, category_id
     FROM services
     WHERE (name LIKE ? OR description LIKE ?)
       AND deleted_at IS NULL

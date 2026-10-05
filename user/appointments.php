@@ -761,7 +761,7 @@ details.card-section summary::-webkit-details-marker { display:none; }
     <div style="text-align:center;padding:3rem;background:#fff;border-radius:10px;">
         <h2 style="color:#3B2A1A;margin-bottom:0.5rem;">No Appointments Yet</h2>
         <p style="color:#666;margin-bottom:1.5rem;">You haven't booked any services yet.</p>
-        <a href="index.php#services" class="btn btn-primary">Browse Services</a>
+        <a href="services.php" class="btn btn-primary">Browse Services</a>
     </div>
     <?php endif; ?>
 </div>
@@ -920,7 +920,7 @@ details.card-section summary::-webkit-details-marker { display:none; }
     <div style="text-align:center;padding:3rem;background:#fff;border-radius:10px;">
         <h2 style="color:#3B2A1A;">No Orders Yet</h2>
         <p style="color:#666;margin-bottom:1.5rem;">You haven't purchased any products yet.</p>
-        <a href="index.php#products" class="btn btn-primary">Browse Products</a>
+        <a href="products.php" class="btn btn-primary">Browse Products</a>
     </div>
     <?php endif; ?>
 </div>

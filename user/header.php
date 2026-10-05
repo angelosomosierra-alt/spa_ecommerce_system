@@ -528,8 +528,8 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
     <div class="nav-drawer-links">
         <a href="index.php" <?php echo $current_page==='index.php' ? 'class="active"' : ''; ?>>🏠 Home</a>
         <a href="index.php#about">ℹ️ About Us</a>
-        <a href="index.php#services">💆 Services</a>
-        <a href="index.php#products">🛍️ Products</a>
+        <a href="services.php" <?php echo $current_page==='services.php' ? 'class="active"' : ''; ?>>💆 Services</a>
+        <a href="products.php" <?php echo $current_page==='products.php' ? 'class="active"' : ''; ?>>🛍️ Products</a>
         <a href="index.php#contact">📞 Contact</a>
         <?php if (isset($_SESSION['user_id'])): ?>
         <div class="nav-drawer-divider"></div>
@@ -563,8 +563,8 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
         <ul class="nav-links">
             <li><a href="index.php"           <?php echo $current_page==='index.php'        ?'class="active"':''; ?>>Home</a></li>
             <li><a href="index.php#about"            <?php echo $current_page==='about.php'        ?'class="active"':''; ?>>About Us</a></li>
-            <li><a href="index.php#services"   <?php echo $current_page==='services.php'     ?'class="active"':''; ?>>Services</a></li>
-            <li><a href="index.php#products"   <?php echo $current_page==='products.php'     ?'class="active"':''; ?>>Products</a></li>
+            <li><a href="services.php"   <?php echo $current_page==='services.php'     ?'class="active"':''; ?>>Services</a></li>
+            <li><a href="products.php"   <?php echo $current_page==='products.php'     ?'class="active"':''; ?>>Products</a></li>
             <li><a href="index.php#contact"          <?php echo $current_page==='contact.php'      ?'class="active"':''; ?>>Contact</a></li>
             <?php if (isset($_SESSION['user_id'])): ?>
                 <li><a href="appointments.php" <?php echo $current_page==='appointments.php' ?'class="active"':''; ?>>Appointments</a></li>
@@ -1147,7 +1147,7 @@ function renderSearchResults(data, query) {
                 ? `<img class="search-result-img" src="../uploads/products/${escHtml(p.image)}" alt="${escHtml(p.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
                 : '';
             html += `
-            <a href="index.php?open=product&id=${encodeURIComponent(p.id)}#products" class="search-result-item" onclick="closeSearchResults()">
+            <a href="products.php?category=${encodeURIComponent(p.category_id || '')}&item=prd-${p.id}" class="search-result-item" onclick="closeSearchResults()">
                 ${img}
                 <div class="search-result-noimg" ${p.image ? 'style="display:none"' : ''}>🧴</div>
                 <div class="search-result-info">
@@ -1166,7 +1166,7 @@ function renderSearchResults(data, query) {
                 ? `<img class="search-result-img" src="../uploads/services/${escHtml(s.image)}" alt="${escHtml(s.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
                 : '';
             html += `
-            <a href="index.php?open=service&id=${encodeURIComponent(s.id)}#services" class="search-result-item" onclick="closeSearchResults()">
+            <a href="services.php?category=${encodeURIComponent(s.category_id || '')}&item=svc-${s.id}" class="search-result-item" onclick="closeSearchResults()">
                 ${img}
                 <div class="search-result-noimg" ${s.image ? 'style="display:none"' : ''}>💆</div>
                 <div class="search-result-info">
