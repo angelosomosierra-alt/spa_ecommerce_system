@@ -461,11 +461,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         $es_partner_id = intval($es_appt['partner_id'] ?? 0);
         $es_reg_price  = floatval($es_svc['price']);
         $es_home_fee   = floatval($es_svc['home_service_fee'] ?? 0);
+
+        // Promo-aware "active right now" price, same convention as the main
+        // booking flow (walkin.php) -- whatever get_active_duration_price()
+        // says RIGHT NOW (promo window live or not) is what gets charged,
+        // never the raw services.price column directly.
+        $es_dur_q = $conn->prepare("SELECT regular_price, promo_price, price_mode, promo_start_time, promo_end_time
+                                     FROM service_durations WHERE service_id = ?
+                                     ORDER BY duration_minutes, session_count LIMIT 1");
+        $es_dur_q->bind_param("i", $es_service_id); $es_dur_q->execute();
+        $es_duration = $es_dur_q->get_result()->fetch_assoc(); $es_dur_q->close();
+        $es_active_price = $es_duration ? get_active_duration_price($es_duration)['price'] : $es_reg_price;
+
         switch ($es_rate_type) {
             case 'home':       $es_base = floatval($es_svc['home_service_price'] ?? 0); break;
             case 'influencer': $es_base = 0.00; break;
             case 'hotel':
-                $es_base = $es_reg_price;
+                $es_base = $es_active_price;
                 if ($es_partner_id > 0) {
                     $es_pr = $conn->prepare("SELECT price FROM partner_rates WHERE partner_id=? AND service_id=?");
                     $es_pr->bind_param("ii", $es_partner_id, $es_service_id); $es_pr->execute();
@@ -473,7 +485,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
                     if ($es_pr_row) $es_base = floatval($es_pr_row['price']);
                 }
                 break;
-            default: $es_base = $es_reg_price;
+            default: $es_base = $es_active_price;
         }
         // Use admin-supplied price if valid, else fall back to rate-computed base
         $es_charged = (is_numeric($es_price_raw) && floatval($es_price_raw) >= 0)
@@ -523,7 +535,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
                     $es_reg_price = floatval($es_reg_q->get_result()->fetch_assoc()['price'] ?? 0); $es_reg_q->close();
                     $es_commission = round($es_reg_price * floatval($es_cm_row['commission_percent']) / 100, 2);
                 } else {
-                    $es_commission = round($es_reg_price * floatval($es_cm_row['commission_percent']) / 100, 2);
+                    // Commission always bases on the service's promo price when one
+                    // is defined (service_durations.promo_price), regardless of
+                    // whether that promo window is active right now or what the
+                    // customer was actually charged -- same rule the rest of the
+                    // system already applies via get_commission_base_price().
+                    $es_comm_base = get_commission_base_price($es_service_id, null, $es_reg_price);
+                    $es_commission = round($es_comm_base * floatval($es_cm_row['commission_percent']) / 100, 2);
                 }
             }
         }
@@ -2490,6 +2508,46 @@ foreach ($all_services_list as $sv) {
     $services_by_cat[$sv['category_name']][] = $sv;
 }
 
+// Default service_durations row's promo pricing per service (same "first
+// row" convention as get_active_duration_price()'s callers elsewhere:
+// ORDER BY duration_minutes, session_count LIMIT 1), embedded for the Add
+// Extra Service modal's client-side "active price right now" preview.
+// The server (add_extra_service handler) independently recomputes this via
+// get_active_duration_price()/get_commission_base_price() on submit, so a
+// stale browser tab can never under/overcharge or miscalculate commission.
+// Seed every service with its plain services.price first, so a service
+// that (unexpectedly) has no service_durations row still gets a correct
+// fallback client-side instead of previewing ₱0.00.
+$svc_duration_pricing = [];
+foreach ($all_services_list as $_sv_seed) {
+    $svc_duration_pricing[$_sv_seed['id']] = [
+        'regular_price'    => (float)$_sv_seed['price'],
+        'promo_price'      => 0.0,
+        'price_mode'       => 'regular',
+        'promo_start_time' => null,
+        'promo_end_time'   => null,
+    ];
+}
+$sdp_res = $conn->query("
+    SELECT sd.service_id, sd.regular_price, sd.promo_price, sd.price_mode, sd.promo_start_time, sd.promo_end_time
+    FROM service_durations sd
+    WHERE sd.id = (
+        SELECT sd2.id FROM service_durations sd2
+        WHERE sd2.service_id = sd.service_id
+        ORDER BY sd2.duration_minutes, sd2.session_count
+        LIMIT 1
+    )
+");
+while ($sdp = $sdp_res->fetch_assoc()) {
+    $svc_duration_pricing[$sdp['service_id']] = [
+        'regular_price'    => (float)$sdp['regular_price'],
+        'promo_price'      => (float)$sdp['promo_price'],
+        'price_mode'       => $sdp['price_mode'],
+        'promo_start_time' => $sdp['promo_start_time'],
+        'promo_end_time'   => $sdp['promo_end_time'],
+    ];
+}
+
 // ── Service → qualified therapist map (drives Add Service therapist dropdown)
 // Uses the existing $get_qualified closure + cache: at most 1 query per unique service_id.
 $svc_qualified_map = [];
@@ -3471,80 +3529,12 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
         <?php endif; ?>
 
         <?php if (in_array($status, ['approved', 'assigned'])): ?>
-        <button type="button" onclick="toggleAddService(<?php echo $appt_id; ?>)"
+        <button type="button" onclick="openExtraServiceModal(<?php echo $appt_id; ?>, <?php echo (int)$people; ?>)"
                 style="padding:0.38rem 0.9rem;border-radius:7px;border:1.5px dashed var(--gold);background:rgba(201,106,44,0.06);color:var(--gold);font-size:0.82rem;font-weight:700;cursor:pointer;transition:all .15s;"
                 onmouseover="this.style.background='rgba(201,106,44,0.12)'"
                 onmouseout="this.style.background='rgba(201,106,44,0.06)'">
             Add Service
         </button>
-
-        <div id="addservice-<?php echo $appt_id; ?>" style="display:none;margin-top:0.75rem;padding:1.1rem;background:var(--bg3);border-radius:10px;border:1px solid var(--border2);">
-            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.85rem;display:flex;justify-content:space-between;">
-                <span>Add Extra Service</span>
-                <?php $rate_labels = ['regular'=>'Regular','home'=>'Home','hotel'=>'Hotel','influencer'=>'Influencer']; $rt = $a['rate_type'] ?? 'regular'; ?>
-                <span style="font-size:0.7rem;background:var(--bg2);padding:0.15rem 0.55rem;border-radius:20px;color:var(--gray);font-weight:400;text-transform:none;">Rate: <?php echo $rate_labels[$rt] ?? 'Regular'; ?></span>
-            </div>
-            <form method="POST" data-extra-svc="1">
-                <?php echo csrf_field(); ?>
-                <input type="hidden" name="action"  value="add_extra_service">
-                <input type="hidden" name="appt_id" value="<?php echo $appt_id; ?>">
-                <div style="margin-bottom:0.75rem;">
-                    <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">For which person?</label>
-                    <select name="person_label" style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.85rem;">
-                        <?php for ($pi = 1; $pi <= $people; $pi++): ?>
-                        <option value="Person <?php echo $pi; ?>">Person <?php echo $pi; ?><?php if ($pi === 1): ?> (Primary)<?php endif; ?></option>
-                        <?php endfor; ?>
-                    </select>
-                </div>
-                <div style="margin-bottom:0.75rem;">
-                    <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:4px;">Select Service <span style="color:var(--rust);">*</span></label>
-                    <select name="extra_svc_id" id="extra-svc-<?php echo $appt_id; ?>" required onchange="previewExtraPrice(this, <?php echo $appt_id; ?>)"
-                            style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.85rem;">
-                        <option value="">— Select a service —</option>
-                        <?php foreach ($services_by_cat as $cat => $svcs): ?>
-                        <optgroup label="<?php echo htmlspecialchars($cat); ?>">
-                            <?php foreach ($svcs as $sv): ?>
-                            <option value="<?php echo $sv['id']; ?>" data-price="<?php echo $sv['price']; ?>"><?php echo htmlspecialchars($sv['name']); ?> — ₱<?php echo number_format($sv['price'],2); ?></option>
-                            <?php endforeach; ?>
-                        </optgroup>
-                        <?php endforeach; ?>
-                    </select>
-                    <span id="extra-svc-err-<?php echo $appt_id; ?>" style="font-size:0.68rem;color:var(--rust);margin-top:2px;display:none;"></span>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.65rem;margin-bottom:0.75rem;">
-                    <div>
-                        <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Charged Price (₱) <span style="color:var(--rust);">*</span></label>
-                        <input type="number" name="extra_price" id="extra-price-input-<?php echo $appt_id; ?>"
-                               step="0.01" min="0" placeholder="0.00" required
-                               oninput="validateExtraForm(<?php echo $appt_id; ?>)"
-                               style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
-                        <div id="extra-price-hint-<?php echo $appt_id; ?>" style="font-size:0.68rem;color:var(--gray);margin-top:2px;"></div>
-                        <span id="extra-price-err-<?php echo $appt_id; ?>" style="font-size:0.68rem;color:var(--rust);margin-top:2px;display:none;"></span>
-                    </div>
-                    <div>
-                        <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Therapist (optional)</label>
-                        <select name="extra_therapist" id="extra-therapist-<?php echo $appt_id; ?>"
-                                required onchange="validateExtraForm(<?php echo $appt_id; ?>)"
-                                style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.83rem;">
-                        </select>
-                        <div id="extra-therapist-note-<?php echo $appt_id; ?>" style="font-size:0.68rem;color:var(--gray);margin-top:2px;display:none;"></div>
-                        <span id="extra-therapist-err-<?php echo $appt_id; ?>" style="font-size:0.68rem;color:var(--rust);margin-top:2px;display:none;"></span>
-                    </div>
-                </div>
-                <div style="margin-bottom:0.85rem;">
-                    <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Notes (optional)</label>
-                    <input type="text" name="extra_notes" placeholder="e.g. VIP guest, specific request..."
-                           style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);color:var(--brown);font-size:0.83rem;box-sizing:border-box;">
-                </div>
-                <div style="margin-bottom:0.85rem;padding:0.6rem 0.8rem;background:rgba(201,106,44,0.06);border:1px dashed var(--gold);border-radius:8px;font-size:0.75rem;color:#78350f;">
-                    Payment for extra services is collected when you mark the session complete.
-                </div>
-                <div style="display:flex;gap:0.6rem;">
-                    <button type="submit" id="extra-confirm-<?php echo $appt_id; ?>" class="btn btn-primary btn-sm" disabled style="opacity:0.5;cursor:not-allowed;">Confirm Add Service</button>
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleAddService(<?php echo $appt_id; ?>)">Cancel</button>
-                </div>
-            </form>
-        </div>
         <?php endif; ?>
     </div>
     <?php endif; ?>
@@ -4154,18 +4144,14 @@ function toggleAssignSession(apptId, sessionNumber) {
 function toggleReschedule(apptId) {
     const el = document.getElementById('reschedule-' + apptId);
     const cancelEl = document.getElementById('cancel-' + apptId);
-    const addEl = document.getElementById('addservice-' + apptId);
     if (cancelEl) cancelEl.style.display = 'none';
-    if (addEl) addEl.style.display = 'none';
     if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
 }
 
 function toggleCancel(apptId) {
     const el = document.getElementById('cancel-' + apptId);
     const reschedEl = document.getElementById('reschedule-' + apptId);
-    const addEl = document.getElementById('addservice-' + apptId);
     if (reschedEl) reschedEl.style.display = 'none';
-    if (addEl) addEl.style.display = 'none';
     if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
 }
 
@@ -4179,16 +4165,6 @@ function highlightPaymentMethod() {
     });
 }
 document.addEventListener('DOMContentLoaded', highlightPaymentMethod);
-
-function toggleAddService(apptId) {
-    const el = document.getElementById('addservice-' + apptId);
-    const reschedEl = document.getElementById('reschedule-' + apptId);
-    const cancelEl  = document.getElementById('cancel-' + apptId);
-    if (reschedEl) reschedEl.style.display = 'none';
-    if (cancelEl)  cancelEl.style.display  = 'none';
-    if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
-    if (el && el.style.display !== 'none') validateExtraForm(apptId);
-}
 
 const apptRateConfig = <?php
     $rate_configs = [];
@@ -4212,44 +4188,34 @@ const partnerRatesData = <?php
 
 const svcQualifiedMap = <?php echo json_encode((object)$svc_qualified_map); ?>;
 
-function validateExtraForm(apptId) {
-    const svcSel     = document.getElementById('extra-svc-' + apptId);
-    const therapSel  = document.getElementById('extra-therapist-' + apptId);
-    const priceInp   = document.getElementById('extra-price-input-' + apptId);
-    const confirmBtn = document.getElementById('extra-confirm-' + apptId);
-    if (!svcSel || !therapSel || !priceInp || !confirmBtn) return;
+// Default service_durations row's promo pricing per service — mirrors
+// get_active_duration_price() so the modal's price preview already shows
+// the promo price while a promo window is live, same as what the server
+// will independently (and authoritatively) compute on submit.
+const svcDurationPricing = <?php echo json_encode((object)$svc_duration_pricing); ?>;
 
-    const svcErr    = document.getElementById('extra-svc-err-' + apptId);
-    const therapErr = document.getElementById('extra-therapist-err-' + apptId);
-    const priceErr  = document.getElementById('extra-price-err-' + apptId);
-
-    let valid = true;
-
-    const svcOk = parseInt(svcSel.value) > 0;
-    if (svcErr) { svcErr.textContent = svcOk ? '' : 'Select a service'; svcErr.style.display = svcOk ? 'none' : ''; }
-    if (!svcOk) valid = false;
-
-    const therapOk = parseInt(therapSel.value) > 0;
-    if (therapErr) { therapErr.textContent = therapOk ? '' : 'Select a therapist'; therapErr.style.display = therapOk ? 'none' : ''; }
-    if (!therapOk) valid = false;
-
-    const pv = priceInp.value.trim();
-    const pn = parseFloat(pv);
-    const priceOk = pv !== '' && !isNaN(pn) && pn >= 0;
-    if (priceErr) { priceErr.textContent = priceOk ? '' : 'Enter a valid price'; priceErr.style.display = priceOk ? 'none' : ''; }
-    if (!priceOk) valid = false;
-
-    confirmBtn.disabled = !valid;
-    confirmBtn.style.opacity = valid ? '' : '0.5';
-    confirmBtn.style.cursor  = valid ? '' : 'not-allowed';
+function getActiveDurationPriceJs(pricing) {
+    if (!pricing) return { price: 0, is_promo_active: false };
+    if (pricing.price_mode !== 'promo' || !pricing.promo_start_time || !pricing.promo_end_time) {
+        return { price: pricing.regular_price, is_promo_active: false };
+    }
+    const toSeconds = t => { const p = t.split(':').map(Number); return (p[0]||0)*3600 + (p[1]||0)*60 + (p[2]||0); };
+    const now   = new Date();
+    const nowS  = now.getHours()*3600 + now.getMinutes()*60 + now.getSeconds();
+    const start = toSeconds(pricing.promo_start_time);
+    const end   = toSeconds(pricing.promo_end_time);
+    const active = (start <= end) ? (nowS >= start && nowS < end) : (nowS >= start || nowS < end);
+    return active
+        ? { price: pricing.promo_price, is_promo_active: true }
+        : { price: pricing.regular_price, is_promo_active: false };
 }
 
-function updateExtraTherapist(apptId, svcId) {
-    const sel  = document.getElementById('extra-therapist-' + apptId);
-    const note = document.getElementById('extra-therapist-note-' + apptId);
+function updateExtraTherapist(svcId) {
+    const sel  = document.getElementById('extra-modal-therapist');
+    const note = document.getElementById('extra-modal-therapist-note');
     if (!sel) return;
     const list = (svcQualifiedMap && svcQualifiedMap[svcId]) ? svcQualifiedMap[svcId] : [];
-    sel.innerHTML = '';
+    sel.innerHTML = '<option value="">— Select therapist —</option>';
     if (svcId && list.length === 0) {
         if (note) { note.textContent = 'No qualified therapists for this service.'; note.style.display = ''; }
     } else {
@@ -4267,51 +4233,154 @@ function updateExtraTherapist(apptId, svcId) {
     }
 }
 
-function previewExtraPrice(selectEl, apptId) {
-    const opt       = selectEl.options[selectEl.selectedIndex];
-    const regPrice  = parseFloat(opt.dataset.price || 0);
-    const svcId     = parseInt(selectEl.value) || 0;
-    const cfg       = apptRateConfig[apptId] || {};
+// ════════════════════════════════════════════════════════
+//  ADD EXTRA SERVICE MODAL
+// ════════════════════════════════════════════════════════
+let extraModalApptId = 0;
+
+function openExtraServiceModal(apptId, peopleCount) {
+    extraModalApptId = apptId;
+    document.getElementById('extra-modal-appt-id').value = apptId;
+
+    const personSel = document.getElementById('extra-modal-person');
+    personSel.innerHTML = '';
+    for (let pi = 1; pi <= (peopleCount || 1); pi++) {
+        const o = document.createElement('option');
+        o.value = 'Person ' + pi;
+        o.textContent = 'Person ' + pi + (pi === 1 ? ' (Primary)' : '');
+        personSel.appendChild(o);
+    }
+
+    const cfg = apptRateConfig[apptId] || {};
+    const rateLabels = { regular: 'Regular', home: 'Home', hotel: 'Hotel', influencer: 'Influencer' };
+    document.getElementById('extraSvcRateBadge').textContent = 'Rate: ' + (rateLabels[cfg.rate_type] || 'Regular');
+
+    extraModalSubmitAttempted = false;
+    document.getElementById('extra-modal-search').value = '';
+    document.getElementById('extra-modal-notes').value = '';
+    clearExtraServiceSelection();
+    filterExtraServiceList('');
+
+    document.getElementById('extraServiceModal').style.display = 'flex';
+}
+
+function closeExtraServiceModal() {
+    document.getElementById('extraServiceModal').style.display = 'none';
+    extraModalApptId = 0;
+}
+
+function filterExtraServiceList(query) {
+    const q = query.trim().toLowerCase();
+    const groups = document.querySelectorAll('#extra-modal-svc-list .extra-svc-group');
+    let anyVisible = false;
+    groups.forEach(function(group) {
+        let groupHasMatch = false;
+        group.querySelectorAll('.extra-svc-row').forEach(function(row) {
+            const match = !q || row.dataset.name.includes(q);
+            row.style.display = match ? '' : 'none';
+            if (match) groupHasMatch = true;
+        });
+        group.style.display = groupHasMatch ? '' : 'none';
+        if (groupHasMatch) anyVisible = true;
+    });
+    document.getElementById('extra-modal-no-results').style.display = anyVisible ? 'none' : '';
+}
+
+function selectExtraService(svcId, svcName) {
+    document.getElementById('extra-modal-svc-id').value = svcId;
+    document.getElementById('extra-modal-selected-name').textContent = svcName;
+    document.getElementById('extra-modal-selected').style.display = 'flex';
+    document.getElementById('extra-modal-search').style.display = 'none';
+    document.getElementById('extra-modal-svc-list').style.display = 'none';
+
+    const cfg       = apptRateConfig[extraModalApptId] || {};
     const rateType  = cfg.rate_type  || 'regular';
     const partnerId = cfg.partner_id || null;
-    const priceInp  = document.getElementById('extra-price-input-' + apptId);
-    const hintEl    = document.getElementById('extra-price-hint-'  + apptId);
+    const pricing   = svcDurationPricing[svcId];
+    const active    = getActiveDurationPriceJs(pricing);
+    const priceInp  = document.getElementById('extra-modal-price');
+    const hintEl    = document.getElementById('extra-modal-price-hint');
 
-    if (!svcId) {
-        if (priceInp) priceInp.value = '';
-        if (hintEl)  hintEl.textContent = '';
-        updateExtraTherapist(apptId, 0);
-        validateExtraForm(apptId);
-        return;
-    }
-    let charged = regPrice, formula = '';
+    let charged = active.price, formula = active.is_promo_active ? 'Promo price (active now)' : 'Regular price';
     switch (rateType) {
         case 'home':
+            // Legacy estimate formula, kept as-is -- the server computes the
+            // real charge from the service's actual home_service_price.
+            const regPrice = pricing ? pricing.regular_price : 0;
             charged = (regPrice * 2) + 300;
             formula = `(₱${regPrice.toFixed(2)} × 2) + ₱300`;
             break;
         case 'hotel':
-            if (partnerId && partnerRatesData[partnerId]?.[svcId]) {
+            if (partnerId && partnerRatesData[partnerId]?.[svcId] !== undefined) {
                 charged = parseFloat(partnerRatesData[partnerId][svcId]);
                 formula = 'Partner rate';
             } else {
-                charged = regPrice;
-                formula = partnerId ? 'No partner rate — using regular' : 'Regular price';
+                charged = active.price;
+                formula = (partnerId ? 'No partner rate — using ' : '') + (active.is_promo_active ? 'promo price' : 'regular price');
             }
             break;
         case 'influencer':
             charged = 0;
             formula = 'Complimentary — ₱0';
             break;
-        default:
-            charged = regPrice;
-            formula = 'Regular price';
     }
     if (priceInp) priceInp.value = charged.toFixed(2);
     if (hintEl)  hintEl.textContent = formula;
-    updateExtraTherapist(apptId, svcId);
-    validateExtraForm(apptId);
+    updateExtraTherapist(svcId);
+    validateExtraModalForm();
 }
+
+function clearExtraServiceSelection() {
+    document.getElementById('extra-modal-svc-id').value = '';
+    document.getElementById('extra-modal-selected').style.display = 'none';
+    document.getElementById('extra-modal-search').style.display = '';
+    document.getElementById('extra-modal-svc-list').style.display = '';
+    document.getElementById('extra-modal-price').value = '';
+    document.getElementById('extra-modal-price-hint').textContent = '';
+    updateExtraTherapist(0);
+    validateExtraModalForm();
+}
+
+let extraModalSubmitAttempted = false;
+
+function validateExtraModalForm() {
+    const svcOk     = !!document.getElementById('extra-modal-svc-id').value;
+    const therapSel = document.getElementById('extra-modal-therapist');
+    const therapOk  = parseInt(therapSel.value) > 0;
+    const priceInp  = document.getElementById('extra-modal-price');
+    const pv = priceInp.value.trim();
+    const pn = parseFloat(pv);
+    const priceOk = pv !== '' && !isNaN(pn) && pn >= 0;
+    const valid = svcOk && therapOk && priceOk;
+
+    // Only surface field-level error text after a submit was attempted,
+    // so the modal doesn't open already showing red errors.
+    if (extraModalSubmitAttempted) {
+        const svcErr = document.getElementById('extra-modal-svc-err');
+        if (svcErr) svcErr.style.display = svcOk ? 'none' : '';
+
+        const therapErr = document.getElementById('extra-modal-therapist-err');
+        if (therapErr) { therapErr.textContent = therapOk ? '' : 'Select a therapist'; therapErr.style.display = therapOk ? 'none' : ''; }
+
+        const priceErr = document.getElementById('extra-modal-price-err');
+        if (priceErr) { priceErr.textContent = priceOk ? '' : 'Enter a valid price'; priceErr.style.display = priceOk ? 'none' : ''; }
+    }
+
+    const confirmBtn = document.getElementById('extra-modal-confirm');
+    confirmBtn.disabled = !valid;
+    confirmBtn.style.opacity = valid ? '' : '0.5';
+    confirmBtn.style.cursor  = valid ? '' : 'not-allowed';
+    return valid;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('extraServiceForm');
+    if (!form) return;
+    form.addEventListener('submit', function(e) {
+        extraModalSubmitAttempted = true;
+        if (!validateExtraModalForm()) e.preventDefault();
+    });
+});
 
 // ── Collapse / Expand card (smooth max-height transition + localStorage) ──────
 function toggleApptCard(headerEl) {
@@ -6134,6 +6203,91 @@ function loadAddSvcSlots() {
                 <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary" style="flex:1;"
                         <?php if (is_cashier()): ?>onclick="openPinGate('Save Changes',this.closest('form'))"<?php endif; ?>>Save Changes</button>
                 <button type="button" onclick="closeEditModal()" class="btn btn-secondary">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ── ADD EXTRA SERVICE MODAL (appointment card) ────────────────────────── -->
+<div id="extraServiceModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem;">
+    <div style="background:var(--bg2);border-radius:16px;padding:1.5rem;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+            <span style="font-weight:800;font-size:1rem;color:var(--brown);">Add Extra Service</span>
+            <span id="extraSvcRateBadge" style="font-size:0.7rem;background:var(--bg3);padding:0.15rem 0.55rem;border-radius:20px;color:var(--gray);font-weight:400;"></span>
+        </div>
+        <form method="POST" id="extraServiceForm" data-extra-svc="1">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="action"      value="add_extra_service">
+            <input type="hidden" name="appt_id"      id="extra-modal-appt-id">
+            <input type="hidden" name="extra_svc_id" id="extra-modal-svc-id">
+
+            <div style="margin-bottom:0.75rem;">
+                <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">For which person?</label>
+                <select name="person_label" id="extra-modal-person"
+                        style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;"></select>
+            </div>
+
+            <div style="margin-bottom:0.75rem;">
+                <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:4px;">Service <span style="color:var(--rust);">*</span></label>
+                <input type="text" id="extra-modal-search" placeholder="Search services…" autocomplete="off"
+                       oninput="filterExtraServiceList(this.value)"
+                       style="width:100%;padding:0.5rem 0.7rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
+                <div id="extra-modal-selected" style="display:none;margin-top:0.4rem;padding:0.5rem 0.7rem;border-radius:7px;background:var(--gold-dim);font-size:0.83rem;color:var(--brown);font-weight:600;align-items:center;justify-content:space-between;">
+                    <span id="extra-modal-selected-name"></span>
+                    <button type="button" onclick="clearExtraServiceSelection()" style="background:none;border:none;color:var(--rust);cursor:pointer;font-size:0.9rem;">✕</button>
+                </div>
+                <div id="extra-modal-svc-list" style="margin-top:0.4rem;max-height:200px;overflow-y:auto;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);">
+                    <?php foreach ($services_by_cat as $cat => $svcs): ?>
+                    <div class="extra-svc-group">
+                        <div style="padding:0.3rem 0.65rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--gray);background:var(--bg4);position:sticky;top:0;">
+                            <?php echo htmlspecialchars($cat); ?>
+                        </div>
+                        <?php foreach ($svcs as $sv): ?>
+                        <div class="extra-svc-row" data-name="<?php echo htmlspecialchars(mb_strtolower($sv['name'])); ?>"
+                             onclick="selectExtraService(<?php echo (int)$sv['id']; ?>, <?php echo json_encode($sv['name'], JSON_HEX_APOS | JSON_HEX_QUOT); ?>)"
+                             style="padding:0.45rem 0.65rem;font-size:0.83rem;color:var(--brown);cursor:pointer;border-top:1px solid var(--border2);display:flex;justify-content:space-between;gap:0.5rem;">
+                            <span><?php echo htmlspecialchars($sv['name']); ?></span>
+                            <span style="color:var(--gray);flex-shrink:0;">₱<?php echo number_format($sv['price'], 2); ?></span>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endforeach; ?>
+                    <div id="extra-modal-no-results" style="display:none;padding:1rem;text-align:center;color:var(--gray);font-size:0.8rem;">No services match.</div>
+                </div>
+                <span id="extra-modal-svc-err" style="font-size:0.68rem;color:var(--rust);margin-top:2px;display:none;">Select a service</span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.65rem;margin-bottom:0.75rem;">
+                <div>
+                    <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Charged Price (₱) <span style="color:var(--rust);">*</span></label>
+                    <input type="number" name="extra_price" id="extra-modal-price" step="0.01" min="0" placeholder="0.00" required
+                           oninput="validateExtraModalForm()"
+                           style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
+                    <div id="extra-modal-price-hint" style="font-size:0.68rem;color:var(--gray);margin-top:2px;"></div>
+                    <span id="extra-modal-price-err" style="font-size:0.68rem;color:var(--rust);margin-top:2px;display:none;"></span>
+                </div>
+                <div>
+                    <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Therapist (optional)</label>
+                    <select name="extra_therapist" id="extra-modal-therapist" required onchange="validateExtraModalForm()"
+                            style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.83rem;"></select>
+                    <div id="extra-modal-therapist-note" style="font-size:0.68rem;color:var(--gray);margin-top:2px;display:none;"></div>
+                    <span id="extra-modal-therapist-err" style="font-size:0.68rem;color:var(--rust);margin-top:2px;display:none;"></span>
+                </div>
+            </div>
+
+            <div style="margin-bottom:0.85rem;">
+                <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Notes (optional)</label>
+                <input type="text" name="extra_notes" id="extra-modal-notes" placeholder="e.g. VIP guest, specific request..."
+                       style="width:100%;padding:0.4rem 0.65rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.83rem;box-sizing:border-box;">
+            </div>
+
+            <div style="margin-bottom:0.85rem;padding:0.6rem 0.8rem;background:rgba(201,106,44,0.06);border:1px dashed var(--gold);border-radius:8px;font-size:0.75rem;color:#78350f;">
+                Payment for extra services is collected when you mark the session complete.
+            </div>
+
+            <div style="display:flex;gap:0.6rem;">
+                <button type="submit" id="extra-modal-confirm" class="btn btn-primary" style="flex:1;opacity:0.5;cursor:not-allowed;" disabled>Confirm Add Service</button>
+                <button type="button" class="btn btn-secondary" onclick="closeExtraServiceModal()">Cancel</button>
             </div>
         </form>
     </div>
