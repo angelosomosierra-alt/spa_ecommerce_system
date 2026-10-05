@@ -2526,6 +2526,8 @@ foreach ($all_services_list as $_sv_seed) {
         'price_mode'       => 'regular',
         'promo_start_time' => null,
         'promo_end_time'   => null,
+        'active_price'     => (float)$_sv_seed['price'],
+        'is_promo_active'  => false,
     ];
 }
 $sdp_res = $conn->query("
@@ -2539,12 +2541,17 @@ $sdp_res = $conn->query("
     )
 ");
 while ($sdp = $sdp_res->fetch_assoc()) {
+    // Same "what's active right now" resolution walkin.php's service cards
+    // use, so this modal's list shows the exact same promo badge/strikethrough.
+    $_active = get_active_duration_price($sdp);
     $svc_duration_pricing[$sdp['service_id']] = [
         'regular_price'    => (float)$sdp['regular_price'],
         'promo_price'      => (float)$sdp['promo_price'],
         'price_mode'       => $sdp['price_mode'],
         'promo_start_time' => $sdp['promo_start_time'],
         'promo_end_time'   => $sdp['promo_end_time'],
+        'active_price'     => $_active['price'],
+        'is_promo_active'  => $_active['is_promo_active'],
     ];
 }
 
@@ -6242,12 +6249,23 @@ function loadAddSvcSlots() {
                         <div style="padding:0.3rem 0.65rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--gray);background:var(--bg4);position:sticky;top:0;">
                             <?php echo htmlspecialchars($cat); ?>
                         </div>
-                        <?php foreach ($svcs as $sv): ?>
+                        <?php foreach ($svcs as $sv):
+                            $_row_d = $svc_duration_pricing[$sv['id']] ?? null;
+                            $_row_promo = $_row_d && !empty($_row_d['is_promo_active']);
+                        ?>
                         <div class="extra-svc-row" data-name="<?php echo htmlspecialchars(mb_strtolower($sv['name'])); ?>"
                              onclick="selectExtraService(<?php echo (int)$sv['id']; ?>, <?php echo json_encode($sv['name'], JSON_HEX_APOS | JSON_HEX_QUOT); ?>)"
-                             style="padding:0.45rem 0.65rem;font-size:0.83rem;color:var(--brown);cursor:pointer;border-top:1px solid var(--border2);display:flex;justify-content:space-between;gap:0.5rem;">
+                             style="padding:0.45rem 0.65rem;font-size:0.83rem;color:var(--brown);cursor:pointer;border-top:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
                             <span><?php echo htmlspecialchars($sv['name']); ?></span>
-                            <span style="color:var(--gray);flex-shrink:0;">₱<?php echo number_format($sv['price'], 2); ?></span>
+                            <span style="flex-shrink:0;display:flex;align-items:center;gap:0.35rem;">
+                                <?php if ($_row_promo): ?>
+                                <span style="text-decoration:line-through;color:var(--gray);font-size:0.78em;">₱<?php echo number_format($_row_d['regular_price'], 2); ?></span>
+                                <span style="color:var(--brown);">₱<?php echo number_format($_row_d['active_price'], 2); ?></span>
+                                <span style="font-size:0.63rem;background:#fdf4ff;color:#a21caf;padding:0.05rem 0.4rem;border-radius:20px;border:1px solid #d946ef;">Promo</span>
+                                <?php else: ?>
+                                <span style="color:var(--gray);">₱<?php echo number_format($sv['price'], 2); ?></span>
+                                <?php endif; ?>
+                            </span>
                         </div>
                         <?php endforeach; ?>
                     </div>
