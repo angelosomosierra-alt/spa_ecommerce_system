@@ -96,6 +96,67 @@ foreach ([
 }
 unset($_aes_col, $_col_name, $_chk);
 
+// ── BACKFILL: split pre-existing multi-session extras into session rows ───────
+// Any appointment_extra_services row added before the session-splitting
+// feature above went live is still sitting as a single total_sessions=1 row
+// even though its own service_duration_id points to a session_count>1
+// package (e.g. a 2-session Exilis-Arms extra added right before this
+// deployed) -- it never got the per-session split, so no session badge or
+// Mark Session Complete button shows for it. One-time, idempotent: only
+// matches rows still at total_sessions=1 with a qualifying duration, so it's
+// a no-op once a row has already been split (by this or the add handler).
+$_aes_backfill_q = $conn->query("
+    SELECT aes.id, aes.appointment_id, aes.service_id, aes.therapist_id, aes.person_label,
+           aes.charged_price, aes.commission, aes.rate_type, aes.payment_method, aes.payment_status,
+           aes.notes, aes.added_by, aes.paymongo_reference, aes.paymongo_method, aes.service_duration_id,
+           aes.created_at, sd.session_count,
+           u.full_name AS added_by_name
+    FROM appointment_extra_services aes
+    JOIN service_durations sd ON sd.id = aes.service_duration_id
+    LEFT JOIN users u ON u.id = aes.added_by
+    WHERE aes.total_sessions = 1 AND sd.session_count > 1
+");
+if ($_aes_backfill_q) {
+    foreach ($_aes_backfill_q->fetch_all(MYSQLI_ASSOC) as $_bf) {
+        $_bf_n       = (int)$_bf['session_count'];
+        $_bf_charged = round((float)$_bf['charged_price'] / $_bf_n, 2);
+        $_bf_comm    = round((float)$_bf['commission']    / $_bf_n, 2);
+        $_bf_by_name = $_bf['added_by_name'] ?: 'Admin';
+
+        // Session 1 — already rendered (this row existed before the feature,
+        // so whatever it represented already happened); attribute it to
+        // whoever added it, at the time it was added, same reasoning the add
+        // handler itself uses for a fresh session 1.
+        $_bf_upd = $conn->prepare("
+            UPDATE appointment_extra_services
+            SET charged_price=?, commission=?, session_number=1, total_sessions=?,
+                extra_group_id=id, session_status='completed',
+                session_completed_by=?, session_completed_by_name=?, session_completed_at=?
+            WHERE id=?
+        ");
+        $_bf_upd->bind_param("ddiissi", $_bf_charged, $_bf_comm, $_bf_n, $_bf['added_by'], $_bf_by_name, $_bf['created_at'], $_bf['id']);
+        $_bf_upd->execute(); $_bf_upd->close();
+
+        // Sessions 2..N — not yet rendered, same as a fresh add's later sessions.
+        for ($_bf_sn = 2; $_bf_sn <= $_bf_n; $_bf_sn++) {
+            $_bf_ins = $conn->prepare("
+                INSERT INTO appointment_extra_services
+                    (appointment_id, service_id, therapist_id, person_label, charged_price, commission,
+                     rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method,
+                     service_duration_id, session_number, total_sessions, extra_group_id, session_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            ");
+            $_bf_ins->bind_param("iiisddssssissiiii",
+                $_bf['appointment_id'], $_bf['service_id'], $_bf['therapist_id'], $_bf['person_label'],
+                $_bf_charged, $_bf_comm, $_bf['rate_type'], $_bf['payment_method'], $_bf['payment_status'],
+                $_bf['notes'], $_bf['added_by'], $_bf['paymongo_reference'], $_bf['paymongo_method'],
+                $_bf['service_duration_id'], $_bf_sn, $_bf_n, $_bf['id']);
+            $_bf_ins->execute(); $_bf_ins->close();
+        }
+    }
+}
+unset($_aes_backfill_q, $_bf, $_bf_n, $_bf_charged, $_bf_comm, $_bf_by_name, $_bf_upd, $_bf_sn, $_bf_ins);
+
 // ── Ensure action tracking columns exist ──────────────────────────────────────
 foreach ([
     "completed_by      INT NULL DEFAULT NULL",
