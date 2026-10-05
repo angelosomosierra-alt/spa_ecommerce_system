@@ -6254,7 +6254,7 @@ function loadAddSvcSlots() {
                             $_row_promo = $_row_d && !empty($_row_d['is_promo_active']);
                         ?>
                         <div class="extra-svc-row" data-name="<?php echo htmlspecialchars(mb_strtolower($sv['name'])); ?>"
-                             onclick="selectExtraService(<?php echo (int)$sv['id']; ?>, <?php echo json_encode($sv['name'], JSON_HEX_APOS | JSON_HEX_QUOT); ?>)"
+                             onclick='selectExtraService(<?php echo (int)$sv['id']; ?>, <?php echo json_encode($sv['name'], JSON_HEX_APOS | JSON_HEX_QUOT); ?>)'
                              style="padding:0.45rem 0.65rem;font-size:0.83rem;color:var(--brown);cursor:pointer;border-top:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
                             <span><?php echo htmlspecialchars($sv['name']); ?></span>
                             <span style="flex-shrink:0;display:flex;align-items:center;gap:0.35rem;">
