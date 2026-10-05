@@ -1,7 +1,8 @@
 <?php
 /**
  * reset_data.php — ONE-TIME owner-only utility to wipe all appointment,
- * commission, and order history for a fresh production start.
+ * commission, order, and Daily Report (Sales Report + Spreadsheet) history
+ * for a fresh production start.
  *
  * Not linked from the admin nav — reached only by typing its URL directly.
  * DELETE THIS FILE after running it once. Leaving a data-wipe endpoint
@@ -10,7 +11,10 @@
  *
  * Clears (TRUNCATE — also resets AUTO_INCREMENT back to 1):
  *   appointment_extra_services, appointment_sessions, appointment_therapists,
- *   therapist_ratings, appointments, order_items, orders
+ *   therapist_ratings, appointments, order_items, orders,
+ *   daily_report_spreadsheet_rows, daily_report_session_commission_rows,
+ *   daily_report_denominations, daily_reports, gift_certificates,
+ *   unpaids_corp, business_expenses, daily_product_sales
  *
  * Does NOT touch: therapist_commission (the %/rate configuration matrix),
  * therapist_deductions (CA/deductions), services, products, therapists,
@@ -28,6 +32,7 @@ if (!is_owner()) {
 
 const RESET_PHRASE = 'RESET APPOINTMENTS';
 const RESET_TABLES = [
+    // Appointments, orders, commission records
     'appointment_extra_services',
     'appointment_sessions',
     'appointment_therapists',
@@ -35,6 +40,16 @@ const RESET_TABLES = [
     'appointments',
     'order_items',
     'orders',
+    // Daily Report — Sales Report tabs (Cash & Summary, Expenses, GC &
+    // Unpaids, Products Sold) and the Spreadsheet tab
+    'daily_report_spreadsheet_rows',
+    'daily_report_session_commission_rows',
+    'daily_report_denominations',
+    'daily_reports',
+    'gift_certificates',
+    'unpaids_corp',
+    'business_expenses',
+    'daily_product_sales',
 ];
 
 $done   = false;
@@ -55,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $conn->query("SET FOREIGN_KEY_CHECKS=1");
         if (empty($errors)) {
             log_activity($conn, 'data_reset',
-                'Reset all appointments, orders, and commission/ratings history (owner-triggered, one-time)',
+                'Reset all appointments, orders, commission/ratings history, and Daily Report (Sales Report + Spreadsheet) data (owner-triggered, one-time)',
                 'system', null);
             $done = true;
         }
@@ -87,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <h1>Reset Appointment &amp; Order Data</h1>
 
     <?php if ($done): ?>
-        <div class="ok">Done. All appointments, extra services, sessions, ratings, and orders have been cleared and IDs reset to start from 1 again.</div>
+        <div class="ok">Done. All appointments, extra services, sessions, ratings, orders, and every date's Daily Report (Sales Report + Spreadsheet) have been cleared and IDs reset to start from 1 again.</div>
         <p style="font-size:0.85rem;">Delete this file (<code>admin/reset_data.php</code>) now — it has no further use and shouldn't stay reachable.</p>
     <?php else: ?>
         <?php foreach ($errors as $e): ?>
@@ -95,11 +110,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php endforeach; ?>
 
         <div class="warn">
-            This permanently deletes, for every customer, every appointment:
+            This permanently deletes, for every customer, every appointment and every day's Daily Report:
             <ul>
                 <li>appointments, their assigned therapists, extra add-on services, and package sessions</li>
                 <li>therapist ratings/reviews left on those appointments</li>
                 <li>all orders and order items (product purchases, walk-in and online)</li>
+                <li>the Daily Report's Spreadsheet tab (all rows, every date)</li>
+                <li>the Daily Report's Sales Report tabs: Cash &amp; Summary (cash counts, opening/closing, lock state), Expenses, GC &amp; Unpaids, and Products Sold — all dates</li>
             </ul>
             There is no undo. Commission <em>rates</em> (the Commission Matrix), services, products, therapists, and staff/customer accounts are not affected.
         </div>
