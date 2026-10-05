@@ -517,6 +517,27 @@ $ss_recluster2->bind_param("ss", $report_date, $report_date);
 $ss_recluster2->execute();
 $ss_recluster2->close();
 
+// ── BACKFILL: correct Net Sales on rows imported before commit adbcae0 ────────
+// Before that fix, a main service row's net_sales was computed as
+// (service's promo_price − commission) instead of (amount actually charged −
+// commission) -- harmless whenever the customer happened to pay the promo
+// price, but wrong whenever a promo is merely DEFINED on the service while
+// the customer actually paid regular (commission is always promo-based per
+// policy regardless, so that part was never the problem). Recomputes using
+// the same formula the import uses today, straight from the appointment's
+// own charged_price, and only for rows nobody has since hand-edited in the
+// Spreadsheet grid (created_by_name='import' AND never updated) — a
+// deliberate manual correction is never overwritten.
+$conn->query("
+    UPDATE daily_report_spreadsheet_rows d
+    JOIN appointments a ON a.id = d.source_appointment_id
+    SET d.net_sales = a.charged_price - (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25)
+    WHERE d.source_appointment_id IS NOT NULL
+      AND d.created_by_name = 'import'
+      AND (d.updated_by_name IS NULL OR d.updated_by_name = '')
+      AND d.net_sales <> ROUND(a.charged_price - (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25), 2)
+");
+
 // ── AUTO-IMPORT: Completed appointments → spreadsheet rows ────────────────────
 // Idempotent — safe on every page load. Skips any appointment already present
 // via source_appointment_id. Never modifies live appointment records.
