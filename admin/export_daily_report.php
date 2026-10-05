@@ -339,6 +339,26 @@ for ($r = $inf_row; $r <= 69; $r++) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// 6b. DOWN PAYMENT (ADV BOOKING) — rows 64-73, columns R-U
+//     Q64:Q73 = bullet markers (template), S74 = =sum(S64:S73) preserved.
+//     This whole box (header, bullets, Total formula) exists in the other
+//     day-sheets ("Copy of 13", "16") but was missing from sheet 28, the one
+//     this export actually fills — added to the template to match. Same
+//     advance-payment data as the Cash & Summary tab's Advance Payments
+//     Received panel and the Spreadsheet tab's own Down Payment panel.
+//     Max 10 rows.
+// ════════════════════════════════════════════════════════════════════════════
+$dp_row = 64;
+foreach ($advances_received as $dp) {
+    if ($dp_row > 73) break;
+    $cv('R' . $dp_row, $dp['customer_name'] ?? '');
+    $cv('S' . $dp_row, (float)($dp['advance_payment'] ?? 0));
+    $cv('T' . $dp_row, ucfirst($dp['advance_payment_method'] ?? 'cash'));
+    $cv('U' . $dp_row, $dp['service_name'] ?? '');
+    $dp_row++;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // 7. EXPENSES (rows 80-94, columns F-H)
 //    H95 = =SUM(H80:H94) preserved
 // ════════════════════════════════════════════════════════════════════════════
