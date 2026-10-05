@@ -598,7 +598,13 @@ require_once 'admin_header.php';
                 <div style="text-align:center;">
                     <div style="font-size:1.4rem;font-weight:700;color:#2d8a4e;">₱<?php echo number_format($total_earned,2); ?></div>
                     <div style="font-size:0.72rem;color:var(--gray);">
-                        <?php echo $history_therapist['pay_type'] === 'fixed' ? 'Total Salary Earned' : 'Total Earned'; ?>
+                        Total Net Sales<?php echo ($hist_from || $hist_to) ? '' : ' (today)'; ?>
+                    </div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:#842029;">₱<?php echo number_format($total_ca + $total_expense,2); ?></div>
+                    <div style="font-size:0.72rem;color:var(--gray);">
+                        CA / Deductions<?php echo ($hist_from || $hist_to) ? '' : ' (today)'; ?>
                     </div>
                 </div>
                 <div style="text-align:center;">
@@ -782,21 +788,27 @@ require_once 'admin_header.php';
     <?php endif; ?>
 
     <div class="panel-body" style="border-top:2px solid var(--border2);padding:1rem 1.25rem;">
-        <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.3rem;">
-            <span style="color:var(--gray);">
-                <?php echo $history_therapist['pay_type'] === 'fixed'
-                    ? 'Total Salary Earned (' . $days_worked . ' day' . ($days_worked === 1 ? '' : 's') . ')'
-                    : 'Total Commission Earned'; ?>
+        <div style="display:flex;justify-content:space-between;font-size:0.95rem;font-weight:800;margin-bottom:0.5rem;">
+            <span style="color:var(--brown);">
+                Total Net Sales
+                <?php if ($history_therapist['pay_type'] === 'fixed'): ?>
+                <span style="font-size:0.7rem;font-weight:500;color:var(--gray);">(<?php echo $days_worked; ?> day<?php echo $days_worked === 1 ? '' : 's'; ?>)</span>
+                <?php endif; ?>
             </span>
-            <span style="font-weight:700;color:#2d8a4e;">₱<?php echo number_format($total_earned,2); ?></span>
+            <span style="color:#2d8a4e;">₱<?php echo number_format($total_earned,2); ?></span>
         </div>
-        <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.3rem;">
-            <span style="color:var(--gray);">Cash Advances</span>
-            <span style="font-weight:700;color:#842029;">−₱<?php echo number_format($total_ca,2); ?></span>
+        <div style="display:flex;justify-content:space-between;font-size:0.95rem;font-weight:800;margin-bottom:0.6rem;
+                    padding-bottom:0.6rem;border-bottom:1px solid var(--border2);">
+            <span style="color:var(--brown);">CA / Deductions</span>
+            <span style="color:#842029;">−₱<?php echo number_format($total_ca + $total_expense,2); ?></span>
         </div>
-        <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.6rem;">
-            <span style="color:var(--gray);">Deductions</span>
-            <span style="font-weight:700;color:#842029;">−₱<?php echo number_format($total_expense,2); ?></span>
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:0.25rem;padding-left:0.75rem;">
+            <span style="color:var(--gray);">— Cash Advances</span>
+            <span style="color:var(--gray);">−₱<?php echo number_format($total_ca,2); ?></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:0.6rem;padding-left:0.75rem;">
+            <span style="color:var(--gray);">— Deductions</span>
+            <span style="color:var(--gray);">−₱<?php echo number_format($total_expense,2); ?></span>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:1rem;font-weight:800;
                     padding-top:0.6rem;border-top:1px solid var(--border2);">

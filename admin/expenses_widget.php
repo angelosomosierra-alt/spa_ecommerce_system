@@ -118,64 +118,11 @@ $today_exp_total = array_sum(array_column($today_expenses, 'amount'));
 $biz_categories = ['water','laundry','supplies','utilities','food','transport','maintenance','misc'];
 $cat_icons      = ['water'=>'','laundry'=>'','supplies'=>'','utilities'=>'',
                    'food'=>'','transport'=>'','maintenance'=>'','misc'=>''];
-$cat_colors     = ['water'=>'#0070f3','laundry'=>'#8b5cf6','supplies'=>'#2d8a4e','utilities'=>'#f59e0b',
-                   'food'=>'#e8590c','transport'=>'#0ca5ac','maintenance'=>'#842029','misc'=>'#6b7280'];
 // Compact mode: bare add-form only, no outer panel/header and no embedded
 // "Today's list" -- used when the caller (Daily Report's Expenses tab)
 // already provides its own panel wrapper and its own properly date-filtered
 // expenses table, so this avoids a redundant nested "today only" list.
 $_compact = !empty($GLOBALS['expenses_widget_compact']);
-
-// ── Expense Category Summary (date-range filter + per-category detail) ──────
-// Shown only in the full (non-compact) widget, i.e. the dashboard instance.
-if (!$_compact) {
-    $exp_range = $_GET['exp_range'] ?? 'today';
-    if (!in_array($exp_range, ['today','7d','30d','custom'], true)) $exp_range = 'today';
-    if ($exp_range === 'custom') {
-        $exp_from = trim($_GET['exp_from'] ?? '');
-        $exp_to   = trim($_GET['exp_to']   ?? '');
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp_from)) $exp_from = date('Y-m-d');
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp_to))   $exp_to   = date('Y-m-d');
-    } elseif ($exp_range === '7d') {
-        $exp_from = date('Y-m-d', strtotime('-6 days'));
-        $exp_to   = date('Y-m-d');
-    } elseif ($exp_range === '30d') {
-        $exp_from = date('Y-m-d', strtotime('-29 days'));
-        $exp_to   = date('Y-m-d');
-    } else {
-        $exp_from = date('Y-m-d');
-        $exp_to   = date('Y-m-d');
-    }
-
-    $range_stmt = $conn->prepare("
-        SELECT be.*, u.full_name AS by_name
-        FROM business_expenses be
-        LEFT JOIN users u ON be.added_by = u.id
-        WHERE be.expense_date BETWEEN ? AND ?
-        ORDER BY be.expense_date DESC, be.created_at DESC
-    ");
-    $range_stmt->bind_param("ss", $exp_from, $exp_to);
-    $range_stmt->execute();
-    $range_expenses = $range_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    $range_stmt->close();
-
-    $cat_summary = []; // category => ['total'=>, 'count'=>, 'entries'=>[]]
-    foreach ($range_expenses as $re) {
-        $c = $re['category'];
-        if (!isset($cat_summary[$c])) $cat_summary[$c] = ['total' => 0.0, 'count' => 0, 'entries' => []];
-        $cat_summary[$c]['total']  += (float)$re['amount'];
-        $cat_summary[$c]['count']  += 1;
-        $cat_summary[$c]['entries'][] = [
-            'date'    => $re['expense_date'],
-            'label'   => $re['label'],
-            'amount'  => (float)$re['amount'],
-            'by'      => $re['by_name'] ?? 'System',
-            'notes'   => $re['notes'] ?? '',
-        ];
-    }
-    uasort($cat_summary, fn($a, $b) => $b['total'] <=> $a['total']);
-    $exp_range_total = array_sum(array_column($cat_summary, 'total'));
-}
 ?>
 
 <!-- ── BUSINESS EXPENSES WIDGET ───────────────────────────────────────────── -->
@@ -311,112 +258,6 @@ if (!$_compact) {
         </div>
     </div>
 
-    <?php if (!$_compact): ?>
-    <!-- Expense Category Summary -->
-    <div class="panel-body" style="padding:1rem;border-top:1px solid var(--border2);">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.75rem;">
-            <div style="font-size:0.78rem;font-weight:700;color:var(--brown);">
-                Expense Category Summary
-            </div>
-            <form method="GET" style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
-                <?php foreach (['today' => 'Today', '7d' => 'Last 7 days', '30d' => 'Last 30 days'] as $rk => $rl): ?>
-                <a href="?exp_range=<?php echo $rk; ?>#expenses-widget"
-                   class="btn btn-sm <?php echo $exp_range === $rk ? 'btn-primary' : 'btn-secondary'; ?>"
-                   style="font-size:0.72rem;padding:0.3rem 0.6rem;"><?php echo $rl; ?></a>
-                <?php endforeach; ?>
-                <input type="date" name="exp_from" value="<?php echo htmlspecialchars($exp_range === 'custom' ? $exp_from : ''); ?>"
-                       style="padding:0.3rem 0.5rem;border:1px solid var(--border2);border-radius:6px;background:var(--bg3);color:var(--brown);font-size:0.74rem;">
-                <span style="font-size:0.72rem;color:var(--gray);">to</span>
-                <input type="date" name="exp_to" value="<?php echo htmlspecialchars($exp_range === 'custom' ? $exp_to : ''); ?>"
-                       style="padding:0.3rem 0.5rem;border:1px solid var(--border2);border-radius:6px;background:var(--bg3);color:var(--brown);font-size:0.74rem;">
-                <input type="hidden" name="exp_range" value="custom">
-                <button type="submit" class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:0.3rem 0.6rem;">Apply</button>
-            </form>
-        </div>
-
-        <?php if (empty($cat_summary)): ?>
-        <div style="text-align:center;padding:1.5rem;color:var(--gray);font-size:0.82rem;
-                    background:var(--bg3);border-radius:8px;border:1px solid var(--border2);">
-            No expenses recorded for this period.
-        </div>
-        <?php else: ?>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:0.6rem;">
-            <?php foreach ($cat_summary as $cat => $cs):
-                $cat_color = $cat_colors[$cat] ?? '#6b7280';
-            ?>
-            <div onclick="openExpenseCategoryModal('<?php echo htmlspecialchars($cat, ENT_QUOTES); ?>')"
-                 style="cursor:pointer;padding:0.75rem;border-radius:9px;background:var(--bg3);
-                        border:1px solid var(--border2);border-left:4px solid <?php echo $cat_color; ?>;
-                        transition:box-shadow 0.15s;"
-                 onmouseover="this.style.boxShadow='0 2px 10px rgba(0,0,0,0.08)'"
-                 onmouseout="this.style.boxShadow='none'">
-                <div style="font-size:0.78rem;font-weight:700;color:var(--brown);margin-bottom:0.3rem;">
-                    <?php echo ucfirst($cat); ?>
-                </div>
-                <div style="font-size:1.05rem;font-weight:700;color:<?php echo $cat_color; ?>;">
-                    ₱<?php echo number_format($cs['total'],2); ?>
-                </div>
-                <div style="font-size:0.68rem;color:var(--gray);"><?php echo $cs['count']; ?> entr<?php echo $cs['count']===1?'y':'ies'; ?></div>
-            </div>
-            <?php endforeach; ?>
-        </div>
-        <div style="margin-top:0.6rem;text-align:right;font-size:0.82rem;font-weight:700;color:var(--rust);">
-            Period Total: ₱<?php echo number_format($exp_range_total, 2); ?>
-        </div>
-        <?php endif; ?>
-    </div>
-
-    <!-- Expense Category Detail Modal -->
-    <div id="expCategoryModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(30,20,10,0.55);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:1rem;">
-        <div style="background:#fff;border-radius:14px;width:100%;max-width:520px;max-height:85vh;overflow-y:auto;padding:1.5rem;box-shadow:0 20px 60px rgba(0,0,0,0.22);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
-                <span id="expCatModalTitle" style="font-weight:700;font-size:1rem;color:var(--brown);"></span>
-                <button type="button" onclick="closeExpenseCategoryModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);">✕</button>
-            </div>
-            <div id="expCatModalRange" style="font-size:0.74rem;color:var(--gray);margin-bottom:0.75rem;"></div>
-            <div id="expCatModalList" style="display:flex;flex-direction:column;gap:0.4rem;"></div>
-            <div style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border2);
-                        display:flex;justify-content:space-between;font-weight:700;color:var(--rust);">
-                <span>Total</span>
-                <span id="expCatModalTotal"></span>
-            </div>
-        </div>
-    </div>
-    <script>
-    const expenseCategoryData = <?php echo json_encode($cat_summary, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
-    const expenseRangeLabel = <?php echo json_encode(date('M d, Y', strtotime($exp_from)) . ($exp_from !== $exp_to ? ' – ' . date('M d, Y', strtotime($exp_to)) : ''), JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
-    function openExpenseCategoryModal(cat) {
-        const data = expenseCategoryData[cat];
-        if (!data) return;
-        document.getElementById('expCatModalTitle').textContent = cat.charAt(0).toUpperCase() + cat.slice(1) + ' Expenses';
-        document.getElementById('expCatModalRange').textContent = expenseRangeLabel;
-        const list = document.getElementById('expCatModalList');
-        list.innerHTML = '';
-        data.entries.forEach(function(e) {
-            const row = document.createElement('div');
-            row.style = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.65rem;background:var(--bg3);border-radius:7px;border:1px solid var(--border2);';
-            row.innerHTML =
-                '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-size:0.82rem;font-weight:600;color:var(--brown);">' + escapeHtmlExp(e.label) + '</div>' +
-                    '<div style="font-size:0.68rem;color:var(--gray);">' + e.date + ' &middot; by ' + escapeHtmlExp(e.by) +
-                        (e.notes ? ' &middot; ' + escapeHtmlExp(e.notes) : '') + '</div>' +
-                '</div>' +
-                '<span style="font-weight:700;color:var(--rust);font-size:0.85rem;white-space:nowrap;">₱' + e.amount.toFixed(2) + '</span>';
-            list.appendChild(row);
-        });
-        document.getElementById('expCatModalTotal').textContent = '₱' + data.total.toFixed(2);
-        document.getElementById('expCategoryModal').style.display = 'flex';
-    }
-    function closeExpenseCategoryModal() {
-        document.getElementById('expCategoryModal').style.display = 'none';
-    }
-    function escapeHtmlExp(s) {
-        const d = document.createElement('div');
-        d.textContent = s || '';
-        return d.innerHTML;
-    }
-    </script>
-    <?php endif; // !$_compact (Expense Category Summary) ?>
 <?php if (!$_compact): ?>
 </div>
 <?php endif; ?>

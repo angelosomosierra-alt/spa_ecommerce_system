@@ -1383,6 +1383,7 @@ function qbSubmit() {
 </div>
 <!-- ── BUSINESS EXPENSES WIDGET ──────────────────────────────────────────── -->
 <?php require 'expenses_widget.php'; ?>
+<?php require 'expense_category_summary.php'; ?>
 
 <?php
 $extra_scripts = '<script>
