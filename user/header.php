@@ -81,6 +81,51 @@ $current_page = basename($_SERVER['PHP_SELF']);
             to   { transform: translateX(0); }
         }
 
+        /* ── Chat drawer (same slide-in pattern as the cart drawer) ── */
+        #chatSlideOverlay {
+            display: none;
+            position: fixed; inset: 0; z-index: 9998;
+            background: rgba(0,0,0,.45);
+            backdrop-filter: blur(2px);
+            animation: fadeIn .3s ease;
+        }
+        #chatSlideOverlay.open { display: block; }
+        #chatSlideDrawer {
+            display: none;
+            position: fixed; top: 0; right: 0; bottom: 0; z-index: 9999;
+            width: 420px; max-width: 100vw;
+            background: #fdfaf6;
+            box-shadow: -6px 0 40px rgba(0,0,0,.15);
+            flex-direction: column;
+            animation: slideIn .38s cubic-bezier(.4,0,.2,1);
+            overflow: hidden;
+        }
+        #chatSlideDrawer.open { display: flex; }
+        #chatMessages {
+            flex: 1; overflow-y: auto; padding: 1.1rem 1rem;
+        }
+        #chatMessages::-webkit-scrollbar { width: 5px; }
+        #chatMessages::-webkit-scrollbar-thumb { background: rgba(201,106,44,.25); border-radius: 4px; }
+        .chat-send-bar {
+            display: flex; gap: .6rem; align-items: flex-end;
+            padding: .85rem 1rem; border-top: 1px solid #EAD8C0;
+            background: #fff; flex-shrink: 0;
+        }
+        .chat-send-bar textarea {
+            flex: 1; resize: none; max-height: 90px;
+            padding: .55rem .75rem; border: 1px solid #EAD8C0; border-radius: 10px;
+            font: inherit; font-size: .85rem; color: #3B2A1A;
+            outline: none;
+        }
+        .chat-send-bar textarea:focus { border-color: #C96A2C; }
+        .chat-send-bar button {
+            padding: .6rem 1.1rem; border: none; border-radius: 10px;
+            background: #C96A2C; color: #fff; font-weight: 700; font-size: .85rem;
+            cursor: pointer; transition: background .15s; flex-shrink: 0;
+        }
+        .chat-send-bar button:hover { background: #A94F1D; }
+        .chat-send-bar button:disabled { opacity: .6; cursor: default; }
+
         /* ── Drawer header bar ── */
         .csd-header {
             display: flex; align-items: center; justify-content: space-between;
@@ -464,6 +509,10 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
         mark_all_read($conn, $notif_user_id);
         header("Location: " . strtok($_SERVER['REQUEST_URI'], '?')); exit();
     }
+
+    // ── Chat (message the spa) setup ───────────────────────────────────────────
+    require_once __DIR__ . '/../chat.php';
+    $chat_unread = chat_unread_count_customer($conn, $notif_user_id);
 }
 ?>
 
@@ -559,6 +608,25 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                         <?php echo $cart_count > 99 ? '99+' : $cart_count; ?>
                     </span>
                 </a>
+
+                <!-- Chat (Message Us) -->
+                <?php if (isset($notif_user_id)): ?>
+                <div style="position:relative;display:inline-block;">
+                    <button onclick="openChatDrawer()"
+                            style="background:none;border:none;cursor:pointer;font-size:1.1rem;
+                                   padding:0.35rem 0.55rem;border-radius:8px;position:relative;
+                                   color:inherit;transition:background 0.15s;"
+                            title="Message Us">
+                        💬
+                        <span id="chatBadge" style="position:absolute;top:-2px;right:-4px;background:#dc3545;
+                                     color:#fff;font-size:0.6rem;font-weight:700;min-width:16px;
+                                     height:16px;border-radius:8px;display:<?php echo $chat_unread > 0 ? 'flex' : 'none'; ?>;align-items:center;
+                                     justify-content:center;padding:0 3px;line-height:1;">
+                            <?php echo $chat_unread > 99 ? '99+' : $chat_unread; ?>
+                        </span>
+                    </button>
+                </div>
+                <?php endif; ?>
 
                 <!-- Notification Bell -->
                 <?php if (isset($notif_user_id)): ?>
@@ -730,6 +798,25 @@ $_logout_url = (strpos($_SERVER['PHP_SELF'], '/user/') !== false)
     </div>
     <div id="cartSlideContent"></div>
 </div>
+
+<?php if (isset($notif_user_id)): ?>
+<!-- ══════════════════════════════════════
+     CHAT DRAWER (message the spa)
+══════════════════════════════════════ -->
+<div id="chatSlideOverlay" onclick="closeChatDrawer()"></div>
+
+<div id="chatSlideDrawer" role="dialog" aria-label="Message Us">
+    <div class="csd-header">
+        <h2>💬 Message Us</h2>
+        <button class="csd-close" onclick="closeChatDrawer()" title="Close">✕</button>
+    </div>
+    <div id="chatMessages"></div>
+    <form id="chatSendForm" class="chat-send-bar">
+        <textarea id="chatInput" placeholder="Type your message…" rows="1" required></textarea>
+        <button type="submit">Send</button>
+    </form>
+</div>
+<?php endif; ?>
 
 <script>
 // ── Profile Sidebar ───────────────────────────────────────────────────────────
@@ -1181,4 +1268,102 @@ document.addEventListener('submit', function(e) {
         btn.textContent = btn.dataset.origLabel + ' Processing…';
     }, 10);
 });
+
+// ════════════════════════════════════════════════════════
+//  CHAT DRAWER (message the spa)
+// ════════════════════════════════════════════════════════
+(function() {
+    const chatDrawer = document.getElementById('chatSlideDrawer');
+    if (!chatDrawer) return; // not logged in — chat UI wasn't rendered
+
+    const chatOverlay = document.getElementById('chatSlideOverlay');
+    const chatMsgs     = document.getElementById('chatMessages');
+    const chatForm     = document.getElementById('chatSendForm');
+    const chatInput    = document.getElementById('chatInput');
+    const chatBadge    = document.getElementById('chatBadge');
+    let chatPollTimer  = null;
+    let chatOpen       = false;
+
+    window.openChatDrawer = function() {
+        chatOverlay.classList.add('open');
+        chatDrawer.classList.add('open');
+        document.body.style.overflow = 'hidden';
+        chatOpen = true;
+        loadChatThread();
+        clearInterval(chatPollTimer);
+        chatPollTimer = setInterval(loadChatThread, 4000);
+    };
+    window.closeChatDrawer = function() {
+        chatOverlay.classList.remove('open');
+        chatDrawer.classList.remove('open');
+        document.body.style.overflow = '';
+        chatOpen = false;
+        clearInterval(chatPollTimer);
+    };
+    chatOverlay.addEventListener('click', closeChatDrawer);
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && chatOpen) closeChatDrawer(); });
+
+    function loadChatThread() {
+        fetch('chat_api.php?action=thread', { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(data => {
+                if (!data || !data.messages_html) return;
+                chatMsgs.innerHTML = data.messages_html;
+                chatMsgs.scrollTop = chatMsgs.scrollHeight;
+                if (chatBadge) chatBadge.style.display = 'none';
+            })
+            .catch(() => {});
+    }
+
+    chatForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const text = chatInput.value.trim();
+        if (!text) return;
+        const btn = chatForm.querySelector('button');
+        btn.disabled = true;
+        chatInput.disabled = true;
+        fetch('chat_api.php?action=send', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'message=' + encodeURIComponent(text)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data && data.ok) {
+                chatInput.value = '';
+                chatMsgs.innerHTML = data.messages_html;
+                chatMsgs.scrollTop = chatMsgs.scrollHeight;
+            }
+        })
+        .catch(() => {})
+        .finally(() => {
+            btn.disabled = false;
+            chatInput.disabled = false;
+            chatInput.focus();
+        });
+    });
+
+    chatInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (chatForm.requestSubmit) chatForm.requestSubmit();
+            else chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
+        }
+    });
+
+    // Lightweight global badge poll, independent of drawer open state.
+    function pollChatBadge() {
+        if (chatOpen) return; // the thread poll above already keeps the badge live
+        fetch('chat_api.php?action=badge', { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(data => {
+                if (!data || !chatBadge) return;
+                chatBadge.textContent = data.unread > 99 ? '99+' : data.unread;
+                chatBadge.style.display = data.unread > 0 ? 'flex' : 'none';
+            })
+            .catch(() => {});
+    }
+    setInterval(pollChatBadge, 4000);
+})();
 </script>

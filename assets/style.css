@@ -54,6 +54,11 @@ body {
 a { text-decoration: none; color: inherit; }
 button { cursor: pointer; border: none; font-family: inherit; }
 
+/* Contact section's Facebook/Instagram links — colored so they read as
+   clickable instead of inheriting the surrounding plain text color. */
+.social-link { color: #C96A2C; font-weight: 600; }
+.social-link:hover { color: #A94F1D; text-decoration: underline; }
+
 /* ========== HEADER & NAVIGATION ========== */
 header {
     background-color: #3B2A1A;
