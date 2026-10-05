@@ -385,7 +385,7 @@ $history_therapist = null;
 $history_records   = [];
 if (isset($_GET['history'])) {
     $hist_id = intval($_GET['history']);
-    $stmt = $conn->prepare("SELECT id, full_name, phone, specialties FROM therapists WHERE id=?");
+    $stmt = $conn->prepare("SELECT id, full_name, phone, specialties, pay_type, fixed_daily_rate FROM therapists WHERE id=?");
     $stmt->bind_param("i", $hist_id); $stmt->execute();
     $history_therapist = $stmt->get_result()->fetch_assoc(); $stmt->close();
 
@@ -513,6 +513,24 @@ require_once 'admin_header.php';
     // and the total always agree. For completed work this equals
     // SUM(v_therapist_commission_events) over the same range (verified in testing).
     $total_earned   = array_sum(array_column($history_records, 'commission'));
+    $days_worked    = 0;
+
+    // Fixed-daily-rate therapists earn no commission at all (enforced on save), so
+    // their "earned" figure comes from days actually clocked in/out instead.
+    if ($history_therapist['pay_type'] === 'fixed') {
+        $dw_sql = "SELECT COUNT(*) AS c FROM therapist_attendance
+                   WHERE therapist_id = ? AND time_in IS NOT NULL AND time_out IS NOT NULL";
+        $dw_params = [$hist_id];
+        $dw_types  = 'i';
+        if ($hist_from) { $dw_sql .= " AND duty_date >= ?"; $dw_params[] = $hist_from; $dw_types .= 's'; }
+        if ($hist_to)   { $dw_sql .= " AND duty_date <= ?"; $dw_params[] = $hist_to;   $dw_types .= 's'; }
+        $dw_stmt = $conn->prepare($dw_sql);
+        $dw_stmt->bind_param($dw_types, ...$dw_params);
+        $dw_stmt->execute();
+        $days_worked  = (int)($dw_stmt->get_result()->fetch_assoc()['c'] ?? 0);
+        $dw_stmt->close();
+        $total_earned = (float)$history_therapist['fixed_daily_rate'] * $days_worked;
+    }
 
     // Cash advance / deductions for the same period
     $ded_sql = "SELECT id, type, amount, label, notes, deduction_date
@@ -553,8 +571,14 @@ require_once 'admin_header.php';
                 <?php echo strtoupper(substr($history_therapist['full_name'],0,1)); ?>
             </div>
             <div style="flex:1;">
-                <div style="font-size:1.1rem;font-weight:700;color:var(--brown);">
+                <div style="font-size:1.1rem;font-weight:700;color:var(--brown);display:flex;align-items:center;gap:0.5rem;">
                     <?php echo htmlspecialchars($history_therapist['full_name']); ?>
+                    <?php if ($history_therapist['pay_type'] === 'fixed'): ?>
+                    <span style="font-size:0.68rem;font-weight:700;padding:0.15rem 0.55rem;border-radius:20px;
+                                 background:var(--gold);color:#fff;">
+                        Fixed ₱<?php echo number_format((float)$history_therapist['fixed_daily_rate'],0); ?>/day
+                    </span>
+                    <?php endif; ?>
                 </div>
                 <?php if ($history_therapist['phone']): ?>
                 <div style="font-size:0.78rem;color:var(--gray);"><?php echo htmlspecialchars($history_therapist['phone']); ?></div>
@@ -565,9 +589,17 @@ require_once 'admin_header.php';
                     <div style="font-size:1.4rem;font-weight:700;color:var(--gold);"><?php echo $total_sessions; ?></div>
                     <div style="font-size:0.72rem;color:var(--gray);">Total Sessions</div>
                 </div>
+                <?php if ($history_therapist['pay_type'] === 'fixed'): ?>
+                <div style="text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--brown);"><?php echo $days_worked; ?></div>
+                    <div style="font-size:0.72rem;color:var(--gray);">Days Worked</div>
+                </div>
+                <?php endif; ?>
                 <div style="text-align:center;">
                     <div style="font-size:1.4rem;font-weight:700;color:#2d8a4e;">₱<?php echo number_format($total_earned,2); ?></div>
-                    <div style="font-size:0.72rem;color:var(--gray);">Total Earned</div>
+                    <div style="font-size:0.72rem;color:var(--gray);">
+                        <?php echo $history_therapist['pay_type'] === 'fixed' ? 'Total Salary Earned' : 'Total Earned'; ?>
+                    </div>
                 </div>
                 <div style="text-align:center;">
                     <div style="font-size:1.4rem;font-weight:700;color:#f59e0b;">
@@ -751,7 +783,11 @@ require_once 'admin_header.php';
 
     <div class="panel-body" style="border-top:2px solid var(--border2);padding:1rem 1.25rem;">
         <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.3rem;">
-            <span style="color:var(--gray);">Total Commission Earned</span>
+            <span style="color:var(--gray);">
+                <?php echo $history_therapist['pay_type'] === 'fixed'
+                    ? 'Total Salary Earned (' . $days_worked . ' day' . ($days_worked === 1 ? '' : 's') . ')'
+                    : 'Total Commission Earned'; ?>
+            </span>
             <span style="font-weight:700;color:#2d8a4e;">₱<?php echo number_format($total_earned,2); ?></span>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.3rem;">
