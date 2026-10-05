@@ -70,6 +70,23 @@ foreach ([
     "paymongo_reference VARCHAR(100) NULL DEFAULT NULL",
     "paymongo_method    VARCHAR(20)  NULL DEFAULT NULL",
     "service_duration_id INT NULL DEFAULT NULL",
+    // Session-count packages added as an extra (e.g. a 2-session Exilis-Arms
+    // package added on top of a main booking) get one appointment_extra_services
+    // row PER SESSION, each its own split of the package price/commission,
+    // grouped by extra_group_id (anchored to the first session's own id, same
+    // convention as appointments.session_group_id). session_status tracks
+    // whether THAT specific session has actually been rendered yet, completely
+    // independent of payment_status -- the whole package is paid for together
+    // when the appointment itself is paid, same as always; session_status is
+    // purely "has this one session happened", so a later session can be marked
+    // done on a future visit without re-billing anything.
+    "session_number    INT NOT NULL DEFAULT 1",
+    "total_sessions    INT NOT NULL DEFAULT 1",
+    "extra_group_id    INT NULL DEFAULT NULL",
+    "session_status    ENUM('pending','completed') NOT NULL DEFAULT 'completed'",
+    "session_completed_by      INT NULL DEFAULT NULL",
+    "session_completed_by_name VARCHAR(120) NULL DEFAULT NULL",
+    "session_completed_at      DATETIME NULL DEFAULT NULL",
 ] as $_aes_col) {
     $_col_name = explode(' ', trim($_aes_col))[0];
     $_chk = $conn->query("SHOW COLUMNS FROM appointment_extra_services LIKE '$_col_name'");
@@ -471,20 +488,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         // picker still behaves exactly as before.
         $es_duration_id = intval($_POST['extra_duration_id'] ?? 0);
         if ($es_duration_id > 0) {
-            $es_dur_q = $conn->prepare("SELECT id, regular_price, promo_price, price_mode, promo_start_time, promo_end_time
+            $es_dur_q = $conn->prepare("SELECT id, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time
                                          FROM service_durations WHERE id = ? AND service_id = ? LIMIT 1");
             $es_dur_q->bind_param("ii", $es_duration_id, $es_service_id); $es_dur_q->execute();
             $es_duration = $es_dur_q->get_result()->fetch_assoc(); $es_dur_q->close();
             if (!$es_duration) { $es_duration_id = 0; } // posted id didn't belong to this service — ignore it
         }
         if (!$es_duration_id) {
-            $es_dur_q = $conn->prepare("SELECT id, regular_price, promo_price, price_mode, promo_start_time, promo_end_time
+            $es_dur_q = $conn->prepare("SELECT id, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time
                                          FROM service_durations WHERE service_id = ?
                                          ORDER BY duration_minutes, session_count LIMIT 1");
             $es_dur_q->bind_param("i", $es_service_id); $es_dur_q->execute();
             $es_duration = $es_dur_q->get_result()->fetch_assoc(); $es_dur_q->close();
             $es_duration_id = $es_duration ? (int)$es_duration['id'] : 0;
         }
+        $es_session_count = $es_duration ? max(1, (int)($es_duration['session_count'] ?? 1)) : 1;
         // Promo-aware "active right now" price, same convention as the main
         // booking flow (walkin.php) -- whatever get_active_duration_price()
         // says RIGHT NOW (promo window live or not) is what gets charged,
@@ -569,21 +587,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         }
 
         // ── INSERT — all bind_param values are plain local variables ──────────
+        // A multi-session duration variant (e.g. a 2-session package) splits
+        // evenly into one row PER SESSION: each its own slice of the charged
+        // price and commission, grouped by extra_group_id. Session 1 is
+        // rendered today (session_status='completed' immediately); later
+        // sessions start 'pending' and get marked done whenever they actually
+        // happen, independent of payment -- the whole package is still billed
+        // together today exactly as a single-session extra always has been.
         $es_pay_status = 'unpaid';
         $es_new_id = 0;
         $es_duration_id_param = $es_duration_id > 0 ? $es_duration_id : null;
-        if ($es_therapist_id > 0) {
-            $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method, service_duration_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $es_ins->bind_param("iiisddssssissi", $es_appt_id, $es_service_id, $es_therapist_id, $es_person_label, $es_charged, $es_commission, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method, $es_duration_id_param);
-        } else {
-            $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method, service_duration_id) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $es_ins->bind_param("iisddssssissi", $es_appt_id, $es_service_id, $es_person_label, $es_charged, $es_commission, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method, $es_duration_id_param);
+        $es_split_charged = round($es_charged / $es_session_count, 2);
+        $es_split_comm    = round($es_commission / $es_session_count, 2);
+        $es_group_id = null;
+        $es_admin_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+        for ($es_sess_n = 1; $es_sess_n <= $es_session_count; $es_sess_n++) {
+            // Only session 1 is genuinely rendered today -- later sessions start
+            // 'pending' with no completed_by/_at until someone actually completes
+            // them (see complete_extra_session below), so they carry no stale
+            // attribution in the meantime.
+            $es_sess_status            = ($es_sess_n === 1) ? 'completed' : 'pending';
+            $es_sess_completed_by      = ($es_sess_n === 1) ? $es_added_by   : null;
+            $es_sess_completed_by_name = ($es_sess_n === 1) ? $es_admin_name : null;
+            $es_sess_completed_at      = ($es_sess_n === 1) ? date('Y-m-d H:i:s') : null;
+            if ($es_therapist_id > 0) {
+                $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method, service_duration_id, session_number, total_sessions, extra_group_id, session_status, session_completed_by, session_completed_by_name, session_completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $es_ins->bind_param("iiisddssssissiiiisiss", $es_appt_id, $es_service_id, $es_therapist_id, $es_person_label, $es_split_charged, $es_split_comm, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method, $es_duration_id_param, $es_sess_n, $es_session_count, $es_group_id, $es_sess_status, $es_sess_completed_by, $es_sess_completed_by_name, $es_sess_completed_at);
+            } else {
+                $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method, service_duration_id, session_number, total_sessions, extra_group_id, session_status, session_completed_by, session_completed_by_name, session_completed_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $es_ins->bind_param("iisddssssissiiiisiss", $es_appt_id, $es_service_id, $es_person_label, $es_split_charged, $es_split_comm, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method, $es_duration_id_param, $es_sess_n, $es_session_count, $es_group_id, $es_sess_status, $es_sess_completed_by, $es_sess_completed_by_name, $es_sess_completed_at);
+            }
+            $es_ins->execute();
+            $es_row_id = (int)$conn->insert_id;
+            $es_ins->close();
+            if ($es_sess_n === 1) {
+                $es_new_id = $es_row_id;
+                $es_group_id = $es_row_id;
+                if ($es_session_count > 1) {
+                    $conn->query("UPDATE appointment_extra_services SET extra_group_id = {$es_group_id} WHERE id = {$es_group_id}");
+                }
+            }
         }
-        $es_ins->execute();
-        $es_new_id = (int)$conn->insert_id;
-        $es_ins->close();
 
-        $message = "Extra service added for {$es_person_label}.";
+        $message = $es_session_count > 1
+            ? "Extra service added for {$es_person_label} (Session 1 of {$es_session_count} recorded as done today)."
+            : "Extra service added for {$es_person_label}.";
         $message_type = "success";
     }
 
@@ -1029,10 +1077,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_r
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIONS — approve / decline / complete
 // ═══════════════════════════════════════════════════════════════════════════
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['approve','decline','checkin_appointment','complete','save_per_person_inline','revert_complete','assign_extra_therapist','assign_person_slot','remove_person_slot','approve_pending','remove_extra_service'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['approve','decline','checkin_appointment','complete','save_per_person_inline','revert_complete','assign_extra_therapist','assign_person_slot','remove_person_slot','approve_pending','remove_extra_service','complete_extra_session'])) {
     // AJAX actions return JSON — use the bool variant so a failed token
     // sends a parseable JSON error instead of die(plain-text).
-    $_ajax_actions = ['assign_person_slot', 'remove_person_slot', 'assign_extra_therapist', 'approve_pending', 'remove_extra_service'];
+    $_ajax_actions = ['assign_person_slot', 'remove_person_slot', 'assign_extra_therapist', 'approve_pending', 'remove_extra_service', 'complete_extra_session'];
     if (in_array($_POST['action'] ?? '', $_ajax_actions)) {
         if (!verify_csrf_token_ajax()) {
             header('Content-Type: application/json');
@@ -1981,6 +2029,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             }
             header('Content-Type: application/json');
             echo json_encode(['success' => false, 'message' => 'Invalid request.']);
+            exit();
+
+        } elseif ($action === 'complete_extra_session') {
+            // Marks one still-pending session of a multi-session extra (e.g.
+            // session 2 of a 2-session package added as an extra) as actually
+            // rendered -- purely a "this happened" record, independent of
+            // payment_status, which was already settled for the whole package
+            // back when the appointment itself was paid. Can be done whenever
+            // the customer actually comes back for it, even long after this
+            // appointment's own status is 'completed' -- see render_card's
+            // Extra Services block, shown for every non-cancelled status.
+            $ces_extra_id = intval($_POST['extra_id'] ?? 0);
+            $ces_row_q = $conn->prepare("SELECT id, session_status FROM appointment_extra_services WHERE id=? AND appointment_id=?");
+            $ces_row_q->bind_param("ii", $ces_extra_id, $appt_id); $ces_row_q->execute();
+            $ces_row = $ces_row_q->get_result()->fetch_assoc(); $ces_row_q->close();
+            header('Content-Type: application/json');
+            if (!$ces_row) {
+                echo json_encode(['success' => false, 'message' => 'Extra service not found.']); exit();
+            }
+            if ($ces_row['session_status'] === 'completed') {
+                echo json_encode(['success' => false, 'message' => 'That session is already marked complete.']); exit();
+            }
+            $ces_by   = (int)$_SESSION['user_id'];
+            $ces_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+            $ces_upd  = $conn->prepare("UPDATE appointment_extra_services
+                                         SET session_status='completed', session_completed_by=?, session_completed_by_name=?, session_completed_at=NOW()
+                                         WHERE id=? AND appointment_id=? AND session_status='pending'");
+            $ces_upd->bind_param("isii", $ces_by, $ces_name, $ces_extra_id, $appt_id);
+            $ces_upd->execute();
+            $ces_ok = $ces_upd->affected_rows > 0;
+            $ces_upd->close();
+            echo json_encode(['success' => $ces_ok, 'message' => $ces_ok ? '' : 'Could not update — it may already be complete.']);
             exit();
 
         } elseif ($action === 'approve_pending') {
@@ -3533,7 +3613,17 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <div style="display:flex;align-items:center;gap:0.55rem;flex:1;min-width:0;">
                     <div style="width:28px;height:28px;border-radius:8px;flex-shrink:0;background:linear-gradient(135deg,#0d6efd22,#0d6efd44);display:flex;align-items:center;justify-content:center;font-size:0.75rem;"></div>
                     <div style="min-width:0;">
-                        <div style="font-size:0.85rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($es['svc_name']); ?></div>
+                        <div style="font-size:0.85rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            <?php echo htmlspecialchars($es['svc_name']); ?>
+                            <?php if ((int)($es['total_sessions'] ?? 1) > 1): ?>
+                            <span style="font-weight:400;color:var(--gray);">(Session <?php echo (int)$es['session_number']; ?> of <?php echo (int)$es['total_sessions']; ?>)</span>
+                            <?php if ($es['session_status'] === 'completed'): ?>
+                            <span style="font-size:0.63rem;background:rgba(45,138,78,0.12);color:#2d8a4e;padding:0.05rem 0.4rem;border-radius:20px;border:1px solid rgba(45,138,78,0.25);">✓ Done</span>
+                            <?php else: ?>
+                            <span style="font-size:0.63rem;background:rgba(201,106,44,0.1);color:var(--gold);padding:0.05rem 0.4rem;border-radius:20px;border:1px solid rgba(201,106,44,0.25);">Pending</span>
+                            <?php endif; ?>
+                            <?php endif; ?>
+                        </div>
                         <div style="font-size:0.7rem;color:var(--gray);">
                         <?php echo htmlspecialchars($es['person_label']); ?>
                         &nbsp;·&nbsp; <?php echo ucfirst($es['payment_method']); ?>
@@ -3591,6 +3681,12 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 </div>
                 <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0;">
                     <span style="font-weight:700;color:var(--gold);font-size:0.9rem;">₱<?php echo number_format($es['charged_price'],2); ?></span>
+                    <?php if ((int)($es['total_sessions'] ?? 1) > 1 && $es['session_status'] === 'pending'): ?>
+                    <button type="button" onclick="completeExtraSession(<?php echo (int)$appt_id; ?>, <?php echo (int)$es['id']; ?>, this)"
+                            style="font-size:0.68rem;padding:0.2rem 0.55rem;background:rgba(45,138,78,0.12);color:#2d8a4e;border-radius:5px;border:1px solid rgba(45,138,78,0.25);font-weight:700;cursor:pointer;">
+                        Mark Session Complete
+                    </button>
+                    <?php endif; ?>
                     <?php if (in_array($status,['approved','assigned'])): ?>
                     <a href="appointments.php?remove_extra=<?php echo $es['id']; ?>&filter=<?php echo $filter; ?>"
                        onclick="var _h=this.href;event.preventDefault();uiConfirm('Remove this extra service?').then(ok=>{if(ok)window.location.href=_h;})"
@@ -5844,6 +5940,34 @@ function autoSaveExtraSlot(selectEl) {
             }
         })
         .catch(function() { selectEl.disabled = false; alert('Network error — please try again.'); });
+}
+
+// Marks one pending session of a multi-session extra (e.g. session 2 of a
+// 2-session package added as an extra) as actually rendered. Works from any
+// status this card is in, including a completed appointment someone has come
+// back to on a later visit — see render_card's Extra Services block.
+function completeExtraSession(apptId, extraId, btnEl) {
+    uiConfirm('Mark this session as completed?').then(function(ok) {
+        if (!ok) return;
+        btnEl.disabled = true;
+        var fd = new FormData();
+        fd.append('action',     'complete_extra_session');
+        fd.append('appt_id',    apptId);
+        fd.append('extra_id',   extraId);
+        fd.append('ajax',       '1');
+        fd.append('csrf_token', pmGetCsrf());
+        fetch(window.location.pathname, { method: 'POST', body: fd, credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    btnEl.disabled = false;
+                    alert(data.message || 'Failed to update.');
+                }
+            })
+            .catch(function() { btnEl.disabled = false; alert('Network error — please try again.'); });
+    });
 }
 
 function showInlineSaved(el) {
