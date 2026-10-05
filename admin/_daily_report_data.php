@@ -270,9 +270,11 @@ $adv_q = $conn->prepare("
            a.advance_payment_method,
            a.appointment_date, a.service_type,
            s.name AS service_name,
+           IFNULL(sd.session_count, 1) AS session_count,
            COALESCE(o.customer_name, u.full_name) AS customer_name
     FROM appointments a
     JOIN services s ON s.id = a.service_id
+    LEFT JOIN service_durations sd ON sd.id = a.service_duration_id
     LEFT JOIN order_items oi ON oi.id = a.order_item_id
     LEFT JOIN orders o ON oi.order_id = o.id
     LEFT JOIN users u ON a.user_id = u.id
@@ -283,6 +285,17 @@ $adv_q->bind_param("s", $report_date);
 $adv_q->execute();
 $advances_received = $adv_q->get_result()->fetch_all(MYSQLI_ASSOC);
 $adv_q->close();
+// This advance is always for a session-count package's NOT-YET-completed
+// later session (set only at Session 1's check-in, on Session 2's own
+// appointment row — see checkin_appointment in appointments.php) — label it
+// so it reads as "what was this a down payment toward", not just a bare
+// service name that looks identical to a same-day sale of the same service.
+foreach ($advances_received as &$_adv_lbl) {
+    if ((int)($_adv_lbl['session_count'] ?? 1) > 1) {
+        $_adv_lbl['service_name'] .= ' — Session 2 of ' . (int)$_adv_lbl['session_count'] . ' (not yet rendered)';
+    }
+}
+unset($_adv_lbl);
 $advances_received_total = array_sum(array_column($advances_received, 'advance_payment'));
 // Per-method DP totals — computed from the same advances_received dataset
 $_dp_by_method = [];

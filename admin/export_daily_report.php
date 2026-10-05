@@ -230,7 +230,11 @@ foreach ($denom_row_map as $denom => $drow) {
 //      B39 =K58+O76+V104  (POS Reading — derived from sheet data)
 //      B41 =M58  (Celeb. Discounts)
 //      B47 =N90  (Unpaids)
-//      B48 =U58  (Advance Payment)
+//      B48 — written explicitly below as =V58 (Advance Payment; the comm_25
+//            column insertion shifted Advance Payment from U to V, same as
+//            B37 above, but the template's B48 formula was never updated to
+//            follow it, so it was silently summing Mode of Payment text — see
+//            the override just below)
 //      B49 =H95  (Expenses)
 //      B50 =O76  (Marketing Expense)
 //      B51 =V105  (Product Sold)
@@ -250,6 +254,9 @@ foreach ($denom_row_map as $denom => $drow) {
 $cv('R58', '=SUM(R16:R57)');
 // Update Staff CF formula to include comm_25 column
 $cv('B37', '=O58+P58+Q58+R58+N76');
+// Advance Payment total — see the B48 note above: was still =U58 (now Mode
+// of Payment text) after the comm_25 insertion moved it to column V.
+$cv('B48', '=V58');
 $cv('B40', (float)$total_discounts);
 $cv('B42', (float)$gc_redeem_total);
 $cv('B43', (float)$card_total);
