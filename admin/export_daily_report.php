@@ -27,6 +27,7 @@ redirect_if_not_admin();
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
 require_once '../vendor/autoload.php';
 
@@ -67,6 +68,24 @@ if (!$ws) {
 // Rename "28" → formatted date (e.g. "Jun 28") and set as active
 $ws->setTitle(date('M j', strtotime($report_date)));
 $wb->setActiveSheetIndex($wb->getIndex($ws));
+
+// ── Un-merge stray row-spanning merges inside the Sales Services data grid ──
+// The client's own copy of this template has a handful of leftover merges
+// in columns S-W, rows 16-27 (e.g. T16:T18, U19:U20) from past manual
+// editing -- harmless to leave alone normally, but fatal here: our data
+// loop writes one value per appointment per row (E16, E17, E18, ...), and a
+// value written into a merged cell's non-anchor row (e.g. T17 inside a
+// T16:T18 merge) is real but never DISPLAYED -- Excel only shows a merged
+// range's top-left cell. Any appointment that happened to land on one of
+// these rows would have its Net Sales/Mode of Payment/Advance Payment
+// silently invisible in the exported file despite being written correctly.
+// Un-merging first makes every row in the grid independently writable.
+foreach (array_keys($ws->getMergeCells()) as $range) {
+    [$c1, $r1, $c2, $r2] = Coordinate::rangeBoundaries($range);
+    if ($r1 >= 16 && $r2 <= 59 && $c1 >= Coordinate::columnIndexFromString('E')) {
+        $ws->unmergeCells($range);
+    }
+}
 
 // ── Helper: set a single cell value (write only to anchor of merged ranges) ──
 $cv = function (string $cell, $value) use ($ws): void {
@@ -201,6 +220,24 @@ foreach ($spreadsheet_rows as $sr) {
 
     $data_row++;
 }
+// K16:L59 originally held =VLOOKUP(I_,services,...) formulas (a "services"
+// lookup table/named range the client's template no longer has — it's long
+// since broken to #REF!, in this template file as received, not something
+// this export does). Every row we actually wrote above replaced that formula
+// with a plain value, but any row left over below the last real entry (and
+// row 59, which is outside the data loop entirely) still has the original
+// broken formula, which K58/L58's own =SUM(K15:K57) then propagates into
+// every total that reads from them. Blank those out explicitly.
+for ($r = $data_row; $r <= 59; $r++) {
+    if ($r === 58) continue; // the SUM totals row — never touch
+    $cv('K' . $r, '');
+    $cv('L' . $r, '');
+}
+// T58 (Net Sales total) and V58 (Advance Payment total, see B48 above) have
+// no SUM formula at all in the template — only K58:S58 and U58 do. Without
+// these, =V58 (B48) and anything reading T58 just evaluate to an empty cell.
+$cv('T58', '=SUM(T16:T57)');
+$cv('V58', '=SUM(V16:V57)');
 
 // ════════════════════════════════════════════════════════════════════════════
 // 4. CASH BREAKDOWN — quantities to column A (rows 17-28)
@@ -289,6 +326,16 @@ foreach ($influencer_rows as $inf) {
     $cv('M' . $inf_row, "=K{$inf_row}+L{$inf_row}");       // Total MKTG Exp formula
 
     $inf_row++;
+}
+// Same stale-formula cleanup as the Sales Services K:L block above, for this
+// section's own broken lookup (=VLOOKUP(I_,MKTG,...) at K64:L69 in the
+// template — M is already overwritten by every row via the M formula above).
+// Row 64 is the "Time Start/Time End" sub-header, never written by the data
+// loop (which starts at 65), but still carries the same broken formula.
+$cv('K64', ''); $cv('L64', '');
+for ($r = $inf_row; $r <= 69; $r++) {
+    $cv('K' . $r, '');
+    $cv('L' . $r, '');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
