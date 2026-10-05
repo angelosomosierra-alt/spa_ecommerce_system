@@ -69,6 +69,7 @@ $conn->query("CREATE TABLE IF NOT EXISTS daily_report_session_commission_rows (
 foreach ([
     "paymongo_reference VARCHAR(100) NULL DEFAULT NULL",
     "paymongo_method    VARCHAR(20)  NULL DEFAULT NULL",
+    "service_duration_id INT NULL DEFAULT NULL",
 ] as $_aes_col) {
     $_col_name = explode(' ', trim($_aes_col))[0];
     $_chk = $conn->query("SHOW COLUMNS FROM appointment_extra_services LIKE '$_col_name'");
@@ -462,16 +463,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         $es_reg_price  = floatval($es_svc['price']);
         $es_home_fee   = floatval($es_svc['home_service_fee'] ?? 0);
 
+        // Duration/session-count variant — the modal lets staff pick which of a
+        // service's service_durations rows to add (e.g. a 2-session package's
+        // own total, not just its default single-session price). Falls back to
+        // the service's first/default row (same convention used everywhere
+        // else) when none was posted, so a stale client that predates this
+        // picker still behaves exactly as before.
+        $es_duration_id = intval($_POST['extra_duration_id'] ?? 0);
+        if ($es_duration_id > 0) {
+            $es_dur_q = $conn->prepare("SELECT id, regular_price, promo_price, price_mode, promo_start_time, promo_end_time
+                                         FROM service_durations WHERE id = ? AND service_id = ? LIMIT 1");
+            $es_dur_q->bind_param("ii", $es_duration_id, $es_service_id); $es_dur_q->execute();
+            $es_duration = $es_dur_q->get_result()->fetch_assoc(); $es_dur_q->close();
+            if (!$es_duration) { $es_duration_id = 0; } // posted id didn't belong to this service — ignore it
+        }
+        if (!$es_duration_id) {
+            $es_dur_q = $conn->prepare("SELECT id, regular_price, promo_price, price_mode, promo_start_time, promo_end_time
+                                         FROM service_durations WHERE service_id = ?
+                                         ORDER BY duration_minutes, session_count LIMIT 1");
+            $es_dur_q->bind_param("i", $es_service_id); $es_dur_q->execute();
+            $es_duration = $es_dur_q->get_result()->fetch_assoc(); $es_dur_q->close();
+            $es_duration_id = $es_duration ? (int)$es_duration['id'] : 0;
+        }
         // Promo-aware "active right now" price, same convention as the main
         // booking flow (walkin.php) -- whatever get_active_duration_price()
         // says RIGHT NOW (promo window live or not) is what gets charged,
         // never the raw services.price column directly.
-        $es_dur_q = $conn->prepare("SELECT regular_price, promo_price, price_mode, promo_start_time, promo_end_time
-                                     FROM service_durations WHERE service_id = ?
-                                     ORDER BY duration_minutes, session_count LIMIT 1");
-        $es_dur_q->bind_param("i", $es_service_id); $es_dur_q->execute();
-        $es_duration = $es_dur_q->get_result()->fetch_assoc(); $es_dur_q->close();
         $es_active_price = $es_duration ? get_active_duration_price($es_duration)['price'] : $es_reg_price;
+        // The chosen variant's own regular price (e.g. a 2-session package's
+        // full total) is the correct fallback/base from here on, not the
+        // plain services.price, which is only ever the single-session rate.
+        if ($es_duration) $es_reg_price = (float)$es_duration['regular_price'];
 
         switch ($es_rate_type) {
             case 'home':       $es_base = floatval($es_svc['home_service_price'] ?? 0); break;
@@ -540,7 +562,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
                     // whether that promo window is active right now or what the
                     // customer was actually charged -- same rule the rest of the
                     // system already applies via get_commission_base_price().
-                    $es_comm_base = get_commission_base_price($es_service_id, null, $es_reg_price);
+                    $es_comm_base = get_commission_base_price($es_service_id, $es_duration_id ?: null, $es_reg_price);
                     $es_commission = round($es_comm_base * floatval($es_cm_row['commission_percent']) / 100, 2);
                 }
             }
@@ -549,12 +571,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         // ── INSERT — all bind_param values are plain local variables ──────────
         $es_pay_status = 'unpaid';
         $es_new_id = 0;
+        $es_duration_id_param = $es_duration_id > 0 ? $es_duration_id : null;
         if ($es_therapist_id > 0) {
-            $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $es_ins->bind_param("iiisddssssiss", $es_appt_id, $es_service_id, $es_therapist_id, $es_person_label, $es_charged, $es_commission, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method);
+            $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method, service_duration_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $es_ins->bind_param("iiisddssssissi", $es_appt_id, $es_service_id, $es_therapist_id, $es_person_label, $es_charged, $es_commission, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method, $es_duration_id_param);
         } else {
-            $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $es_ins->bind_param("iisddssssiss", $es_appt_id, $es_service_id, $es_person_label, $es_charged, $es_commission, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method);
+            $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method, service_duration_id) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $es_ins->bind_param("iisddssssissi", $es_appt_id, $es_service_id, $es_person_label, $es_charged, $es_commission, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method, $es_duration_id_param);
         }
         $es_ins->execute();
         $es_new_id = (int)$conn->insert_id;
@@ -2573,6 +2596,33 @@ while ($sdp = $sdp_res->fetch_assoc()) {
     ];
 }
 
+// Every duration/session-count variant per service (not just the default
+// row above) — lets the Add Extra Service modal offer the same duration
+// picker walkin.php's own booking form already has, so e.g. a 2-session
+// package's own total can be added as an extra, not just its default
+// single-session price. Services with only one variant never show a picker
+// at all client-side (see updateExtraDurationPicker() below).
+$svc_all_durations = [];
+$sad_res = $conn->query("
+    SELECT id, service_id, duration_minutes, session_count,
+           regular_price, promo_price, price_mode, promo_start_time, promo_end_time
+    FROM service_durations
+    ORDER BY service_id, duration_minutes, session_count
+");
+while ($sad = $sad_res->fetch_assoc()) {
+    $_active = get_active_duration_price($sad);
+    $svc_all_durations[(int)$sad['service_id']][] = [
+        'id'               => (int)$sad['id'],
+        'duration_minutes' => (int)$sad['duration_minutes'],
+        'session_count'    => (int)$sad['session_count'],
+        'regular_price'    => (float)$sad['regular_price'],
+        'promo_price'      => (float)$sad['promo_price'],
+        'active_price'     => $_active['price'],
+        'is_promo_active'  => $_active['is_promo_active'],
+        'promo_end_time'   => $sad['promo_end_time'],
+    ];
+}
+
 // ── Service → qualified therapist map (drives Add Service therapist dropdown)
 // Uses the existing $get_qualified closure + cache: at most 1 query per unique service_id.
 $svc_qualified_map = [];
@@ -4223,6 +4273,9 @@ const svcQualifiedMap = <?php echo json_encode((object)$svc_qualified_map); ?>;
 // the promo price while a promo window is live, same as what the server
 // will independently (and authoritatively) compute on submit.
 const svcDurationPricing = <?php echo json_encode((object)$svc_duration_pricing); ?>;
+// Every duration/session-count variant per service, for the Add Extra
+// Service modal's duration picker — see updateExtraDurationPicker().
+const svcAllDurations = <?php echo json_encode((object)$svc_all_durations); ?>;
 
 function getActiveDurationPriceJs(pricing) {
     if (!pricing) return { price: 0, is_promo_active: false };
@@ -4316,18 +4369,69 @@ function filterExtraServiceList(query) {
     document.getElementById('extra-modal-no-results').style.display = anyVisible ? 'none' : '';
 }
 
-function selectExtraService(svcId, svcName) {
-    document.getElementById('extra-modal-svc-id').value = svcId;
-    document.getElementById('extra-modal-selected-name').textContent = svcName;
-    document.getElementById('extra-modal-selected').style.display = 'flex';
-    document.getElementById('extra-modal-search').style.display = 'none';
-    document.getElementById('extra-modal-svc-list').style.display = 'none';
+// Which duration/session-count variant is currently chosen for svcId, from
+// the radio list updateExtraDurationPicker() builds — falls back to the
+// service's first variant (same convention as everywhere else) when the
+// hidden input hasn't been set yet.
+function getChosenExtraDurationVariant(svcId) {
+    const durations = svcAllDurations[svcId] || [];
+    if (!durations.length) return null;
+    const selId = parseInt(document.getElementById('extra-modal-duration-id')?.value || 0);
+    return durations.find(d => d.id === selId) || durations[0];
+}
 
+// Builds the duration/session-count picker (radio list) for svcId. Services
+// with only one variant (the common case) never show it at all — nothing
+// changes for them. Mirrors walkin.php's own duration picker UX.
+function updateExtraDurationPicker(svcId) {
+    const section = document.getElementById('extra-modal-duration-section');
+    const options = document.getElementById('extra-modal-duration-options');
+    const hidden  = document.getElementById('extra-modal-duration-id');
+    if (!section || !options || !hidden) return;
+    const durations = svcAllDurations[svcId] || [];
+    if (durations.length <= 1) {
+        section.style.display = 'none';
+        options.innerHTML = '';
+        hidden.value = durations.length ? durations[0].id : '';
+        return;
+    }
+    section.style.display = '';
+    options.innerHTML = '';
+    const fmt = n => parseFloat(n).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    durations.forEach(function(d, i) {
+        const wrap = document.createElement('label');
+        wrap.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.65rem;'
+            + 'border:1px solid var(--border2);border-radius:7px;margin-bottom:0.3rem;'
+            + 'cursor:pointer;background:var(--bg3);font-size:0.82rem;';
+        const priceLabel = d.is_promo_active ? ('₱' + fmt(d.active_price) + ' (Promo)') : ('₱' + fmt(d.active_price));
+        const sessionLabel = d.session_count > 1 ? (' × ' + d.session_count + ' sessions') : '';
+        wrap.innerHTML = '<input type="radio" name="extra_duration_radio" value="' + d.id + '" ' + (i === 0 ? 'checked' : '') + '>'
+            + '<span>' + d.duration_minutes + ' mins' + sessionLabel + ' — ' + priceLabel + '</span>';
+        options.appendChild(wrap);
+    });
+    hidden.value = durations[0].id;
+    options.querySelectorAll('input[name="extra_duration_radio"]').forEach(function(radio) {
+        radio.addEventListener('change', function() {
+            hidden.value = this.value;
+            applyExtraPricing(svcId);
+        });
+    });
+}
+
+// Recomputes the price preview for svcId using whichever duration variant
+// is currently chosen (see getChosenExtraDurationVariant above) — same
+// rate-type formula selectExtraService always used, just driven by the
+// chosen variant's own regular/promo/active price instead of always the
+// service's default duration.
+function applyExtraPricing(svcId) {
     const cfg       = apptRateConfig[extraModalApptId] || {};
     const rateType  = cfg.rate_type  || 'regular';
     const partnerId = cfg.partner_id || null;
-    const pricing   = svcDurationPricing[svcId];
-    const active    = getActiveDurationPriceJs(pricing);
+    const variant   = getChosenExtraDurationVariant(svcId);
+    const pricing   = variant || svcDurationPricing[svcId]; // no duration rows at all — same fallback as before
+    const active    = variant
+        ? { price: variant.active_price, is_promo_active: variant.is_promo_active }
+        : getActiveDurationPriceJs(pricing);
     const priceInp  = document.getElementById('extra-modal-price');
     const hintEl    = document.getElementById('extra-modal-price-hint');
 
@@ -4354,8 +4458,20 @@ function selectExtraService(svcId, svcName) {
             formula = 'Complimentary — ₱0';
             break;
     }
+    if (variant && variant.session_count > 1) formula += ` (${variant.session_count}-session package total)`;
     if (priceInp) priceInp.value = charged.toFixed(2);
     if (hintEl)  hintEl.textContent = formula;
+}
+
+function selectExtraService(svcId, svcName) {
+    document.getElementById('extra-modal-svc-id').value = svcId;
+    document.getElementById('extra-modal-selected-name').textContent = svcName;
+    document.getElementById('extra-modal-selected').style.display = 'flex';
+    document.getElementById('extra-modal-search').style.display = 'none';
+    document.getElementById('extra-modal-svc-list').style.display = 'none';
+
+    updateExtraDurationPicker(svcId);
+    applyExtraPricing(svcId);
     updateExtraTherapist(svcId);
     validateExtraModalForm();
 }
@@ -4367,6 +4483,10 @@ function clearExtraServiceSelection() {
     document.getElementById('extra-modal-svc-list').style.display = '';
     document.getElementById('extra-modal-price').value = '';
     document.getElementById('extra-modal-price-hint').textContent = '';
+    const durSection = document.getElementById('extra-modal-duration-section');
+    if (durSection) durSection.style.display = 'none';
+    const durHidden = document.getElementById('extra-modal-duration-id');
+    if (durHidden) durHidden.value = '';
     updateExtraTherapist(0);
     validateExtraModalForm();
 }
@@ -6250,6 +6370,7 @@ function loadAddSvcSlots() {
             <input type="hidden" name="action"      value="add_extra_service">
             <input type="hidden" name="appt_id"      id="extra-modal-appt-id">
             <input type="hidden" name="extra_svc_id" id="extra-modal-svc-id">
+            <input type="hidden" name="extra_duration_id" id="extra-modal-duration-id">
 
             <div style="margin-bottom:0.75rem;">
                 <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">For which person?</label>
@@ -6296,6 +6417,11 @@ function loadAddSvcSlots() {
                     <div id="extra-modal-no-results" style="display:none;padding:1rem;text-align:center;color:var(--gray);font-size:0.8rem;">No services match.</div>
                 </div>
                 <span id="extra-modal-svc-err" style="font-size:0.68rem;color:var(--rust);margin-top:2px;display:none;">Select a service</span>
+            </div>
+
+            <div id="extra-modal-duration-section" style="display:none;margin-bottom:0.75rem;">
+                <label style="font-size:0.73rem;color:var(--gray);font-weight:600;display:block;margin-bottom:4px;">Duration / Package</label>
+                <div id="extra-modal-duration-options"></div>
             </div>
 
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.65rem;margin-bottom:0.75rem;">
