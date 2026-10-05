@@ -425,6 +425,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
     echo json_encode(['ok'=>true]); exit;
 }
 
+// ── BACKFILL: give already-imported row_order=0 rows a real grouping key ──────
+// One-time fix for rows inserted before row_order was set to the source
+// appointment_id (see the imports below) -- harmless to run on every page
+// load since it only ever touches rows still sitting at the old default of 0.
+$conn->query("
+    UPDATE daily_report_spreadsheet_rows
+    SET row_order = source_appointment_id
+    WHERE row_order = 0 AND source_appointment_id IS NOT NULL
+");
+$conn->query("
+    UPDATE daily_report_spreadsheet_rows d
+    JOIN appointment_extra_services es ON es.id = d.source_extra_service_id
+    SET d.row_order = es.appointment_id
+    WHERE d.row_order = 0 AND d.source_extra_service_id IS NOT NULL
+");
+
 // ── AUTO-IMPORT: Completed appointments → spreadsheet rows ────────────────────
 // Idempotent — safe on every page load. Skips any appointment already present
 // via source_appointment_id. Never modifies live appointment records.
@@ -586,7 +602,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $net_sales   = $charged_amount - $total_comm;
         $raw_mop     = strtolower(trim($ap['payment_method'] ?? ''));
         $mode_of_pay = $mop_map[$raw_mop] ?? 'Cash';
-        $row_order   = 0;
+        // Grouping key, not a literal sort-by-time value: an extra service's
+        // row_order (below) is set to this SAME appointment_id, so — combined
+        // with the existing "ORDER BY row_order ASC, id ASC" and this row
+        // always being inserted before that appointment's extras (this loop
+        // runs to completion before the extras loop below even starts) —
+        // every extra always sorts immediately after its own main service row
+        // instead of wherever it happened to get auto-imported.
+        $row_order   = $appt_id;
         $slip_no     = $ap['slip_number']   ?? '';
         $client_name = $ap['customer_name'] ?? '';
         $svc_name    = $ap['service_name']  ?? '';
@@ -707,7 +730,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $svc_name      = $ex['service_name']  ?? '';
         $stylist       = $ex['therapist_name'] ?? '';
         $remarks       = $ex['person_label']  ?? '';
-        $row_order = 0; $celeb_10 = 0.0; $disc_20_pwd = 0.0; $disc_50_staff = 0.0;
+        // Same grouping key as the extra's own parent appointment's main row
+        // (see the comment on $row_order in the main-row import above), so
+        // this row always sorts directly under that main service row.
+        $row_order = (int)$ex['appointment_id'];
+        $celeb_10 = 0.0; $disc_20_pwd = 0.0; $disc_50_staff = 0.0;
         $is_refund = 0; $created_by = 'import'; $time_out = '';
 
         $eins->bind_param("sisssssisiddddddddddssisi",
