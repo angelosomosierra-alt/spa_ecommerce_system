@@ -1255,7 +1255,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     $po_row = $po->get_result()->fetch_assoc(); $po->close();
 
                     if ($po_row) {
-                        $ci_base = floatval($po_row['total_amount']);
+                        // The check-in bill shown to the customer (openCheckinModal's
+                        // "Buong Bill") is session + every extra service already attached
+                        // at check-in time, and Pay Now is presented as settling that
+                        // whole total — so the amount actually marked paid here, and the
+                        // discount base, must include those extras too. Previously this
+                        // only used the session's own total_amount, so a "Pay Now"
+                        // check-in silently left attached extras unpaid even though the
+                        // customer paid the combined total shown on screen.
+                        $ci_es_q = $conn->prepare("SELECT COALESCE(SUM(charged_price),0) AS t FROM appointment_extra_services WHERE appointment_id=? AND payment_status != 'paid'");
+                        $ci_es_q->bind_param("i", $appt_id); $ci_es_q->execute();
+                        $ci_extras_total = floatval($ci_es_q->get_result()->fetch_assoc()['t'] ?? 0); $ci_es_q->close();
+
+                        $ci_base = floatval($po_row['total_amount']) + $ci_extras_total;
                         $ci_disc_amt = 0.00;
                         if ($ci_disc_type === 'pwd' || $ci_disc_type === 'senior') {
                             $ci_disc_amt = round($ci_base * 0.20, 2);
@@ -1281,6 +1293,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
                         $u->bind_param("ssddi", $ci_pm, $ci_disc_type, $ci_disc_amt, $ci_final, $po_row['id']);
                         $u->execute(); $u->close();
+
+                        if ($ci_extras_total > 0) {
+                            $ci_es_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");
+                            $ci_es_upd->bind_param("si", $ci_pm, $appt_id);
+                            $ci_es_upd->execute(); $ci_es_upd->close();
+                        }
                     }
                 }
 
@@ -3646,9 +3664,14 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             $_cm_bdisc  = floatval($pm_row['discount_amount'] ?? 0);
             $_cm_bdtype = $pm_row['discount_type'] ?? 'none';
             $_cm_paid   = ($pm_row['payment_status'] === 'paid') ? floatval($pm_row['final_amount'] ?? 0) : 0.0;
+            // Every extra counts toward the bill total here, paid or not: a paid one
+            // was folded into $_cm_paid (final_amount) at check-in already (see the
+            // checkin_appointment handler above), so TOTAL DUE below nets back down
+            // to exactly the still-unpaid extras instead of double-charging for ones
+            // already settled.
             $_cm_extras = 0.0;
             foreach ($extra_services as $_ces) {
-                if (($_ces['payment_status'] ?? '') !== 'paid') $_cm_extras += floatval($_ces['charged_price']);
+                $_cm_extras += floatval($_ces['charged_price']);
             }
             ?>
             <script>
