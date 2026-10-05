@@ -44,7 +44,7 @@ $_footer_svc_cats = get_customer_categories_with_counts($conn, 'service');
                 <li><a href="<?php echo BASE_URL; ?>index.php#contact">G&amp;R Bldg., M.H. Del Pilar, Molo, Iloilo City</a></li>
                 <li><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></li>
                 <li><a href="tel:+639853359998">+639853359998</a></li>
-                <li><a href="<?php echo BASE_URL; ?>index.php#contact">Mon – Sun: 10AM – 10PM</a></li>
+                <li><a href="<?php echo BASE_URL; ?>index.php#contact">Mon–Fri: 9AM–10PM, Sat–Sun: 9AM–12AM</a></li>
             </ul>
         </div>
     </div>

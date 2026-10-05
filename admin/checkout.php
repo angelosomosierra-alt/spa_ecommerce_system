@@ -2441,7 +2441,7 @@ document.getElementById('checkoutForm').addEventListener('submit', function(e) {
         <div class="footer-brand"><div class="ft-logo">RECOVERY ILOILO</div><p>Your sanctuary for wellness and restoration in the heart of Iloilo City.</p></div>
         <div class="footer-col"><h4>Quick Links</h4><ul><li><a href="index.php">Home</a></li><li><a href="index.php#services">Services</a></li><li><a href="index.php#products">Products</a></li><li><a href="index.php#about">About Us</a></li><li><a href="index.php#contact">Contact</a></li></ul></div>
         <div class="footer-col"><h4>Services</h4><ul><li><a href="index.php#services">Massage Therapy</a></li><li><a href="index.php#services">Nail Care</a></li><li><a href="index.php#services">Lash Services</a></li><li><a href="index.php#services">Facial Treatments</a></li><li><a href="index.php#services">Body Scrubs</a></li></ul></div>
-        <div class="footer-col"><h4>Contact</h4><ul><li><a href="index.php#contact">Iloilo City, Philippines</a></li><li><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></li><li><a href="tel:+639853359998">+639853359998</a></li><li><a href="index.php#contact">Mon – Sun: 10AM – 10PM</a></li></ul></div>
+        <div class="footer-col"><h4>Contact</h4><ul><li><a href="index.php#contact">Iloilo City, Philippines</a></li><li><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></li><li><a href="tel:+639853359998">+639853359998</a></li><li><a href="index.php#contact">Mon–Fri: 9AM–10PM, Sat–Sun: 9AM–12AM</a></li></ul></div>
     </div>
     <div class="footer-bottom">&copy; <?php echo date('Y'); ?> Recovery Spa Iloilo. All rights reserved.</div>
 </footer>

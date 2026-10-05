@@ -528,12 +528,12 @@ require_once 'header.php';
                     <div class="contact-detail"><div class="contact-icon">📍</div><div><h4>Our Location</h4><p>G&amp;R Building, M.H. Del Pilar Street, Molo, Iloilo City</p></div></div>
                     <div class="contact-detail"><div class="contact-icon">📞</div><div><h4>Phone / Viber</h4><a href="tel:+639853359998">+639853359998</a></div></div>
                     <div class="contact-detail"><div class="contact-icon">✉️</div><div><h4>Email</h4><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></div></div>
-                    <div class="contact-detail"><div class="contact-icon">📱</div><div><h4>Social Media</h4><p>Facebook: Recovery Spa Iloilo<br>Instagram: @recoveryspa</p></div></div>
+                    <div class="contact-detail"><div class="contact-icon">📱</div><div><h4>Social Media</h4><p><a href="https://www.facebook.com/RecoveryIloilo" target="_blank" rel="noopener noreferrer">Facebook: Recovery Spa Iloilo</a><br><a href="https://www.instagram.com/recoveryiloilo/" target="_blank" rel="noopener noreferrer">Instagram: @recoveryiloilo</a></p></div></div>
                 </div>
                 <div class="hours-box">
                     <h4>Operating Hours</h4>
-                    <div class="hours-row"><span>Monday – Sunday</span><span>10:00 AM – 10:00 PM</span></div>
-                    <div class="hours-row"><span>Holidays</span><span>10:00 AM – 10:00 PM</span></div>
+                    <div class="hours-row"><span>Monday – Friday</span><span>9:00 AM – 10:00 PM</span></div>
+                    <div class="hours-row"><span>Saturday – Sunday</span><span>9:00 AM – 12:00 AM</span></div>
                 </div>
             </div>
             <div class="contact-form-card">
