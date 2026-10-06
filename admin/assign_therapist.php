@@ -74,23 +74,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_per_person'])) {
         $svc_id           = (int)$appt['service_id'];
         $errors           = [];
 
+        // Specialty check — package-aware (tests every real component for a
+        // Package service, e.g. "Package 2" = Express Head Spa + Foot
+        // Massage, instead of the package's own id/category; see
+        // get_booking_qualified_therapist_ids()).
+        $spc_qualified_ids = get_booking_qualified_therapist_ids($conn, $svc_id);
+
         foreach ($grouped as $tid_key => $ph) {
             $tid = (int)$tid_key;
 
-            // Specialty check
-            $spc = $conn->prepare("
-                SELECT (
-                    SELECT COUNT(*) FROM therapist_specialty_services WHERE therapist_id=? AND service_id=?
-                ) + (
-                    SELECT COUNT(*) FROM therapist_specialties ts
-                    JOIN services s ON s.category_id = ts.category_id
-                    WHERE ts.therapist_id=? AND s.id=?
-                ) AS total
-            ");
-            $spc->bind_param("iiii", $tid, $svc_id, $tid, $svc_id); $spc->execute();
-            $spc_count = intval($spc->get_result()->fetch_assoc()['total']); $spc->close();
-
-            if ($spc_count === 0) {
+            if (!in_array($tid, $spc_qualified_ids, true)) {
                 $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
                 $tn->bind_param("i", $tid); $tn->execute();
                 $tn_name = htmlspecialchars($tn->get_result()->fetch_assoc()['full_name'] ?? 'Unknown'); $tn->close();
@@ -221,6 +214,12 @@ $new_start_expr    = "'{$appt_date_esc}' - INTERVAL {$appt_buffer} MINUTE";
 
 $appt_is_today = (date('Y-m-d', strtotime($appt_date)) === date('Y-m-d'));
 
+// Package service (e.g. "Package 2" = Express Head Spa + Foot Massage) --
+// qualification is tested against every real component, not the package's
+// own id/category. See get_booking_qualified_therapist_ids().
+$roster_qualified_ids = get_booking_qualified_therapist_ids($conn, (int)$appt['service_id']);
+$roster_qualified_in  = implode(',', $roster_qualified_ids ?: [0]);
+
 if ($appt_is_today) {
     // Same-day: restrict to therapists on duty TODAY (query unchanged)
     $available_stmt = $conn->query("
@@ -232,17 +231,8 @@ if ($appt_is_today) {
                 JOIN categories c ON ts2.category_id = c.id
                 WHERE ts2.therapist_id = t.id
                ) AS specialty_categories,
-               -- Check if therapist has this appointment's service as a specialty
-               (SELECT COUNT(*)
-                FROM therapist_specialty_services tss
-                WHERE tss.therapist_id = t.id
-                  AND tss.service_id = {$appt['service_id']}
-               ) + (SELECT COUNT(*)
-                FROM therapist_specialties ts2
-                JOIN services s2 ON s2.category_id = ts2.category_id
-                WHERE ts2.therapist_id = t.id
-                  AND s2.id = {$appt['service_id']}
-               ) AS has_specialty,
+               -- Qualified for this service (package-aware)
+               (t.id IN ({$roster_qualified_in})) AS has_specialty,
                -- Proper overlap conflict check using session_time + home service buffer
                (SELECT COUNT(*)
                 FROM appointment_therapists at3
@@ -273,17 +263,8 @@ if ($appt_is_today) {
                 JOIN categories c ON ts2.category_id = c.id
                 WHERE ts2.therapist_id = t.id
                ) AS specialty_categories,
-               -- Check if therapist has this appointment's service as a specialty
-               (SELECT COUNT(*)
-                FROM therapist_specialty_services tss
-                WHERE tss.therapist_id = t.id
-                  AND tss.service_id = {$appt['service_id']}
-               ) + (SELECT COUNT(*)
-                FROM therapist_specialties ts2
-                JOIN services s2 ON s2.category_id = ts2.category_id
-                WHERE ts2.therapist_id = t.id
-                  AND s2.id = {$appt['service_id']}
-               ) AS has_specialty,
+               -- Qualified for this service (package-aware)
+               (t.id IN ({$roster_qualified_in})) AS has_specialty,
                -- Proper overlap conflict check using session_time + home service buffer
                (SELECT COUNT(*)
                 FROM appointment_therapists at3
@@ -311,12 +292,7 @@ $form_t_stmt = $conn->query("
     SELECT t.id, t.full_name, t.specialties,
            COALESCE(ta.is_on_break, 0) AS is_on_break,
            ta.time_out,
-           (SELECT COUNT(*) FROM therapist_specialty_services tss
-            WHERE tss.therapist_id=t.id AND tss.service_id={$appt['service_id']}
-           ) + (SELECT COUNT(*) FROM therapist_specialties ts2
-            JOIN services s2 ON s2.category_id=ts2.category_id
-            WHERE ts2.therapist_id=t.id AND s2.id={$appt['service_id']}
-           ) AS has_specialty,
+           (t.id IN ({$roster_qualified_in})) AS has_specialty,
            (SELECT COUNT(*) FROM appointment_therapists at3
             JOIN appointments a3 ON at3.appointment_id=a3.id
             JOIN services     s3 ON a3.service_id=s3.id

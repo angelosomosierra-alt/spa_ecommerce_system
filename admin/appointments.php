@@ -595,24 +595,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
     }
 
     // ── Qualification check ───────────────────────────────────────────────────
+    // Package service (e.g. "Package 2" = Express Head Spa + Foot Massage) --
+    // qualification is tested against every real component, not the
+    // package's own id/category. See get_booking_qualified_therapist_ids().
     if ($es_ok && $es_therapist_id > 0) {
-        $es_qual = $conn->prepare("
-            SELECT (SELECT COUNT(*) FROM therapist_specialty_services
-                    WHERE therapist_id=? AND service_id=?)
-                 + (SELECT COUNT(*) FROM therapist_specialties ts
-                    JOIN services sv ON sv.category_id = ts.category_id
-                    WHERE ts.therapist_id=? AND sv.id=?)
-                 + IFNULL((SELECT is_generalist FROM therapists WHERE id=?), 0)
-                 AS total
-        ");
-        $es_qual->bind_param("iiiii",
-            $es_therapist_id, $es_service_id,
-            $es_therapist_id, $es_service_id,
-            $es_therapist_id);
-        $es_qual->execute();
-        $es_qual_count = (int)$es_qual->get_result()->fetch_assoc()['total'];
-        $es_qual->close();
-        if ($es_qual_count === 0) {
+        $es_qualified_ids = get_booking_qualified_therapist_ids($conn, $es_service_id);
+        if (!in_array($es_therapist_id, $es_qualified_ids, true)) {
             $message = "The selected therapist is not qualified for this service.";
             $message_type = "danger"; $es_ok = false;
         }
@@ -2042,15 +2030,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 } elseif ($slot_tid === null) {
                     // "Any Available" — walang specific na tao, i-skip ang qualification check.
                 } else {
-                    // Qualification check — same query as the inline dropdown filter
-                    $sp2 = $conn->prepare("
-                        SELECT (SELECT COUNT(*) FROM therapist_specialty_services WHERE therapist_id=? AND service_id=?)
-                             + (SELECT COUNT(*) FROM therapist_specialties ts JOIN services s ON s.category_id=ts.category_id
-                                WHERE ts.therapist_id=? AND s.id=?) AS total
-                    ");
-                    $sp2->bind_param("iiii", $slot_tid, $slot_svc_id, $slot_tid, $slot_svc_id); $sp2->execute();
-                    $sp2_count = (int)$sp2->get_result()->fetch_assoc()['total']; $sp2->close();
-                    if ($sp2_count === 0) $slot_err = 'Therapist is not qualified for this service.';
+                    // Qualification check — package-aware (tests every real
+                    // component for a Package service; see
+                    // get_booking_qualified_therapist_ids()).
+                    $slot_qualified_ids = get_booking_qualified_therapist_ids($conn, $slot_svc_id);
+                    if (!in_array($slot_tid, $slot_qualified_ids, true)) $slot_err = 'Therapist is not qualified for this service.';
                 }
 
                 if ($slot_err) {

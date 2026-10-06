@@ -352,6 +352,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 //    against yet for Session 2. Any failure here blocks the whole booking —
                 //    the transaction below never starts. ──────────────────────────────────
                 $check_service_slot = function(string $chk_date, string $chk_label) use ($conn, $item_id, $item, $rate_type, $people_count, $therapist_id, $selected_duration) {
+                    // Package service (e.g. "Package 2" = Express Head Spa + Foot
+                    // Massage) -- qualification is tested against every real
+                    // component, not the package's own id/category. See
+                    // get_booking_qualified_therapist_ids().
+                    $qualified_ids_pre = get_booking_qualified_therapist_ids($conn, $item_id);
+                    $qualified_in_pre  = implode(',', $qualified_ids_pre ?: [0]);
+
                     // Feature A: today + zero qualified on duty → block
                     $chk_is_today = (date('Y-m-d') === date('Y-m-d', strtotime($chk_date)));
                     if ($chk_is_today) {
@@ -360,15 +367,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                             FROM therapists t
                             JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE()
                             WHERE (ta.time_out IS NULL OR ta.time_out = '')
-                              AND (
-                                  t.is_generalist = 1
-                                  OR EXISTS(SELECT 1 FROM therapist_specialty_services WHERE therapist_id = t.id AND service_id = ?)
-                                  OR EXISTS(SELECT 1 FROM therapist_specialties ts
-                                            JOIN services s ON s.category_id = ts.category_id
-                                            WHERE ts.therapist_id = t.id AND s.id = ?)
-                              )
+                              AND t.id IN ({$qualified_in_pre})
                         ");
-                        $qc->bind_param("ii", $item_id, $item_id); $qc->execute();
+                        $qc->execute();
                         $qualified_on_duty_count = (int)$qc->get_result()->fetch_assoc()['cnt']; $qc->close();
                         if ($qualified_on_duty_count === 0) {
                             return "No qualified therapist is currently on duty for <strong>" . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . "</strong>{$chk_label}. Please book a future date or wait until a qualified therapist checks in.";
@@ -383,14 +384,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                             FROM therapists t
                             JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE()
                             WHERE (ta.time_out IS NULL OR ta.time_out = '')
-                              AND (
-                                  t.is_generalist = 1
-                                  OR EXISTS(SELECT 1 FROM therapist_specialty_services
-                                            WHERE therapist_id = t.id AND service_id = ?)
-                                  OR EXISTS(SELECT 1 FROM therapist_specialties ts
-                                            JOIN services s ON s.category_id = ts.category_id
-                                            WHERE ts.therapist_id = t.id AND s.id = ?)
-                              )
+                              AND t.id IN ({$qualified_in_pre})
                               AND NOT EXISTS(
                                   SELECT 1
                                   FROM appointment_therapists at2
@@ -405,7 +399,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                                         > (? - INTERVAL ? MINUTE)
                               )
                         ");
-                        $fq->bind_param("iissisi", $item_id, $item_id,
+                        $fq->bind_param("ssisi",
                                         $chk_date,
                                         $chk_date, $end_mins_pre, $chk_date, $svc_buffer_pre);
                         $fq->execute();

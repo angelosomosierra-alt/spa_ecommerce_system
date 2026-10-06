@@ -406,17 +406,19 @@ function render_quick_book_services_html(mysqli $conn): string {
 }
 
 function quick_book_qualified_therapists(mysqli $conn, int $service_id): array {
+    // Package service (e.g. "Package 2" = Express Head Spa + Foot Massage) --
+    // qualification is tested against every real component, not the
+    // package's own id/category. See get_booking_qualified_therapist_ids().
+    $qualified_ids = get_booking_qualified_therapist_ids($conn, $service_id);
+    $in = implode(',', $qualified_ids ?: [0]);
     $stmt = $conn->prepare("
         SELECT t.id, t.full_name,
                CASE WHEN ta.therapist_id IS NOT NULL AND (ta.time_out IS NULL OR ta.time_out = '') THEN 1 ELSE 0 END AS on_duty
         FROM therapists t
         LEFT JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE()
-        WHERE t.is_generalist = 1
-           OR EXISTS(SELECT 1 FROM therapist_specialty_services WHERE therapist_id = t.id AND service_id = ?)
-           OR EXISTS(SELECT 1 FROM therapist_specialties ts JOIN services s ON s.category_id = ts.category_id WHERE ts.therapist_id = t.id AND s.id = ?)
+        WHERE t.id IN ({$in})
         ORDER BY on_duty DESC, t.full_name ASC
     ");
-    $stmt->bind_param("ii", $service_id, $service_id);
     $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();

@@ -534,6 +534,45 @@ function compute_package_commission($conn, int $package_service_id, int $therapi
     return ['total' => round($total, 2), 'components' => $breakdown];
 }
 
+// A therapist "qualified" for a Package service is NOT tested against the
+// package's own id/category -- nobody is ever specialized in a bundle as
+// such -- it's tested against EVERY real component, since the one therapist
+// assigned will perform the whole thing. For an ordinary (non-package)
+// service this is exactly the existing specialty check (is_generalist, or a
+// therapist_specialty_services row, or a therapist_specialties category
+// match), just centralized here instead of repeated inline per call site.
+// Returns the qualified therapist ids as a plain array, for callers to use
+// via "t.id IN (...)" or array membership.
+function get_booking_qualified_therapist_ids($conn, int $service_id): array {
+    $components = get_package_components($conn, $service_id);
+    $check_ids = !empty($components)
+        ? array_map(fn($c) => (int)$c['component_service_id'], $components)
+        : [$service_id];
+
+    $generalists = array_map('intval', array_column(
+        $conn->query("SELECT id FROM therapists WHERE is_generalist = 1")->fetch_all(MYSQLI_ASSOC), 'id'
+    ));
+
+    $qualified_sets = [];
+    foreach ($check_ids as $sid) {
+        $stmt = $conn->prepare("
+            SELECT DISTINCT t.id FROM therapists t
+            WHERE EXISTS(SELECT 1 FROM therapist_specialty_services WHERE therapist_id = t.id AND service_id = ?)
+               OR EXISTS(SELECT 1 FROM therapist_specialties ts JOIN services s ON s.category_id = ts.category_id WHERE ts.therapist_id = t.id AND s.id = ?)
+        ");
+        $stmt->bind_param("ii", $sid, $sid);
+        $stmt->execute();
+        $qualified_sets[] = array_map('intval', array_column($stmt->get_result()->fetch_all(MYSQLI_ASSOC), 'id'));
+        $stmt->close();
+    }
+    $intersection = $qualified_sets ? array_shift($qualified_sets) : [];
+    foreach ($qualified_sets as $set) {
+        $intersection = array_intersect($intersection, $set);
+    }
+
+    return array_values(array_unique(array_merge($generalists, $intersection)));
+}
+
 // Walk-in-sourced appointments are attributed to this account (see admin/walkin.php);
 // online-sourced ones use the real customer's own user_id from user/checkout.php.
 // Slotting and Rotation's approval flow (admin/appointments.php) uses this to tell
