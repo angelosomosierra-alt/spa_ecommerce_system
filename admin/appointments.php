@@ -650,27 +650,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         // ── INSERT — all bind_param values are plain local variables ──────────
         // A multi-session duration variant (e.g. a 2-session package) splits
         // evenly into one row PER SESSION: each its own slice of the charged
-        // price and commission, grouped by extra_group_id. Session 1 is
-        // rendered today (session_status='completed' immediately); later
-        // sessions start 'pending' and get marked done whenever they actually
-        // happen, independent of payment -- the whole package is still billed
-        // together today exactly as a single-session extra always has been.
+        // price and commission, grouped by extra_group_id. Every session,
+        // including session 1, starts 'pending' -- nothing has actually been
+        // rendered yet at the moment the extra is merely added (adding it to
+        // a not-yet-checked-in, possibly future-dated appointment shouldn't
+        // claim it already happened). advance_extra_sessions() (see the
+        // ACTIONS block below) marks the earliest pending session of each
+        // group 'completed' whenever the appointment/session it's attached
+        // to actually completes; staff can also mark one done sooner by hand
+        // via the Mark Session Complete button, same as any later session.
         $es_pay_status = 'unpaid';
         $es_new_id = 0;
         $es_duration_id_param = $es_duration_id > 0 ? $es_duration_id : null;
         $es_split_charged = round($es_charged / $es_session_count, 2);
         $es_split_comm    = round($es_commission / $es_session_count, 2);
         $es_group_id = null;
-        $es_admin_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
         for ($es_sess_n = 1; $es_sess_n <= $es_session_count; $es_sess_n++) {
-            // Only session 1 is genuinely rendered today -- later sessions start
-            // 'pending' with no completed_by/_at until someone actually completes
-            // them (see complete_extra_session below), so they carry no stale
-            // attribution in the meantime.
-            $es_sess_status            = ($es_sess_n === 1) ? 'completed' : 'pending';
-            $es_sess_completed_by      = ($es_sess_n === 1) ? $es_added_by   : null;
-            $es_sess_completed_by_name = ($es_sess_n === 1) ? $es_admin_name : null;
-            $es_sess_completed_at      = ($es_sess_n === 1) ? date('Y-m-d H:i:s') : null;
+            $es_sess_status            = 'pending';
+            $es_sess_completed_by      = null;
+            $es_sess_completed_by_name = null;
+            $es_sess_completed_at      = null;
             if ($es_therapist_id > 0) {
                 $es_ins = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, paymongo_reference, paymongo_method, service_duration_id, session_number, total_sessions, extra_group_id, session_status, session_completed_by, session_completed_by_name, session_completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $es_ins->bind_param("iiisddssssissiiiisiss", $es_appt_id, $es_service_id, $es_therapist_id, $es_person_label, $es_split_charged, $es_split_comm, $es_rate_type, $extra_pm, $es_pay_status, $es_notes, $es_added_by, $es_pm_ref, $es_pm_method, $es_duration_id_param, $es_sess_n, $es_session_count, $es_group_id, $es_sess_status, $es_sess_completed_by, $es_sess_completed_by_name, $es_sess_completed_at);
@@ -691,7 +690,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         }
 
         $message = $es_session_count > 1
-            ? "Extra service added for {$es_person_label} (Session 1 of {$es_session_count} recorded as done today)."
+            ? "Extra service added for {$es_person_label} ({$es_session_count} sessions — mark each one done as it happens)."
             : "Extra service added for {$es_person_label}.";
         $message_type = "success";
     }
@@ -1133,6 +1132,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_r
 
     echo json_encode(['success' => true, 'message' => $sr_resource_id > 0 ? 'Resource assigned.' : 'Resource cleared.']);
     exit();
+}
+
+// For a multi-session extra added while the appointment wasn't checked in yet
+// (status was 'assigned', not 'approved' -- see add_extra_service above),
+// session 1 starts 'pending' just like every later session, since nothing
+// had actually happened yet at add time. Call this whenever the appointment
+// (or, for a session-count package, one of its own sessions) actually
+// completes: it advances the EARLIEST still-pending session of every
+// multi-session extra group on this appointment to 'completed', so "this
+// visit happened" for the extra lines up with "this visit happened" for the
+// appointment itself, instead of needing a separate manual click for a
+// session that already occurred as part of today's visit.
+function advance_extra_sessions(mysqli $conn, int $appt_id, int $actor_id, string $actor_name): void {
+    $q = $conn->prepare("
+        SELECT aes.id
+        FROM appointment_extra_services aes
+        JOIN (
+            SELECT extra_group_id, MIN(session_number) AS min_sn
+            FROM appointment_extra_services
+            WHERE appointment_id = ? AND session_status = 'pending' AND extra_group_id IS NOT NULL
+            GROUP BY extra_group_id
+        ) m ON m.extra_group_id = aes.extra_group_id AND m.min_sn = aes.session_number
+        WHERE aes.appointment_id = ? AND aes.session_status = 'pending'
+    ");
+    $q->bind_param("ii", $appt_id, $appt_id); $q->execute();
+    $ids = array_column($q->get_result()->fetch_all(MYSQLI_ASSOC), 'id');
+    $q->close();
+    if (empty($ids)) return;
+    $upd = $conn->prepare("UPDATE appointment_extra_services SET session_status='completed', session_completed_by=?, session_completed_by_name=?, session_completed_at=NOW() WHERE id=?");
+    foreach ($ids as $id) {
+        $upd->bind_param("isi", $actor_id, $actor_name, $id);
+        $upd->execute();
+    }
+    $upd->close();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1648,6 +1681,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
                 $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
             }
+            // This visit is concluding now — whichever session of each
+            // multi-session extra was still waiting on "has this happened yet"
+            // happened as part of it. See advance_extra_sessions() above.
+            advance_extra_sessions($conn, $appt_id, $cp_by, $cp_name);
 
             // ── Appointment status + supply deduction — atomic transaction ────────
             $conn->begin_transaction();
@@ -2438,6 +2475,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
             // this only flips the status, same as check-in's sweep does.
             $es_sweep = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid' WHERE appointment_id=? AND payment_status='unpaid'");
             $es_sweep->bind_param("i", $cs_appt_id); $es_sweep->execute(); $es_sweep->close();
+            // This session just happened — whichever session of each multi-session
+            // extra was still waiting on "has this happened yet" happened alongside
+            // it. See advance_extra_sessions() above the ACTIONS block.
+            advance_extra_sessions($conn, $cs_appt_id, $cs_by, $cs_name);
 
             // If this was the LAST remaining session, flip the appointment itself
             // to completed (Kanban/operational status only — Daily Report revenue
