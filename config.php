@@ -573,6 +573,48 @@ function get_booking_qualified_therapist_ids($conn, int $service_id): array {
     return array_values(array_unique(array_merge($generalists, $intersection)));
 }
 
+// Which of the Daily Report's four commission-rate columns (30/20/15/25%)
+// a given percent lands in -- same tier boundaries used everywhere this
+// report buckets a rate. Anything outside 13-32% (including "no rate set")
+// falls back to the 30% column, matching the long-standing behavior here.
+function commission_report_bucket_key(float $pct): string {
+    if ($pct >= 28 && $pct <= 32) return 'comm_30';
+    if ($pct >= 23 && $pct <= 27) return 'comm_25';
+    if ($pct >= 18 && $pct <= 22) return 'comm_20';
+    if ($pct >= 13 && $pct <= 17) return 'comm_15';
+    return 'comm_30';
+}
+
+// Splits a service's total commission across the Daily Report's four rate
+// columns for one therapist. A Package service (see
+// service_package_components) has no rate of its own -- each real
+// component can carry a different rate, so its commission is split across
+// however many buckets its components land in (e.g. Express Head Spa's
+// 15% and Foot Massage's 25% land in two different columns, not blended
+// into one). An ordinary service keeps the single-rate lookup it always
+// had, routing $total_comm (the already-computed, authoritative amount)
+// into that one bucket.
+function route_commission_to_buckets($conn, int $service_id, int $therapist_id, float $total_comm): array {
+    $buckets = ['comm_30' => 0.0, 'comm_20' => 0.0, 'comm_15' => 0.0, 'comm_25' => 0.0];
+    $pkg = compute_package_commission($conn, $service_id, $therapist_id);
+    if (!empty($pkg['components'])) {
+        foreach ($pkg['components'] as $comp) {
+            $buckets[commission_report_bucket_key((float)$comp['rate'])] += (float)$comp['commission'];
+        }
+        return $buckets;
+    }
+    $pct = 0.0;
+    if ($therapist_id > 0) {
+        $stmt = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+        $stmt->bind_param("ii", $therapist_id, $service_id);
+        $stmt->execute();
+        $pct = (float)($stmt->get_result()->fetch_assoc()['commission_percent'] ?? 0);
+        $stmt->close();
+    }
+    $buckets[commission_report_bucket_key($pct)] += $total_comm;
+    return $buckets;
+}
+
 // Walk-in-sourced appointments are attributed to this account (see admin/walkin.php);
 // online-sourced ones use the real customer's own user_id from user/checkout.php.
 // Slotting and Rotation's approval flow (admin/appointments.php) uses this to tell

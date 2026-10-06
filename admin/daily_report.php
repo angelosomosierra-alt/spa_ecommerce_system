@@ -558,12 +558,6 @@ $conn->query("
     // runs before _daily_report_data.php's own self-heal further down the file.
     $conn->query("ALTER TABLE service_durations ADD COLUMN IF NOT EXISTS session_count INT NOT NULL DEFAULT 1 AFTER duration_minutes");
 
-    // Pre-load commission percents (therapist_id_service_id → percent) for column routing
-    $imp_cm = [];
-    $cq = $conn->query("SELECT therapist_id, service_id, commission_percent FROM therapist_commission");
-    if ($cq) foreach ($cq->fetch_all(MYSQLI_ASSOC) as $_c)
-        $imp_cm[(int)$_c['therapist_id'] . '_' . (int)$_c['service_id']] = (float)$_c['commission_percent'];
-
     // Pre-load which services have 2+ duration options (Duration Variants) —
     // built once per import run, not queried per row.
     $imp_multi_duration_svc = [];
@@ -687,15 +681,13 @@ $conn->query("
         $disc_20_pwd   = 0.0; $disc_50_staff = 0.0;
         $total_comm    = (float)($ap['total_commission'] ?? 0);
 
-        // Route commission to the column matching the therapist+service percent
-        $pct_key = $therapist_id . '_' . $service_id;
-        $pct     = $imp_cm[$pct_key] ?? 0;
-        $comm_30 = $comm_20 = $comm_15 = $comm_25 = 0.0;
-        if     ($pct >= 28 && $pct <= 32) $comm_30 = $total_comm;
-        elseif ($pct >= 23 && $pct <= 27) $comm_25 = $total_comm;
-        elseif ($pct >= 18 && $pct <= 22) $comm_20 = $total_comm;
-        elseif ($pct >= 13 && $pct <= 17) $comm_15 = $total_comm;
-        else                               $comm_30 = $total_comm; // fallback
+        // Route commission to the column(s) matching the therapist's actual
+        // rate(s) -- a Package service splits across each component's own
+        // rate instead of one lookup against the package's own id (see
+        // route_commission_to_buckets()).
+        $_buckets = route_commission_to_buckets($conn, $service_id, $therapist_id, $total_comm);
+        $comm_30 = $_buckets['comm_30']; $comm_20 = $_buckets['comm_20'];
+        $comm_15 = $_buckets['comm_15']; $comm_25 = $_buckets['comm_25'];
 
         $net_sales   = $charged_amount - $total_comm;
         $raw_mop     = strtolower(trim($ap['payment_method'] ?? ''));
@@ -800,12 +792,6 @@ $conn->query("
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
 
-    // Pre-load commission percents for column routing
-    $ecm = [];
-    $cq2 = $conn->query("SELECT therapist_id, service_id, commission_percent FROM therapist_commission");
-    if ($cq2) foreach ($cq2->fetch_all(MYSQLI_ASSOC) as $_c)
-        $ecm[(int)$_c['therapist_id'] . '_' . (int)$_c['service_id']] = (float)$_c['commission_percent'];
-
     foreach ($imp_extras as $ex) {
         $extra_id = (int)$ex['extra_id'];
         if (isset($already_extra[$extra_id])) continue;
@@ -816,14 +802,11 @@ $conn->query("
         $regular_price = (float)($ex['regular_price'] ?? 0);
         $promo_price   = (float)($ex['charged_price'] ?? 0);
         $total_comm    = (float)($ex['commission'] ?? 0);
-        $pct_key       = $therapist_id . '_' . $service_id;
-        $pct           = $ecm[$pct_key] ?? 0;
-        $comm_30 = $comm_20 = $comm_15 = $comm_25 = 0.0;
-        if     ($pct >= 28 && $pct <= 32) $comm_30 = $total_comm;
-        elseif ($pct >= 23 && $pct <= 27) $comm_25 = $total_comm;
-        elseif ($pct >= 18 && $pct <= 22) $comm_20 = $total_comm;
-        elseif ($pct >= 13 && $pct <= 17) $comm_15 = $total_comm;
-        else                               $comm_30 = $total_comm;
+        // Route commission to the column(s) matching the therapist's actual
+        // rate(s) -- package-aware, see route_commission_to_buckets().
+        $_ebuckets = route_commission_to_buckets($conn, $service_id, $therapist_id, $total_comm);
+        $comm_30 = $_ebuckets['comm_30']; $comm_20 = $_ebuckets['comm_20'];
+        $comm_15 = $_ebuckets['comm_15']; $comm_25 = $_ebuckets['comm_25'];
         $net_sales     = $promo_price - $total_comm;
         $raw_mop       = strtolower(trim($ex['payment_method'] ?? ''));
         $mode_of_pay   = $mop_map2[$raw_mop] ?? 'Cash';

@@ -701,6 +701,15 @@ $commission_services = $conn->query("
     LEFT JOIN categories c ON s.category_id = c.id
     ORDER BY c.name ASC, s.name ASC
 ")->fetch_all(MYSQLI_ASSOC);
+// The ₱ Preview column must reflect what commission actually gets computed
+// off (get_commission_base_price() -- promo price when one's defined,
+// regardless of whether it's scheduled/active right now), not the raw
+// regular price, or the preview misleads staff into expecting more than
+// the service will actually pay out.
+foreach ($commission_services as &$_cs) {
+    $_cs['comm_base'] = get_commission_base_price((int)$_cs['id'], null, (float)$_cs['price']);
+}
+unset($_cs);
 
 $svc_by_cat = [];
 foreach ($commission_services as $svc) $svc_by_cat[$svc['category_name']][] = $svc;
@@ -2188,17 +2197,22 @@ function showCommission(therapistId) {
             var pctNum   = parseFloat(s.pct) || 0;
             var selPct   = pctNum >= 28 ? 30 : pctNum >= 23 ? 25 : pctNum >= 18 ? 20 : pctNum >= 13 ? 15 : 0;
             var pctVal   = parseFloat(s.pct) || 0;
-            var svcPrice = parseFloat(svc.price) || 0;
-            var previewAmt = pctVal > 0 ? '₱' + (svcPrice * pctVal / 100).toFixed(2) : '';
+            // Commission is actually computed off comm_base (promo price when
+            // one's defined for this service), not the raw regular price --
+            // the preview below has to match, or it misleads staff about
+            // what the service will really pay out.
+            var svcCommBase = parseFloat(svc.comm_base) || parseFloat(svc.price) || 0;
+            var hasPromoBase = Math.abs(svcCommBase - parseFloat(svc.price)) > 0.005;
+            var previewAmt = pctVal > 0 ? '₱' + (svcCommBase * pctVal / 100).toFixed(2) : '';
             row.innerHTML = `
                 <div>
                     <input type="hidden" name="svc_id[]" value="${svc.id}">
-                    <span data-svc-price="${svc.price}" style="display:none;"></span>
+                    <span data-svc-price="${svcCommBase}" style="display:none;"></span>
                     <div style="font-size:0.83rem;font-weight:600;color:var(--brown);">
                         ${svc.name}
                         ${missingComm ? '<span style="background:rgba(234,179,8,0.15);color:#92400e;font-size:0.62rem;padding:0.1rem 0.4rem;border-radius:20px;margin-left:0.3rem;font-weight:700;">NO COMMISSION</span>' : ''}
                     </div>
-                    <div style="font-size:0.7rem;color:var(--gray);">Regular: ₱${price}</div>
+                    <div style="font-size:0.7rem;color:var(--gray);">Regular: ₱${price}${hasPromoBase ? ' <span style="color:#C96A2C;font-weight:600;">(commission based on promo ₱' + svcCommBase.toFixed(2) + ')</span>' : ''}</div>
                 </div>
                 <div>
                     <select name="svc_percent[]" onchange="updateCommPreview(this)"
