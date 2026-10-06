@@ -691,6 +691,8 @@ require_once 'admin_header.php';
 <div id="resourceGridContainer" style="margin-bottom:1.5rem;"><?php require_once __DIR__ . '/_resource_grid.php'; echo render_resource_grid_html($conn); ?></div>
 <?php include __DIR__ . '/_resource_grid_js.php'; ?>
 
+<?php require_once __DIR__ . '/_advance_payments_widget.php'; ?>
+
 <!-- Appointments calendar modal -->
 <div class="modal-overlay" id="apptCalendarModal">
     <div class="modal-box" style="max-width:1720px;width:95vw;">

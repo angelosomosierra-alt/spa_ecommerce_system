@@ -36,6 +36,23 @@
     if (!in_array('opening_coh', $rpt_cols))
         $conn->query("ALTER TABLE daily_reports ADD COLUMN opening_coh DECIMAL(10,2) NOT NULL DEFAULT 0.00");
 
+    // Dashboard's Advance Payments & Vouchers widget — "Other Deposit" entries.
+    // Self-healed here too (not just in the widget file) so this shared data
+    // layer never fails to find the table regardless of load order.
+    $conn->query("CREATE TABLE IF NOT EXISTS manual_advance_payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        report_date DATE NOT NULL,
+        client_name VARCHAR(120) NOT NULL,
+        service_label VARCHAR(255) NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        payment_method VARCHAR(20) NOT NULL DEFAULT 'cash',
+        remarks VARCHAR(255) NULL,
+        added_by INT NULL,
+        verified_by_pin VARCHAR(10) NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_map_date (report_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
     $conn->query("CREATE TABLE IF NOT EXISTS `daily_report_spreadsheet_rows` (
         `id`               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         `report_date`      DATE NOT NULL,
@@ -296,6 +313,29 @@ foreach ($advances_received as &$_adv_lbl) {
     }
 }
 unset($_adv_lbl);
+
+// Manually-logged advances (Dashboard's Advance Payments & Vouchers widget,
+// "Other Deposit" entries — not tied to any appointment the system already
+// tracks, e.g. a deposit toward a future custom arrangement). Folded into
+// the SAME advances_received shape so every total/breakdown below (cash on
+// hand, per-method DP) picks them up automatically, same as a session
+// advance would. Only ever counted on their own collection date — there's
+// no future "this session happens now" event to carry them forward to like
+// a session-package advance has, so they don't feed the prior-day Advance
+// Payment (B48) calc elsewhere in this file.
+$_map_q = $conn->prepare("
+    SELECT id, amount AS advance_payment, report_date AS advance_payment_date,
+           payment_method AS advance_payment_method, created_at AS appointment_date,
+           'manual' AS service_type, service_label AS service_name,
+           1 AS session_count, client_name AS customer_name
+    FROM manual_advance_payments
+    WHERE report_date = ?
+");
+$_map_q->bind_param("s", $report_date);
+$_map_q->execute();
+$advances_received = array_merge($advances_received, $_map_q->get_result()->fetch_all(MYSQLI_ASSOC));
+$_map_q->close();
+
 $advances_received_total = array_sum(array_column($advances_received, 'advance_payment'));
 // Per-method DP totals — computed from the same advances_received dataset
 $_dp_by_method = [];
