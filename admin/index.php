@@ -525,8 +525,24 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     if (!in_array($discount_type, $valid_discount_types, true)) { $discount_type = 'none'; }
     if ($discount_type === 'voucher' && $voucher_value <= 0) { echo json_encode(['ok' => false, 'message' => 'Please enter the voucher amount, or select None if no voucher is used.']); exit; }
     if ($discount_type === 'celebration' && $voucher_value <= 0) { echo json_encode(['ok' => false, 'message' => 'Please enter the celebration discount percentage, or select None if no discount is used.']); exit; }
-    if (!in_array($payment_method, $valid_payment_methods, true)) { echo json_encode(['ok' => false, 'message' => 'Please choose a payment method.']); exit; }
     if (!in_array($advance_pm, $valid_payment_methods, true)) { $advance_pm = 'cash'; }
+
+    // A booking dated after today is a reservation, not a walk-in -- there's
+    // no "pay the remaining balance now" moment for a visit that hasn't
+    // happened yet, only a down payment to hold the slot. The actual balance
+    // gets collected at check-in on the appointment date (checkin_appointment
+    // in appointments.php already handles crediting advance_payment then).
+    $is_future_booking = $date > date('Y-m-d');
+    if ($is_future_booking) {
+        if ($advance_payment <= 0) {
+            echo json_encode(['ok' => false, 'message' => 'A down payment is required to book a future appointment.']); exit;
+        }
+        // The down payment's own method stands in for the order's payment
+        // method -- there's nothing else being paid today to pick one for.
+        $payment_method = $advance_pm;
+    } elseif (!in_array($payment_method, $valid_payment_methods, true)) {
+        echo json_encode(['ok' => false, 'message' => 'Please choose a payment method.']); exit;
+    }
 
     $stmt = $conn->prepare("SELECT * FROM services WHERE id = ? AND deleted_at IS NULL");
     $stmt->bind_param("i", $service_id);
@@ -563,11 +579,15 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $walkin_user_id    = get_walkin_customer_id();
     $adv_pm_val        = $advance_payment > 0 ? $advance_pm : 'cash';
     $adv_date          = $advance_payment > 0 ? date('Y-m-d') : null;
+    // A walk-in always pays everything today. A future booking only pays its
+    // down payment today -- 'paid' only if that happens to cover the whole
+    // charge already; otherwise the balance is still owed at check-in.
+    $order_payment_status = (!$is_future_booking || $final_amount <= 0) ? 'paid' : 'unpaid';
 
     $conn->begin_transaction();
     try {
-        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, 'paid', 'approved', ?, ?, ?, NULL)");
-        $stmt->bind_param("isssdssdd", $walkin_user_id, $customer_name, $phone, $appointment_date, $charged_price, $payment_method, $discount_type, $discount_amount_calc, $final_amount);
+        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, NULL)");
+        $stmt->bind_param("isssdsssdd", $walkin_user_id, $customer_name, $phone, $appointment_date, $charged_price, $payment_method, $order_payment_status, $discount_type, $discount_amount_calc, $final_amount);
         $stmt->execute();
         $order_id = $stmt->insert_id;
         $stmt->close();
@@ -830,9 +850,13 @@ require_once 'admin_header.php';
                     </div>
                 </div>
 
+                <div id="qbFutureNotice" class="qb-notice" style="display:none;margin-top:1.25rem;background:rgba(201,106,44,0.08);border-color:var(--gold);color:var(--brown);">
+                    <strong>This is a future-dated booking.</strong> A down payment is required to hold the slot — the remaining balance is collected when the customer checks in on the appointment date.
+                </div>
+
                 <div class="qb-summary" id="qbPriceSummary" style="margin-top:1.25rem;"></div>
 
-                <div class="qb-field" style="margin-top:1.25rem;">
+                <div class="qb-field" id="qbPayMethodBlock" style="margin-top:1.25rem;">
                     <label>Payment Method</label>
                     <div class="qb-pay-grid" id="qbPayGrid"></div>
                     <?php if (!ONLINE_PAYMENT_ENABLED): ?>
@@ -842,11 +866,11 @@ require_once 'admin_header.php';
 
                 <div class="qb-field-row" style="margin-top:1rem;">
                     <div class="qb-field">
-                        <label for="qbAdvancePayment">Advance Payment (₱) <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                        <label for="qbAdvancePayment" id="qbAdvanceLabel">Advance Payment (₱) <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
                         <input type="number" id="qbAdvancePayment" min="0" step="0.01" value="0" oninput="qbRecalc()">
                     </div>
                     <div class="qb-field">
-                        <label>Advance Payment Method</label>
+                        <label id="qbAdvanceMethodLabel">Advance Payment Method</label>
                         <div class="qb-pay-grid" id="qbAdvPayGrid"></div>
                     </div>
                 </div>
@@ -941,7 +965,7 @@ function openQuickBook(prefillDate) {
     qbBuildPayGrid('qbAdvPayGrid', 'advance_payment_method');
     var confirmBtn = document.getElementById('qbConfirmBtn');
     confirmBtn.disabled = false;
-    confirmBtn.textContent = 'Book Walk-In';
+    confirmBtn.textContent = qbConfirmBtnLabel();
     qbMaxStepReached = 1;
     qbGotoStep(1);
     document.getElementById('quickBookModal').classList.add('active');
@@ -968,8 +992,32 @@ function qbGotoStep(n) {
             'Booking for ' + dt.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
     }
     if (n === 3) qbBuildReviewSummary();
+    if (n === 4) qbUpdateFutureBookingUI();
     var scrollBody = document.querySelector('#quickBookModal .modal-box-body');
     if (scrollBody) scrollBody.scrollTop = 0;
+}
+
+// A booking dated after today can't collect "today's" payment for a visit
+// that hasn't happened yet — it needs a down payment now and the balance
+// gets settled at check-in on the day, same as any other future booking.
+// Same-day walk-ins are unaffected: pay in full now, advance stays optional.
+function qbIsFutureBooking() {
+    var todayStr = new Date().toISOString().slice(0, 10);
+    return qbState.date > todayStr;
+}
+
+function qbConfirmBtnLabel() { return qbIsFutureBooking() ? 'Book Appointment' : 'Book Walk-In'; }
+
+function qbUpdateFutureBookingUI() {
+    var isFuture = qbIsFutureBooking();
+    document.getElementById('qbFutureNotice').style.display = isFuture ? '' : 'none';
+    document.getElementById('qbPayMethodBlock').style.display = isFuture ? 'none' : '';
+    document.getElementById('qbAdvanceLabel').innerHTML = isFuture
+        ? 'Down Payment (₱) <span style="font-weight:700;color:var(--rust);">*required</span>'
+        : 'Advance Payment (₱) <span style="font-weight:400;color:var(--gray);">(optional)</span>';
+    document.getElementById('qbAdvanceMethodLabel').textContent = isFuture ? 'Down Payment Method' : 'Advance Payment Method';
+    document.getElementById('qbConfirmBtn').textContent = qbConfirmBtnLabel();
+    qbRecalc();
 }
 
 function qbStepClick(n) {
@@ -1113,10 +1161,11 @@ function qbRecalc() {
     var discount = qbComputeDiscount(base);
     var advance  = parseFloat(document.getElementById('qbAdvancePayment').value) || 0;
     var final    = Math.max(0, base - discount - advance);
+    var isFuture = qbIsFutureBooking();
     var rows = '<div class="qb-summary-row"><span>' + qbRateTypeLabel() + ' Price</span><strong>₱' + base.toFixed(2) + '</strong></div>';
     if (discount > 0) rows += '<div class="qb-summary-row"><span>Discount</span><strong>&minus;₱' + discount.toFixed(2) + '</strong></div>';
-    if (advance > 0)  rows += '<div class="qb-summary-row"><span>Advance Payment</span><strong>&minus;₱' + advance.toFixed(2) + '</strong></div>';
-    rows += '<div class="qb-summary-row qb-summary-total"><span>Balance Due</span><strong>₱' + final.toFixed(2) + '</strong></div>';
+    if (advance > 0)  rows += '<div class="qb-summary-row"><span>' + (isFuture ? 'Down Payment' : 'Advance Payment') + '</span><strong>&minus;₱' + advance.toFixed(2) + '</strong></div>';
+    rows += '<div class="qb-summary-row qb-summary-total"><span>' + (isFuture ? 'Due at Appointment' : 'Balance Due') + '</span><strong>₱' + final.toFixed(2) + '</strong></div>';
     document.getElementById('qbPriceSummary').innerHTML = rows;
 }
 
@@ -1135,7 +1184,14 @@ function qbSelectPayment(el, field) {
 }
 
 function qbSubmit() {
-    if (!qbState.payment_method) { uiAlert('Please choose a payment method.'); return; }
+    var isFuture = qbIsFutureBooking();
+    var advanceAmt = parseFloat(document.getElementById('qbAdvancePayment').value) || 0;
+    if (isFuture) {
+        if (advanceAmt <= 0) { uiAlert('A down payment is required to book a future appointment.'); return; }
+        if (!qbState.advance_payment_method) { uiAlert('Please choose a down payment method.'); return; }
+    } else if (!qbState.payment_method) {
+        uiAlert('Please choose a payment method.'); return;
+    }
     if (qbState.discount_type === 'voucher' && (parseFloat(document.getElementById('qbVoucherAmount').value) || 0) <= 0) {
         uiAlert('Please enter the voucher amount, or select None if no voucher is used.'); return;
     }
@@ -1177,14 +1233,14 @@ function qbSubmit() {
                 errEl.textContent = data.message || 'Could not save the booking.';
                 errEl.style.display = '';
                 confirmBtn.disabled = false;
-                confirmBtn.textContent = 'Book Walk-In';
+                confirmBtn.textContent = qbConfirmBtnLabel();
             }
         })
         .catch(function () {
             errEl.textContent = 'Network error. Please try again.';
             errEl.style.display = '';
             confirmBtn.disabled = false;
-            confirmBtn.textContent = 'Book Walk-In';
+            confirmBtn.textContent = qbConfirmBtnLabel();
         });
 }
 
