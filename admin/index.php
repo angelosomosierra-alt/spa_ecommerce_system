@@ -542,6 +542,11 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
         $payment_method = $advance_pm;
     } elseif (!in_array($payment_method, $valid_payment_methods, true)) {
         echo json_encode(['ok' => false, 'message' => 'Please choose a payment method.']); exit;
+    } else {
+        // A walk-in happening now is paid in full today -- there's no future
+        // visit for a deposit to be held against, so any advance_payment the
+        // client sent for a same-day booking is ignored.
+        $advance_payment = 0.0;
     }
 
     $stmt = $conn->prepare("SELECT * FROM services WHERE id = ? AND deleted_at IS NULL");
@@ -861,13 +866,13 @@ require_once 'admin_header.php';
                     <div class="qb-pay-grid" id="qbPayGrid"></div>
                 </div>
 
-                <div class="qb-field-row" style="margin-top:1rem;">
+                <div class="qb-field-row" id="qbAdvancePaymentBlock" style="margin-top:1rem;">
                     <div class="qb-field">
-                        <label for="qbAdvancePayment" id="qbAdvanceLabel">Advance Payment (₱) <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                        <label for="qbAdvancePayment" id="qbAdvanceLabel">Down Payment (₱) <span style="font-weight:700;color:var(--rust);">*required</span></label>
                         <input type="number" id="qbAdvancePayment" min="0" step="0.01" value="0" oninput="qbRecalc()">
                     </div>
                     <div class="qb-field">
-                        <label id="qbAdvanceMethodLabel">Advance Payment Method</label>
+                        <label id="qbAdvanceMethodLabel">Down Payment Method</label>
                         <div class="qb-pay-grid" id="qbAdvPayGrid"></div>
                     </div>
                 </div>
@@ -1005,14 +1010,16 @@ function qbIsFutureBooking() {
 
 function qbConfirmBtnLabel() { return qbIsFutureBooking() ? 'Book Appointment' : 'Book Walk-In'; }
 
+// A "now" walk-in is paid in full today via the single Payment Method below --
+// there's nothing to advance against, so the whole Down Payment block (which
+// only ever makes sense as a deposit held against a *future* visit) is hidden
+// for it entirely, not just relabeled.
 function qbUpdateFutureBookingUI() {
     var isFuture = qbIsFutureBooking();
     document.getElementById('qbFutureNotice').style.display = isFuture ? '' : 'none';
     document.getElementById('qbPayMethodBlock').style.display = isFuture ? 'none' : '';
-    document.getElementById('qbAdvanceLabel').innerHTML = isFuture
-        ? 'Down Payment (₱) <span style="font-weight:700;color:var(--rust);">*required</span>'
-        : 'Advance Payment (₱) <span style="font-weight:400;color:var(--gray);">(optional)</span>';
-    document.getElementById('qbAdvanceMethodLabel').textContent = isFuture ? 'Down Payment Method' : 'Advance Payment Method';
+    document.getElementById('qbAdvancePaymentBlock').style.display = isFuture ? '' : 'none';
+    if (!isFuture) document.getElementById('qbAdvancePayment').value = 0;
     document.getElementById('qbConfirmBtn').textContent = qbConfirmBtnLabel();
     qbRecalc();
 }
@@ -1156,12 +1163,12 @@ function qbComputeDiscount(base) {
 function qbRecalc() {
     var base     = qbComputeBasePrice();
     var discount = qbComputeDiscount(base);
-    var advance  = parseFloat(document.getElementById('qbAdvancePayment').value) || 0;
-    var final    = Math.max(0, base - discount - advance);
     var isFuture = qbIsFutureBooking();
+    var advance  = isFuture ? (parseFloat(document.getElementById('qbAdvancePayment').value) || 0) : 0;
+    var final    = Math.max(0, base - discount - advance);
     var rows = '<div class="qb-summary-row"><span>' + qbRateTypeLabel() + ' Price</span><strong>₱' + base.toFixed(2) + '</strong></div>';
     if (discount > 0) rows += '<div class="qb-summary-row"><span>Discount</span><strong>&minus;₱' + discount.toFixed(2) + '</strong></div>';
-    if (advance > 0)  rows += '<div class="qb-summary-row"><span>' + (isFuture ? 'Down Payment' : 'Advance Payment') + '</span><strong>&minus;₱' + advance.toFixed(2) + '</strong></div>';
+    if (advance > 0)  rows += '<div class="qb-summary-row"><span>Down Payment</span><strong>&minus;₱' + advance.toFixed(2) + '</strong></div>';
     rows += '<div class="qb-summary-row qb-summary-total"><span>' + (isFuture ? 'Due at Appointment' : 'Balance Due') + '</span><strong>₱' + final.toFixed(2) + '</strong></div>';
     document.getElementById('qbPriceSummary').innerHTML = rows;
 }
