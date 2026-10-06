@@ -936,16 +936,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
         <div class="table-wrap" style="border:none;border-radius:0;overflow-x:auto;">
         <?php
         // ── Per-row commission-tier & totals accumulators ─────────────────────
-        $t_reg=$t_promo=$t_celeb=$t_dpwd=$t_c30=$t_c20=$t_c15=$t_d50=$t_net=0;
-        // Commission-percent lookup for column routing -- this table used to guess
-        // the tier from rate_type (regular/home/hotel), which is the customer's
-        // PRICING tier and has nothing to do with what percent the therapist is
-        // actually paid. Route by the therapist's real configured rate instead,
-        // same as the spreadsheet import above.
-        $disp_cm = [];
-        $_dcq = $conn->query("SELECT therapist_id, service_id, commission_percent FROM therapist_commission");
-        if ($_dcq) foreach ($_dcq->fetch_all(MYSQLI_ASSOC) as $_dc)
-            $disp_cm[(int)$_dc['therapist_id'] . '_' . (int)$_dc['service_id']] = (float)$_dc['commission_percent'];
+        $t_reg=$t_promo=$t_celeb=$t_dpwd=$t_c30=$t_c20=$t_c15=$t_c25=$t_d50=$t_net=0;
         ?>
             <table style="min-width:1900px;font-size:0.78rem;">
                 <thead>
@@ -963,6 +954,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         <th style="text-align:right;">30%<br>Commission Fee</th>
                         <th style="text-align:right;">20%<br>Commission Fee</th>
                         <th style="text-align:right;">15%<br>Commission Fee</th>
+                        <th style="text-align:right;">25%<br>Commission Fee</th>
                         <th style="text-align:right;">50% Disc.<br>for Staff</th>
                         <th style="text-align:right;">Net Sales</th>
                         <th style="text-align:center;">Mode of<br>Payment</th>
@@ -971,7 +963,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 </thead>
                 <tbody>
                 <?php if (empty($service_rows)): ?>
-                <tr><td colspan="17" style="text-align:center;color:var(--gray);padding:2rem;">
+                <tr><td colspan="18" style="text-align:center;color:var(--gray);padding:2rem;">
                     No service transactions for <?php echo date('M d, Y', strtotime($report_date)); ?>.
                 </td></tr>
                 <?php else:
@@ -985,14 +977,13 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     // Commission tier from the therapist's actual configured rate
                     // for this service (therapist_commission) -- NOT rate_type,
                     // which is the customer's pricing tier and unrelated to what
-                    // percent the therapist is paid.
+                    // percent the therapist is paid. Package-aware: splits across
+                    // each component's own rate (see route_commission_to_buckets()).
                     $_row_tid = (int)($row['sr_therapist_id'] ?? 0);
-                    $_row_pct = $disp_cm[$_row_tid . '_' . (int)$row['service_id']] ?? 0;
                     $_total_comm = (float)$row['total_commission'];
-                    $c30 = $c20 = $c15 = 0.0;
-                    if      ($_row_pct >= 18 && $_row_pct <= 22) $c20 = $_total_comm;
-                    elseif  ($_row_pct >= 13 && $_row_pct <= 17) $c15 = $_total_comm;
-                    else                                          $c30 = $_total_comm; // 28-32%, 23-27%, and any unmatched rate all show here (no 25% column in this table)
+                    $_row_buckets = route_commission_to_buckets($conn, (int)$row['service_id'], $_row_tid, $_total_comm);
+                    $c30 = $_row_buckets['comm_30']; $c20 = $_row_buckets['comm_20'];
+                    $c15 = $_row_buckets['comm_15']; $c25 = $_row_buckets['comm_25'];
                     // Discount columns
                     $disc_pwd  = in_array($row['discount_type'], ['senior','pwd']) ? (float)$row['discount_amount'] : 0;
                     $disc_50   = ($row['discount_type'] === 'employee')            ? (float)$row['discount_amount'] : 0;
@@ -1011,7 +1002,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     $t_reg   += (float)$row['regular_price'];
                     $t_promo += $_true_promo;
                     $t_celeb += $disc_celeb;
-                    $t_dpwd  += $disc_pwd; $t_c30 += $c30; $t_c20 += $c20; $t_c15 += $c15;
+                    $t_dpwd  += $disc_pwd; $t_c30 += $c30; $t_c20 += $c20; $t_c15 += $c15; $t_c25 += $c25;
                     $t_d50   += $disc_50;  $t_net += $net;
                     // Payment display
                     $display_pm = !empty($row['paymongo_method']) ? $row['paymongo_method'] : ($row['payment_method'] ?? 'cash');
@@ -1039,6 +1030,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="text-align:right;color:var(--rust);"><?php echo $c30 > 0 ? '₱'.number_format($c30, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $c20 > 0 ? '₱'.number_format($c20, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $c15 > 0 ? '₱'.number_format($c15, 2) : '—'; ?></td>
+                    <td style="text-align:right;color:var(--rust);"><?php echo $c25 > 0 ? '₱'.number_format($c25, 2) : '—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $disc_50 > 0 ? '₱'.number_format($disc_50, 2) : '—'; ?></td>
                     <td style="text-align:right;font-weight:700;color:#198754;">₱<?php echo number_format($net, 2); ?></td>
                     <td style="text-align:center;"><?php echo strtoupper($display_pm); ?></td>
@@ -1051,14 +1043,13 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 <?php foreach ($addons_by_appt[$row['appt_id']] as $addon):
                     // Same fix as the main row above: route by the therapist's actual
                     // configured rate, not rate_type (the customer's pricing tier).
-                    $a_pct  = $disp_cm[(int)($addon['therapist_id'] ?? 0) . '_' . (int)$addon['service_id']] ?? 0;
-                    $a_c30 = $a_c20 = $a_c15 = 0.0;
-                    if      ($a_pct >= 18 && $a_pct <= 22) $a_c20 = (float)$addon['commission'];
-                    elseif  ($a_pct >= 13 && $a_pct <= 17) $a_c15 = (float)$addon['commission'];
-                    else                                    $a_c30 = (float)$addon['commission'];
+                    // Package-aware, see route_commission_to_buckets().
+                    $a_buckets = route_commission_to_buckets($conn, (int)$addon['service_id'], (int)($addon['therapist_id'] ?? 0), (float)$addon['commission']);
+                    $a_c30 = $a_buckets['comm_30']; $a_c20 = $a_buckets['comm_20'];
+                    $a_c15 = $a_buckets['comm_15']; $a_c25 = $a_buckets['comm_25'];
                     $a_net  = (float)$addon['charged_price'] - (float)$addon['commission'];
                     $t_promo += (float)$addon['charged_price'];
-                    $t_c30 += $a_c30; $t_c20 += $a_c20; $t_c15 += $a_c15; $t_net += $a_net;
+                    $t_c30 += $a_c30; $t_c20 += $a_c20; $t_c15 += $a_c15; $t_c25 += $a_c25; $t_net += $a_net;
                     $a_pm = $addon['payment_method'] ?? 'cash';
                 ?>
                 <tr style="background:rgba(200,164,107,0.04);border-left:3px solid var(--gold);">
@@ -1077,6 +1068,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="text-align:right;color:var(--rust);"><?php echo $a_c30>0?'₱'.number_format($a_c30,2):'—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $a_c20>0?'₱'.number_format($a_c20,2):'—'; ?></td>
                     <td style="text-align:right;color:var(--rust);"><?php echo $a_c15>0?'₱'.number_format($a_c15,2):'—'; ?></td>
+                    <td style="text-align:right;color:var(--rust);"><?php echo $a_c25>0?'₱'.number_format($a_c25,2):'—'; ?></td>
                     <td></td>
                     <td style="text-align:right;font-weight:700;color:#198754;">₱<?php echo number_format($a_net, 2); ?></td>
                     <td style="text-align:center;"><?php echo strtoupper($a_pm); ?></td>
@@ -1095,6 +1087,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         <td style="text-align:right;color:var(--rust);"><?php echo $t_c30>0?'₱'.number_format($t_c30,2):'—'; ?></td>
                         <td style="text-align:right;color:var(--rust);"><?php echo $t_c20>0?'₱'.number_format($t_c20,2):'—'; ?></td>
                         <td style="text-align:right;color:var(--rust);"><?php echo $t_c15>0?'₱'.number_format($t_c15,2):'—'; ?></td>
+                        <td style="text-align:right;color:var(--rust);"><?php echo $t_c25>0?'₱'.number_format($t_c25,2):'—'; ?></td>
                         <td style="text-align:right;color:var(--rust);"><?php echo $t_d50>0?'₱'.number_format($t_d50,2):'—'; ?></td>
                         <td style="text-align:right;color:#198754;">₱<?php echo number_format($t_net, 2); ?></td>
                         <td colspan="2"></td>
