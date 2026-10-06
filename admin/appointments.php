@@ -3688,15 +3688,17 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                     <div style="min-width:0;">
                         <div style="font-size:0.85rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                             <?php echo htmlspecialchars($es['svc_name']); ?>
-                            <?php if ((int)($es['total_sessions'] ?? 1) > 1): ?>
-                            <span style="font-weight:400;color:var(--gray);">(Session <?php echo (int)$es['session_number']; ?> of <?php echo (int)$es['total_sessions']; ?>)</span>
+                        </div>
+                        <?php if ((int)($es['total_sessions'] ?? 1) > 1): ?>
+                        <div style="display:flex;align-items:center;gap:0.3rem;flex-wrap:wrap;margin-top:0.15rem;">
+                            <span style="font-size:0.72rem;font-weight:400;color:var(--gray);">Session <?php echo (int)$es['session_number']; ?> of <?php echo (int)$es['total_sessions']; ?></span>
                             <?php if ($es['session_status'] === 'completed'): ?>
-                            <span style="font-size:0.63rem;background:rgba(45,138,78,0.12);color:#2d8a4e;padding:0.05rem 0.4rem;border-radius:20px;border:1px solid rgba(45,138,78,0.25);">✓ Done</span>
+                            <span style="font-size:0.63rem;background:rgba(45,138,78,0.12);color:#2d8a4e;padding:0.05rem 0.4rem;border-radius:20px;border:1px solid rgba(45,138,78,0.25);white-space:nowrap;">✓ Done</span>
                             <?php else: ?>
-                            <span style="font-size:0.63rem;background:rgba(201,106,44,0.1);color:var(--gold);padding:0.05rem 0.4rem;border-radius:20px;border:1px solid rgba(201,106,44,0.25);">Pending</span>
-                            <?php endif; ?>
+                            <span style="font-size:0.63rem;background:rgba(201,106,44,0.1);color:var(--gold);padding:0.05rem 0.4rem;border-radius:20px;border:1px solid rgba(201,106,44,0.25);white-space:nowrap;">Pending</span>
                             <?php endif; ?>
                         </div>
+                        <?php endif; ?>
                         <div style="font-size:0.7rem;color:var(--gray);">
                         <?php echo htmlspecialchars($es['person_label']); ?>
                         &nbsp;·&nbsp; <?php echo ucfirst($es['payment_method']); ?>
