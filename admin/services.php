@@ -48,6 +48,7 @@ if ($_sd_col_chk && $_sd_col_chk->num_rows === 0) {
     $conn->query("ALTER TABLE appointments ADD CONSTRAINT fk_appt_service_duration FOREIGN KEY (service_duration_id) REFERENCES service_durations(id) ON DELETE SET NULL");
 }
 unset($_sd_col_chk);
+ensure_service_package_components_table($conn);
 
 $message      = '';
 $message_type = '';
@@ -312,6 +313,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                 $ins_sd->execute(); $ins_sd->close();
             }
             // ──────────────────────────────────────────────────────────────
+
+            // ── Save Package Components: delete-then-reinsert (same pattern
+            //    as the recipe/duration saves above). A service can't list
+            //    itself as its own component. ─────────────────────────────
+            $_pkg_comp_ids = array_unique(array_map('intval', (array)($_POST['package_component_ids'] ?? [])));
+            $_pkg_comp_ids = array_values(array_filter($_pkg_comp_ids, fn($cid) => $cid > 0 && $cid !== $svc_logged_id));
+            $del_pkg = $conn->prepare("DELETE FROM service_package_components WHERE package_service_id = ?");
+            $del_pkg->bind_param("i", $svc_logged_id);
+            $del_pkg->execute(); $del_pkg->close();
+            foreach ($_pkg_comp_ids as $_pci => $_pcid) {
+                $ins_pkg = $conn->prepare("INSERT INTO service_package_components (package_service_id, component_service_id, sort_order) VALUES (?, ?, ?)");
+                $ins_pkg->bind_param("iii", $svc_logged_id, $_pcid, $_pci);
+                $ins_pkg->execute(); $ins_pkg->close();
+            }
+            // ──────────────────────────────────────────────────────────────
             $redirect_to = $id ? "services.php?edit={$svc_logged_id}&saved=1" : "services.php?success=1";
             header("Location: $redirect_to");
             exit();
@@ -333,6 +349,27 @@ if (isset($_GET['edit'])) {
     $edit_service = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 }
+
+// ─── PACKAGE COMPONENTS: picker options + this service's current selection ──
+// Services that are themselves already a package (have components of their
+// own) are excluded from the picker so packages can't nest.
+$_pkg_already_ids_rs = $conn->query("SELECT DISTINCT package_service_id FROM service_package_components");
+$_pkg_already_ids = $_pkg_already_ids_rs ? array_map('intval', array_column($_pkg_already_ids_rs->fetch_all(MYSQLI_ASSOC), 'package_service_id')) : [];
+unset($_pkg_already_ids_rs);
+
+$component_pickable_services = [];
+$_pkg_svc_rs = $conn->query("SELECT s.id, s.name, s.price, c.name AS category_name FROM services s LEFT JOIN categories c ON c.id = s.category_id WHERE s.deleted_at IS NULL ORDER BY c.name, s.name");
+while ($_cps_row = $_pkg_svc_rs->fetch_assoc()) {
+    $_cps_id = (int)$_cps_row['id'];
+    if ($edit_service && $_cps_id === (int)$edit_service['id']) continue; // can't be its own component
+    if (in_array($_cps_id, $_pkg_already_ids, true)) continue;            // no nested packages
+    $component_pickable_services[] = $_cps_row;
+}
+unset($_pkg_svc_rs, $_cps_row, $_cps_id);
+
+$current_pkg_component_ids = $edit_service
+    ? array_map(fn($c) => (int)$c['component_service_id'], get_package_components($conn, (int)$edit_service['id']))
+    : [];
 
 // ─── FETCH RECIPE FOR EDITING ─────────────────────────────────────────────────
 $svc_recipe          = [];
@@ -666,6 +703,46 @@ require_once 'admin_header.php';
                 </div>
             </div>
             <?php endif; ?>
+
+            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
+                <span class="section-label-sm">Package Components (optional)</span>
+            </div>
+            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
+                <div class="form-group">
+                    <small style="color:var(--gray);display:block;margin-bottom:0.6rem;">
+                        Only check services here if this service is really a bundle of OTHER services sold
+                        together under one combined price (e.g. "Package 2" = Express Head Spa + Foot Massage).
+                        When set, therapist commission for this service is computed per component — each
+                        checked service's own commission rate and own price, summed — instead of one rate on
+                        this service's own price. Leave everything unchecked for an ordinary, single-treatment
+                        service; nothing here changes how it's priced or sold.
+                    </small>
+                    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border2);border-radius:8px;padding:0.75rem;">
+                        <?php if (empty($component_pickable_services)): ?>
+                        <div style="color:var(--gray);font-size:0.85rem;">No other services available to pick as components.</div>
+                        <?php else:
+                            $_pkg_cat_seen = null;
+                            foreach ($component_pickable_services as $_cps):
+                                $_cps_cat = $_cps['category_name'] ?: 'Uncategorized';
+                                if ($_cps_cat !== $_pkg_cat_seen):
+                                    if ($_pkg_cat_seen !== null) echo '</div>';
+                                    echo '<div style="font-size:0.7rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.03em;margin:0.6rem 0 0.3rem;">' . htmlspecialchars($_cps_cat) . '</div><div>';
+                                    $_pkg_cat_seen = $_cps_cat;
+                                endif;
+                        ?>
+                        <label style="display:flex;align-items:center;gap:0.6rem;padding:0.3rem 0;cursor:pointer;">
+                            <input type="checkbox" name="package_component_ids[]" value="<?php echo (int)$_cps['id']; ?>"
+                                   <?php echo in_array((int)$_cps['id'], $current_pkg_component_ids, true) ? 'checked' : ''; ?>>
+                            <span><?php echo htmlspecialchars($_cps['name']); ?> <span style="color:var(--gray);">— ₱<?php echo number_format((float)$_cps['price'], 2); ?></span></span>
+                        </label>
+                        <?php
+                            endforeach;
+                            if ($_pkg_cat_seen !== null) echo '</div>';
+                        endif;
+                        ?>
+                    </div>
+                </div>
+            </div>
 
             <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
                 <span class="section-label-sm">Media</span>

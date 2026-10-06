@@ -470,6 +470,70 @@ function get_commission_base_price(int $service_id, ?int $service_duration_id, f
     return $promo > 0 ? $promo : $fallback_price;
 }
 
+// ─── PACKAGE SERVICES: commission-only components ────────────────────────────
+// A "Package" service bundles 2+ real services sold together under one combined
+// price (e.g. "Package 2" = Express Head Spa + Foot Massage). Therapist
+// commission for it is NOT one rate applied to the package's own price -- it's
+// the SUM of what each component service would pay on its own: that
+// component's own commission % for this therapist, times that component's own
+// get_commission_base_price(). charged_price/revenue bookkeeping is untouched
+// (it stays the package's own regular price, exactly like any other service),
+// so Net Sales = charged_price - total_package_commission falls out of the
+// existing formula with no changes there. Services with no rows here are
+// ordinary, unbundled services and behave exactly as before.
+function ensure_service_package_components_table($conn): void {
+    $conn->query("CREATE TABLE IF NOT EXISTS service_package_components (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        package_service_id INT NOT NULL,
+        component_service_id INT NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        UNIQUE KEY uq_pkg_component (package_service_id, component_service_id),
+        KEY idx_package (package_service_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+}
+
+// Returns [] for an ordinary (non-package) service -- callers use an empty
+// result as the signal to fall back to the normal single-rate commission calc.
+function get_package_components($conn, int $package_service_id): array {
+    ensure_service_package_components_table($conn);
+    $stmt = $conn->prepare("SELECT spc.component_service_id, s.name, s.price
+                             FROM service_package_components spc
+                             JOIN services s ON s.id = spc.component_service_id
+                             WHERE spc.package_service_id = ?
+                             ORDER BY spc.sort_order, s.name");
+    $stmt->bind_param("i", $package_service_id);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+    return $rows;
+}
+
+// Sums each component's own standalone commission for $therapist_id -- same
+// math as a normal single-service commission calc, just run once per
+// component and added up. Returns total 0.00 (with components => []) when
+// $package_service_id isn't actually a package, so callers can use an empty
+// 'components' array as the "not a package" signal.
+function compute_package_commission($conn, int $package_service_id, int $therapist_id): array {
+    $components = get_package_components($conn, $package_service_id);
+    $total = 0.00;
+    $breakdown = [];
+    foreach ($components as $comp) {
+        $rate = 0.00;
+        if ($therapist_id > 0) {
+            $cm = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+            $cm->bind_param("ii", $therapist_id, $comp['component_service_id']);
+            $cm->execute();
+            $rate = floatval($cm->get_result()->fetch_assoc()['commission_percent'] ?? 0);
+            $cm->close();
+        }
+        $base = get_commission_base_price((int)$comp['component_service_id'], null, (float)$comp['price']);
+        $comm = round($base * $rate / 100, 2);
+        $total += $comm;
+        $breakdown[] = ['service_id' => (int)$comp['component_service_id'], 'name' => $comp['name'], 'base' => $base, 'rate' => $rate, 'commission' => $comm];
+    }
+    return ['total' => round($total, 2), 'components' => $breakdown];
+}
+
 // Walk-in-sourced appointments are attributed to this account (see admin/walkin.php);
 // online-sourced ones use the real customer's own user_id from user/checkout.php.
 // Slotting and Rotation's approval flow (admin/appointments.php) uses this to tell

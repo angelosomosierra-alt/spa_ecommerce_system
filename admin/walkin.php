@@ -578,7 +578,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                         // Skip it entirely here; that action is the sole source of truth
                         // for a package's commission, building up from zero.
                         $commission = 0.00;
-                        if ($svc_session_count <= 1) {
+                        // Package service (bundles 2+ real services under one combined
+                        // price, e.g. "Package 2" = Express Head Spa + Foot Massage) --
+                        // commission is the SUM of each component's own standalone
+                        // commission, not one rate applied to this service's own price.
+                        $walkin_pkg_components = get_package_components($conn, $item_id);
+                        if ($svc_session_count <= 1 && !empty($walkin_pkg_components)) {
+                            $commission = compute_package_commission($conn, $item_id, $therapist_id)['total'] * $people_handled_svc;
+                        } elseif ($svc_session_count <= 1) {
                             $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
                             $cm->bind_param("ii", $therapist_id, $item_id); $cm->execute();
                             $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();

@@ -621,7 +621,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
     if ($es_ok) {
         // ── Commission auto-calc (walkin.php formula) ─────────────────────────
         $es_commission = 0.00;
-        if ($es_therapist_id > 0) {
+        // Package service (bundles 2+ real services under one combined price,
+        // e.g. "Package 2" = Express Head Spa + Foot Massage) -- commission is
+        // the SUM of each component's own standalone commission, not one rate
+        // applied to this service's own price. See services.php's Package
+        // Components picker.
+        $es_pkg_components = get_package_components($conn, $es_service_id);
+        if ($es_therapist_id > 0 && !empty($es_pkg_components)) {
+            $es_commission = compute_package_commission($conn, $es_service_id, $es_therapist_id)['total'];
+        } elseif ($es_therapist_id > 0) {
             $es_cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate
                                      FROM therapist_commission
                                      WHERE therapist_id=? AND service_id=? LIMIT 1");
@@ -1787,7 +1795,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $ph  = max(1, intval($dt['people_handled']));  // people this therapist handled
                 $commission_amt = 0.00;
 
-                if ($svc_id && $charged_for_commission > 0) {
+                // Package service (bundles 2+ real services under one combined
+                // price, e.g. "Package 2" = Express Head Spa + Foot Massage) --
+                // commission is the SUM of each component's own standalone
+                // commission, not one rate applied to this service's own price.
+                $done_pkg_components = $svc_id ? get_package_components($conn, (int)$svc_id) : [];
+                if ($svc_id && $charged_for_commission > 0 && !empty($done_pkg_components)) {
+                    $commission_amt = compute_package_commission($conn, (int)$svc_id, (int)$tid)['total'] * $ph;
+                } elseif ($svc_id && $charged_for_commission > 0) {
                     $cm = $conn->prepare("
                         SELECT commission_percent, influencer_flat_rate
                         FROM therapist_commission

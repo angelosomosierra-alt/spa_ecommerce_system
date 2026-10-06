@@ -235,23 +235,32 @@ try {
 
         // Therapist assignment
         if ($therapist_id > 0) {
-            $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
-            $cm->bind_param("ii", $therapist_id, $item_id); $cm->execute();
-            $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
             $commission = 0.0;
-            if ($cm_row) {
-                // commission = per-person price × people_handled × rate
-                if ($rate_type === 'influencer') {
-                    $commission = floatval($cm_row['influencer_flat_rate']) * $people_handled_svc;
-                } elseif ($rate_type === 'hotel') {
-                    $reg_q = $conn->prepare("SELECT price FROM services WHERE id=? LIMIT 1");
-                    $reg_q->bind_param("i", $item_id); $reg_q->execute();
-                    $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
-                    $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
-                } else {
-                    $disc_frac  = ($total_amount > 0) ? ($discount_amount_calc / $total_amount) : 0.0;
-                    $comm_base  = get_commission_base_price($item_id, null, $regular_price);
-                    $commission = round($comm_base * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+            // Package service (bundles 2+ real services under one combined
+            // price, e.g. "Package 2" = Express Head Spa + Foot Massage) --
+            // commission is the SUM of each component's own standalone
+            // commission, not one rate applied to this service's own price.
+            $wp_pkg_components = get_package_components($conn, $item_id);
+            if (!empty($wp_pkg_components)) {
+                $commission = compute_package_commission($conn, $item_id, $therapist_id)['total'] * $people_handled_svc;
+            } else {
+                $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+                $cm->bind_param("ii", $therapist_id, $item_id); $cm->execute();
+                $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
+                if ($cm_row) {
+                    // commission = per-person price × people_handled × rate
+                    if ($rate_type === 'influencer') {
+                        $commission = floatval($cm_row['influencer_flat_rate']) * $people_handled_svc;
+                    } elseif ($rate_type === 'hotel') {
+                        $reg_q = $conn->prepare("SELECT price FROM services WHERE id=? LIMIT 1");
+                        $reg_q->bind_param("i", $item_id); $reg_q->execute();
+                        $reg_price = floatval($reg_q->get_result()->fetch_assoc()['price'] ?? 0); $reg_q->close();
+                        $commission = round($reg_price * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                    } else {
+                        $disc_frac  = ($total_amount > 0) ? ($discount_amount_calc / $total_amount) : 0.0;
+                        $comm_base  = get_commission_base_price($item_id, null, $regular_price);
+                        $commission = round($comm_base * (1 - $disc_frac) * $people_handled_svc * floatval($cm_row['commission_percent']) / 100, 2);
+                    }
                 }
             }
             $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
