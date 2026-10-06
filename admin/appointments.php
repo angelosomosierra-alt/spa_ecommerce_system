@@ -2427,6 +2427,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
                 $ins_drscr->execute(); $ins_drscr->close();
             }
 
+            // Settle any extra services added since the last time this swept —
+            // a session-count package card never shows the regular Mark Complete
+            // button (that whole payment-collection step is gated off for
+            // $is_session_pkg_card cards), so nothing else ever marks its extras
+            // paid once check-in's own one-time sweep has passed. Without this,
+            // an extra added mid-package (between sessions, or alongside a later
+            // session) stayed payment_status='unpaid' forever. Each extra keeps
+            // its own already-chosen payment_method (set when it was added) —
+            // this only flips the status, same as check-in's sweep does.
+            $es_sweep = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid' WHERE appointment_id=? AND payment_status='unpaid'");
+            $es_sweep->bind_param("i", $cs_appt_id); $es_sweep->execute(); $es_sweep->close();
+
             // If this was the LAST remaining session, flip the appointment itself
             // to completed (Kanban/operational status only — Daily Report revenue
             // recognition does not depend on this, see _daily_report_data.php).
