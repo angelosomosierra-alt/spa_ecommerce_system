@@ -367,6 +367,10 @@ function render_quick_book_services_html(mysqli $conn): string {
 
     ob_start();
     ?>
+    <div class="qb-svc-search-wrap">
+        <span class="qb-svc-search-icon">&#9906;</span>
+        <input type="text" id="qbSvcSearch" class="qb-svc-search" placeholder="Search services&hellip;" autocomplete="off" oninput="qbFilterServices(this.value)">
+    </div>
     <div class="qb-svc-layout">
         <nav class="qb-svc-sidebar">
             <?php foreach ($by_cat as $cat_id => $cat_data): ?>
@@ -394,6 +398,7 @@ function render_quick_book_services_html(mysqli $conn): string {
                 <?php endforeach; ?>
             </section>
             <?php endforeach; ?>
+            <div id="qbSvcNoResults" class="qb-svc-no-results" style="display:none;">No services match your search.</div>
         </div>
     </div>
     <?php
@@ -956,6 +961,8 @@ function openQuickBook(prefillDate) {
     document.getElementById('qbVoucherInputs').style.display = 'none';
     document.getElementById('qbCelebInputs').style.display   = 'none';
     document.querySelectorAll('.qb-svc-row.selected').forEach(function (r) { r.classList.remove('selected'); });
+    var svcSearch = document.getElementById('qbSvcSearch');
+    if (svcSearch) { svcSearch.value = ''; qbFilterServices(''); }
     document.querySelectorAll('.qb-rate-btn').forEach(function (b) { b.classList.toggle('selected', b.getAttribute('data-rate') === 'regular'); });
     document.querySelectorAll('.qb-disc-btn').forEach(function (b) { b.classList.toggle('selected', b.getAttribute('data-discount') === 'none'); });
     document.getElementById('qbTherapist').innerHTML = '<option value="">Select therapist&hellip;</option>';
@@ -1258,6 +1265,28 @@ function qbSubmit() {
         });
     });
 }());
+
+function qbFilterServices(query) {
+    var q = query.trim().toLowerCase();
+    var matchedCatIds = {};
+    document.querySelectorAll('.qb-svc-row').forEach(function (row) {
+        var name = (row.getAttribute('data-service-name') || '').toLowerCase();
+        var match = !q || name.indexOf(q) !== -1;
+        row.style.display = match ? '' : 'none';
+        if (match) {
+            var section = row.closest('[data-cat-section]');
+            if (section) matchedCatIds[section.getAttribute('data-cat-section')] = true;
+        }
+    });
+    document.querySelectorAll('[data-cat-section]').forEach(function (section) {
+        section.style.display = matchedCatIds[section.getAttribute('data-cat-section')] ? '' : 'none';
+    });
+    document.querySelectorAll('.qb-svc-cat-btn').forEach(function (btn) {
+        btn.style.display = (!q || matchedCatIds[btn.dataset.catId]) ? '' : 'none';
+    });
+    var noResults = document.getElementById('qbSvcNoResults');
+    if (noResults) noResults.style.display = (q && Object.keys(matchedCatIds).length === 0) ? '' : 'none';
+}
 </script>
 
 <style>
@@ -1357,6 +1386,15 @@ function qbSubmit() {
 .qb-disc-btn.selected small { color:#fdece0; }
 .qb-sub-box { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:0.75rem; }
 .qb-notice { margin-top:0.6rem; padding:0.7rem 1rem; background:#fff8f2; border-left:3px solid #C96A2C; border-radius:6px; font-size:0.85rem; color:#92400e; }
+
+.qb-svc-search-wrap { position:relative; margin-bottom:1rem; }
+.qb-svc-search {
+    width:100%; box-sizing:border-box; padding:0.75rem 1rem 0.75rem 2.6rem;
+    border:1.5px solid var(--border); border-radius:10px; font-size:0.95rem; font-family:inherit;
+}
+.qb-svc-search:focus { outline:none; border-color:#C96A2C; }
+.qb-svc-search-icon { position:absolute; left:1rem; top:50%; transform:translateY(-50%); color:var(--gray); font-size:1rem; pointer-events:none; }
+.qb-svc-no-results { color:var(--gray); text-align:center; padding:2rem; }
 
 .qb-svc-layout { display:grid; grid-template-columns:220px 1fr; gap:0; align-items:stretch; height:60vh; max-height:620px; min-height:320px; }
 .qb-svc-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--border); background:#fff; overflow-y:auto; }
