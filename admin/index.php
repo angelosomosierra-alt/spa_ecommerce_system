@@ -386,7 +386,7 @@ function render_quick_book_services_html(mysqli $conn): string {
                      data-price="<?php echo (float)$svc['price']; ?>"
                      data-minutes="<?php echo (int)$svc['session_time']; ?>"
                      data-home-price="<?php echo (float)($svc['home_service_price'] ?? 0); ?>"
-                     onclick="qbSelectService(this)">
+                     onclick="qbSelectService(this)" ondblclick="qbSelectService(this); qbNext();">
                     <span class="qb-svc-row-name"><?php echo htmlspecialchars($svc['name']); ?></span>
                     <span class="qb-svc-row-meta"><?php echo (int)$svc['session_time']; ?> min</span>
                     <span class="qb-svc-row-price">₱<?php echo number_format($svc['price'], 2); ?></span>
@@ -859,9 +859,6 @@ require_once 'admin_header.php';
                 <div class="qb-field" id="qbPayMethodBlock" style="margin-top:1.25rem;">
                     <label>Payment Method</label>
                     <div class="qb-pay-grid" id="qbPayGrid"></div>
-                    <?php if (!ONLINE_PAYMENT_ENABLED): ?>
-                    <div class="qb-notice">Online payment is coming soon — please complete payment onsite for now.</div>
-                    <?php endif; ?>
                 </div>
 
                 <div class="qb-field-row" style="margin-top:1rem;">
@@ -918,12 +915,12 @@ function apptCalShowDay(dateStr, el) {
 <script>
 var QB_CSRF = '<?php echo generate_csrf_token(); ?>';
 var QB_PAYMENT_METHODS = <?php
+    // Staff are recording how a walk-in/counter customer actually paid, not
+    // processing an online gateway transaction — so this list isn't gated by
+    // ONLINE_PAYMENT_ENABLED (that flag only controls customer self-checkout).
     $pm_wk = ['cash' => 'Cash', 'gcash' => 'GCash', 'maya' => 'Maya', 'qrph' => 'QR Ph', 'card' => 'Card', 'swiper' => 'Swiper'];
-    $online_pm = ['gcash', 'maya', 'card', 'qrph'];
     $qb_pm_list = [];
     foreach ($pm_wk as $pmv => $pml) {
-        if (!ONLINE_PAYMENT_ENABLED && in_array($pmv, $online_pm, true)) continue;
-        if (ONLINE_PAYMENT_ENABLED && in_array($pmv, ['gcash', 'maya'], true) && !SHOW_GCASH_MAYA) continue;
         $qb_pm_list[] = ['value' => $pmv, 'label' => $pml];
     }
     echo json_encode($qb_pm_list);
@@ -1354,14 +1351,14 @@ function qbSubmit() {
 .qb-sub-box { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:0.75rem; }
 .qb-notice { margin-top:0.6rem; padding:0.7rem 1rem; background:#fff8f2; border-left:3px solid #C96A2C; border-radius:6px; font-size:0.85rem; color:#92400e; }
 
-.qb-svc-layout { display:grid; grid-template-columns:220px 1fr; gap:0; align-items:start; }
-.qb-svc-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--border); position:sticky; top:52px; background:#fff; }
+.qb-svc-layout { display:grid; grid-template-columns:220px 1fr; gap:0; align-items:stretch; height:60vh; max-height:620px; min-height:320px; }
+.qb-svc-sidebar { display:flex; flex-direction:column; border-right:1px solid var(--border); background:#fff; overflow-y:auto; }
 .qb-svc-cat-btn {
     padding:0.9rem 1.25rem; font-weight:600; color:var(--brown); text-decoration:none;
     border-bottom:1px solid var(--border); border-left:3px solid transparent;
 }
 .qb-svc-cat-btn:hover { background:var(--bg3); }
-.qb-svc-content { padding:0 1.5rem; }
+.qb-svc-content { padding:0 1.5rem; overflow-y:auto; }
 .qb-svc-cat-title { font-size:1rem; font-weight:700; color:var(--brown); margin:1.25rem 0 0.5rem; }
 .qb-svc-row {
     display:flex; align-items:center; gap:1rem; padding:0.9rem 0.75rem; border-radius:10px;
@@ -1386,9 +1383,12 @@ function qbSubmit() {
 .qb-pay-btn.selected { background:#C96A2C; color:#fff; border-color:#C96A2C; }
 .qb-error { margin-top:1rem; padding:0.85rem 1rem; background:#f8d7da; color:#842029; border-radius:10px; font-size:0.9rem; }
 @media (max-width:640px) {
-    .qb-svc-layout { grid-template-columns:1fr; }
-    .qb-svc-sidebar { position:static; }
-    .qb-svc-sidebar { flex-direction:row; flex-wrap:wrap; overflow-x:auto; }
+    .qb-svc-layout { grid-template-columns:1fr; height:auto; max-height:none; }
+    .qb-svc-sidebar {
+        flex-direction:row; flex-wrap:nowrap; overflow-x:auto; overflow-y:visible;
+        border-right:none; border-bottom:1px solid var(--border);
+    }
+    .qb-svc-content { max-height:55vh; }
     .qb-pay-grid { grid-template-columns:repeat(2,1fr); }
     .qb-rate-grid { grid-template-columns:repeat(2,1fr); }
     .qb-disc-grid { grid-template-columns:repeat(2,1fr); }
