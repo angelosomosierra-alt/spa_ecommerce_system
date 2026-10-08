@@ -2,6 +2,16 @@
 require_once '../config.php';
 redirect_if_not_admin();
 require_once __DIR__ . '/../notify.php';
+require_once __DIR__ . '/_book_now.php';
+
+// ── Book Now groups: orders.booking_group links every order one Dashboard
+//    Book Now booking created (one per guest service), for "Pay for group".
+book_now_ensure_schema($conn);
+if (($_GET['ajax'] ?? '') === 'group_bill') {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['guests' => book_now_group_bill($conn, (string)($_GET['group'] ?? ''))]);
+    exit();
+}
 
 // ── 2-Session Package linking column — this file references session_group_id
 //    directly in SQL (cancel/check-in handlers), so it must self-heal it
@@ -2264,6 +2274,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
     end_action:;
 }
 
+// ── PAY FOR GROUP (Book Now bookings) ────────────────────────────────────────
+// Settles the chosen guests of one booking group in a single payment, each
+// with their own discount. See book_now_pay_group() in _book_now.php.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pay_group') {
+    verify_csrf_token();
+    $pg_ok = true;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pg_ok = (bool)$ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pg_ok) { $message = "Incorrect PIN. Payment not recorded."; $message_type = "danger"; }
+    }
+    if ($pg_ok) {
+        $pg_group = (string)($_POST['booking_group'] ?? '');
+        $pg_disc  = json_decode($_POST['guest_discounts'] ?? '{}', true);
+        $pg_res   = book_now_pay_group($conn, $pg_group, is_array($pg_disc) ? $pg_disc : [], (string)($_POST['pay_method'] ?? ''));
+        if ($pg_res['ok']) {
+            $message = 'Paid ₱' . number_format($pg_res['total'], 2) . ' for ' . implode(', ', $pg_res['guests']) . '.';
+            $message_type = 'success';
+            log_activity($conn, 'group_payment', 'Group payment ₱' . number_format($pg_res['total'], 2) . ' for ' . implode(', ', $pg_res['guests']) . " (group $pg_group)", 'order', null, null);
+        } else {
+            $message = $pg_res['message']; $message_type = 'danger';
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // SESSION-COUNT PACKAGES — per-session actions on appointment_sessions rows.
 // Independent of the big dispatch above; the UI only exposes these for
@@ -2928,11 +2965,11 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
     $bdr=['pending'=>'#f59e0b','assigned'=>'#0d6efd','approved'=>'var(--green)','completed'=>'#0891b2','declined'=>'#dc3545','cancelled'=>'#6b7280'][$status]??'var(--border2)';
 
     $pm_row=['order_id'=>0,'payment_method'=>'onsite','payment_status'=>'unpaid','paymongo_method'=>null,
-             'total_amount'=>0,'discount_type'=>'none','discount_amount'=>0,'final_amount'=>0];
+             'total_amount'=>0,'discount_type'=>'none','discount_amount'=>0,'final_amount'=>0,'booking_group'=>null];
     if (!empty($a['order_item_id'])) {
         $pm=$conn->prepare("
             SELECT o.id AS order_id, o.payment_method, o.payment_status, o.paymongo_method,
-                   o.total_amount, o.discount_type, o.discount_amount, o.final_amount
+                   o.total_amount, o.discount_type, o.discount_amount, o.final_amount, o.booking_group
             FROM orders o
             JOIN order_items oi ON oi.order_id = o.id
             WHERE oi.id = ? LIMIT 1
@@ -3850,6 +3887,10 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
 
     <!-- ══ ACTION BUTTONS ═════════════════════════════════════════════════ -->
     <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
+        <?php if (!empty($pm_row['booking_group']) && ($pm_row['payment_status'] ?? '') !== 'paid' && in_array($status, ['assigned', 'approved'])): ?>
+            <button type="button" class="btn btn-sm" onclick="openGroupPay('<?php echo htmlspecialchars($pm_row['booking_group'], ENT_QUOTES); ?>')"
+                    style="background:#C96A2C;color:#fff;border:1px solid #C96A2C;">Pay for group</button>
+        <?php endif; ?>
         <?php if ($status==='pending'): ?>
             <script>
             (window._apptExtras = window._apptExtras || {})[<?php echo $appt_id; ?>] = <?php echo json_encode(array_map(function($e){ return ['id'=>(int)$e['id'],'name'=>$e['svc_name'],'price'=>(float)$e['charged_price']]; }, $extra_services)); ?>;
@@ -3888,6 +3929,7 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
             (window._apptExtras = window._apptExtras || {})[<?php echo $appt_id; ?>] = <?php echo json_encode(array_map(function($e){ return ['id'=>(int)$e['id'],'name'=>$e['svc_name'],'price'=>(float)$e['charged_price']]; }, $extra_services)); ?>;
             </script>
             <button type="button" class="btn btn-success btn-sm" data-checkin-btn
+                    data-paid="<?php echo ($pm_row['payment_status'] ?? '') === 'paid' ? '1' : '0'; ?>"
                     data-bill-json='<?php echo htmlspecialchars(json_encode($_bill_lines), ENT_QUOTES); ?>'
                     onclick="openCheckinModal(<?php echo $appt_id; ?>,'<?php echo htmlspecialchars(addslashes($a['full_name'])); ?>', null, '<?php echo htmlspecialchars(addslashes($_checkin_bill_title)); ?>', <?php echo floatval($a['advance_payment'] ?? 0); ?>)"
                     <?php if ($_has_unassigned_therapist): ?>
@@ -5249,6 +5291,94 @@ function submitComplete() {
 </div>
 
 <!-- ══ CHECK-IN MODAL ═════════════════════════════════════════════════════════ -->
+<!-- ══ PAY FOR GROUP (Book Now bookings) ═══════════════════════════════════ -->
+<div id="groupPayModal" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(59,42,26,0.5);align-items:center;justify-content:center;padding:1rem;">
+    <div style="background:#fff;border-radius:14px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 18px 50px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:1rem 1.25rem;border-bottom:1px solid var(--border2);background:var(--bg3);">
+            <strong style="color:var(--brown);">Pay for group</strong>
+            <button type="button" onclick="closeGroupPay()" style="border:0;background:none;font-size:1.1rem;cursor:pointer;color:var(--gray);">✕</button>
+        </div>
+        <div style="padding:1rem 1.25rem;">
+            <p style="font-size:0.78rem;color:var(--gray);margin:0 0 0.75rem;">Tick the guests this payment covers. Each guest's discount applies to their own services only.</p>
+            <div id="gp-guests" style="display:flex;flex-direction:column;gap:0.6rem;"></div>
+            <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin:1rem 0 0.4rem;">Payment Method</label>
+            <select id="gp-method" style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.88rem;">
+                <option value="cash">Cash</option><option value="swiper">Swiper</option><option value="gcash">GCash</option>
+                <option value="maya">Maya</option><option value="card">Card</option><option value="qrph">QR Ph</option>
+            </select>
+            <div style="display:flex;justify-content:space-between;font-weight:800;font-size:1rem;color:var(--brown);margin-top:1rem;padding-top:0.6rem;border-top:1px solid var(--border2);">
+                <span>Collect now</span><span id="gp-total">₱0.00</span>
+            </div>
+            <?php if (is_cashier()): ?>
+            <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin:0.9rem 0 0.4rem;">Receptionist PIN</label>
+            <input type="password" id="gp-pin-input" maxlength="4" placeholder="••••" inputmode="numeric"
+                   style="width:110px;padding:0.5rem;border:1px solid var(--border2);border-radius:8px;text-align:center;letter-spacing:0.25em;">
+            <?php endif; ?>
+            <div style="display:flex;gap:0.5rem;margin-top:1.1rem;">
+                <button type="button" class="btn btn-secondary" style="flex:1;" onclick="closeGroupPay()">Cancel</button>
+                <button type="button" class="btn btn-primary" style="flex:2;" id="gp-submit" onclick="submitGroupPay()">Record payment</button>
+            </div>
+        </div>
+        <form id="groupPayForm" method="POST" style="display:none;">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="action" value="pay_group">
+            <input type="hidden" name="booking_group" id="gp-group" value="">
+            <input type="hidden" name="guest_discounts" id="gp-discounts" value="{}">
+            <input type="hidden" name="pay_method" id="gp-method-hidden" value="cash">
+            <?php if (is_cashier()): ?><input type="hidden" name="pin" id="gp-pin-hidden" value=""><?php endif; ?>
+        </form>
+    </div>
+</div>
+<script>
+var GP_DISC = [['none', 'None', 0], ['senior', 'Senior 20%', 20], ['pwd', 'PWD 20%', 20], ['employee', 'Staff 50%', 50]];
+var _gpGuests = [];
+function _gpEsc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function openGroupPay(group) {
+    document.getElementById('gp-group').value = group;
+    document.getElementById('gp-guests').innerHTML = '<div style="color:var(--gray);font-size:0.82rem;">Loading…</div>';
+    document.getElementById('groupPayModal').style.display = 'flex';
+    fetch('appointments.php?ajax=group_bill&group=' + encodeURIComponent(group), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) { _gpGuests = (data.guests || []).map(function (g) { g.on = true; g.disc = 'none'; return g; }); gpRender(); })
+        .catch(function () { document.getElementById('gp-guests').innerHTML = '<div style="color:var(--red);font-size:0.82rem;">Could not load the group. Close and try again.</div>'; });
+}
+function closeGroupPay() { document.getElementById('groupPayModal').style.display = 'none'; }
+function gpRender() {
+    var box = document.getElementById('gp-guests');
+    if (!_gpGuests.length) { box.innerHTML = '<div style="color:var(--gray);font-size:0.82rem;">Everyone in this group has already paid.</div>'; gpTotal(); return; }
+    box.innerHTML = _gpGuests.map(function (g, i) {
+        var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2];
+        var due = Math.round(g.subtotal * (100 - pct)) / 100;
+        return '<div style="border:1px solid var(--border2);border-radius:10px;padding:0.6rem 0.75rem;' + (g.on ? '' : 'opacity:0.55;') + '">' +
+            '<label style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;font-weight:700;color:var(--brown);cursor:pointer;">' +
+            '<span><input type="checkbox" ' + (g.on ? 'checked' : '') + ' onchange="_gpGuests[' + i + '].on=this.checked;gpRender()"> ' + _gpEsc(g.name) + '</span>' +
+            '<span>₱' + due.toFixed(2) + '</span></label>' +
+            g.services.map(function (s) { return '<div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--gray);padding-left:1.4rem;"><span>' + _gpEsc(s.name) + '</span><span>₱' + s.amount.toFixed(2) + '</span></div>'; }).join('') +
+            '<div style="display:flex;flex-wrap:wrap;gap:0.3rem;padding-left:1.4rem;margin-top:0.4rem;">' +
+            GP_DISC.map(function (d) { var sel = g.disc === d[0]; return '<button type="button" onclick="_gpGuests[' + i + '].disc=\'' + d[0] + '\';gpRender()" style="border:1px solid ' + (sel ? '#C96A2C' : 'var(--border2)') + ';background:' + (sel ? '#C96A2C' : '#fff') + ';color:' + (sel ? '#fff' : 'var(--brown)') + ';border-radius:20px;padding:0.15rem 0.55rem;font-size:0.7rem;font-weight:700;cursor:pointer;">' + d[1] + '</button>'; }).join('') +
+            '</div></div>';
+    }).join('');
+    gpTotal();
+}
+function gpTotal() {
+    var t = 0, any = false;
+    _gpGuests.forEach(function (g) { if (!g.on) return; any = true; var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2]; t += Math.round(g.subtotal * (100 - pct)) / 100; });
+    document.getElementById('gp-total').textContent = '₱' + t.toFixed(2);
+    document.getElementById('gp-submit').disabled = !any;
+}
+function submitGroupPay() {
+    var map = {};
+    _gpGuests.forEach(function (g) { if (g.on) map[g.name] = g.disc; });
+    if (!Object.keys(map).length) { uiAlert('Tick at least one guest.'); return; }
+    document.getElementById('gp-discounts').value = JSON.stringify(map);
+    document.getElementById('gp-method-hidden').value = document.getElementById('gp-method').value;
+    var pinV = document.getElementById('gp-pin-input'), pinH = document.getElementById('gp-pin-hidden');
+    if (pinV && pinH) { if (!/^\d{4}$/.test(pinV.value)) { uiAlert('Enter your 4-digit PIN.'); return; } pinH.value = pinV.value; }
+    document.getElementById('gp-submit').disabled = true;
+    document.getElementById('groupPayForm').submit();
+}
+</script>
+
 <div id="checkinModal" style="display:none;position:fixed;inset:0;z-index:9998;
      background:rgba(30,20,10,0.5);backdrop-filter:blur(4px);
      align-items:center;justify-content:center;">
@@ -5278,6 +5408,10 @@ function submitComplete() {
         </div>
 
         <!-- Pay Now / Pay Later toggle -->
+        <div id="ci-paid-notice" style="display:none;background:#d1e7dd;border:1px solid #198754;border-radius:8px;padding:0.75rem 0.9rem;font-size:0.82rem;color:#0f5132;margin-bottom:1rem;">
+            Already paid (group payment). Nothing to collect at check-in.
+        </div>
+        <div id="ci-pay-timing">
         <div style="font-size:0.78rem;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">Payment Timing</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem;">
             <button type="button" id="ci-pay-now-btn" onclick="setCheckinPayMode('now')"
@@ -5288,6 +5422,7 @@ function submitComplete() {
                     style="padding:0.65rem 0.5rem;border:2px solid var(--border2);border-radius:10px;background:#fff;font-size:0.85rem;font-weight:600;cursor:pointer;transition:all .15s;">
                 Pay Later
             </button>
+        </div>
         </div>
 
         <!-- Payment method + discount (Pay Now only) -->
@@ -5894,6 +6029,13 @@ function openCheckinModal(apptId, customerName, billLines, billTitle, advanceAmo
     if (vchrVal) vchrVal.value = '';
     var pinInput = document.getElementById('ci-pin-input');
     if (pinInput) pinInput.value = '';
+    // Already settled (e.g. "Pay for group"): check in without asking again.
+    var _ciCard = document.querySelector('.appt-card[data-appt-id="' + apptId + '"]');
+    var _ciBtn  = _ciCard ? _ciCard.querySelector('[data-checkin-btn]') : null;
+    var _ciPaid = !!(_ciBtn && _ciBtn.dataset.paid === '1');
+    document.getElementById('ci-paid-notice').style.display = _ciPaid ? 'block' : 'none';
+    document.getElementById('ci-pay-timing').style.display  = _ciPaid ? 'none' : '';
+    if (_ciPaid) document.getElementById('ci-pay-choice').value = 'later';
     document.getElementById('checkinModal').style.display = 'flex';
 }
 

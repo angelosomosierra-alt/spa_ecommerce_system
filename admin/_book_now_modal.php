@@ -9,10 +9,12 @@
  * guests side by side, and can reorder a guest's services to cut waiting.
  *
  * Data comes from index.php?ajax=book_now_data (see _book_now.php), fetched
- * each time the modal opens. FRONT END ONLY for now: the Book button does not
- * save yet — the classic form (openQuickBook) is linked from the header.
+ * each time the modal opens. Book saves through index.php?ajax=book_now_submit
+ * (book_now_save): unpaid, no discount. Payment and discounts are collected in
+ * appointments.php at check-in / Mark Complete, or for several guests at once
+ * with "Pay for group".
  *
- * Usage: include once on the Dashboard, after QB_PAYMENT_METHODS is defined.
+ * Usage: include once on the Dashboard, after QB_CSRF is defined.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 ?>
@@ -21,7 +23,6 @@
         <div class="modal-box-header">
             <span class="modal-box-title">Book Now <span class="bn-sub" id="bnSub">· walk-in · today</span></span>
             <div style="display:flex;align-items:center;gap:0.75rem;">
-                <button type="button" class="bn-link" onclick="closeBookNow(); openQuickBook();">Use the classic form</button>
                 <button class="modal-box-close" type="button" onclick="closeBookNow()">✕</button>
             </div>
         </div>
@@ -47,14 +48,10 @@
                         <div id="bnPlan" class="bn-plan"></div>
                     </div>
                     <div class="bn-col">
-                        <p class="bn-ct">Bill</p>
-                        <div class="bn-chips" id="bnBillMode"></div>
+                        <p class="bn-ct">Estimated total</p>
                         <div class="bn-bill" id="bnBill"></div>
-                        <div id="bnPaysWrap">
-                            <p class="bn-ct" style="margin-bottom:0.4rem;">Payment method</p>
-                            <div class="bn-chips" id="bnPays"></div>
-                        </div>
                         <div class="bn-sum" id="bnSum"></div>
+                        <p class="bn-hint">Payment and discounts (Senior, PWD, Staff, voucher) are taken in <b>Appointments</b> at check-in or when done. A group can pay together there with <b>Pay for group</b>.</p>
                         <p class="bn-miss" id="bnMiss"></p>
                         <button type="button" class="bn-book" id="bnBookBtn">Book</button>
                     </div>
@@ -72,7 +69,6 @@
 #bookNowModal .modal-box { max-height:92vh; display:flex; flex-direction:column; }
 #bookNowModal .modal-box-body { flex:1; overflow-y:auto; }
 .bn-sub { color:var(--gray); font-weight:500; font-size:0.85rem; }
-.bn-link { border:0; background:none; color:var(--rust); font-size:0.8rem; font-weight:600; cursor:pointer; text-decoration:underline; }
 .bn-loading { padding:3rem; text-align:center; color:var(--gray); }
 .bn-ct { font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.08em; color:var(--gray); margin:0; }
 .bn-hint { font-size:0.72rem; color:var(--gray); line-height:1.45; margin:0; }
@@ -145,7 +141,7 @@
 .bn-brow { border:1px solid var(--border2); border-radius:9px; padding:0.5rem 0.6rem; display:flex; flex-direction:column; gap:0.4rem; }
 .bn-brow .t { display:flex; justify-content:space-between; font-weight:700; font-size:0.82rem; color:var(--brown); font-variant-numeric:tabular-nums; }
 .bn-brow .t i { font-style:normal; display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--gc); margin-right:6px; }
-.bn-brow .bn-chip { padding:0.2rem 0.5rem; font-size:0.68rem; }
+.bn-brow .ln { display:flex; justify-content:space-between; gap:0.5rem; font-size:0.74rem; color:var(--brown-md); font-variant-numeric:tabular-nums; }
 .bn-sum { background:var(--bg3); border-radius:10px; padding:0.65rem 0.75rem; display:flex; flex-direction:column; gap:0.25rem; font-variant-numeric:tabular-nums; }
 .bn-sum div { display:flex; justify-content:space-between; font-size:0.8rem; color:var(--brown-md); }
 .bn-sum .big { font-size:1.1rem; font-weight:800; color:var(--brown); }
@@ -170,7 +166,6 @@
 <script>
 (function () {
     var GC = ['#C96A2C', '#2f7d8c', '#7a5bb0', '#4f8a3a'];
-    var DISC = [{ k: 'none', l: 'None', pct: 0 }, { k: 'senior', l: 'Senior 20%', pct: 20 }, { k: 'pwd', l: 'PWD 20%', pct: 20 }, { k: 'employee', l: 'Staff 50%', pct: 50 }];
     var DAY_END = 24 * 60;
 
     var D = null;          // data snapshot from ajax=book_now_data
@@ -185,7 +180,7 @@
     function pesoShort(n) { return peso(n).replace(/\.00$/, ''); }
     function ov(a, ad, b, bd) { return a < b + bd && b < a + ad; }
     function gname(g, i) { return g.name.trim() || 'Guest ' + (i + 1); }
-    function newGuest() { return { id: uid++, name: '', items: [], disc: 'none', pay: null }; }
+    function newGuest() { return { id: uid++, name: '', items: [] }; }
 
     // ── Open / close ──────────────────────────────────────────────────────
     window.openBookNow = function () {
@@ -199,7 +194,7 @@
                 D.services.forEach(function (s) { SVC[s.id] = s; });
                 D.therapists.forEach(function (t) { TH[t.id] = t; });
                 FIRST = Math.ceil(D.now / 5) * 5;
-                S = { guests: [newGuest()], active: 0, cat: 'All', billMode: 'one', pay: null, open: null };
+                S = { guests: [newGuest()], active: 0, cat: 'All', open: null, saving: false };
                 $('bnQ').value = ''; $('bnOptOrder').checked = true; $('bnOptSame').checked = true;
                 $('bnSub').textContent = '· walk-in · today, starting ' + fmt(FIRST);
                 $('bnLoading').hidden = true; $('bnApp').hidden = false;
@@ -440,52 +435,27 @@
         if (S && S.open && !e.target.closest('.bn-pick')) { S.open = null; renderPlan(); }
     });
 
-    // ── Bill ──────────────────────────────────────────────────────────────
-    function gTotals(g) {
-        var sub = g.items.reduce(function (a, it) { return a + it.dur.p; }, 0);
-        var pct = DISC.filter(function (d) { return d.k === g.disc; })[0].pct;
-        var disc = Math.round(sub * pct) / 100;
-        return { sub: sub, disc: disc, tot: sub - disc };
-    }
-    function payChips(selected, attr) {
-        return QB_PAYMENT_METHODS.map(function (pm) { return '<button type="button" class="bn-chip' + (selected === pm.value ? ' sel' : '') + '" ' + attr + ' data-p="' + pm.value + '">' + esc(pm.label) + '</button>'; }).join('');
-    }
+    // ── Estimated total (no payment here) ─────────────────────────────────
     function renderBill() {
-        $('bnBillMode').innerHTML = [['one', 'One bill'], ['split', 'Separate bills']].map(function (m) {
-            return '<button type="button" class="bn-chip' + (S.billMode === m[0] ? ' sel' : '') + '" data-m="' + m[0] + '">' + m[1] + '</button>';
-        }).join('');
-        $('bnBillMode').querySelectorAll('.bn-chip').forEach(function (b) { b.onclick = function () { S.billMode = b.dataset.m; renderBill(); }; });
-
+        var total = 0, n = 0;
         $('bnBill').innerHTML = S.guests.map(function (g, gi) {
-            var t = gTotals(g);
-            return '<div class="bn-brow" style="--gc:' + GC[gi % 4] + '"><div class="t"><span><i></i>' + esc(gname(g, gi)) + '</span><span>' + peso(t.tot) + '</span></div>' +
-                '<div class="bn-chips">' + DISC.map(function (d) { return '<button type="button" class="bn-chip' + (g.disc === d.k ? ' sel' : '') + '" data-g="' + gi + '" data-d="' + d.k + '">' + d.l + '</button>'; }).join('') + '</div>' +
-                (S.billMode === 'split' ? '<div class="bn-chips">' + payChips(g.pay, 'data-gp="' + gi + '"') + '</div>' : '') +
+            var sub = g.items.reduce(function (a, it) { return a + it.dur.p; }, 0);
+            total += sub; n += g.items.length;
+            return '<div class="bn-brow" style="--gc:' + GC[gi % 4] + '"><div class="t"><span><i></i>' + esc(gname(g, gi)) + '</span><span>' + peso(sub) + '</span></div>' +
+                g.items.map(function (it) { return '<div class="ln"><span>' + esc(it.svc.name) + ' · ' + it.dur.m + ' min</span><span>' + pesoShort(it.dur.p) + '</span></div>'; }).join('') +
                 '</div>';
         }).join('');
-        $('bnBill').querySelectorAll('[data-d]').forEach(function (b) { b.onclick = function () { S.guests[+b.dataset.g].disc = b.dataset.d; renderBill(); }; });
-        $('bnBill').querySelectorAll('[data-gp]').forEach(function (b) { b.onclick = function () { S.guests[+b.dataset.gp].pay = b.dataset.p; renderBill(); }; });
-
-        $('bnPaysWrap').hidden = S.billMode === 'split';
-        $('bnPays').innerHTML = payChips(S.pay, '');
-        $('bnPays').querySelectorAll('.bn-chip').forEach(function (b) { b.onclick = function () { S.pay = b.dataset.p; renderBill(); }; });
-
-        var sub = 0, disc = 0, n = 0;
-        S.guests.forEach(function (g) { var t = gTotals(g); sub += t.sub; disc += t.disc; n += g.items.length; });
         $('bnSum').innerHTML =
-            '<div><span>' + S.guests.length + ' guest' + (S.guests.length > 1 ? 's' : '') + ' · ' + n + ' service' + (n !== 1 ? 's' : '') + '</span><span>' + peso(sub) + '</span></div>' +
-            (disc ? '<div><span>Discounts</span><span>−' + peso(disc) + '</span></div>' : '') +
-            '<div class="big"><span>Collect now</span><span>' + peso(sub - disc) + '</span></div>' +
+            '<div><span>' + S.guests.length + ' guest' + (S.guests.length > 1 ? 's' : '') + ' · ' + n + ' service' + (n !== 1 ? 's' : '') + '</span><span></span></div>' +
+            '<div class="big"><span>Total before discounts</span><span>' + peso(total) + '</span></div>' +
             (n ? '<div><span>Everyone done by</span><span>' + fmt(PLAN.end) + '</span></div>' : '');
 
         var miss = [];
         S.guests.forEach(function (g, gi) { if (!g.items.length) miss.push(gname(g, gi) + ' has no service'); });
         if (PLAN.lines.some(function (ls) { return ls.some(function (L) { return !L.t || !L.r; }); })) miss.push('a service has no free therapist or room today');
-        if (S.billMode === 'one' && !S.pay) miss.push('payment method');
-        if (S.billMode === 'split') S.guests.forEach(function (g, gi) { if (!g.pay) miss.push('payment for ' + gname(g, gi)); });
         $('bnMiss').textContent = miss.length ? 'Still needed: ' + miss.join(', ') : '';
-        $('bnBookBtn').disabled = miss.length > 0;
-        $('bnBookBtn').textContent = 'Book ' + S.guests.length + ' guest' + (S.guests.length > 1 ? 's' : '') + ' · ' + n + ' service' + (n !== 1 ? 's' : '');
+        $('bnBookBtn').disabled = miss.length > 0 || S.saving;
+        $('bnBookBtn').textContent = S.saving ? 'Booking…' : 'Book ' + S.guests.length + ' guest' + (S.guests.length > 1 ? 's' : '') + ' · ' + n + ' service' + (n !== 1 ? 's' : '');
     }
 
     // ── Room preview ──────────────────────────────────────────────────────
@@ -518,10 +488,32 @@
     $('bnOptSame').onchange = function () { if (S) renderAll(); };
     $('bnOptOrder').onchange = function () { if (S) renderAll(); };
 
-    // ── Book (front end only for now) ─────────────────────────────────────
+    // ── Book ──────────────────────────────────────────────────────────────
+    // Sends exactly what the plan shows; the server re-checks every line
+    // (price, duration, training, duty, clashes) before saving anything.
     $('bnBookBtn').onclick = function () {
         if (this.disabled) return;
-        uiAlert('Saving from this screen is not connected yet. To book this customer now, use the classic form (link at the top of this window).');
+        var guests = S.guests.map(function (g, gi) {
+            return {
+                name: g.name.trim(),
+                items: (PLAN.lines[gi] || []).map(function (L) {
+                    return { service_id: L.item.svc.id, duration_id: L.item.dur.id, therapist_id: L.t, resource_id: L.r, start: L.s };
+                })
+            };
+        });
+        S.saving = true; renderBill();
+        fetch('index.php?ajax=book_now_submit', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': QB_CSRF },
+            body: new URLSearchParams({ guests: JSON.stringify(guests) }).toString()
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                S.saving = false;
+                if (res.ok) { closeBookNow(); uiAlert(res.message).then(function () { location.reload(); }); }
+                else { renderBill(); uiAlert(res.message || 'Could not save the booking.'); }
+            })
+            .catch(function () { S.saving = false; renderBill(); uiAlert('Could not reach the server. Please try again.'); });
     };
 
     document.addEventListener('keydown', function (e) {
