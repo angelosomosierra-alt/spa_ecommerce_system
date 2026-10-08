@@ -493,6 +493,15 @@ if (($_GET['ajax'] ?? '') === 'quick_book_partner_rate') {
     exit;
 }
 
+require_once __DIR__ . '/_book_now.php';
+if (($_GET['ajax'] ?? '') === 'book_now_data') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(book_now_data($conn));
+    exit;
+}
+
 if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_if_not_admin();
     ob_clean();
@@ -724,7 +733,7 @@ require_once 'admin_header.php';
         <span class="panel-title">Appointments</span>
         <div style="display:flex;gap:0.6rem;">
             <button type="button" class="btn btn-primary btn-sm" onclick="openApptCalendar()">Calendar</button>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="openQuickBook()">Book Now</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="openBookNow()">Book Now</button>
         </div>
     </div>
 </div>
@@ -1299,6 +1308,7 @@ function qbFilterServices(query) {
     if (noResults) noResults.style.display = (q && Object.keys(matchedCatIds).length === 0) ? '' : 'none';
 }
 </script>
+<?php require __DIR__ . '/_book_now_modal.php'; ?>
 
 <style>
 .rotation-groups-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; }
