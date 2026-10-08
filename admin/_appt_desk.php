@@ -244,7 +244,7 @@
             '<div class="dk-svcs"><span>' + esc(a.service.name) + ' · ' + a.service.mins + 'm' + pkg + '</span>' +
                 a.addons.map(function (x) { return '<span>+ ' + esc(x.name) + (x.rows.length > 1 ? ' <span class="dk-pill p-pkg">' + x.rows.filter(function (r) { return r.status === 'completed'; }).length + '/' + x.rows.length + '</span>' : '') + '</span>'; }).join('') + '</div>' +
             '<div class="dk-meta">' + (th ? esc(th) : '<span class="dk-pill p-need">No therapist yet</span>') + (a.resource_id && RES[a.resource_id] ? ' · ' + esc(RES[a.resource_id].name) : '') + '</div>' +
-            '<div class="dk-pills">' + (a.overdue && !isPkg(a) ? '<span class="dk-pill p-need">Overdue · ' + esc(dayLabel(a.start)) + '</span>' : '') + payPill(a) + (a.group ? '<span class="dk-pill p-src">Group</span>' : '') + '</div>' +
+            '<div class="dk-pills">' + (a.overdue && !isPkg(a) ? '<span class="dk-pill p-need">Overdue · ' + esc(dayLabel(a.start)) + '</span>' : '') + payPill(a) + (a.group && a.group_size > 1 ? '<span class="dk-pill p-src">Group of ' + a.group_size + '</span>' : '') + '</div>' +
             (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + a.id + '">' + na.l + '</button>' : '') +
             '</article>';
     }
@@ -337,7 +337,7 @@
         }
 
         var groupHtml = '';
-        if (a.group && S.grp) {
+        if (a.group && a.group_size > 1 && S.grp) {
             groupHtml = '<div class="dk-inline" id="dkGrp"><p class="dk-hint">Loading the group…</p></div>';
         }
 
@@ -358,13 +358,13 @@
 
         $('dkDrawer').innerHTML =
             '<div class="dk-dh"><div class="dk-drow"><h3>' + esc(a.name) + '</h3><button type="button" class="dk-x" id="dkX" aria-label="Close">✕</button></div>' +
-            '<div class="dk-drow"><span class="dk-hint">' + dayLabel(a.start) + ', ' + tm(a.start) + ' · ' + esc(a.source) + (a.phone ? ' · ' + esc(a.phone) : '') + (a.note ? ' · “' + esc(a.note) + '”' : '') + '</span>' + (a.group ? '<span class="dk-pill p-src">Group booking</span>' : '') + '</div>' +
+            '<div class="dk-drow"><span class="dk-hint">' + dayLabel(a.start) + ', ' + tm(a.start) + ' · ' + esc(a.source) + (a.phone ? ' · ' + esc(a.phone) : '') + (a.note ? ' · “' + esc(a.note) + '”' : '') + '</span>' + (a.group && a.group_size > 1 ? '<span class="dk-pill p-src">Group of ' + a.group_size + '</span>' : '') + '</div>' +
             '<div class="dk-steps">' + steps + '</div></div>' +
             '<div class="dk-db">' +
             (a.legacy_two_session ? '<p class="dk-hint">This is an old 2-session package booking. Manage it in the <a href="appointments.php?view=classic">classic view</a>.</p>' : '') +
             '<div class="dk-sec"><h4>Services</h4>' + mainHtml + addHtml +
                 (!locked ? '<a class="dk-hint" href="appointments.php?view=classic&appt_date=' + a.date + '">Add a service or edit details in the classic view</a>' : '') + '</div>' +
-            '<div class="dk-sec"><h4><span>Payment</span>' + (a.group && !b.paid && !locked ? '<button type="button" class="dk-btn" id="dkGrpOpen">Pay for group</button>' : '') + '</h4>' + billHtml + payForm + groupHtml + '</div>' +
+            '<div class="dk-sec"><h4><span>Payment</span>' + (a.group && a.group_size > 1 && !b.paid && !locked ? '<button type="button" class="dk-btn" id="dkGrpOpen">' + (S.grp ? 'Back to this guest' : 'Pay for group') + '</button>' : '') + '</h4>' + billHtml + payForm + groupHtml + '</div>' +
             (extra ? '<div class="dk-sec">' + extra + '</div>' : '') +
             '<p class="dk-err" id="dkErr"></p></div>' +
             '<div class="dk-df">' +
@@ -374,7 +374,7 @@
                 : '<button type="button" class="dk-btn" id="dkRsOpen">Reschedule</button><button type="button" class="dk-btn danger" id="dkCxOpen">' + (a.status === 'pending' ? 'Decline' : 'Cancel') + '</button>') +
             '</div>';
         wire(a);
-        if (a.group && S.grp) loadGroup(a);
+        if (a.group && a.group_size > 1 && S.grp) loadGroup(a);
     }
     function discChips() {
         return '<div><label class="dk-lbl">Discount</label><div class="dk-bar">' + DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (S.disc === d[0] ? ' sel' : '') + '" data-disc="' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div></div>';
@@ -424,12 +424,12 @@
             if (na.k === 'checkin') {
                 var m2 = missing(a, true); if (m2.length) return err('Choose a ' + m2.join(', ') + ' first.');
                 if (b.paid) return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
-                if (S.panel !== 'checkin') { S.panel = 'checkin'; return renderDrawer(); }
+                if (S.panel !== 'checkin') { S.panel = 'checkin'; S.grp = false; return renderDrawer(); }
                 if (S.payNow && !S.method) return err('Choose a payment method, or pick Pay later.');
                 return post('checkin_appointment', a.id, { pay_choice: S.payNow ? 'now' : 'later', pay_method: S.method || 'cash', discount_type: S.payNow ? S.disc : 'none', voucher_type: 'cash', voucher_value: 0 }, false, true);
             }
             if (na.k === 'complete') {
-                if (b.due > 0 && S.panel !== 'complete') { S.panel = 'complete'; return renderDrawer(); }
+                if (b.due > 0 && S.panel !== 'complete') { S.panel = 'complete'; S.grp = false; return renderDrawer(); }
                 if (b.due > 0 && !S.method) return err('Choose how the customer paid.');
                 return post('complete', a.id, {
                     complete_pay_method: S.method || 'cash', complete_unpaid_billto: ($('dkBill') || {}).value || '',
@@ -453,7 +453,7 @@
             else post('cancel', a.id, { cancel_reason: ($('dkCr') || {}).value || '' });
         };
         var undo = $('dkUndo'); if (undo) undo.onclick = function () { post('revert_complete', a.id, {}); };
-        var gpo = $('dkGrpOpen'); if (gpo) gpo.onclick = function () { S.grp = !S.grp; renderDrawer(); };
+        var gpo = $('dkGrpOpen'); if (gpo) gpo.onclick = function () { S.grp = !S.grp; if (S.grp) S.panel = null; renderDrawer(); };
     }
 
     // ── Pay for group (same action as the classic view) ───────────────────

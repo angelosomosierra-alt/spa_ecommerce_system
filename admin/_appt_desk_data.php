@@ -43,7 +43,9 @@ function appt_desk_data(mysqli $conn, string $range): array {
                u.full_name AS user_name, u.phone AS user_phone,
                o.id AS order_id, o.customer_name, o.phone AS order_phone, o.total_amount,
                o.discount_type, o.discount_amount, o.final_amount, o.payment_status,
-               o.payment_method, o.paymongo_method, o.booking_group
+               o.payment_method, o.paymongo_method, o.booking_group,
+               (SELECT COUNT(DISTINCT o2.customer_name) FROM orders o2
+                WHERE o.booking_group IS NOT NULL AND o2.booking_group = o.booking_group) AS group_size
         FROM appointments a
         JOIN services s ON s.id = a.service_id
         LEFT JOIN categories c ON c.id = s.category_id
@@ -167,6 +169,7 @@ function appt_desk_data(mysqli $conn, string $range): array {
             'sessions' => ((int)$r['session_count'] > 1) ? ($sessions[$id] ?? []) : [],
             'legacy_two_session' => !empty($r['session_group_id']),
             'group' => $r['booking_group'] ?: null,
+            'group_size' => (int)($r['group_size'] ?? 0),
             'bill' => [
                 'order_total' => $order_total, 'addons' => $extras_all, 'addons_unpaid' => $extras_unpaid,
                 'discount' => $bdisc, 'discount_type' => $r['discount_type'] ?: 'none',
