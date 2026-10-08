@@ -15,6 +15,8 @@
  *   - Session Package     → read-only here. Created automatically at
  *     check-in (see checkin_appointment in appointments.php); shown so
  *     every advance is visible in one place, not to be entered by hand.
+ *     Also lists session-count packages with a session completed today:
+ *     the paid value of the sessions still left (Dashboard only).
  *
  * Usage: <?php require_once 'admin/_advance_payments_widget.php'; ?>
  * Requires: $conn (DB), session with user_id, config.php already loaded.
@@ -33,6 +35,27 @@ $conn->query("CREATE TABLE IF NOT EXISTS manual_advance_payments (
     verified_by_pin VARCHAR(10) NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_map_date (report_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
+// Read below for session-count packages. Normally created by walkin.php /
+// appointments.php, but the Dashboard may be the first page opened on a
+// fresh database — same self-healing schema convention as those pages.
+$conn->query("CREATE TABLE IF NOT EXISTS appointment_sessions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    appointment_id INT NOT NULL,
+    session_number INT NOT NULL,
+    session_date DATETIME NULL,
+    therapist_id INT NULL,
+    duration_minutes INT NOT NULL,
+    status ENUM('not_scheduled','scheduled','checked_in','completed') NOT NULL DEFAULT 'not_scheduled',
+    commission DECIMAL(10,2) NULL,
+    checked_in_at DATETIME NULL,
+    completed_at DATETIME NULL,
+    completed_by INT NULL,
+    completed_by_name VARCHAR(120) NULL,
+    UNIQUE KEY uq_appt_session (appointment_id, session_number),
+    CONSTRAINT fk_appt_sessions_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+    CONSTRAINT fk_appt_sessions_therapist FOREIGN KEY (therapist_id) REFERENCES therapists(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
 $apw_msg = ''; $apw_msg_type = 'success';
@@ -153,9 +176,44 @@ $apw_sessions = $conn->query("
     ORDER BY a.id DESC
 ")->fetch_all(MYSQLI_ASSOC);
 
+// Session-count packages (service_durations.session_count > 1) are one
+// appointment paid in full upfront, with progress tracked in
+// appointment_sessions — they never set appointments.advance_payment, so the
+// query above misses them. Once a session is completed today and the order is
+// paid, the sessions still left are money already collected for service not
+// yet rendered: list that balance here. Dashboard visibility only — the Daily
+// Report already recognizes the full package price on its booking date, so
+// this is deliberately NOT fed into _daily_report_data.php's advance totals.
+$apw_pkg_remaining = $conn->query("
+    SELECT a.id, a.charged_price, s.name AS service_name,
+           COUNT(*) AS total_sessions,
+           SUM(aps.status = 'completed') AS done_sessions,
+           COALESCE(NULLIF(o.paymongo_method, ''), o.payment_method) AS pay_method,
+           COALESCE(o.customer_name, u.full_name) AS customer_name
+    FROM appointments a
+    JOIN appointment_sessions aps ON aps.appointment_id = a.id
+    JOIN services s ON s.id = a.service_id
+    JOIN order_items oi ON oi.id = a.order_item_id
+    JOIN orders o ON o.id = oi.order_id
+    LEFT JOIN users u ON u.id = a.user_id
+    WHERE o.payment_status = 'paid'
+      AND a.status != 'cancelled'
+    GROUP BY a.id
+    HAVING SUM(aps.status = 'completed' AND DATE(aps.completed_at) = CURDATE()) > 0
+       AND done_sessions < total_sessions
+    ORDER BY a.id DESC
+")->fetch_all(MYSQLI_ASSOC);
+foreach ($apw_pkg_remaining as &$_pr) {
+    $_left = (int)$_pr['total_sessions'] - (int)$_pr['done_sessions'];
+    $_pr['remaining_sessions'] = $_left;
+    $_pr['remaining_amount']   = round((float)$_pr['charged_price'] * $_left / max(1, (int)$_pr['total_sessions']), 2);
+}
+unset($_pr);
+
 $apw_voucher_total = array_sum(array_column($apw_vouchers, 'amount'));
 $apw_deposit_total = array_sum(array_column($apw_deposits, 'amount'))
-                    + array_sum(array_column($apw_sessions, 'advance_payment'));
+                    + array_sum(array_column($apw_sessions, 'advance_payment'))
+                    + array_sum(array_column($apw_pkg_remaining, 'remaining_amount'));
 $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
 ?>
 <div class="panel" style="margin-top:1.5rem;" id="advance-payments-widget">
@@ -282,7 +340,7 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
                     </button>
                 </div>
 
-                <?php if (empty($apw_vouchers) && empty($apw_deposits) && empty($apw_sessions)): ?>
+                <?php if (empty($apw_vouchers) && empty($apw_deposits) && empty($apw_sessions) && empty($apw_pkg_remaining)): ?>
                 <div id="apw-empty" style="text-align:center;padding:1.5rem;color:var(--gray);font-size:0.82rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);">
                     No entries yet today.
                 </div>
@@ -345,6 +403,23 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
                         <span style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($s['advance_payment'],2); ?></span>
                     </div>
                     <?php endforeach; ?>
+
+                    <?php foreach ($apw_pkg_remaining as $p):
+                        $_done = (int)$p['done_sessions']; $_tot = (int)$p['total_sessions']; $_left = (int)$p['remaining_sessions'];
+                        $_lbl = $p['service_name'] . ' — ' . $_done . ' of ' . $_tot . ' done, ' . $_left . ' session' . ($_left > 1 ? 's' : '') . ' remaining';
+                    ?>
+                    <div class="apw-entry" data-type="advance" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;background:var(--bg3);border-radius:7px;border:1px solid var(--border2);">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:0.82rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($p['customer_name'] ?? ''); ?></div>
+                            <div style="font-size:0.68rem;color:var(--gray);">
+                                <span style="color:#9333a6;font-weight:700;">Auto · Session Pkg</span>
+                                &nbsp;·&nbsp;<?php echo htmlspecialchars($_lbl); ?>
+                                &nbsp;·&nbsp;<?php echo htmlspecialchars(ucfirst($p['pay_method'] ?? 'cash')); ?>
+                            </div>
+                        </div>
+                        <span style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($p['remaining_amount'],2); ?></span>
+                    </div>
+                    <?php endforeach; ?>
                 </div>
                 <div id="apw-empty" style="display:none;text-align:center;padding:1.5rem;color:var(--gray);font-size:0.82rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);">
                     No entries match this filter.
@@ -358,7 +433,7 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
             <div style="font-size:0.76rem;color:var(--gray);margin-top:0.5rem;line-height:1.6;">
                 <strong style="color:var(--brown);">Voucher / GC</strong> — also appears on GC &amp; Unpaids → Sold, counted once in Sold GC (Gross Sales). Shown here for visibility only.<br>
                 <strong style="color:var(--brown);">Other Deposit</strong> — counted in Advance Payment on the Summary Report, same bucket session-package advances already use.<br>
-                <strong style="color:var(--brown);">Session Package</strong> — created automatically at check-in; already counted in Advance Payment today.
+                <strong style="color:var(--brown);">Session Package</strong> — created automatically. When a session of a paid multi-session package is completed, the value of the sessions still left shows here. Dashboard only: the Sales Report already counts the full package price on its booking date.
             </div>
         </details>
     </div>
