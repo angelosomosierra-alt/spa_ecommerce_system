@@ -501,6 +501,32 @@ if (($_GET['ajax'] ?? '') === 'book_now_data') {
     echo json_encode(book_now_data($conn));
     exit;
 }
+require_once __DIR__ . '/_sell_product.php';
+if (($_GET['ajax'] ?? '') === 'sell_product_data') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(sell_product_data($conn));
+    exit;
+}
+if (($_GET['ajax'] ?? '') === 'sell_product_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    verify_csrf_token();
+    $sp_items = json_decode($_POST['items'] ?? '[]', true);
+    echo json_encode(sell_product_save(
+        $conn,
+        is_array($sp_items) ? $sp_items : [],
+        (string)($_POST['customer'] ?? ''),
+        (string)($_POST['slip'] ?? ''),
+        (string)($_POST['discount_type'] ?? 'none'),
+        max(0.0, (float)($_POST['voucher_amount'] ?? 0)),
+        (string)($_POST['payment_method'] ?? '')
+    ));
+    exit;
+}
+
 if (($_GET['ajax'] ?? '') === 'book_now_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_if_not_admin();
     ob_clean();
@@ -742,6 +768,7 @@ require_once 'admin_header.php';
         <div style="display:flex;gap:0.6rem;">
             <button type="button" class="btn btn-primary btn-sm" onclick="openApptCalendar()">Calendar</button>
             <button type="button" class="btn btn-secondary btn-sm" onclick="openBookNow()">Book Now</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="openSellProduct()">Sell Product</button>
         </div>
     </div>
 </div>
@@ -1322,6 +1349,7 @@ function qbFilterServices(query) {
 }
 </script>
 <?php require __DIR__ . '/_book_now_modal.php'; ?>
+<?php require __DIR__ . '/_sell_product_modal.php'; ?>
 
 <style>
 .rotation-groups-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; }
