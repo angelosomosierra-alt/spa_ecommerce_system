@@ -118,7 +118,7 @@
     var CSRF = <?php echo json_encode(generate_csrf_token()); ?>;
     var PAYS = [['cash','Cash'],['gcash','GCash'],['maya','Maya'],['qrph','QR Ph'],['card','Card'],['swiper','Swiper']];
     var DISC = [['none','None',0],['senior','Senior 20%',20],['pwd','PWD 20%',20],['employee','Staff 50%',50]];
-    var RANGES = [['today','Today'],['tomorrow','Tomorrow'],['upcoming','All upcoming']];
+    var RANGES = [['today','Today'],['tomorrow','Tomorrow'],['upcoming','All open']];
     var LANES = [
         { k: 'pending',   l: 'Needs therapist', s: 'Online bookings to confirm', c: 'var(--red)' },
         { k: 'assigned',  l: 'Booked',          s: 'Waiting for the customer',   c: '#2f63b8' },
@@ -244,7 +244,7 @@
             '<div class="dk-svcs"><span>' + esc(a.service.name) + ' · ' + a.service.mins + 'm' + pkg + '</span>' +
                 a.addons.map(function (x) { return '<span>+ ' + esc(x.name) + (x.rows.length > 1 ? ' <span class="dk-pill p-pkg">' + x.rows.filter(function (r) { return r.status === 'completed'; }).length + '/' + x.rows.length + '</span>' : '') + '</span>'; }).join('') + '</div>' +
             '<div class="dk-meta">' + (th ? esc(th) : '<span class="dk-pill p-need">No therapist yet</span>') + (a.resource_id && RES[a.resource_id] ? ' · ' + esc(RES[a.resource_id].name) : '') + '</div>' +
-            '<div class="dk-pills">' + payPill(a) + (a.group ? '<span class="dk-pill p-src">Group</span>' : '') + '</div>' +
+            '<div class="dk-pills">' + (a.overdue && !isPkg(a) ? '<span class="dk-pill p-need">Overdue · ' + esc(dayLabel(a.start)) + '</span>' : '') + payPill(a) + (a.group ? '<span class="dk-pill p-src">Group</span>' : '') + '</div>' +
             (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + a.id + '">' + na.l + '</button>' : '') +
             '</article>';
     }

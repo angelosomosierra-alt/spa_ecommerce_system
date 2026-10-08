@@ -21,8 +21,12 @@ function appt_desk_data(mysqli $conn, string $range): array {
     $walkin_uid = get_walkin_customer_id();
 
     // Which bookings are on the board:
-    //   today / tomorrow → that day's bookings, plus packages with a session that day
-    //   upcoming         → every open booking from today on
+    //   today    → today's bookings, packages with a session today, and every
+    //              unfinished booking from an earlier day (flagged overdue)
+    //   tomorrow → tomorrow's bookings and package sessions
+    //   upcoming → every unfinished booking, any date
+    // Nothing is ever left off just because its date has passed: an open
+    // booking stays on the board until it's completed, cancelled or declined.
     // "Done" only ever shows bookings completed for the chosen day.
     if ($range === 'tomorrow') { $from = $tomorrow; $to = $tomorrow; }
     elseif ($range === 'upcoming') { $from = $today; $to = '2999-12-31'; }
@@ -56,7 +60,7 @@ function appt_desk_data(mysqli $conn, string $range): array {
                     OR EXISTS (SELECT 1 FROM appointment_sessions x
                                WHERE x.appointment_id = a.id AND x.status != 'completed'
                                  AND DATE(x.session_date) BETWEEN ? AND ?)
-                    OR (? = 'upcoming' AND DATE(a.appointment_date) < ? AND a.status IN ('assigned','approved'))
+                    OR (? != 'tomorrow' AND DATE(a.appointment_date) < ?)
                 ))
              OR (a.status = 'completed' AND DATE(a.appointment_date) = ?)
           )
@@ -142,6 +146,7 @@ function appt_desk_data(mysqli $conn, string $range): array {
             'id' => $id,
             'status' => $r['status'],
             'date' => substr($r['appointment_date'], 0, 10),
+            'overdue' => $r['status'] !== 'completed' && substr($r['appointment_date'], 0, 10) < $today,
             'start' => $r['appointment_date'],
             'name' => $name,
             'phone' => $r['order_phone'] ?: ($is_walkin ? '' : ($r['user_phone'] ?? '')),
