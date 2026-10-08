@@ -377,6 +377,16 @@ function send_approval_email($conn, $appt_id) {
     }
 }
 
+// ── Desk view data (default view; see _appt_desk.php). Read-only JSON, and it
+//    hands back the flash message an action just set, so it must run before
+//    the flash is consumed below.
+if (($_GET['ajax'] ?? '') === 'desk_data') {
+    require_once __DIR__ . '/_appt_desk_data.php';
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(appt_desk_data($conn, (string)($_GET['range'] ?? 'today')));
+    exit();
+}
+
 // ── Flash message retrieval (PRG pattern) ────────────────────────────────────
 $message = '';
 $message_type = 'success';
@@ -2872,7 +2882,18 @@ $page_title  = 'Appointments';
 $page_icon   = '';
 $active_page = 'appointments';
 require_once 'admin_header.php';
+
+// Desk view is the default; the original board stays at ?view=classic. The
+// choice sticks for the session so the classic board's own tabs, filters and
+// form redirects (which link to plain appointments.php) stay on it.
+if (in_array($_GET['view'] ?? '', ['classic', 'desk'], true)) $_SESSION['appt_view'] = $_GET['view'];
+if (($_SESSION['appt_view'] ?? 'desk') !== 'classic') {
+    require __DIR__ . '/_appt_desk.php';
+    require_once 'admin_footer.php';
+    exit();
+}
 ?>
+<div style="margin-bottom:1rem;"><a href="appointments.php?view=desk" style="font-size:0.85rem;font-weight:700;">&larr; Back to the new Appointments view</a></div>
 
 <?php include __DIR__ . '/_resource_picker_js.php'; ?>
 
@@ -3659,98 +3680,10 @@ $render_card = function(array $a) use ($conn, $on_duty_therapists, $services_by_
                 <?php endforeach; ?>
                 </div>
             </div>
-            <!-- Audit Trail -->
-            <div style="flex-shrink:0;min-width:180px;">
-                <div style="font-size:0.78rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem;">Action Log</div>
-                <div style="display:flex;flex-direction:column;gap:0.35rem;">
-                    <?php if (!empty($a['rescheduled_by_name'])): ?>
-                    <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:#0891b2;">Rescheduled by:</span><br>
-                        <span style="color:var(--brown);"><?php echo htmlspecialchars($a['rescheduled_by_name']); ?></span>
-                        <?php if (!empty($a['rescheduled_at'])): ?>
-                        <span style="color:var(--gray);font-size:0.68rem;"> · <?php echo date('M d, h:i A', strtotime($a['rescheduled_at'])); ?></span>
-                        <?php endif; ?>
-                    </div>
-                    <?php endif; ?>
-                    <?php if (!empty($a['approved_by_name'])): ?>
-                    <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:var(--green);">Approved by:</span><br>
-                        <span style="color:var(--brown);"><?php echo htmlspecialchars($a['approved_by_name']); ?></span>
-                    </div>
-                    <?php endif; ?>
-                    <?php if (!empty($a['completed_by_name'])): ?>
-                    <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:#0d6efd;">Completed by:</span><br>
-                        <span style="color:var(--brown);"><?php echo htmlspecialchars($a['completed_by_name']); ?></span>
-                    </div>
-                    <?php endif; ?>
-                    <?php if (!empty($a['declined_by_name'])): ?>
-                    <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:#dc3545;">Declined by:</span><br>
-                        <span style="color:var(--brown);"><?php echo htmlspecialchars($a['declined_by_name']); ?></span>
-                    </div>
-                    <?php endif; ?>
-                    <?php if (!empty($a['cancelled_by_name'])): ?>
-                    <div style="font-size:0.75rem;color:var(--gray);">
-                        <span style="font-weight:700;color:#6b7280;">Cancelled by:</span><br>
-                        <span style="color:var(--brown);"><?php echo htmlspecialchars($a['cancelled_by_name']); ?></span>
-                    </div>
-                    <?php endif; ?>
-                </div>
-            </div>
         </div>
     </div>
     <?php endif; ?>
 
-    <!-- Audit trail for active appointments (approved/assigned) -->
-    <?php
-    $has_audit = !empty($a['rescheduled_by_name']) || !empty($a['approved_by_name']);
-    if (in_array($status, ['approved','assigned']) && $has_audit):
-    ?>
-    <div style="margin-bottom:1rem;padding:0.6rem 1rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);display:flex;flex-wrap:wrap;gap:1rem;">
-        <div style="font-size:0.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;width:100%;margin-bottom:0.1rem;">Action Log</div>
-        <?php if (!empty($a['rescheduled_by_name'])): ?>
-        <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:#0891b2;">Rescheduled by:</span>
-            <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['rescheduled_by_name']); ?></span>
-            <?php if (!empty($a['rescheduled_at'])): ?>
-            <span style="color:var(--gray);font-size:0.68rem;"> · <?php echo date('M d, h:i A', strtotime($a['rescheduled_at'])); ?></span>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
-        <?php if (!empty($a['approved_by_name'])): ?>
-        <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:var(--green);">Approved by:</span>
-            <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['approved_by_name']); ?></span>
-        </div>
-        <?php endif; ?>
-    </div>
-    <?php endif; ?>
-
-    <!-- Audit trail for cancelled appointments -->
-    <?php if ($status === 'cancelled'): ?>
-    <div style="margin-bottom:1rem;padding:0.6rem 1rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);display:flex;flex-wrap:wrap;gap:1rem;">
-        <div style="font-size:0.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;width:100%;margin-bottom:0.1rem;">Action Log</div>
-        <?php if (!empty($a['rescheduled_by_name'])): ?>
-        <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:#0891b2;">Rescheduled by:</span>
-            <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['rescheduled_by_name']); ?></span>
-        </div>
-        <?php endif; ?>
-        <?php if (!empty($a['approved_by_name'])): ?>
-        <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:var(--green);">Approved by:</span>
-            <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['approved_by_name']); ?></span>
-        </div>
-        <?php endif; ?>
-        <?php if (!empty($a['cancelled_by_name'])): ?>
-        <div style="font-size:0.75rem;">
-            <span style="font-weight:700;color:#6b7280;">Cancelled by:</span>
-            <span style="color:var(--brown);margin-left:0.3rem;"><?php echo htmlspecialchars($a['cancelled_by_name']); ?></span>
-        </div>
-        <?php endif; ?>
-    </div>
-    <?php endif; ?>
 
     <!-- ══ EXTRA SERVICES ════════════════════════════════════════════════ -->
     <?php if (in_array($status, ['pending','approved','assigned','completed'])): ?>
