@@ -582,21 +582,24 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     // is collected now; payment happens at check-in on the appointment date
     // (checkin_appointment in appointments.php).
     $is_future_booking = $date > date('Y-m-d');
+    // This form is reached from the Calendar only (walk-ins happening now go
+    // through Book Now), so it books one of two things:
+    //   - another day: a down payment is REQUIRED to hold the slot. It is
+    //     saved on the appointment (advance_payment/_date/_method) so the
+    //     Daily Report lists it today and deducts it as ADVANCE PAYMENT on the
+    //     appointment day; the balance is collected at check-in.
+    //   - later today: a walk-in coming back when a slot frees up. No payment
+    //     now; everything is collected at check-in.
+    // Discounts are never applied here; they're chosen at check-in.
+    $discount_type = 'none';
+    $voucher_value = 0.0;
     if ($is_future_booking) {
-        // Nothing is paid or discounted at booking time: the order stays
-        // unpaid ('onsite', same as Walk-in's pay-later bookings) and the
-        // receptionist collects payment + any discount at check-in in
-        // appointments.php.
-        $payment_method  = 'onsite';
-        $advance_payment = 0.0;
-        $discount_type   = 'none';
-        $voucher_value   = 0.0;
-    } elseif (!in_array($payment_method, $valid_payment_methods, true)) {
-        echo json_encode(['ok' => false, 'message' => 'Please choose a payment method.']); exit;
+        if ($advance_payment <= 0) {
+            echo json_encode(['ok' => false, 'message' => 'A down payment is required to book another day.']); exit;
+        }
+        $payment_method = $advance_pm;
     } else {
-        // A walk-in happening now is paid in full today -- there's no future
-        // visit for a deposit to be held against, so any advance_payment the
-        // client sent for a same-day booking is ignored.
+        $payment_method  = 'onsite';
         $advance_payment = 0.0;
     }
 
@@ -626,6 +629,7 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
             ? round($charged_price * ($voucher_value / 100), 2)
             : min($voucher_value, $charged_price);
     }
+    $advance_payment = min($advance_payment, $charged_price);
     $final_amount = max(0.00, $charged_price - $discount_amount_calc - $advance_payment);
 
     $duration_minutes  = (int)$service['session_time'];
@@ -635,9 +639,8 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $walkin_user_id    = get_walkin_customer_id();
     $adv_pm_val        = $advance_payment > 0 ? $advance_pm : 'cash';
     $adv_date          = $advance_payment > 0 ? date('Y-m-d') : null;
-    // A walk-in always pays everything today; a future booking pays nothing
-    // until check-in.
-    $order_payment_status = $is_future_booking ? 'unpaid' : 'paid';
+    // Paid only if a future booking's down payment already covers it all.
+    $order_payment_status = ($is_future_booking && $final_amount <= 0) ? 'paid' : 'unpaid';
 
     $conn->begin_transaction();
     try {
@@ -916,7 +919,10 @@ require_once 'admin_header.php';
                 </div>
 
                 <div id="qbFutureNotice" class="qb-notice" style="display:none;margin-top:1.25rem;background:rgba(201,106,44,0.08);border-color:var(--gold);color:var(--brown);">
-                    <strong>This is a future-dated booking.</strong> No payment is taken now. Payment and any discount (Senior, PWD, Staff, voucher) are collected in Appointments when the customer checks in.
+                    <strong>Booking for another day.</strong> A down payment is required to hold the slot. The balance and any discount (Senior, PWD, Staff, voucher) are collected at check-in in Appointments.
+                </div>
+                <div id="qbTodayNotice" class="qb-notice" style="display:none;margin-top:1.25rem;background:rgba(201,106,44,0.08);border-color:var(--gold);color:var(--brown);">
+                    <strong>Customer coming back later today.</strong> No payment now. Everything, including any discount, is collected at check-in in Appointments.
                 </div>
 
                 <div class="qb-summary" id="qbPriceSummary" style="margin-top:1.25rem;"></div>
@@ -1061,15 +1067,14 @@ function qbGotoStep(n) {
     if (scrollBody) scrollBody.scrollTop = 0;
 }
 
-// A booking dated after today takes no payment or discount here — both are
-// collected at check-in on the day, in Appointments. Same-day bookings made
-// with this form still pay in full now.
+// Calendar bookings: another day needs a down payment (balance at check-in);
+// later today is a come-back reservation with no payment. No discounts here.
 function qbIsFutureBooking() {
     var todayStr = new Date().toISOString().slice(0, 10);
     return qbState.date > todayStr;
 }
 
-function qbConfirmBtnLabel() { return qbIsFutureBooking() ? 'Book Appointment' : 'Book Walk-In'; }
+function qbConfirmBtnLabel() { return qbIsFutureBooking() ? 'Book Appointment' : 'Save Reservation'; }
 
 // A "now" walk-in is paid in full today via the single Payment Method below --
 // there's nothing to advance against, so the whole Down Payment block (which
@@ -1077,19 +1082,18 @@ function qbConfirmBtnLabel() { return qbIsFutureBooking() ? 'Book Appointment' :
 // for it entirely, not just relabeled.
 function qbUpdateFutureBookingUI() {
     var isFuture = qbIsFutureBooking();
+    // Another day: down payment required. Later today: no payment at all.
+    // Either way no payment method or discount here; both happen at check-in.
     document.getElementById('qbFutureNotice').style.display = isFuture ? '' : 'none';
-    // Future bookings take no payment or discount here — both happen at
-    // check-in in appointments.php.
-    document.getElementById('qbPayMethodBlock').style.display = isFuture ? 'none' : '';
-    document.getElementById('qbDiscountBlock').style.display = isFuture ? 'none' : '';
-    document.getElementById('qbAdvancePaymentBlock').style.display = 'none';
-    document.getElementById('qbAdvancePayment').value = 0;
-    if (isFuture) {
-        qbState.discount_type = 'none';
-        document.querySelectorAll('.qb-disc-btn').forEach(function (b) { b.classList.toggle('selected', b.getAttribute('data-discount') === 'none'); });
-        document.getElementById('qbVoucherInputs').style.display = 'none';
-        document.getElementById('qbCelebInputs').style.display = 'none';
-    }
+    document.getElementById('qbTodayNotice').style.display  = isFuture ? 'none' : '';
+    document.getElementById('qbPayMethodBlock').style.display = 'none';
+    document.getElementById('qbDiscountBlock').style.display = 'none';
+    document.getElementById('qbAdvancePaymentBlock').style.display = isFuture ? '' : 'none';
+    if (!isFuture) document.getElementById('qbAdvancePayment').value = 0;
+    qbState.discount_type = 'none';
+    document.querySelectorAll('.qb-disc-btn').forEach(function (b) { b.classList.toggle('selected', b.getAttribute('data-discount') === 'none'); });
+    document.getElementById('qbVoucherInputs').style.display = 'none';
+    document.getElementById('qbCelebInputs').style.display = 'none';
     document.getElementById('qbConfirmBtn').textContent = qbConfirmBtnLabel();
     qbRecalc();
 }
@@ -1260,8 +1264,9 @@ function qbSelectPayment(el, field) {
 function qbSubmit() {
     var isFuture = qbIsFutureBooking();
     var advanceAmt = parseFloat(document.getElementById('qbAdvancePayment').value) || 0;
-    if (!isFuture && !qbState.payment_method) {
-        uiAlert('Please choose a payment method.'); return;
+    if (isFuture) {
+        if (advanceAmt <= 0) { uiAlert('A down payment is required to book another day.'); return; }
+        if (!qbState.advance_payment_method) { uiAlert('Please choose a down payment method.'); return; }
     }
     if (qbState.discount_type === 'voucher' && (parseFloat(document.getElementById('qbVoucherAmount').value) || 0) <= 0) {
         uiAlert('Please enter the voucher amount, or select None if no voucher is used.'); return;

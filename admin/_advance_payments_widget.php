@@ -162,8 +162,15 @@ $apw_deposits = $conn->query("
     ORDER BY m.id DESC
 ")->fetch_all(MYSQLI_ASSOC);
 
-$apw_sessions = $conn->query("
+// Down payments recorded on an appointment today. Two kinds:
+//   - session_group_id set: Session 2 of the retired 2-session package,
+//     credited at Session 1's check-in → Multi-session Paid.
+//   - anything else: a down payment for a booking on another day (Calendar)
+//     → Advance Payment. The Daily Report deducts it on the appointment day.
+$conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS session_group_id INT NULL DEFAULT NULL");
+$apw_appt_adv = $conn->query("
     SELECT a.id, a.advance_payment, a.advance_payment_method, a.advance_payment_date,
+           a.appointment_date, a.session_group_id,
            s.name AS service_name, IFNULL(sd.session_count, 1) AS session_count,
            COALESCE(o.customer_name, u.full_name) AS customer_name
     FROM appointments a
@@ -175,6 +182,8 @@ $apw_sessions = $conn->query("
     WHERE a.advance_payment > 0 AND a.advance_payment_date = CURDATE()
     ORDER BY a.id DESC
 ")->fetch_all(MYSQLI_ASSOC);
+$apw_sessions     = array_values(array_filter($apw_appt_adv, fn($r) => !empty($r['session_group_id'])));
+$apw_booking_advs = array_values(array_filter($apw_appt_adv, fn($r) => empty($r['session_group_id'])));
 
 // Session-count packages (service_durations.session_count > 1) are one
 // appointment paid in full upfront, with progress tracked in
@@ -214,7 +223,8 @@ $apw_voucher_total = array_sum(array_column($apw_vouchers, 'amount'));
 // Advance Payment (deposits for a future visit) and Multi-session Paid
 // (sessions already paid for but not yet rendered) are shown and totalled
 // separately; the grand total still covers everything.
-$apw_deposit_total = array_sum(array_column($apw_deposits, 'amount'));
+$apw_deposit_total = array_sum(array_column($apw_deposits, 'amount'))
+                    + array_sum(array_column($apw_booking_advs, 'advance_payment'));
 $apw_session_total = array_sum(array_column($apw_sessions, 'advance_payment'))
                     + array_sum(array_column($apw_pkg_remaining, 'remaining_amount'));
 $apw_grand_total    = $apw_voucher_total + $apw_deposit_total + $apw_session_total;
@@ -347,7 +357,7 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total + $apw_session_tot
                     </button>
                 </div>
 
-                <?php if (empty($apw_vouchers) && empty($apw_deposits) && empty($apw_sessions) && empty($apw_pkg_remaining)): ?>
+                <?php if (empty($apw_vouchers) && empty($apw_deposits) && empty($apw_booking_advs) && empty($apw_sessions) && empty($apw_pkg_remaining)): ?>
                 <div id="apw-empty" style="text-align:center;padding:1.5rem;color:var(--gray);font-size:0.82rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);">
                     No entries yet today.
                 </div>
@@ -395,6 +405,20 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total + $apw_session_tot
                     </div>
                     <?php endforeach; ?>
 
+                    <?php foreach ($apw_booking_advs as $b): ?>
+                    <div class="apw-entry" data-type="advance" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;background:var(--bg3);border-radius:7px;border:1px solid var(--border2);">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:0.82rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($b['customer_name'] ?? ''); ?></div>
+                            <div style="font-size:0.68rem;color:var(--gray);">
+                                <span style="color:#2d8a4e;font-weight:700;">Auto · Down payment</span>
+                                &nbsp;·&nbsp;<?php echo htmlspecialchars($b['service_name']); ?> on <?php echo date('M j, g:i A', strtotime($b['appointment_date'])); ?>
+                                &nbsp;·&nbsp;<?php echo htmlspecialchars(ucfirst($b['advance_payment_method'] ?? 'cash')); ?>
+                            </div>
+                        </div>
+                        <span class="apw-amt" style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($b['advance_payment'],2); ?></span>
+                    </div>
+                    <?php endforeach; ?>
+
                     <?php foreach ($apw_sessions as $s):
                         $_lbl = $s['service_name'] . ((int)$s['session_count'] > 1 ? ' — Session 2 of ' . (int)$s['session_count'] . ' (not yet rendered)' : '');
                     ?>
@@ -439,7 +463,7 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total + $apw_session_tot
             <summary style="cursor:pointer;font-size:0.76rem;font-weight:700;color:var(--gray);">Where each type lands in the Sales Report</summary>
             <div style="font-size:0.76rem;color:var(--gray);margin-top:0.5rem;line-height:1.6;">
                 <strong style="color:var(--brown);">Voucher / GC</strong> — also appears on GC &amp; Unpaids → Sold, counted once in Sold GC (Gross Sales). Shown here for visibility only.<br>
-                <strong style="color:var(--brown);">Other Deposit</strong> — listed under Advance Payment here, and counted in Advance Payment on the Summary Report.<br>
+                <strong style="color:var(--brown);">Advance Payment</strong> — down payments for a booking on another day (taken automatically when booked from the Calendar) and Other Deposits. Listed today; a booking's down payment is deducted as Advance Payment on the Sales Report on the appointment day.<br>
                 <strong style="color:var(--brown);">Multi-session Paid</strong> — created automatically and listed separately from Advance Payment. When a session of a paid multi-session package is completed, the value of the sessions still left shows here. Dashboard only: the Sales Report already counts the full package price on its booking date.
             </div>
         </details>
