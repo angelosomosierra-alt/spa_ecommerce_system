@@ -383,7 +383,7 @@ function send_approval_email($conn, $appt_id) {
 if (($_GET['ajax'] ?? '') === 'desk_data') {
     require_once __DIR__ . '/_appt_desk_data.php';
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(appt_desk_data($conn, (string)($_GET['done_date'] ?? '')));
+    echo json_encode(appt_desk_data($conn, (int)($_GET['done_days'] ?? 7)));
     exit();
 }
 

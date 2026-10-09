@@ -15,15 +15,16 @@
  */
 
 if (!function_exists('appt_desk_data')) {
-function appt_desk_data(mysqli $conn, string $done_date = ''): array {
+function appt_desk_data(mysqli $conn, int $done_days = 7): array {
     $today    = date('Y-m-d');
     $walkin_uid = get_walkin_customer_id();
-    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $done_date)) $done_date = $today;
+    $done_days = max(1, min(366, $done_days));
+    $done_from = date('Y-m-d', strtotime('-' . ($done_days - 1) . ' days'));
 
     // The board holds EVERY open booking (pending / booked / checked in),
     // whatever its date: nothing drops off until it's completed, cancelled or
-    // declined. Completed bookings only come back for one chosen day, for the
-    // Completed section (view + Undo complete).
+    // declined. Completed bookings come back for the last $done_days days, for
+    // the Completed section (view + Undo complete).
     $stmt = $conn->prepare("
         SELECT a.id, a.user_id, a.status, a.appointment_date, a.people_count, a.customer_note,
                a.charged_price, a.advance_payment, a.advance_payment_date, a.advance_payment_method,
@@ -49,11 +50,11 @@ function appt_desk_data(mysqli $conn, string $done_date = ''): array {
           AND (a.session_group_id IS NULL OR a.id = a.session_group_id)
           AND (
                 a.status IN ('pending','assigned','approved')
-             OR (a.status = 'completed' AND DATE(a.appointment_date) = ?)
+             OR (a.status = 'completed' AND DATE(a.appointment_date) >= ?)
           )
         ORDER BY a.appointment_date ASC
     ");
-    $stmt->bind_param("s", $done_date);
+    $stmt->bind_param("s", $done_from);
     $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
@@ -186,7 +187,7 @@ function appt_desk_data(mysqli $conn, string $done_date = ''): array {
     }
 
     return [
-        'done_date' => $done_date,
+        'done_days' => $done_days,
         'today' => $today,
         'now' => date('Y-m-d H:i:s'),
         'appointments' => $out,

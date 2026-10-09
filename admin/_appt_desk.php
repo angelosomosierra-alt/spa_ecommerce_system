@@ -32,13 +32,10 @@
 <section class="dk-done">
     <div class="dk-done-h">
         <h2>Completed</h2>
-        <div class="dk-bar">
-            <button type="button" class="dk-chip sm" id="dkDonePrev" aria-label="Previous day">‹</button>
-            <input type="date" id="dkDoneDate" aria-label="Completed on">
-            <button type="button" class="dk-chip sm" id="dkDoneNext" aria-label="Next day">›</button>
-        </div>
+        <span class="dk-hint" id="dkDoneRange"></span>
     </div>
     <div id="dkDoneList"></div>
+    <button type="button" class="dk-btn" id="dkDoneMore" style="margin-top:0.6rem;">Show 7 more days</button>
 </section>
 
 <div class="dk-scrim" id="dkScrim" hidden></div>
@@ -69,6 +66,7 @@
 .dk-done-h input[type=date] { padding:0.35rem 0.5rem; border:1px solid var(--border2); border-radius:8px; background:var(--bg3); color:var(--brown); font:inherit; font-size:0.82rem; }
 .dk-drow2 { display:grid; grid-template-columns:70px minmax(0,1.2fr) minmax(0,1.6fr) minmax(0,1fr) auto; gap:0.6rem; align-items:center; padding:0.55rem 0.4rem; border-top:1px solid var(--border2); font-size:0.82rem; color:var(--brown); cursor:pointer; }
 .dk-drow2:hover { background:var(--bg3); }
+.dk-dsum { cursor:default; font-weight:800; background:var(--bg3); }
 .dk-drow2 .amt { font-weight:800; font-variant-numeric:tabular-nums; text-align:right; }
 .dk-drow2 small { color:var(--gray); display:block; font-size:0.7rem; }
 @media (max-width:760px) { .dk-drow2 { grid-template-columns:60px 1fr auto; } .dk-drow2 .hide-sm { display:none; } }
@@ -159,7 +157,7 @@
         { k: 'approved',  l: 'In service',      s: 'Checked in',                 c: 'var(--green)' }
     ];
     var D = null, TH = {}, RES = {};
-    var S = { q: '', open: null, panel: null, busy: false, doneDate: null, todayOnly: false };
+    var S = { q: '', open: null, panel: null, busy: false, doneDays: 7, todayOnly: false };
     // "Today only" is remembered on this computer (per receptionist screen).
     try { S.todayOnly = localStorage.getItem('dkTodayOnly') === '1'; } catch (e) {}
 
@@ -169,7 +167,7 @@
     function pesoS(n) { return peso(n).replace(/\.00$/, ''); }
     function dt(s) { return new Date(String(s).replace(' ', 'T')); }
     function tm(s) { return dt(s).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }); }
-    function dayLabel(s) { var d = String(s).slice(0, 10); if (d === D.today) return 'Today'; var t = new Date(D.today + 'T00:00'); t.setDate(t.getDate() + 1); if (d === ymd(t)) return 'Tomorrow'; return dt(s).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }); }
+    function dayLabel(s) { var d = String(s).slice(0, 10); if (d === D.today) return 'Today'; var t = new Date(D.today + 'T00:00'); t.setDate(t.getDate() + 1); if (d === ymd(t)) return 'Tomorrow'; t.setDate(t.getDate() - 2); if (d === ymd(t)) return 'Yesterday'; return dt(s).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }); }
     function byId(id) { return (D.appointments || []).filter(function (a) { return a.id === id; })[0]; }
     // Server messages can arrive HTML-escaped (&#039; etc.); show them as text.
     function unescape(m) { var el = document.createElement('textarea'); el.innerHTML = String(m).replace(/<[^>]*>/g, ''); return el.value; }
@@ -177,7 +175,7 @@
 
     // ── Server calls ──────────────────────────────────────────────────────
     function load(closeOnOk) {
-        return fetch('appointments.php?ajax=desk_data' + (S.doneDate ? '&done_date=' + S.doneDate : ''), { credentials: 'same-origin' })
+        return fetch('appointments.php?ajax=desk_data&done_days=' + S.doneDays, { credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 D = data; TH = {}; RES = {};
@@ -185,7 +183,6 @@
                 D.resources.forEach(function (r) { RES[r.id] = r; });
                 var failed = !!(D.flash && D.flash.type === 'danger');
                 if (D.flash && D.flash.message) toast(D.flash.message, failed);
-                if (!S.doneDate) S.doneDate = D.done_date;
                 renderBoard(); renderDone();
                 // A main step that worked (confirm / check in / complete) closes
                 // the panel; anything else keeps it open on the same booking.
@@ -305,32 +302,35 @@
             (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + a.id + '">' + na.l + '</button>' : '') +
             '</article>';
     }
-    // ── Completed (one day at a time; open a row for details or Undo) ────
+    // ── Completed (last N days, newest first, by day; open a row for Undo) ──
     function renderDone() {
-        $('dkDoneDate').value = S.doneDate;
         var q = S.q;
         var list = D.appointments.filter(function (a) {
             if (a.status !== 'completed') return false;
             return !q || (a.name + ' ' + a.service.name + ' ' + therNames(a)).toLowerCase().indexOf(q) >= 0;
         });
-        var total = list.reduce(function (t, a) { return t + (a.bill.paid ? a.bill.paid_amount : 0); }, 0);
-        $('dkDoneList').innerHTML = list.length
-            ? list.map(function (a) {
-                var b = a.bill, disc = b.completion_discount || b.discount;
-                return '<div class="dk-drow2" data-id="' + a.id + '" tabindex="0"><span>' + tm(a.start) + '</span>' +
-                    '<span><b>' + esc(a.name) + '</b><small>' + esc(a.source) + '</small></span>' +
-                    '<span class="hide-sm">' + esc(a.service.name) + (a.addons.length ? ' + ' + a.addons.map(function (x) { return esc(x.name); }).join(', ') : '') + '<small>' + esc(therNames(a)) + '</small></span>' +
-                    '<span class="hide-sm">' + (a.rate_type === 'influencer' ? 'Influencer · ₱0' : (b.paid ? 'Paid · ' + esc(b.method || '') : 'Unpaid / on account')) + (disc ? '<small>Discount ' + peso(disc) + '</small>' : '') + '</span>' +
-                    '<span class="amt">' + peso(b.paid ? b.paid_amount : 0) + '</span></div>';
-            }).join('') + '<div class="dk-drow2" style="cursor:default;font-weight:800;"><span></span><span>' + list.length + ' completed</span><span class="hide-sm"></span><span class="hide-sm"></span><span class="amt">' + peso(total) + '</span></div>'
-            : '<div class="dk-empty">Nothing completed on this day.</div>';
+        list.sort(function (x, y) { return x.start < y.start ? 1 : x.start > y.start ? -1 : 0; });
+        $('dkDoneRange').textContent = S.doneDays === 1 ? 'Today' : 'Last ' + S.doneDays + ' days';
+        var html = '', day = null, dayTotal = 0, dayCount = 0;
+        function closeDay() {
+            if (day !== null) html += '<div class="dk-drow2 dk-dsum"><span></span><span>' + dayCount + ' completed</span><span class="hide-sm"></span><span class="hide-sm"></span><span class="amt">' + peso(dayTotal) + '</span></div>';
+        }
+        list.forEach(function (a) {
+            var d = String(a.start).slice(0, 10), b = a.bill, disc = b.completion_discount || b.discount, amt = b.paid ? b.paid_amount : 0;
+            if (d !== day) { closeDay(); day = d; dayTotal = 0; dayCount = 0; html += '<div class="dk-day" style="margin-top:0.6rem;">' + dayLabel(a.start) + '</div>'; }
+            dayTotal += amt; dayCount++;
+            html += '<div class="dk-drow2" data-id="' + a.id + '" tabindex="0"><span>' + tm(a.start) + '</span>' +
+                '<span><b>' + esc(a.name) + '</b><small>' + esc(a.source) + '</small></span>' +
+                '<span class="hide-sm">' + esc(a.service.name) + (a.addons.length ? ' + ' + a.addons.map(function (x) { return esc(x.name); }).join(', ') : '') + '<small>' + esc(therNames(a)) + '</small></span>' +
+                '<span class="hide-sm">' + (a.rate_type === 'influencer' ? 'Influencer · ₱0' : (b.paid ? 'Paid · ' + esc(b.method || '') : 'Unpaid / on account')) + (disc ? '<small>Discount ' + peso(disc) + '</small>' : '') + '</span>' +
+                '<span class="amt">' + peso(amt) + '</span></div>';
+        });
+        closeDay();
+        $('dkDoneList').innerHTML = list.length ? html : '<div class="dk-empty">Nothing completed in the ' + (S.doneDays === 1 ? 'day' : 'last ' + S.doneDays + ' days') + '.</div>';
         $('dkDoneList').querySelectorAll('.dk-drow2[data-id]').forEach(function (r) { r.onclick = function () { openDrawer(+r.dataset.id); }; });
     }
     function ymd(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); } // local date, not UTC
-    function shiftDone(days) { var d = new Date(S.doneDate + 'T00:00'); d.setDate(d.getDate() + days); S.doneDate = ymd(d); load(); }
-    $('dkDonePrev').onclick = function () { shiftDone(-1); };
-    $('dkDoneNext').onclick = function () { shiftDone(1); };
-    $('dkDoneDate').onchange = function () { if (this.value) { S.doneDate = this.value; load(); } };
+    $('dkDoneMore').onclick = function () { S.doneDays += 7; load(); };
 
     $('dkQ').addEventListener('input', function () { S.q = this.value.trim().toLowerCase(); if (D) { renderBoard(); renderDone(); } });
 
