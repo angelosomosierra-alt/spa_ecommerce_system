@@ -156,6 +156,7 @@ function appt_desk_data(mysqli $conn, string $range): array {
             'source' => $source,
             'online' => !$is_walkin,
             'people' => max(1, (int)$r['people_count']),
+            'rate_type' => $r['rate_type'] ?: 'regular',
             'service' => [
                 'id' => (int)$r['service_id'], 'name' => $r['service_name'],
                 'mins' => (int)($r['duration_minutes'] ?: $r['session_time'] ?: 60),

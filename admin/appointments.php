@@ -1429,7 +1429,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     if (!in_array($ci_pm, $ci_allowed_pm)) $ci_pm = 'cash';
 
                     $ci_disc_type = sanitize_input($_POST['discount_type'] ?? 'none');
-                    if (!in_array($ci_disc_type, ['none','pwd','senior','employee','voucher'])) $ci_disc_type = 'none';
+                    if (!in_array($ci_disc_type, ['none','pwd','senior','employee','voucher','celebration'])) $ci_disc_type = 'none';
 
                     $po = $conn->prepare("SELECT o.id, o.total_amount FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
                     $po->bind_param("i", $appt['order_item_id']); $po->execute();
@@ -1466,6 +1466,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                                 }
                             } else {
                                 $message .= ($message ? ' ' : '') . 'Voucher amount not entered — no discount applied.';
+                                $ci_disc_type = 'none';
+                            }
+                        } elseif ($ci_disc_type === 'celebration') {
+                            // Celebration: a percentage off, same as at Mark Complete.
+                            $ci_celeb_pct = min(100.0, max(0.0, floatval($_POST['voucher_value'] ?? 0)));
+                            if ($ci_celeb_pct > 0) {
+                                $ci_disc_amt = round($ci_base * $ci_celeb_pct / 100, 2);
+                            } else {
+                                $message .= ($message ? ' ' : '') . 'Celebration percentage not entered — no discount applied.';
                                 $ci_disc_type = 'none';
                             }
                         }
@@ -1810,7 +1819,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $done_pkg_components = $svc_id ? get_package_components($conn, (int)$svc_id) : [];
                 if ($svc_id && $charged_for_commission > 0 && !empty($done_pkg_components)) {
                     $commission_amt = compute_package_commission($conn, (int)$svc_id, (int)$tid)['total'] * $ph;
-                } elseif ($svc_id && $charged_for_commission > 0) {
+                } elseif ($svc_id && ($charged_for_commission > 0 || ($appt['rate_type'] ?? '') === 'influencer')) {
+                    // Influencer / PR bookings are ₱0 by design but still pay the
+                    // therapist the influencer flat rate, so they skip the "> 0" gate.
                     $cm = $conn->prepare("
                         SELECT commission_percent, influencer_flat_rate
                         FROM therapist_commission
@@ -2282,6 +2293,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
         }
     }
     end_action:;
+}
+
+// ── INFLUENCER / PR RATE (desk view) ─────────────────────────────────────────
+// Turns an unpaid booking into an Influencer / PR booking (₱0, therapist paid
+// the influencer flat rate at completion, counted under Marketing Expense in
+// the Daily Report — all keyed off appointments.rate_type), or back to the
+// regular price. The order's totals follow, so check-in / Mark Complete and
+// the Daily Report see the same ₱0 (or restored) amount.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_rate_type') {
+    verify_csrf_token();
+    $rt_ok = true;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $rt_ok = (bool)$ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$rt_ok) { $message = "Incorrect PIN. Rate not changed."; $message_type = "danger"; }
+    }
+    $rt_appt_id = intval($_POST['appt_id'] ?? 0);
+    $rt_new     = ($_POST['rate_type'] ?? '') === 'influencer' ? 'influencer' : 'regular';
+    if ($rt_ok) {
+        $rq = $conn->prepare("
+            SELECT a.id, a.status, a.rate_type, a.charged_price, a.people_count, a.advance_payment,
+                   a.service_id, a.service_duration_id, a.order_item_id, s.price AS service_price,
+                   o.id AS order_id, o.payment_status, o.total_amount, o.final_amount
+            FROM appointments a
+            JOIN services s ON s.id = a.service_id
+            LEFT JOIN order_items oi ON oi.id = a.order_item_id
+            LEFT JOIN orders o ON o.id = oi.order_id
+            WHERE a.id = ?");
+        $rq->bind_param("i", $rt_appt_id); $rq->execute();
+        $rt = $rq->get_result()->fetch_assoc(); $rq->close();
+        $rt_pkg = false;
+        if ($rt && !empty($rt['service_duration_id'])) {
+            $pk = $conn->prepare("SELECT session_count FROM service_durations WHERE id = ?");
+            $pk->bind_param("i", $rt['service_duration_id']); $pk->execute();
+            $rt_pkg = (int)($pk->get_result()->fetch_assoc()['session_count'] ?? 1) > 1; $pk->close();
+        }
+
+        if (!$rt || !in_array($rt['status'], ['pending', 'assigned', 'approved'], true)) {
+            $message = "This booking can't be changed anymore."; $message_type = "danger";
+        } elseif (empty($rt['order_id'])) {
+            $message = "This booking has no order to update."; $message_type = "danger";
+        } elseif ($rt['payment_status'] === 'paid' && $rt['rate_type'] !== 'influencer') {
+            $message = "Already paid. Refund it first before making it an Influencer booking."; $message_type = "danger";
+        } elseif ((float)$rt['advance_payment'] > 0) {
+            $message = "This booking has a down payment, so it can't be made free."; $message_type = "danger";
+        } elseif ($rt_pkg) {
+            $message = "Multi-session packages can't be switched to Influencer here."; $message_type = "danger";
+        } elseif ($rt['rate_type'] === $rt_new) {
+            $message = $rt_new === 'influencer' ? "It's already an Influencer booking." : "It's already at the regular price."; $message_type = "danger";
+        } else {
+            if ($rt_new === 'influencer') {
+                $rt_price = 0.0;
+            } else {
+                $rt_price = (float)$rt['service_price'];
+                if (!empty($rt['service_duration_id'])) {
+                    $dq = $conn->prepare("SELECT * FROM service_durations WHERE id = ?");
+                    $dq->bind_param("i", $rt['service_duration_id']); $dq->execute();
+                    $drow = $dq->get_result()->fetch_assoc(); $dq->close();
+                    if ($drow) $rt_price = (float)get_active_duration_price($drow)['price'];
+                }
+                $rt_price = round($rt_price * max(1, (int)$rt['people_count']), 2);
+            }
+            $rt_delta  = $rt_price - (float)$rt['charged_price'];
+            $rt_total  = max(0.0, round((float)$rt['total_amount'] + $rt_delta, 2));
+            // ₱0 order = nothing to collect: mark it settled. Back to regular = owed again.
+            $rt_status = $rt_total <= 0 ? 'paid' : 'unpaid';
+            $rt_method = $rt_total <= 0 ? 'cash' : 'onsite';
+
+            $conn->begin_transaction();
+            try {
+                $u1 = $conn->prepare("UPDATE appointments SET rate_type = ?, charged_price = ? WHERE id = ?");
+                $u1->bind_param("sdi", $rt_new, $rt_price, $rt_appt_id); $u1->execute(); $u1->close();
+                $u2 = $conn->prepare("UPDATE order_items SET price = ?, subtotal = ? WHERE id = ?");
+                $rt_unit = $rt_price; // one item per booking (quantity 1)
+                $u2->bind_param("ddi", $rt_unit, $rt_price, $rt['order_item_id']); $u2->execute(); $u2->close();
+                $u3 = $conn->prepare("UPDATE orders SET total_amount = ?, final_amount = ?, discount_type = 'none', discount_amount = 0, payment_status = ?, payment_method = ? WHERE id = ?");
+                $u3->bind_param("ddssi", $rt_total, $rt_total, $rt_status, $rt_method, $rt['order_id']); $u3->execute(); $u3->close();
+                $conn->commit();
+                $message = $rt_new === 'influencer' ? "Changed to Influencer / PR (₱0). The therapist gets the influencer rate when it's completed." : "Changed back to the regular price (₱" . number_format($rt_price, 2) . ").";
+                $message_type = 'success';
+                log_activity($conn, 'rate_type_changed', "Appointment #{$rt_appt_id} rate changed to {$rt_new}", 'appointment', $rt_appt_id, null);
+            } catch (Throwable $e) {
+                $conn->rollback();
+                $message = "Could not change the rate. Please try again."; $message_type = "danger";
+            }
+        }
+    }
 }
 
 // ── PAY FOR GROUP (Book Now bookings) ────────────────────────────────────────

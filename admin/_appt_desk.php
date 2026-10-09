@@ -117,7 +117,18 @@
 (function () {
     var CSRF = <?php echo json_encode(generate_csrf_token()); ?>;
     var PAYS = [['cash','Cash'],['gcash','GCash'],['maya','Maya'],['qrph','QR Ph'],['card','Card'],['swiper','Swiper']];
-    var DISC = [['none','None',0],['senior','Senior 20%',20],['pwd','PWD 20%',20],['employee','Staff 50%',50]];
+    // Fixed-rate discounts carry their %; Voucher (₱ or %) and Celebration (%)
+    // take a value typed in by the receptionist.
+    var DISC = [['none','None',0],['senior','Senior 20%',20],['pwd','PWD 20%',20],['employee','Staff 50%',50],['voucher','Voucher',null],['celebration','Celebration',null]];
+    // Discount amount on a base, for a {disc, dv (value), vt ('fixed'|'percent')} choice.
+    function discAmt(base, d) {
+        var row = DISC.filter(function (x) { return x[0] === d.disc; })[0] || DISC[0], v = parseFloat(d.dv) || 0;
+        if (row[2] !== null) return Math.round(base * row[2]) / 100;
+        if (d.disc === 'celebration') return Math.round(base * Math.min(v, 100)) / 100;
+        if (d.disc === 'voucher') return d.vt === 'percent' ? Math.round(base * Math.min(v, 100)) / 100 : Math.min(v, base);
+        return 0;
+    }
+    function discNeedsValue(d) { return (d.disc === 'voucher' || d.disc === 'celebration') && !(parseFloat(d.dv) > 0); }
     var RANGES = [['today','Today'],['tomorrow','Tomorrow'],['upcoming','All open']];
     var LANES = [
         { k: 'pending',   l: 'Needs therapist', s: 'Online bookings to confirm', c: 'var(--red)' },
@@ -231,6 +242,7 @@
     }
     function payPill(a) {
         var b = a.bill;
+        if (a.rate_type === 'influencer') return '<span class="dk-pill p-pkg">Influencer · ₱0</span>' + (b.due > 0 ? '<span class="dk-pill p-unpaid">Add-ons ' + pesoS(b.due) + '</span>' : '');
         if (b.paid && b.due <= 0) return '<span class="dk-pill p-paid">Paid' + (b.method ? ' · ' + esc(b.method) : '') + '</span>';
         if (b.advance > 0 && !b.paid) return '<span class="dk-pill p-down">Down ' + pesoS(b.advance) + ' · bal ' + pesoS(b.due) + '</span>';
         return '<span class="dk-pill p-unpaid">' + (b.paid ? 'Add-ons unpaid ' : 'Unpaid ') + pesoS(b.due) + '</span>';
@@ -253,7 +265,7 @@
     // ── Drawer ────────────────────────────────────────────────────────────
     function openDrawer(id, panel) {
         S.open = id; S.panel = panel === 'checkin' || panel === 'complete' ? panel : null;
-        S.method = null; S.disc = 'none'; S.payNow = true; S.schedFor = null; S.resched = S.cancelling = S.grp = false;
+        S.method = null; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false;
         renderBoard(); renderDrawer(); $('dkDrawer').hidden = false; $('dkScrim').hidden = false;
     }
     function closeDrawer() { S.open = null; S.pin = ''; $('dkDrawer').hidden = true; $('dkScrim').hidden = true; if (D) renderBoard(); }
@@ -348,13 +360,7 @@
             : '<div><label class="dk-lbl" for="dkCr">Why cancel?</label><input id="dkCr" type="text" placeholder="e.g. customer called to cancel"></div>') +
             '<div class="dk-bar"><button type="button" class="dk-btn danger" id="dkCxSave">' + (a.status === 'pending' ? 'Decline booking' : 'Cancel booking') + '</button><button type="button" class="dk-btn" id="dkCxX">Keep it</button></div></div>';
 
-        var primary = '';
-        if (na) {
-            var label = na.l;
-            if (na.k === 'checkin' && S.panel === 'checkin') label = b.paid ? 'Check in' : (S.payNow ? 'Check in & take ' + peso(b.due) : 'Check in · pay later');
-            if (na.k === 'complete' && S.panel === 'complete') label = S.method === 'unpaid' ? 'Complete · charge to account' : 'Complete & take ' + peso(b.due);
-            primary = '<button type="button" class="dk-btn ' + na.cls + '" id="dkGo" style="flex:1;padding:0.7rem;">' + label + '</button>';
-        }
+        var primary = na ? '<button type="button" class="dk-btn ' + na.cls + '" id="dkGo" style="flex:1;padding:0.7rem;">' + goLabel(a) + '</button>' : '';
 
         $('dkDrawer').innerHTML =
             '<div class="dk-dh"><div class="dk-drow"><h3>' + esc(a.name) + '</h3><button type="button" class="dk-x" id="dkX" aria-label="Close">✕</button></div>' +
@@ -364,7 +370,7 @@
             (a.legacy_two_session ? '<p class="dk-hint">This is an old 2-session package booking. Manage it in the <a href="appointments.php?view=classic">classic view</a>.</p>' : '') +
             '<div class="dk-sec"><h4>Services</h4>' + mainHtml + addHtml +
                 (!locked ? '<a class="dk-hint" href="appointments.php?view=classic&appt_date=' + a.date + '">Add a service or edit details in the classic view</a>' : '') + '</div>' +
-            '<div class="dk-sec"><h4><span>Payment</span>' + (a.group && a.group_size > 1 && !b.paid && !locked ? '<button type="button" class="dk-btn" id="dkGrpOpen">' + (S.grp ? 'Back to this guest' : 'Pay for group') + '</button>' : '') + '</h4>' + billHtml + payForm + groupHtml + '</div>' +
+            '<div class="dk-sec"><h4><span>Payment</span>' + (a.group && a.group_size > 1 && !b.paid && !locked ? '<button type="button" class="dk-btn" id="dkGrpOpen">' + (S.grp ? 'Back to this guest' : 'Pay for group') + '</button>' : '') + '</h4>' + billHtml + inflHtml(a) + payForm + groupHtml + '</div>' +
             (extra ? '<div class="dk-sec">' + extra + '</div>' : '') +
             '<p class="dk-err" id="dkErr"></p></div>' +
             '<div class="dk-df">' +
@@ -376,8 +382,39 @@
         wire(a);
         if (a.group && a.group_size > 1 && S.grp) loadGroup(a);
     }
+    // Influencer / PR: a free booking (₱0). Saved through set_rate_type so the
+    // Daily Report counts it under Marketing Expense and the therapist gets the
+    // influencer flat rate. Only before payment, without a down payment, and
+    // not for multi-session packages.
+    function inflHtml(a) {
+        var b = a.bill;
+        if (a.status === 'completed' || a.legacy_two_session) return '';
+        if (a.rate_type === 'influencer') {
+            return '<div class="dk-bar"><span class="dk-pill p-pkg">Influencer / PR · free</span><button type="button" class="dk-btn" id="dkInflOff">Back to regular price</button></div>';
+        }
+        if (b.paid || b.advance > 0 || isPkg(a)) return '';
+        if (!S.infl) return '<button type="button" class="dk-btn" id="dkInflOpen" style="align-self:flex-start;">Influencer / PR (free)</button>';
+        return '<div class="dk-inline"><p class="dk-hint"><b>Make this a free Influencer / PR booking?</b> The price becomes ₱0, it is counted as a Marketing Expense in the Daily Report, and the therapist gets the influencer rate when it is completed. Add-ons are still charged.</p>' +
+            '<div class="dk-bar"><button type="button" class="dk-btn primary" id="dkInflSave">Yes, make it free</button><button type="button" class="dk-btn" id="dkInflX">Keep the price</button></div></div>';
+    }
+    function goLabel(a) {
+        var na = nextAction(a), b = a.bill; if (!na) return '';
+        if (na.k === 'checkin' && S.panel === 'checkin') return b.paid ? 'Check in' : (S.payNow ? 'Check in & take ' + peso(dueWithDisc(a)) : 'Check in · pay later');
+        if (na.k === 'complete' && S.panel === 'complete') return S.method === 'unpaid' ? 'Complete · charge to account' : 'Complete & take ' + peso(dueWithDisc(a));
+        return na.l;
+    }
     function discChips() {
-        return '<div><label class="dk-lbl">Discount</label><div class="dk-bar">' + DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (S.disc === d[0] ? ' sel' : '') + '" data-disc="' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div></div>';
+        var extra = '';
+        if (S.disc === 'voucher') extra = '<div class="dk-bar" style="margin-top:0.35rem;"><input type="number" id="dkDv" min="0" step="1" placeholder="' + (S.vt === 'percent' ? 'Voucher %' : 'Voucher amount ₱') + '" value="' + esc(S.dv) + '" style="max-width:150px;">' +
+            '<button type="button" class="dk-chip sm' + (S.vt !== 'percent' ? ' sel' : '') + '" data-vt="fixed">₱ off</button><button type="button" class="dk-chip sm' + (S.vt === 'percent' ? ' sel' : '') + '" data-vt="percent">% off</button></div>';
+        if (S.disc === 'celebration') extra = '<div class="dk-bar" style="margin-top:0.35rem;"><input type="number" id="dkDv" min="0" max="100" step="1" placeholder="Celebration %" value="' + esc(S.dv) + '" style="max-width:150px;"><span class="dk-hint">% off</span></div>';
+        return '<div><label class="dk-lbl">Discount</label><div class="dk-bar">' + DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (S.disc === d[0] ? ' sel' : '') + '" data-disc="' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div>' + extra + '</div>';
+    }
+    // What will actually be collected with the discount chosen in the panel.
+    function dueWithDisc(a) {
+        var b = a.bill; if (b.paid) return b.due;
+        var base = b.order_total + b.addons - b.discount;
+        return Math.max(0, base - discAmt(base, S) - b.advance);
     }
     function methodChips(allowAccount) {
         var list = PAYS.concat(allowAccount ? [['unpaid', 'Charge to account']] : []);
@@ -410,7 +447,9 @@
         W.querySelectorAll('[data-sin]').forEach(function (bt) { bt.onclick = function () { post('checkin_session', a.id, { session_id: bt.dataset.sin }); }; });
         W.querySelectorAll('[data-sdone]').forEach(function (bt) { bt.onclick = function () { post('complete_session', a.id, { session_id: bt.dataset.sdone }); }; });
         W.querySelectorAll('[data-pn]').forEach(function (bt) { bt.onclick = function () { S.payNow = bt.dataset.pn === '1'; renderDrawer(); }; });
-        W.querySelectorAll('[data-disc]').forEach(function (bt) { bt.onclick = function () { S.disc = bt.dataset.disc; renderDrawer(); }; });
+        W.querySelectorAll('[data-disc]').forEach(function (bt) { bt.onclick = function () { S.disc = bt.dataset.disc; S.dv = ''; renderDrawer(); }; });
+        W.querySelectorAll('[data-vt]').forEach(function (bt) { bt.onclick = function () { S.vt = bt.dataset.vt; renderDrawer(); }; });
+        var dvEl = $('dkDv'); if (dvEl) dvEl.oninput = function () { S.dv = dvEl.value; var g = $('dkGo'), a2 = byId(S.open); if (g && a2) g.textContent = goLabel(a2); };
         W.querySelectorAll('[data-pm]').forEach(function (bt) { bt.onclick = function () { S.method = bt.dataset.pm; renderDrawer(); }; });
 
         var go = $('dkGo');
@@ -426,14 +465,16 @@
                 if (b.paid) return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
                 if (S.panel !== 'checkin') { S.panel = 'checkin'; S.grp = false; return renderDrawer(); }
                 if (S.payNow && !S.method) return err('Choose a payment method, or pick Pay later.');
-                return post('checkin_appointment', a.id, { pay_choice: S.payNow ? 'now' : 'later', pay_method: S.method || 'cash', discount_type: S.payNow ? S.disc : 'none', voucher_type: 'cash', voucher_value: 0 }, false, true);
+                if (S.payNow && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
+                return post('checkin_appointment', a.id, { pay_choice: S.payNow ? 'now' : 'later', pay_method: S.method || 'cash', discount_type: S.payNow ? S.disc : 'none', voucher_type: S.vt === 'percent' ? 'percent' : 'fixed', voucher_value: S.payNow ? (parseFloat(S.dv) || 0) : 0 }, false, true);
             }
             if (na.k === 'complete') {
                 if (b.due > 0 && S.panel !== 'complete') { S.panel = 'complete'; S.grp = false; return renderDrawer(); }
                 if (b.due > 0 && !S.method) return err('Choose how the customer paid.');
+                if (b.due > 0 && !b.paid && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
                 return post('complete', a.id, {
                     complete_pay_method: S.method || 'cash', complete_unpaid_billto: ($('dkBill') || {}).value || '',
-                    complete_disc_type: b.paid ? 'none' : S.disc, complete_voucher_type: 'cash', complete_voucher_value: 0,
+                    complete_disc_type: b.paid ? 'none' : S.disc, complete_voucher_type: S.vt === 'percent' ? 'percent' : 'cash', complete_voucher_value: b.paid ? 0 : (parseFloat(S.dv) || 0),
                     celebration_discount: 0, advance_payment: 0
                 }, false, true);
             }
@@ -453,6 +494,16 @@
             else post('cancel', a.id, { cancel_reason: ($('dkCr') || {}).value || '' });
         };
         var undo = $('dkUndo'); if (undo) undo.onclick = function () { post('revert_complete', a.id, {}); };
+        var io = $('dkInflOpen'); if (io) io.onclick = function () { S.infl = true; S.panel = null; S.grp = false; renderDrawer(); };
+        var ix = $('dkInflX'); if (ix) ix.onclick = function () { S.infl = false; renderDrawer(); };
+        var isv = $('dkInflSave'); if (isv) isv.onclick = function () {
+            if (D.cashier && !/^\d{4}$/.test($('dkPin').value)) return err('Enter your 4-digit PIN.');
+            S.infl = false; post('set_rate_type', a.id, { rate_type: 'influencer' });
+        };
+        var ioff = $('dkInflOff'); if (ioff) ioff.onclick = function () {
+            if (D.cashier && !/^\d{4}$/.test($('dkPin').value)) return err('Enter your 4-digit PIN.');
+            post('set_rate_type', a.id, { rate_type: 'regular' });
+        };
         var gpo = $('dkGrpOpen'); if (gpo) gpo.onclick = function () { S.grp = !S.grp; if (S.grp) S.panel = null; renderDrawer(); };
     }
 
@@ -462,22 +513,29 @@
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 var box = $('dkGrp'); if (!box) return;
-                var G = (data.guests || []).map(function (g) { g.on = true; g.disc = 'none'; return g; });
+                var G = (data.guests || []).map(function (g) { g.on = true; g.disc = 'none'; g.dv = ''; g.vt = 'fixed'; return g; });
                 var method = null;
-                function total() { return G.reduce(function (t, g) { if (!g.on) return t; var p = DISC.filter(function (d) { return d[0] === g.disc; })[0][2]; return t + Math.round(g.subtotal * (100 - p)) / 100; }, 0); }
+                function total() { return G.reduce(function (t, g) { return g.on ? t + Math.max(0, g.subtotal - discAmt(g.subtotal, g)) : t; }, 0); }
                 function draw() {
                     if (!G.length) { box.innerHTML = '<p class="dk-hint">Everyone in this group has already paid.</p>'; return; }
                     box.innerHTML = G.map(function (g, i) {
                         return '<div><label class="dk-lbl"><input type="checkbox" data-gi="' + i + '"' + (g.on ? ' checked' : '') + '> ' + esc(g.name) + ' · ' + peso(g.subtotal) + '</label><div class="dk-bar">' +
-                            DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (g.disc === d[0] ? ' sel' : '') + '" data-gd="' + i + ',' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div></div>';
+                            DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (g.disc === d[0] ? ' sel' : '') + '" data-gd="' + i + ',' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div>' +
+                            (g.disc === 'voucher' || g.disc === 'celebration' ? '<div class="dk-bar" style="margin-top:0.3rem;"><input type="number" min="0" data-gv="' + i + '" value="' + esc(g.dv) + '" placeholder="' + (g.disc === 'celebration' ? 'Celebration %' : (g.vt === 'percent' ? 'Voucher %' : 'Voucher ₱')) + '" style="max-width:130px;">' +
+                                (g.disc === 'voucher' ? '<button type="button" class="dk-chip sm' + (g.vt !== 'percent' ? ' sel' : '') + '" data-gvt="' + i + ',fixed">₱ off</button><button type="button" class="dk-chip sm' + (g.vt === 'percent' ? ' sel' : '') + '" data-gvt="' + i + ',percent">% off</button>' : '') + '</div>' : '') +
+                            '</div>';
                     }).join('') +
                     '<div class="dk-bar">' + PAYS.map(function (p) { return '<button type="button" class="dk-chip sm' + (method === p[0] ? ' sel' : '') + '" data-gm="' + p[0] + '">' + p[1] + '</button>'; }).join('') + '</div>' +
                     '<button type="button" class="dk-btn ok" id="dkGrpPay">Record ' + peso(total()) + ' for the group</button>';
                     box.querySelectorAll('[data-gi]').forEach(function (c) { c.onchange = function () { G[+c.dataset.gi].on = c.checked; draw(); }; });
-                    box.querySelectorAll('[data-gd]').forEach(function (c) { c.onclick = function () { var p = c.dataset.gd.split(','); G[+p[0]].disc = p[1]; draw(); }; });
+                    box.querySelectorAll('[data-gd]').forEach(function (c) { c.onclick = function () { var p = c.dataset.gd.split(','); G[+p[0]].disc = p[1]; G[+p[0]].dv = ''; draw(); }; });
+                    box.querySelectorAll('[data-gvt]').forEach(function (c) { c.onclick = function () { var p = c.dataset.gvt.split(','); G[+p[0]].vt = p[1]; draw(); }; });
+                    box.querySelectorAll('[data-gv]').forEach(function (c) { c.oninput = function () { G[+c.dataset.gv].dv = c.value; $('dkGrpPay').textContent = 'Record ' + peso(total()) + ' for the group'; }; });
                     box.querySelectorAll('[data-gm]').forEach(function (c) { c.onclick = function () { method = c.dataset.gm; draw(); }; });
                     $('dkGrpPay').onclick = function () {
-                        var map = {}; G.forEach(function (g) { if (g.on) map[g.name] = g.disc; });
+                        var map = {}, need = null;
+                        G.forEach(function (g) { if (!g.on) return; if (discNeedsValue(g)) need = g.name; map[g.name] = { type: g.disc, value: parseFloat(g.dv) || 0, vtype: g.vt }; });
+                        if (need) return ($('dkErr').textContent = 'Type the discount amount for ' + need + '.');
                         if (!Object.keys(map).length) return ($('dkErr').textContent = 'Tick at least one guest.');
                         if (!method) return ($('dkErr').textContent = 'Choose a payment method.');
                         if (D.cashier && !/^\d{4}$/.test($('dkPin').value)) return ($('dkErr').textContent = 'Enter your 4-digit PIN.');

@@ -355,9 +355,11 @@ function book_now_group_bill(mysqli $conn, string $group): array {
 if (!function_exists('book_now_pay_group')) {
 /**
  * Pay the selected guests of a booking group in one go. $discounts maps
- * guest name => discount key (BOOK_NOW_DISCOUNTS); only guests listed are
- * paid. Each order gets its own share of its guest's discount — the same
- * fields check-in's Pay Now writes, so Mark Complete sees them as paid.
+ * guest name => either a discount key (BOOK_NOW_DISCOUNTS) or
+ * ['type' => 'voucher'|'celebration'|key, 'value' => n, 'vtype' => 'fixed'|'percent'].
+ * Only guests listed are paid. Percent discounts apply to each of the
+ * guest's orders; a fixed ₱ voucher is split across them by price. Same
+ * order fields check-in's Pay Now writes, so Mark Complete sees them as paid.
  */
 function book_now_pay_group(mysqli $conn, string $group, array $discounts, string $method): array {
     if (!in_array($method, ['cash', 'gcash', 'maya', 'qrph', 'card', 'swiper'], true)) return ['ok' => false, 'message' => 'Choose a payment method.'];
@@ -377,15 +379,32 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
     $stmt->bind_param("s", $group); $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
+    // Normalise each guest's discount to [type, percent, fixed ₱].
+    $spec = [];
+    foreach ($discounts as $name => $d) {
+        $type = is_array($d) ? (string)($d['type'] ?? 'none') : (string)$d;
+        $val  = is_array($d) ? max(0.0, (float)($d['value'] ?? 0)) : 0.0;
+        $vt   = is_array($d) && ($d['vtype'] ?? '') === 'percent' ? 'percent' : 'fixed';
+        if (array_key_exists($type, BOOK_NOW_DISCOUNTS))      $spec[$name] = [$type, BOOK_NOW_DISCOUNTS[$type], 0.0];
+        elseif ($type === 'celebration' && $val > 0)          $spec[$name] = ['celebration', min(100.0, $val), 0.0];
+        elseif ($type === 'voucher' && $val > 0)              $spec[$name] = $vt === 'percent' ? ['voucher', min(100.0, $val), 0.0] : ['voucher', 0.0, $val];
+        else                                                  $spec[$name] = ['none', 0, 0.0];
+    }
+    $guest_base = [];
+    foreach ($rows as $r) { $n = $r['customer_name'] ?: 'Guest'; $guest_base[$n] = ($guest_base[$n] ?? 0) + (float)$r['total_amount'] + (float)$r['extras']; }
+
     $paid_total = 0.0; $paid_guests = [];
     $conn->begin_transaction();
     try {
         foreach ($rows as $r) {
             $name = $r['customer_name'] ?: 'Guest';
-            if (!array_key_exists($name, $discounts)) continue;
-            $dkey = array_key_exists($discounts[$name], BOOK_NOW_DISCOUNTS) ? $discounts[$name] : 'none';
+            if (!isset($spec[$name])) continue;
+            [$dkey, $pct, $fixed] = $spec[$name];
             $base = (float)$r['total_amount'] + (float)$r['extras'];
-            $disc = round($base * BOOK_NOW_DISCOUNTS[$dkey] / 100, 2);
+            $disc = $fixed > 0
+                ? round(min($fixed, $guest_base[$name]) * ($guest_base[$name] > 0 ? $base / $guest_base[$name] : 0), 2)
+                : round($base * $pct / 100, 2);
+            $disc = min($disc, $base);
             $final = max(0.0, $base - $disc);
 
             $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
