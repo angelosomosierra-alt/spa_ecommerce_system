@@ -23,6 +23,7 @@
 <div class="dk-top">
     <div class="dk-bar">
         <input type="text" id="dkQ" class="dk-search" placeholder="Search name, service, therapist" aria-label="Search appointments">
+        <div class="dk-bar" id="dkShow" role="group" aria-label="Which days to show"></div>
     </div>
     <a href="appointments.php?view=classic" class="dk-classic">Classic view</a>
 </div>
@@ -158,7 +159,9 @@
         { k: 'approved',  l: 'In service',      s: 'Checked in',                 c: 'var(--green)' }
     ];
     var D = null, TH = {}, RES = {};
-    var S = { q: '', open: null, panel: null, busy: false, doneDate: null };
+    var S = { q: '', open: null, panel: null, busy: false, doneDate: null, todayOnly: false };
+    // "Today only" is remembered on this computer (per receptionist screen).
+    try { S.todayOnly = localStorage.getItem('dkTodayOnly') === '1'; } catch (e) {}
 
     function $(id) { return document.getElementById(id); }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -248,9 +251,20 @@
     // ── Board ─────────────────────────────────────────────────────────────
     function renderBoard() {
         var q = S.q;
+        // Today only = today plus anything overdue; later days stay one click away.
+        var later = D.appointments.filter(function (a) { return a.status !== 'completed' && String(a.when).slice(0, 10) > D.today; }).length;
+        $('dkShow').innerHTML =
+            '<button type="button" class="dk-chip' + (!S.todayOnly ? ' sel' : '') + '" data-show="all">All days</button>' +
+            '<button type="button" class="dk-chip' + (S.todayOnly ? ' sel' : '') + '" data-show="today">Today only' + (S.todayOnly && later ? ' · ' + later + ' later' : '') + '</button>';
+        $('dkShow').querySelectorAll('[data-show]').forEach(function (b) { b.onclick = function () {
+            S.todayOnly = b.dataset.show === 'today';
+            try { localStorage.setItem('dkTodayOnly', S.todayOnly ? '1' : '0'); } catch (e) {}
+            renderBoard();
+        }; });
         $('dkBoard').innerHTML = LANES.map(function (L) {
             var list = D.appointments.filter(function (a) {
                 if (laneOf(a) !== L.k) return false;
+                if (S.todayOnly && String(a.when).slice(0, 10) > D.today) return false;
                 if (!q) return true;
                 return (a.name + ' ' + a.service.name + ' ' + a.addons.map(function (x) { return x.name; }).join(' ') + ' ' + therNames(a)).toLowerCase().indexOf(q) >= 0;
             });
