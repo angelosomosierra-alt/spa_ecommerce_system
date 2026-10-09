@@ -15,24 +15,15 @@
  */
 
 if (!function_exists('appt_desk_data')) {
-function appt_desk_data(mysqli $conn, string $range): array {
+function appt_desk_data(mysqli $conn, string $done_date = ''): array {
     $today    = date('Y-m-d');
-    $tomorrow = date('Y-m-d', strtotime('+1 day'));
     $walkin_uid = get_walkin_customer_id();
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $done_date)) $done_date = $today;
 
-    // Which bookings are on the board:
-    //   today    → today's bookings, packages with a session today, and every
-    //              unfinished booking from an earlier day (flagged overdue)
-    //   tomorrow → tomorrow's bookings and package sessions
-    //   upcoming → every unfinished booking, any date
-    // Nothing is ever left off just because its date has passed: an open
-    // booking stays on the board until it's completed, cancelled or declined.
-    // "Done" only ever shows bookings completed for the chosen day.
-    if ($range === 'tomorrow') { $from = $tomorrow; $to = $tomorrow; }
-    elseif ($range === 'upcoming') { $from = $today; $to = '2999-12-31'; }
-    else { $range = 'today'; $from = $today; $to = $today; }
-
-    $statuses = "'pending','assigned','approved','completed'";
+    // The board holds EVERY open booking (pending / booked / checked in),
+    // whatever its date: nothing drops off until it's completed, cancelled or
+    // declined. Completed bookings only come back for one chosen day, for the
+    // Completed section (view + Undo complete).
     $stmt = $conn->prepare("
         SELECT a.id, a.user_id, a.status, a.appointment_date, a.people_count, a.customer_note,
                a.charged_price, a.advance_payment, a.advance_payment_date, a.advance_payment_method,
@@ -44,6 +35,7 @@ function appt_desk_data(mysqli $conn, string $range): array {
                o.id AS order_id, o.customer_name, o.phone AS order_phone, o.total_amount,
                o.discount_type, o.discount_amount, o.final_amount, o.payment_status,
                o.payment_method, o.paymongo_method, o.booking_group,
+               o.completion_discount_type, o.completion_discount_amount,
                (SELECT COUNT(DISTINCT o2.customer_name) FROM orders o2
                 WHERE o.booking_group IS NOT NULL AND o2.booking_group = o.booking_group) AS group_size
         FROM appointments a
@@ -53,23 +45,15 @@ function appt_desk_data(mysqli $conn, string $range): array {
         JOIN users u ON u.id = a.user_id
         LEFT JOIN order_items oi ON oi.id = a.order_item_id
         LEFT JOIN orders o ON o.id = oi.order_id
-        WHERE a.status IN ($statuses)
-          AND (o.id IS NULL OR o.payment_status != 'pending_payment')
+        WHERE (o.id IS NULL OR o.payment_status != 'pending_payment')
           AND (a.session_group_id IS NULL OR a.id = a.session_group_id)
           AND (
-                (a.status != 'completed' AND (
-                    DATE(a.appointment_date) BETWEEN ? AND ?
-                    OR EXISTS (SELECT 1 FROM appointment_sessions x
-                               WHERE x.appointment_id = a.id AND x.status != 'completed'
-                                 AND DATE(x.session_date) BETWEEN ? AND ?)
-                    OR (? != 'tomorrow' AND DATE(a.appointment_date) < ?)
-                ))
+                a.status IN ('pending','assigned','approved')
              OR (a.status = 'completed' AND DATE(a.appointment_date) = ?)
           )
         ORDER BY a.appointment_date ASC
     ");
-    $done_day = $range === 'tomorrow' ? $tomorrow : $today;
-    $stmt->bind_param("sssssss", $from, $to, $from, $to, $range, $today, $done_day);
+    $stmt->bind_param("s", $done_date);
     $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
@@ -144,11 +128,21 @@ function appt_desk_data(mysqli $conn, string $range): array {
         $paid        = ($r['payment_status'] ?? '') === 'paid';
         $due = $paid ? $extras_unpaid : max(0.0, $order_total + $extras_all - $bdisc - $adv);
 
+        // Where the booking sits on the board: a package goes by its next
+        // scheduled session; anything else by its appointment time.
+        $when = $r['appointment_date'];
+        if ((int)$r['session_count'] > 1) {
+            foreach ($sessions[$id] ?? [] as $x) {
+                if ($x['status'] !== 'completed') { if (!empty($x['date'])) $when = $x['date']; break; }
+            }
+        }
+
         $out[] = [
             'id' => $id,
+            'when' => $when,
             'status' => $r['status'],
             'date' => substr($r['appointment_date'], 0, 10),
-            'overdue' => $r['status'] !== 'completed' && substr($r['appointment_date'], 0, 10) < $today,
+            'overdue' => $r['status'] !== 'completed' && substr($when, 0, 10) < $today,
             'start' => $r['appointment_date'],
             'name' => $name,
             'phone' => $r['order_phone'] ?: ($is_walkin ? '' : ($r['user_phone'] ?? '')),
@@ -174,6 +168,8 @@ function appt_desk_data(mysqli $conn, string $range): array {
             'bill' => [
                 'order_total' => $order_total, 'addons' => $extras_all, 'addons_unpaid' => $extras_unpaid,
                 'discount' => $bdisc, 'discount_type' => $r['discount_type'] ?: 'none',
+                'completion_discount' => (float)($r['completion_discount_amount'] ?? 0),
+                'completion_discount_type' => $r['completion_discount_type'] ?: '',
                 'advance' => $adv, 'advance_method' => $r['advance_payment_method'],
                 'advance_today' => $r['advance_payment_date'] === $today,
                 'paid' => $paid, 'paid_amount' => $paid ? (float)$r['final_amount'] : 0.0,
@@ -190,7 +186,7 @@ function appt_desk_data(mysqli $conn, string $range): array {
     }
 
     return [
-        'range' => $range,
+        'done_date' => $done_date,
         'today' => $today,
         'now' => date('Y-m-d H:i:s'),
         'appointments' => $out,

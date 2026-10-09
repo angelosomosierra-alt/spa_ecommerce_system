@@ -23,11 +23,22 @@
 <div class="dk-top">
     <div class="dk-bar">
         <input type="text" id="dkQ" class="dk-search" placeholder="Search name, service, therapist" aria-label="Search appointments">
-        <div class="dk-bar" id="dkRange"></div>
     </div>
     <a href="appointments.php?view=classic" class="dk-classic">Classic view</a>
 </div>
 <div id="dkBoard" class="dk-board"><div class="dk-empty">Loading appointments&hellip;</div></div>
+
+<section class="dk-done">
+    <div class="dk-done-h">
+        <h2>Completed</h2>
+        <div class="dk-bar">
+            <button type="button" class="dk-chip sm" id="dkDonePrev" aria-label="Previous day">‹</button>
+            <input type="date" id="dkDoneDate" aria-label="Completed on">
+            <button type="button" class="dk-chip sm" id="dkDoneNext" aria-label="Next day">›</button>
+        </div>
+    </div>
+    <div id="dkDoneList"></div>
+</section>
 
 <div class="dk-scrim" id="dkScrim" hidden></div>
 <aside class="dk-drawer" id="dkDrawer" hidden aria-label="Appointment details"></aside>
@@ -47,8 +58,19 @@
 .dk-btn.danger { color:var(--red); border-color:var(--red); background:transparent; }
 .dk-btn:disabled { opacity:0.45; cursor:not-allowed; }
 
-.dk-board { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:0.85rem; align-items:start; }
-@media (max-width:1200px) { .dk-board { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+.dk-board { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:0.85rem; align-items:start; }
+@media (max-width:1100px) { .dk-board { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+.dk-day { font-size:0.68rem; font-weight:800; text-transform:uppercase; letter-spacing:0.08em; color:var(--brown-md); margin:0.35rem 0.25rem 0; }
+.dk-day.over { color:var(--red); }
+.dk-done { margin-top:1.4rem; background:#fff; border:1px solid var(--border2); border-radius:14px; padding:0.85rem 1rem; }
+.dk-done-h { display:flex; justify-content:space-between; align-items:center; gap:0.6rem; flex-wrap:wrap; margin-bottom:0.6rem; }
+.dk-done-h h2 { margin:0; font-size:0.95rem; color:var(--brown); }
+.dk-done-h input[type=date] { padding:0.35rem 0.5rem; border:1px solid var(--border2); border-radius:8px; background:var(--bg3); color:var(--brown); font:inherit; font-size:0.82rem; }
+.dk-drow2 { display:grid; grid-template-columns:70px minmax(0,1.2fr) minmax(0,1.6fr) minmax(0,1fr) auto; gap:0.6rem; align-items:center; padding:0.55rem 0.4rem; border-top:1px solid var(--border2); font-size:0.82rem; color:var(--brown); cursor:pointer; }
+.dk-drow2:hover { background:var(--bg3); }
+.dk-drow2 .amt { font-weight:800; font-variant-numeric:tabular-nums; text-align:right; }
+.dk-drow2 small { color:var(--gray); display:block; font-size:0.7rem; }
+@media (max-width:760px) { .dk-drow2 { grid-template-columns:60px 1fr auto; } .dk-drow2 .hide-sm { display:none; } }
 @media (max-width:640px)  { .dk-board { grid-template-columns:1fr; } .dk-search { min-width:0; flex:1; } }
 .dk-lane { background:var(--bg3); border:1px solid var(--border2); border-radius:14px; padding:0.65rem; display:flex; flex-direction:column; gap:0.55rem; min-height:110px; }
 .dk-lane h2 { margin:0.15rem 0.25rem 0.2rem; font-size:0.74rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--brown); display:flex; justify-content:space-between; gap:0.5rem; }
@@ -129,15 +151,14 @@
         return 0;
     }
     function discNeedsValue(d) { return (d.disc === 'voucher' || d.disc === 'celebration') && !(parseFloat(d.dv) > 0); }
-    var RANGES = [['today','Today'],['tomorrow','Tomorrow'],['upcoming','All open']];
+
     var LANES = [
         { k: 'pending',   l: 'Needs therapist', s: 'Online bookings to confirm', c: 'var(--red)' },
         { k: 'assigned',  l: 'Booked',          s: 'Waiting for the customer',   c: '#2f63b8' },
-        { k: 'approved',  l: 'In service',      s: 'Checked in',                 c: 'var(--green)' },
-        { k: 'completed', l: 'Done',            s: 'Completed',                  c: 'var(--gray)' }
+        { k: 'approved',  l: 'In service',      s: 'Checked in',                 c: 'var(--green)' }
     ];
     var D = null, TH = {}, RES = {};
-    var S = { range: 'today', q: '', open: null, panel: null, busy: false };
+    var S = { q: '', open: null, panel: null, busy: false, doneDate: null };
 
     function $(id) { return document.getElementById(id); }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -145,13 +166,15 @@
     function pesoS(n) { return peso(n).replace(/\.00$/, ''); }
     function dt(s) { return new Date(String(s).replace(' ', 'T')); }
     function tm(s) { return dt(s).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }); }
-    function dayLabel(s) { var d = String(s).slice(0, 10); if (d === D.today) return 'Today'; var t = new Date(D.today + 'T00:00'); t.setDate(t.getDate() + 1); if (d === t.toISOString().slice(0, 10)) return 'Tomorrow'; return dt(s).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }); }
+    function dayLabel(s) { var d = String(s).slice(0, 10); if (d === D.today) return 'Today'; var t = new Date(D.today + 'T00:00'); t.setDate(t.getDate() + 1); if (d === ymd(t)) return 'Tomorrow'; return dt(s).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }); }
     function byId(id) { return (D.appointments || []).filter(function (a) { return a.id === id; })[0]; }
-    var tt; function toast(m, bad) { var t = $('dkToast'); t.textContent = m; t.className = 'dk-toast' + (bad ? ' bad' : ''); t.hidden = false; clearTimeout(tt); tt = setTimeout(function () { t.hidden = true; }, 4200); }
+    // Server messages can arrive HTML-escaped (&#039; etc.); show them as text.
+    function unescape(m) { var el = document.createElement('textarea'); el.innerHTML = String(m).replace(/<[^>]*>/g, ''); return el.value; }
+    var tt; function toast(m, bad) { var t = $('dkToast'); t.textContent = unescape(m); t.className = 'dk-toast' + (bad ? ' bad' : ''); t.hidden = false; clearTimeout(tt); tt = setTimeout(function () { t.hidden = true; }, 4200); }
 
     // ── Server calls ──────────────────────────────────────────────────────
     function load(closeOnOk) {
-        return fetch('appointments.php?ajax=desk_data&range=' + S.range, { credentials: 'same-origin' })
+        return fetch('appointments.php?ajax=desk_data' + (S.doneDate ? '&done_date=' + S.doneDate : ''), { credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 D = data; TH = {}; RES = {};
@@ -159,7 +182,8 @@
                 D.resources.forEach(function (r) { RES[r.id] = r; });
                 var failed = !!(D.flash && D.flash.type === 'danger');
                 if (D.flash && D.flash.message) toast(D.flash.message, failed);
-                renderBoard();
+                if (!S.doneDate) S.doneDate = D.done_date;
+                renderBoard(); renderDone();
                 // A main step that worked (confirm / check in / complete) closes
                 // the panel; anything else keeps it open on the same booking.
                 if (S.open) { if (byId(S.open) && !(closeOnOk && !failed)) renderDrawer(); else closeDrawer(); }
@@ -223,8 +247,6 @@
 
     // ── Board ─────────────────────────────────────────────────────────────
     function renderBoard() {
-        $('dkRange').innerHTML = RANGES.map(function (r) { return '<button type="button" class="dk-chip' + (S.range === r[0] ? ' sel' : '') + '" data-r="' + r[0] + '">' + r[1] + '</button>'; }).join('');
-        $('dkRange').querySelectorAll('.dk-chip').forEach(function (b) { b.onclick = function () { S.range = b.dataset.r; load(); }; });
         var q = S.q;
         $('dkBoard').innerHTML = LANES.map(function (L) {
             var list = D.appointments.filter(function (a) {
@@ -232,8 +254,17 @@
                 if (!q) return true;
                 return (a.name + ' ' + a.service.name + ' ' + a.addons.map(function (x) { return x.name; }).join(' ') + ' ' + therNames(a)).toLowerCase().indexOf(q) >= 0;
             });
+            // Sorted by time, with a heading each time the day changes
+            // (Earlier days first, flagged overdue, then Today, Tomorrow, …).
+            list.sort(function (x, y) { return x.when < y.when ? -1 : x.when > y.when ? 1 : 0; });
+            var html = '', lastDay = null;
+            list.forEach(function (a) {
+                var d = String(a.when).slice(0, 10);
+                if (d !== lastDay) { html += '<div class="dk-day' + (d < D.today ? ' over' : '') + '">' + (d < D.today ? 'Overdue · ' : '') + dayLabel(a.when) + '</div>'; lastDay = d; }
+                html += card(a, L.c);
+            });
             return '<section class="dk-lane"><h2><span>' + L.l + '<small>' + L.s + '</small></span><span class="dk-count">' + list.length + '</span></h2>' +
-                (list.length ? list.map(function (a) { return card(a, L.c); }).join('') : '<div class="dk-empty">Nothing here.</div>') + '</section>';
+                (list.length ? html : '<div class="dk-empty">Nothing here.</div>') + '</section>';
         }).join('');
         $('dkBoard').querySelectorAll('.dk-card').forEach(function (c) {
             c.onclick = function (e) { if (e.target.closest('[data-go]')) return; openDrawer(+c.dataset.id); };
@@ -251,16 +282,43 @@
         var na = nextAction(a), th = therNames(a);
         var pkg = isPkg(a) ? ' <span class="dk-pill p-pkg">' + a.sessions.filter(function (s) { return s.status === 'completed'; }).length + '/' + a.sessions.length + ' sessions</span>' : '';
         return '<article class="dk-card' + (S.open === a.id ? ' sel' : '') + '" data-id="' + a.id + '" style="--stripe:' + stripe + '" tabindex="0">' +
-            '<div class="dk-ctop"><span class="dk-time">' + (a.date !== D.today ? dayLabel(a.start) + ' ' : '') + tm(a.start) + '</span><span class="dk-pill p-src">' + esc(a.source) + '</span></div>' +
+            '<div class="dk-ctop"><span class="dk-time">' + tm(a.when) + '</span><span class="dk-pill p-src">' + esc(a.source) + '</span></div>' +
             '<div class="dk-name">' + esc(a.name) + (a.people > 1 ? ' <span class="dk-meta">· ' + a.people + ' people</span>' : '') + '</div>' +
             '<div class="dk-svcs"><span>' + esc(a.service.name) + ' · ' + a.service.mins + 'm' + pkg + '</span>' +
                 a.addons.map(function (x) { return '<span>+ ' + esc(x.name) + (x.rows.length > 1 ? ' <span class="dk-pill p-pkg">' + x.rows.filter(function (r) { return r.status === 'completed'; }).length + '/' + x.rows.length + '</span>' : '') + '</span>'; }).join('') + '</div>' +
             '<div class="dk-meta">' + (th ? esc(th) : '<span class="dk-pill p-need">No therapist yet</span>') + (a.resource_id && RES[a.resource_id] ? ' · ' + esc(RES[a.resource_id].name) : '') + '</div>' +
-            '<div class="dk-pills">' + (a.overdue && !isPkg(a) ? '<span class="dk-pill p-need">Overdue · ' + esc(dayLabel(a.start)) + '</span>' : '') + payPill(a) + (a.group && a.group_size > 1 ? '<span class="dk-pill p-src">Group of ' + a.group_size + '</span>' : '') + '</div>' +
+            '<div class="dk-pills">' + payPill(a) + (a.group && a.group_size > 1 ? '<span class="dk-pill p-src">Group of ' + a.group_size + '</span>' : '') + '</div>' +
             (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + a.id + '">' + na.l + '</button>' : '') +
             '</article>';
     }
-    $('dkQ').addEventListener('input', function () { S.q = this.value.trim().toLowerCase(); if (D) renderBoard(); });
+    // ── Completed (one day at a time; open a row for details or Undo) ────
+    function renderDone() {
+        $('dkDoneDate').value = S.doneDate;
+        var q = S.q;
+        var list = D.appointments.filter(function (a) {
+            if (a.status !== 'completed') return false;
+            return !q || (a.name + ' ' + a.service.name + ' ' + therNames(a)).toLowerCase().indexOf(q) >= 0;
+        });
+        var total = list.reduce(function (t, a) { return t + (a.bill.paid ? a.bill.paid_amount : 0); }, 0);
+        $('dkDoneList').innerHTML = list.length
+            ? list.map(function (a) {
+                var b = a.bill, disc = b.completion_discount || b.discount;
+                return '<div class="dk-drow2" data-id="' + a.id + '" tabindex="0"><span>' + tm(a.start) + '</span>' +
+                    '<span><b>' + esc(a.name) + '</b><small>' + esc(a.source) + '</small></span>' +
+                    '<span class="hide-sm">' + esc(a.service.name) + (a.addons.length ? ' + ' + a.addons.map(function (x) { return esc(x.name); }).join(', ') : '') + '<small>' + esc(therNames(a)) + '</small></span>' +
+                    '<span class="hide-sm">' + (a.rate_type === 'influencer' ? 'Influencer · ₱0' : (b.paid ? 'Paid · ' + esc(b.method || '') : 'Unpaid / on account')) + (disc ? '<small>Discount ' + peso(disc) + '</small>' : '') + '</span>' +
+                    '<span class="amt">' + peso(b.paid ? b.paid_amount : 0) + '</span></div>';
+            }).join('') + '<div class="dk-drow2" style="cursor:default;font-weight:800;"><span></span><span>' + list.length + ' completed</span><span class="hide-sm"></span><span class="hide-sm"></span><span class="amt">' + peso(total) + '</span></div>'
+            : '<div class="dk-empty">Nothing completed on this day.</div>';
+        $('dkDoneList').querySelectorAll('.dk-drow2[data-id]').forEach(function (r) { r.onclick = function () { openDrawer(+r.dataset.id); }; });
+    }
+    function ymd(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); } // local date, not UTC
+    function shiftDone(days) { var d = new Date(S.doneDate + 'T00:00'); d.setDate(d.getDate() + days); S.doneDate = ymd(d); load(); }
+    $('dkDonePrev').onclick = function () { shiftDone(-1); };
+    $('dkDoneNext').onclick = function () { shiftDone(1); };
+    $('dkDoneDate').onchange = function () { if (this.value) { S.doneDate = this.value; load(); } };
+
+    $('dkQ').addEventListener('input', function () { S.q = this.value.trim().toLowerCase(); if (D) { renderBoard(); renderDone(); } });
 
     // ── Drawer ────────────────────────────────────────────────────────────
     function openDrawer(id, panel) {
@@ -376,7 +434,7 @@
             '<div class="dk-df">' +
             (D.cashier ? '<input type="password" id="dkPin" maxlength="4" inputmode="numeric" placeholder="PIN" value="' + esc(S.pin || '') + '" style="width:80px;text-align:center;letter-spacing:0.2em;">' : '') +
             primary +
-            (locked ? (D.full_access ? '<button type="button" class="dk-btn" id="dkUndo">Undo complete</button>' : '')
+            (locked ? (D.full_access ? '<button type="button" class="dk-btn" id="dkUndo">Undo complete</button>' : '<span class="dk-hint">Only the owner or IT can undo a completed booking.</span>')
                 : '<button type="button" class="dk-btn" id="dkRsOpen">Reschedule</button><button type="button" class="dk-btn danger" id="dkCxOpen">' + (a.status === 'pending' ? 'Decline' : 'Cancel') + '</button>') +
             '</div>';
         wire(a);
