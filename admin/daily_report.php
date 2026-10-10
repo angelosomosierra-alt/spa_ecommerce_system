@@ -1877,6 +1877,18 @@ $ss_commissions = [];
 if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     $ss_commissions[(int)$_c['therapist_id'].'_'.(int)$_c['service_id']] = (float)$_c['commission_percent'];
 } }
+// Package services: each component's commission base (promo price when set),
+// so a hand-entered package row splits commission by component like the
+// imported rows do (see compute_package_commission()).
+ensure_service_package_components_table($conn);
+$ss_packages = [];
+foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, s.price
+                       FROM service_package_components spc JOIN services s ON s.id = spc.component_service_id")->fetch_all(MYSQLI_ASSOC) as $_p) {
+    $ss_packages[(int)$_p['package_service_id']][] = [
+        'id'   => (int)$_p['component_service_id'],
+        'base' => get_commission_base_price((int)$_p['component_service_id'], null, (float)$_p['price']),
+    ];
+}
 ?>
 <?php if (!empty($advances_received)): ?>
 <!-- Down Payment (Advance Booking) — same data as the Cash & Summary tab's
@@ -2212,6 +2224,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     var SS_THERAPISTS  = <?php echo json_encode($ss_therapists_list, JSON_HEX_TAG|JSON_HEX_APOS); ?>;
     var SS_MOP         = <?php echo json_encode($ss_mop_list,        JSON_HEX_TAG|JSON_HEX_APOS); ?>;
     var SS_COMMISSIONS = <?php echo json_encode($ss_commissions,     JSON_HEX_TAG|JSON_HEX_APOS); ?>;
+    var SS_PACKAGES    = <?php echo json_encode((object)$ss_packages, JSON_HEX_TAG|JSON_HEX_APOS); ?>;
 
     function canEdit() {
         if (_rptLocked) return false;
@@ -2267,7 +2280,23 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         var stylId = sfStylist ? (parseInt(sfStylist.value) || 0) : 0;
         var pct = 0;
         var c30 = 0, c20 = 0, c15 = 0, c25 = 0, noteText = '';
-        if (svcId && stylId) {
+        var pkgFields = null;
+        if (svcId && stylId && Object.prototype.hasOwnProperty.call(SS_PACKAGES, svcId)) {
+            // Package: each component pays its own rate on its own promo price.
+            pkgFields = [];
+            SS_PACKAGES[svcId].forEach(function(cp) {
+                var r = SS_COMMISSIONS[stylId + '_' + cp.id] || 0;
+                if (!r) return;
+                var a = Math.round(cp.base * r) / 100;
+                if      (r >= 28 && r <= 32) { c30 += a; pkgFields.push(sfC30); }
+                else if (r >= 23 && r <= 27) { c25 += a; pkgFields.push(sfC25); }
+                else if (r >= 18 && r <= 22) { c20 += a; pkgFields.push(sfC20); }
+                else if (r >= 13 && r <= 17) { c15 += a; pkgFields.push(sfC15); }
+                else                         { c30 += a; pkgFields.push(sfC30); }
+            });
+            pct = pkgFields.length ? 1 : 0;
+            noteText = pkgFields.length ? 'package: per-service commission' : 'no commission set';
+        } else if (svcId && stylId) {
             var key = stylId + '_' + svcId;
             if (Object.prototype.hasOwnProperty.call(SS_COMMISSIONS, key)) {
                 pct = SS_COMMISSIONS[key];
@@ -2290,7 +2319,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
 
         [sfC30, sfC20, sfC15, sfC25].forEach(function(f) {
             if (!f) return;
-            if (f === activeField) {
+            if (pkgFields ? pkgFields.indexOf(f) !== -1 : f === activeField) {
                 f.readOnly = false;
                 f.classList.remove('ss-ec-ro');
             } else {

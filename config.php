@@ -598,8 +598,19 @@ function route_commission_to_buckets($conn, int $service_id, int $therapist_id, 
     $buckets = ['comm_30' => 0.0, 'comm_20' => 0.0, 'comm_15' => 0.0, 'comm_25' => 0.0];
     $pkg = compute_package_commission($conn, $service_id, $therapist_id);
     if (!empty($pkg['components'])) {
-        foreach ($pkg['components'] as $comp) {
-            $buckets[commission_report_bucket_key((float)$comp['rate'])] += (float)$comp['commission'];
+        // The components give the SPLIT; $total_comm (what was actually
+        // stored -- e.g. x2 when one therapist handled 2 people) gives the
+        // AMOUNT, so the columns always add up to the row's commission.
+        if ($pkg['total'] > 0) {
+            $scale = $total_comm / $pkg['total'];
+            foreach ($pkg['components'] as $comp) {
+                $buckets[commission_report_bucket_key((float)$comp['rate'])] += round((float)$comp['commission'] * $scale, 2);
+            }
+            // Keep the rounding cent in the largest column.
+            $diff = round($total_comm - array_sum($buckets), 2);
+            if ($diff != 0.0) { arsort($buckets); $buckets[array_key_first($buckets)] += $diff; }
+        } else {
+            $buckets['comm_30'] += $total_comm;
         }
         return $buckets;
     }
