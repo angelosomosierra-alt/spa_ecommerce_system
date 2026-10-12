@@ -1602,8 +1602,8 @@ require_once 'header.php';
                 <div class="co-card-body">
                     <?php foreach ($checkout_items as $item):
                         $img = $item['type'] === 'service'
-                            ? '/spa_ecommerce_system/uploads/services/' . $item['image']
-                            : '/spa_ecommerce_system/uploads/products/' . $item['image'];
+                            ? BASE_URL . 'uploads/services/' . $item['image']
+                            : BASE_URL . 'uploads/products/' . $item['image'];
                     ?>
                     <div class="co-item">
                         <img src="<?php echo $img; ?>"
@@ -2393,7 +2393,7 @@ function _renderExtraList() {
             + 'margin-bottom:0.35rem;font-size:0.8rem;';
         var safeName = item.name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         var imgHtml = item.image
-            ? '<img src="/spa_ecommerce_system/uploads/services/' + item.image
+            ? '<img src="<?php echo BASE_URL; ?>uploads/services/' + item.image
               + '" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;" alt="">'
             : '';
         row.innerHTML = imgHtml
