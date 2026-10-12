@@ -358,8 +358,8 @@ if (!function_exists('book_now_group_bill')) {
  */
 function book_now_group_bill(mysqli $conn, string $group): array {
     $stmt = $conn->prepare("
-        SELECT o.id AS order_id, o.customer_name, o.total_amount, a.id AS appt_id, a.appointment_date,
-               s.name AS service_name,
+        SELECT o.id AS order_id, o.customer_name, o.total_amount, (o.payment_status = 'paid') AS order_paid,
+               a.id AS appt_id, a.appointment_date, s.name AS service_name,
                (SELECT COALESCE(SUM(aes.charged_price), 0) FROM appointment_extra_services aes
                 WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras
         FROM orders o
@@ -367,8 +367,8 @@ function book_now_group_bill(mysqli $conn, string $group): array {
         JOIN appointments a ON a.order_item_id = oi.id
         JOIN services s ON s.id = a.service_id
         WHERE o.booking_group = ?
-          AND o.payment_status != 'paid'
           AND a.status NOT IN ('cancelled', 'declined', 'refunded')
+        HAVING order_paid = 0 OR extras > 0   -- a paid guest's later add-ons still count
         ORDER BY o.customer_name, a.appointment_date
     ");
     $stmt->bind_param("s", $group); $stmt->execute();
@@ -378,8 +378,9 @@ function book_now_group_bill(mysqli $conn, string $group): array {
     foreach ($rows as $r) {
         $name = $r['customer_name'] ?: 'Guest';
         if (!isset($guests[$name])) $guests[$name] = ['name' => $name, 'services' => [], 'subtotal' => 0.0];
-        $amt = (float)$r['total_amount'] + (float)$r['extras'];
-        $guests[$name]['services'][] = ['name' => $r['service_name'] . ((float)$r['extras'] > 0 ? ' + extras' : ''), 'amount' => $amt];
+        $amt = ($r['order_paid'] ? 0.0 : (float)$r['total_amount']) + (float)$r['extras'];
+        $label = $r['order_paid'] ? $r['service_name'] . ' — added services' : $r['service_name'] . ((float)$r['extras'] > 0 ? ' + added services' : '');
+        $guests[$name]['services'][] = ['name' => $label, 'amount' => $amt];
         $guests[$name]['subtotal'] += $amt;
     }
     return array_values($guests);
@@ -400,15 +401,15 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
     if (!$discounts) return ['ok' => false, 'message' => 'Choose at least one guest to pay for.'];
 
     $stmt = $conn->prepare("
-        SELECT o.id AS order_id, o.customer_name, o.total_amount, a.id AS appt_id,
+        SELECT o.id AS order_id, o.customer_name, o.total_amount, (o.payment_status = 'paid') AS order_paid, a.id AS appt_id,
                (SELECT COALESCE(SUM(aes.charged_price), 0) FROM appointment_extra_services aes
                 WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras
         FROM orders o
         JOIN order_items oi ON oi.order_id = o.id
         JOIN appointments a ON a.order_item_id = oi.id
         WHERE o.booking_group = ?
-          AND o.payment_status != 'paid'
           AND a.status NOT IN ('cancelled', 'declined', 'refunded')
+        HAVING order_paid = 0 OR extras > 0
     ");
     $stmt->bind_param("s", $group); $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
@@ -425,7 +426,9 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
         else                                                  $spec[$name] = ['none', 0, 0.0];
     }
     $guest_base = [];
-    foreach ($rows as $r) { $n = $r['customer_name'] ?: 'Guest'; $guest_base[$n] = ($guest_base[$n] ?? 0) + (float)$r['total_amount'] + (float)$r['extras']; }
+    // An order already paid only owes its unpaid add-ons; its own payment
+    // and discount stay as recorded (no new discount on those add-ons).
+    foreach ($rows as $r) { if ($r['order_paid']) continue; $n = $r['customer_name'] ?: 'Guest'; $guest_base[$n] = ($guest_base[$n] ?? 0) + (float)$r['total_amount'] + (float)$r['extras']; }
 
     $paid_total = 0.0; $paid_guests = [];
     $conn->begin_transaction();
@@ -434,6 +437,13 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
             $name = $r['customer_name'] ?: 'Guest';
             if (!isset($spec[$name])) continue;
             [$dkey, $pct, $fixed] = $spec[$name];
+            if ($r['order_paid']) {
+                $ue = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");
+                $ue->bind_param("si", $method, $r['appt_id']);
+                $ue->execute(); $ue->close();
+                $paid_total += (float)$r['extras']; $paid_guests[$name] = true;
+                continue;
+            }
             $base = (float)$r['total_amount'] + (float)$r['extras'];
             $disc = $fixed > 0
                 ? round(min($fixed, $guest_base[$name]) * ($guest_base[$name] > 0 ? $base / $guest_base[$name] : 0), 2)
