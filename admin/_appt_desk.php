@@ -132,6 +132,15 @@
 .dk-toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:var(--brown); color:#fff; padding:0.65rem 1rem; border-radius:10px; font-weight:700; font-size:0.84rem; max-width:calc(100% - 32px); z-index:1100; }
 .dk-toast.bad { background:var(--red); }
 .dk-drawer[hidden], .dk-scrim[hidden], .dk-toast[hidden] { display:none !important; }
+/* Add service picker */
+.dk-add-q { width:100%; box-sizing:border-box; border:1px solid var(--border2); border-radius:8px; padding:0.5rem 0.65rem; background:#fff; font:inherit; }
+.dk-add-list { display:flex; flex-direction:column; gap:0.35rem; max-height:300px; overflow:auto; }
+.dk-add-item { border:1px solid var(--border2); border-radius:8px; padding:0.45rem 0.55rem; background:#fff; }
+.dk-add-item b { font-size:0.84rem; }
+.dk-add-item small { color:var(--gray); margin-left:0.3rem; }
+.dk-add-durs { display:flex; flex-wrap:wrap; gap:0.3rem; margin-top:0.35rem; }
+.dk-add-dur { border:1px solid var(--gold); background:#fff; color:var(--brown); border-radius:7px; padding:0.2rem 0.5rem; font-size:0.74rem; font-weight:700; cursor:pointer; }
+.dk-add-dur:hover { background:var(--rust); border-color:var(--rust); color:#fff; }
 </style>
 
 <script>
@@ -192,7 +201,7 @@
     }
     // json=true: the action answers JSON itself. Otherwise it answers with a
     // redirect + flash message; desk_data returns that message on reload.
-    function post(action, appt, fields, json, closeOnOk) {
+    function post(action, appt, fields, json, closeOnOk, okMsg) {
         if (S.busy) return Promise.resolve();
         var fd = new FormData();
         fd.append('csrf_token', CSRF); fd.append('action', action); fd.append('appt_id', appt);
@@ -207,6 +216,7 @@
                 var bad = json && res && res.success === false;
                 if (bad) toast(res.message || 'That did not work.', true);
                 else if (json && res && res.warning) toast(res.warning, true);
+                else if (json && okMsg) toast(okMsg);
                 else if (json && closeOnOk) toast('Saved');
                 return load(closeOnOk && !bad);
             })
@@ -337,7 +347,7 @@
     // ── Drawer ────────────────────────────────────────────────────────────
     function openDrawer(id, panel) {
         S.open = id; S.panel = panel === 'checkin' || panel === 'complete' ? panel : null;
-        S.method = null; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false;
+        S.method = null; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false; S.add = null;
         renderBoard(); renderDrawer(); $('dkDrawer').hidden = false; $('dkScrim').hidden = false;
     }
     function closeDrawer() { S.open = null; S.pin = ''; $('dkDrawer').hidden = true; $('dkScrim').hidden = true; if (D) renderBoard(); }
@@ -349,6 +359,71 @@
         return '<select ' + attrs + (val ? '' : ' class="missing"') + '><option value="">Choose therapist…</option>' +
             (allowAny ? '<option value="__any__">Any available</option>' : '') +
             opts.map(function (t) { return '<option value="' + t.id + '"' + (t.id === val ? ' selected' : '') + '>' + esc(t.name) + (t.on ? '' : ' (off duty)') + '</option>'; }).join('') + '</select>';
+    }
+    // ── Add service (any open booking: needs therapist, booked, checked in) ──
+    // Uses the same catalogue as Book Now and posts to add_extra_service,
+    // which prices it by the booking's rate, handles multi-session add-ons,
+    // therapist qualification and commission.
+    var CAT = null;
+    function loadCat() {
+        if (CAT) return Promise.resolve(CAT);
+        return fetch('appointments.php?ajax=desk_catalog', { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) { CAT = d.services || []; return CAT; });
+    }
+    function canAdd(a) { return ['pending', 'assigned', 'approved'].indexOf(a.status) >= 0 && !a.legacy_two_session; }
+    function durLabel(d) { return d.m + ' min' + (d.n > 1 ? ' × ' + d.n + ' sessions' : ''); }
+    function addServiceHtml(a) {
+        if (!canAdd(a)) return '';
+        if (!S.add) return '<button type="button" class="dk-btn" id="dkAddOpen" style="align-self:flex-start;">+ Add service</button>';
+        var A = S.add, h = '<div class="dk-inline" id="dkAddBox">';
+        if (!CAT) return h + '<span class="dk-hint">Loading services…</span></div>';
+        if (!A.svc) {
+            var q = (A.q || '').toLowerCase();
+            var list = CAT.filter(function (s) { return !q || (s.name + ' ' + s.cat).toLowerCase().indexOf(q) >= 0; }).slice(0, 12);
+            h += '<input class="dk-add-q" id="dkAddQ" type="search" placeholder="Search a service…" autocomplete="off" value="' + esc(A.q || '') + '" aria-label="Search a service">' +
+                '<div class="dk-add-list">' + (list.length ? list.map(function (s) {
+                    return '<div class="dk-add-item"><b>' + esc(s.name) + '</b><small>' + esc(s.cat) + (s.med ? ' · Doctor / Nurse' : '') + '</small><div class="dk-add-durs">' +
+                        s.durs.map(function (d, di) { return '<button type="button" class="dk-add-dur" data-addpick="' + s.id + ',' + di + '">+ ' + durLabel(d) + ' · ' + pesoS(d.p) + '</button>'; }).join('') + '</div></div>';
+                }).join('') : '<span class="dk-hint">No service matches.</span>') + '</div>' +
+                '<div class="dk-bar"><button type="button" class="dk-btn" id="dkAddCancel">Cancel</button></div></div>';
+            return h;
+        }
+        var s = A.svc, d = s.durs[A.di];
+        h += '<div class="dk-svch"><span><b>' + esc(s.name) + '</b> <small>' + durLabel(d) + '</small></span><span class="dk-amt">' + peso(d.p) + '</span></div>' +
+            (d.n > 1 ? '<p class="dk-hint">Adds ' + d.n + ' sessions; each one is marked done here as it happens.</p>' : '') +
+            '<div class="dk-g2">' +
+            (s.med ? '<div><label class="dk-lbl">Done by</label><div class="dk-hint">Doctor / Nurse</div></div>'
+                   : '<div><label class="dk-lbl" for="dkAddTh">Therapist</label>' + therSelect(s.qual, A.th ? +A.th : null, 'id="dkAddTh"', false).replace('<option value="">Choose therapist…</option>', '<option value="">Assign later</option>') + '</div>') +
+            (a.people > 1 ? '<div><label class="dk-lbl" for="dkAddPerson">For</label><select id="dkAddPerson">' +
+                Array.apply(null, Array(a.people)).map(function (_, i) { var v = 'Person ' + (i + 1); return '<option' + (A.person === v ? ' selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' : '') +
+            '</div>' +
+            '<p class="dk-hint">Charged with this booking (' + (a.rate_type === 'regular' ? 'regular rate' : esc(a.rate_type) + ' rate') + '); collected at check-in or when completing.</p>' +
+            '<div class="dk-bar"><button type="button" class="dk-btn primary" id="dkAddGo">Add to booking</button><button type="button" class="dk-btn" id="dkAddBack">Pick another</button><button type="button" class="dk-btn" id="dkAddCancel">Cancel</button></div></div>';
+        return h;
+    }
+    function wireAdd(a) {
+        var open = $('dkAddOpen');
+        if (open) open.onclick = function () { S.add = { q: '', svc: null, di: 0, th: '', person: 'Person 1' }; renderDrawer(); loadCat().then(function () { if (S.add) { renderDrawer(); var q = $('dkAddQ'); if (q) q.focus(); } }); };
+        var q = $('dkAddQ');
+        if (q) q.oninput = function () { S.add.q = q.value; var pos = q.selectionStart; renderDrawer(); var n = $('dkAddQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } };
+        document.querySelectorAll('[data-addpick]').forEach(function (b) { b.onclick = function () {
+            var p = b.dataset.addpick.split(','), s = CAT.filter(function (x) { return x.id === +p[0]; })[0];
+            // Default to the booking's own therapist when qualified.
+            var own = (a.slots[0] || {}).therapist_id;
+            S.add.svc = s; S.add.di = +p[1]; S.add.th = own && s.qual.indexOf(own) >= 0 ? String(own) : '';
+            renderDrawer();
+        }; });
+        var th = $('dkAddTh'); if (th) th.onchange = function () { S.add.th = th.value; };
+        var pe = $('dkAddPerson'); if (pe) pe.onchange = function () { S.add.person = pe.value; };
+        var back = $('dkAddBack'); if (back) back.onclick = function () { S.add.svc = null; renderDrawer(); };
+        var cancel = $('dkAddCancel'); if (cancel) cancel.onclick = function () { S.add = null; renderDrawer(); };
+        var go = $('dkAddGo'); if (go) go.onclick = function () {
+            var s = S.add.svc, d = s.durs[S.add.di];
+            var f = { extra_svc_id: s.id, extra_duration_id: d.id || '', extra_therapist: s.med ? '' : (S.add.th || ''), person_label: S.add.person || 'Person 1', extra_payment_method: 'cash' };
+            S.add = null;
+            post('add_extra_service', a.id, f, true, false, s.name + ' added');
+        };
     }
     function roomSelect(a) {
         var pref = D.resources.filter(function (r) { return r.type === a.service.res; }), other = D.resources.filter(function (r) { return r.type !== a.service.res; });
@@ -443,7 +518,8 @@
             '<div class="dk-db">' +
             (a.legacy_two_session ? '<p class="dk-hint">This is an old 2-session package booking. Manage it in the <a href="appointments.php?view=classic">classic view</a>.</p>' : '') +
             '<div class="dk-sec"><h4>Services</h4>' + mainHtml + addHtml +
-                (!locked ? '<a class="dk-hint" href="appointments.php?view=classic&appt_date=' + a.date + '">Add a service or edit details in the classic view</a>' : '') + '</div>' +
+                addServiceHtml(a) +
+                (!locked ? '<a class="dk-hint" href="appointments.php?view=classic&appt_date=' + a.date + '">Edit other details in the classic view</a>' : '') + '</div>' +
             '<div class="dk-sec"><h4><span>Payment</span>' + (a.group && a.group_size > 1 && !b.paid && !locked ? '<button type="button" class="dk-btn" id="dkGrpOpen">' + (S.grp ? 'Back to this guest' : 'Pay for group') + '</button>' : '') + '</h4>' + billHtml + inflHtml(a) + payForm + groupHtml + '</div>' +
             (extra ? '<div class="dk-sec">' + extra + '</div>' : '') +
             '<p class="dk-err" id="dkErr"></p></div>' +
@@ -499,6 +575,7 @@
         var W = $('dkDrawer'), err = function (m) { $('dkErr').textContent = m; };
         $('dkX').onclick = closeDrawer;
         var pinEl = $('dkPin'); if (pinEl) pinEl.oninput = function () { S.pin = pinEl.value; }; // kept across redraws
+        wireAdd(a);
         W.querySelectorAll('[data-slot]').forEach(function (s) { s.onchange = function () { if (s.value) post('assign_person_slot', a.id, { person_slot: s.dataset.slot, therapist_id: s.value }, true); }; });
         W.querySelectorAll('[data-xth]').forEach(function (s) { s.onchange = function () {
             if (!s.value) return;

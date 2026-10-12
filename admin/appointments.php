@@ -380,6 +380,15 @@ function send_approval_email($conn, $appt_id) {
 // ── Desk view data (default view; see _appt_desk.php). Read-only JSON, and it
 //    hands back the flash message an action just set, so it must run before
 //    the flash is consumed below.
+// Service catalogue for the desk's "Add service" picker: the same list Book
+// Now uses (duration options incl. multi-session, qualified therapists,
+// Doctor / Nurse flag). Adding still goes through add_extra_service.
+if (($_GET['ajax'] ?? '') === 'desk_catalog') {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['services' => book_now_data($conn)['services']]);
+    exit();
+}
+
 if (($_GET['ajax'] ?? '') === 'desk_data') {
     require_once __DIR__ . '/_appt_desk_data.php';
     header('Content-Type: application/json; charset=utf-8');
@@ -706,6 +715,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
             }
         }
 
+        // A therapist picked while adding counts as chosen (Confirm booking
+        // requires every add-on to have one chosen).
+        if ($es_therapist_id > 0) {
+            $es_sel = $conn->prepare("UPDATE appointment_extra_services SET therapist_selected = 1 WHERE appointment_id = ? AND therapist_id IS NOT NULL AND therapist_selected = 0");
+            $es_sel->bind_param("i", $es_appt_id); $es_sel->execute(); $es_sel->close();
+        }
         $message = $es_session_count > 1
             ? "Extra service added for {$es_person_label} ({$es_session_count} sessions — mark each one done as it happens)."
             : "Extra service added for {$es_person_label}.";
