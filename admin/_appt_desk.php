@@ -132,6 +132,13 @@
 .dk-toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:var(--brown); color:#fff; padding:0.65rem 1rem; border-radius:10px; font-weight:700; font-size:0.84rem; max-width:calc(100% - 32px); z-index:1100; }
 .dk-toast.bad { background:var(--red); }
 .dk-drawer[hidden], .dk-scrim[hidden], .dk-toast[hidden] { display:none !important; }
+/* Group card: guests booked together share one card per lane */
+.dk-gcard .dk-grows { display:flex; flex-direction:column; gap:0.45rem; }
+.dk-grow { border:1px solid var(--border2); border-radius:9px; padding:0.5rem 0.6rem; display:flex; flex-direction:column; gap:0.3rem; cursor:pointer; background:#fff; }
+.dk-grow:hover, .dk-grow.sel { border-color:var(--gold); background:var(--bg3); }
+.dk-grow-top { display:flex; justify-content:space-between; gap:0.5rem; align-items:baseline; }
+.dk-grow-top b { font-size:0.88rem; }
+.dk-grow .dk-btn { align-self:stretch; padding:0.35rem 0.6rem; font-size:0.8rem; }
 /* Add service picker */
 .dk-add-q { width:100%; box-sizing:border-box; border:1px solid var(--border2); border-radius:8px; padding:0.5rem 0.65rem; background:#fff; font:inherit; }
 .dk-add-list { display:flex; flex-direction:column; gap:0.35rem; max-height:300px; overflow:auto; }
@@ -278,17 +285,28 @@
             // Sorted by time, with a heading each time the day changes
             // (Earlier days first, flagged overdue, then Today, Tomorrow, …).
             list.sort(function (x, y) { return x.when < y.when ? -1 : x.when > y.when ? 1 : 0; });
-            var html = '', lastDay = null;
+            // Guests booked together (same booking group) share one card per
+            // lane and day, placed at the group's earliest time.
+            var items = [], byGroup = {};
             list.forEach(function (a) {
-                var d = String(a.when).slice(0, 10);
-                if (d !== lastDay) { html += '<div class="dk-day' + (d < D.today ? ' over' : '') + '">' + (d < D.today ? 'Overdue · ' : '') + dayLabel(a.when) + '</div>'; lastDay = d; }
-                html += card(a, L.c);
+                if (a.group && a.group_size > 1) {
+                    var key = a.group + '|' + String(a.when).slice(0, 10);
+                    if (!byGroup[key]) { byGroup[key] = { group: true, when: a.when, list: [] }; items.push(byGroup[key]); }
+                    byGroup[key].list.push(a);
+                } else items.push({ group: false, when: a.when, a: a });
+            });
+            var html = '', lastDay = null;
+            items.forEach(function (it) {
+                var d = String(it.when).slice(0, 10);
+                if (d !== lastDay) { html += '<div class="dk-day' + (d < D.today ? ' over' : '') + '">' + (d < D.today ? 'Overdue · ' : '') + dayLabel(it.when) + '</div>'; lastDay = d; }
+                html += it.group ? (it.list.length > 1 ? groupCard(it.list, L.c) : card(it.list[0], L.c)) : card(it.a, L.c);
             });
             return '<section class="dk-lane"><h2><span>' + L.l + '<small>' + L.s + '</small></span><span class="dk-count">' + list.length + '</span></h2>' +
                 (list.length ? html : '<div class="dk-empty">Nothing here.</div>') + '</section>';
         }).join('');
-        $('dkBoard').querySelectorAll('.dk-card').forEach(function (c) {
-            c.onclick = function (e) { if (e.target.closest('[data-go]')) return; openDrawer(+c.dataset.id); };
+        $('dkBoard').querySelectorAll('.dk-card[data-id], .dk-grow[data-id]').forEach(function (c) {
+            c.onclick = function (e) { if (e.target.closest('[data-go]')) return; e.stopPropagation(); openDrawer(+c.dataset.id); };
+            c.onkeydown = function (e) { if (e.key === 'Enter' && e.target === c) openDrawer(+c.dataset.id); };
         });
         $('dkBoard').querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { openDrawer(+b.dataset.id, b.dataset.go); }; });
     }
@@ -310,6 +328,28 @@
             '<div class="dk-meta">' + (th ? esc(th) : '<span class="dk-pill p-need">No therapist yet</span>') + (a.resource_id && RES[a.resource_id] ? ' · ' + esc(RES[a.resource_id].name) : '') + '</div>' +
             '<div class="dk-pills">' + payPill(a) + (a.group && a.group_size > 1 ? '<span class="dk-pill p-src">Group of ' + a.group_size + '</span>' : '') + '</div>' +
             (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + a.id + '">' + na.l + '</button>' : '') +
+            '</article>';
+    }
+    function groupCard(list, stripe) {
+        var names = list.map(function (a) { return a.name; }).filter(function (n, i, arr) { return arr.indexOf(n) === i; });
+        var due = list.reduce(function (s, a) { return s + (a.rate_type === 'influencer' ? 0 : a.bill.due); }, 0);
+        var times = list.map(function (a) { return tm(a.when); }).filter(function (t, i, arr) { return arr.indexOf(t) === i; });
+        return '<article class="dk-card dk-gcard" style="--stripe:' + stripe + '">' +
+            '<div class="dk-ctop"><span class="dk-time">' + times.join(' · ') + '</span><span class="dk-pill p-src">' + esc(list[0].source) + '</span></div>' +
+            '<div class="dk-name">' + esc(names.join(' & ')) + ' <span class="dk-meta">· group of ' + list[0].group_size + '</span></div>' +
+            '<div class="dk-grows">' + list.map(function (a) {
+                var na = nextAction(a), th = therNames(a);
+                var pkg = isPkg(a) ? ' <span class="dk-pill p-pkg">' + a.sessions.filter(function (s) { return s.status === 'completed'; }).length + '/' + a.sessions.length + '</span>' : '';
+                return '<div class="dk-grow' + (S.open === a.id ? ' sel' : '') + '" data-id="' + a.id + '" tabindex="0">' +
+                    '<div class="dk-grow-top"><b>' + esc(a.name) + '</b>' + (times.length > 1 ? '<span class="dk-meta">' + tm(a.when) + '</span>' : '') + '</div>' +
+                    '<div class="dk-svcs"><span>' + esc(a.service.name) + ' · ' + a.service.mins + 'm' + pkg + '</span>' +
+                        a.addons.map(function (x) { return '<span>+ ' + esc(x.name) + '</span>'; }).join('') + '</div>' +
+                    '<div class="dk-meta">' + (th ? esc(th) : (a.service.med ? 'Doctor / Nurse' : '<span class="dk-pill p-need">No therapist yet</span>')) + (a.resource_id && RES[a.resource_id] ? ' · ' + esc(RES[a.resource_id].name) : '') + '</div>' +
+                    '<div class="dk-pills">' + payPill(a) + '</div>' +
+                    (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + a.id + '">' + na.l + '</button>' : '') +
+                    '</div>';
+            }).join('') + '</div>' +
+            (due > 0 ? '<div class="dk-meta">Group still to collect: <b>' + peso(due) + '</b> · use <b>Pay for group</b> in any guest\'s panel</div>' : '') +
             '</article>';
     }
     // ── Completed (last N days, newest first, by day; open a row for Undo) ──
