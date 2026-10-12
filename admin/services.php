@@ -302,16 +302,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             }
             // ──────────────────────────────────────────────────────────────
 
-            // ── Save duration variants: delete-then-reinsert (same pattern as
-            //    the recipe save above) ─────────────────────────────────────
-            $del_sd = $conn->prepare("DELETE FROM service_durations WHERE service_id = ?");
+            // ── Save duration variants IN PLACE. Bookings point at a row by id
+            //    (appointments.service_duration_id) to know their promo price,
+            //    commission base and session count, so an option that is kept
+            //    (same minutes + sessions) is UPDATEd and keeps its id; only
+            //    removed options are deleted and new ones inserted. ─────────
+            $_sd_old = [];
+            $_sd_q = $conn->prepare("SELECT id, duration_minutes, IFNULL(session_count, 1) AS sc FROM service_durations WHERE service_id = ?");
+            $_sd_q->bind_param("i", $svc_logged_id); $_sd_q->execute();
+            foreach ($_sd_q->get_result()->fetch_all(MYSQLI_ASSOC) as $_o) $_sd_old[(int)$_o['duration_minutes'] . 'x' . (int)$_o['sc']] = (int)$_o['id'];
+            $_sd_q->close();
+            $_sd_keep = [];
+            foreach ($duration_variants as $_dv) {
+                $_k = (int)$_dv['duration'] . 'x' . (int)$_dv['session_count'];
+                if (isset($_sd_old[$_k])) {
+                    $_sd_id = $_sd_old[$_k];
+                    $up_sd = $conn->prepare("UPDATE service_durations SET regular_price = ?, promo_price = ?, price_mode = ?, promo_start_time = ?, promo_end_time = ? WHERE id = ?");
+                    $up_sd->bind_param("ddsssi", $_dv['regular'], $_dv['promo'], $_dv['price_mode'], $_dv['promo_start'], $_dv['promo_end'], $_sd_id);
+                    $up_sd->execute(); $up_sd->close();
+                    $_sd_keep[] = $_sd_id;
+                } else {
+                    $ins_sd = $conn->prepare("INSERT INTO service_durations (service_id, duration_minutes, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                    $ins_sd->bind_param("iiiddsss", $svc_logged_id, $_dv['duration'], $_dv['session_count'], $_dv['regular'], $_dv['promo'], $_dv['price_mode'], $_dv['promo_start'], $_dv['promo_end']);
+                    $ins_sd->execute(); $_sd_keep[] = (int)$ins_sd->insert_id; $ins_sd->close();
+                }
+            }
+            $_sd_keep_sql = implode(',', array_map('intval', $_sd_keep ?: [0]));
+            $del_sd = $conn->prepare("DELETE FROM service_durations WHERE service_id = ? AND id NOT IN ($_sd_keep_sql)");
             $del_sd->bind_param("i", $svc_logged_id);
             $del_sd->execute(); $del_sd->close();
-            foreach ($duration_variants as $_dv) {
-                $ins_sd = $conn->prepare("INSERT INTO service_durations (service_id, duration_minutes, session_count, regular_price, promo_price, price_mode, promo_start_time, promo_end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                $ins_sd->bind_param("iiiddsss", $svc_logged_id, $_dv['duration'], $_dv['session_count'], $_dv['regular'], $_dv['promo'], $_dv['price_mode'], $_dv['promo_start'], $_dv['promo_end']);
-                $ins_sd->execute(); $ins_sd->close();
-            }
+            relink_orphan_service_durations($conn, $svc_logged_id);
             // ──────────────────────────────────────────────────────────────
 
             // ── Save Package Components: delete-then-reinsert (same pattern

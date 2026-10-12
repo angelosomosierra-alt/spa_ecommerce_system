@@ -470,6 +470,30 @@ function get_commission_base_price(int $service_id, ?int $service_duration_id, f
     return $promo > 0 ? $promo : $fallback_price;
 }
 
+// Bookings whose duration option was deleted (older Services saves deleted
+// and re-inserted every option, and the FK sets the booking's id to NULL)
+// lose their promo price, commission base and session count. Re-link each
+// to the service's current option with the same minutes -- and the same
+// session count, read from its appointment_sessions rows (1 when it has
+// none). Only touches bookings with no option at all.
+function relink_orphan_service_durations($conn, ?int $service_id = null): int {
+    $where = $service_id ? ' AND a.service_id = ' . (int)$service_id : '';
+    try {
+    $conn->query("
+        UPDATE appointments a
+        JOIN service_durations sd
+          ON sd.service_id = a.service_id
+         AND sd.duration_minutes = a.duration_minutes
+         AND IFNULL(sd.session_count, 1) = GREATEST(1, (SELECT COUNT(*) FROM appointment_sessions x WHERE x.appointment_id = a.id))
+        LEFT JOIN service_durations cur ON cur.id = a.service_duration_id
+        SET a.service_duration_id = sd.id
+        WHERE cur.id IS NULL AND a.duration_minutes IS NOT NULL$where");
+    return $conn->affected_rows;
+    } catch (Throwable $e) {
+        return 0; // appointment_sessions not created yet on this install
+    }
+}
+
 // ─── PACKAGE SERVICES: commission-only components ────────────────────────────
 // A "Package" service bundles 2+ real services sold together under one combined
 // price (e.g. "Package 2" = Express Head Spa + Foot Massage). Therapist

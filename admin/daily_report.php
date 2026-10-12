@@ -538,6 +538,10 @@ $conn->query("
       AND d.net_sales <> ROUND(a.charged_price - (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25), 2)
 ");
 
+// Re-link bookings whose duration option was deleted by an older Services
+// save, so Promo Price / commission base read the right option again.
+relink_orphan_service_durations($conn);
+
 // ── SYNC: Package service commission ─────────────────────────────────────────
 // A Package (service_package_components) pays the therapist each component's
 // own rate on that component's own promo price (compute_package_commission()).
