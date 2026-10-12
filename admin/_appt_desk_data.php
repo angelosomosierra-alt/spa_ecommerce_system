@@ -111,6 +111,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                     'name' => $e['name'], 'service_id' => (int)$e['service_id'], 'price' => 0.0,
                     'res' => book_now_resource_type($e['category_name']), 'qual' => $qual((int)$e['service_id']),
                     'person' => $e['person_label'], 'rows' => [],
+                    'med' => service_is_medical($conn, (int)$e['service_id']),
                 ];
             }
             $addons[$key]['price'] += (float)$e['charged_price'];
@@ -158,6 +159,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                 'price' => (float)$r['charged_price'],
                 'res' => book_now_resource_type($r['category_name']),
                 'qual' => $qual((int)$r['service_id']),
+                'med' => service_is_medical($conn, (int)$r['service_id']),
             ],
             'slots' => $slots[$id] ?? [],
             'resource_id' => $r['resource_id'] !== null ? (int)$r['resource_id'] : null,

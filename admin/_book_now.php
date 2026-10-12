@@ -93,6 +93,7 @@ function book_now_data(mysqli $conn): array {
             'res'  => book_now_resource_type($s['category_name']),
             'durs' => $durs,
             'qual' => get_booking_qualified_therapist_ids($conn, $sid),
+            'med'  => service_is_medical($conn, $sid),
         ];
     }
 
@@ -228,20 +229,26 @@ function book_now_save(mysqli $conn, array $guests): array {
             }
             $start_dt = $today . ' ' . sprintf('%02d:%02d:00', intdiv($start, 60), $start % 60);
 
-            if (!in_array($therapist_id, get_booking_qualified_therapist_ids($conn, $service_id), true)) {
-                return ['ok' => false, 'message' => "The therapist picked for $gname's {$svc['name']} isn't trained for it."];
+            // Doctor / Nurse service: no therapist at all (see service_is_medical()).
+            $is_med = service_is_medical($conn, $service_id);
+            if ($is_med) {
+                $therapist_id = 0;
+            } else {
+                if (!in_array($therapist_id, get_booking_qualified_therapist_ids($conn, $service_id), true)) {
+                    return ['ok' => false, 'message' => "The therapist picked for $gname's {$svc['name']} isn't trained for it."];
+                }
+                $td = $conn->prepare("SELECT t.full_name FROM therapists t JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE() WHERE t.id = ? AND (ta.time_out IS NULL OR ta.time_out = '')");
+                $td->bind_param("i", $therapist_id); $td->execute();
+                $th = $td->get_result()->fetch_assoc(); $td->close();
+                if (!$th) return ['ok' => false, 'message' => "The therapist picked for $gname's {$svc['name']} is not on duty."];
             }
-            $td = $conn->prepare("SELECT t.full_name FROM therapists t JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE() WHERE t.id = ? AND (ta.time_out IS NULL OR ta.time_out = '')");
-            $td->bind_param("i", $therapist_id); $td->execute();
-            $th = $td->get_result()->fetch_assoc(); $td->close();
-            if (!$th) return ['ok' => false, 'message' => "The therapist picked for $gname's {$svc['name']} is not on duty."];
 
             $rs = $conn->prepare("SELECT name FROM service_resources WHERE id = ? AND is_active = 1");
             $rs->bind_param("i", $resource_id); $rs->execute();
             $room = $rs->get_result()->fetch_assoc(); $rs->close();
             if (!$room) return ['ok' => false, 'message' => "Pick a room for $gname's {$svc['name']}."];
 
-            if (!book_now_therapist_free($conn, $therapist_id, $start_dt, $minutes)) {
+            if (!$is_med && !book_now_therapist_free($conn, $therapist_id, $start_dt, $minutes)) {
                 return ['ok' => false, 'message' => "{$th['full_name']} was just booked at " . date('g:i A', strtotime($start_dt)) . ". Reopen Book Now to re-plan."];
             }
             if (!is_resource_available($resource_id, $start_dt, $minutes)) {
@@ -249,7 +256,7 @@ function book_now_save(mysqli $conn, array $guests): array {
             }
             foreach ($planned as $p) {
                 if ($start < $p['end'] && $p['start'] < $start + $minutes
-                    && ($p['therapist_id'] === $therapist_id || $p['resource_id'] === $resource_id)) {
+                    && (($therapist_id > 0 && $p['therapist_id'] === $therapist_id) || $p['resource_id'] === $resource_id)) {
                     return ['ok' => false, 'message' => 'Two services in this booking overlap on the same therapist or room.'];
                 }
             }
@@ -298,10 +305,12 @@ function book_now_save(mysqli $conn, array $guests): array {
                     $commission = round($base * (float)$cm_row['commission_percent'] / 100, 2);
                 }
             }
-            if (service_is_medical($conn, $L['service_id'])) $commission = 0.00; // doctor/nurse: paid by accounting
-            $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
-            $stmt->bind_param("iid", $appointment_id, $L['therapist_id'], $commission);
-            $stmt->execute(); $stmt->close();
+            // Doctor / Nurse service: no therapist row and no commission.
+            if ($L['therapist_id'] > 0 && !service_is_medical($conn, $L['service_id'])) {
+                $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
+                $stmt->bind_param("iid", $appointment_id, $L['therapist_id'], $commission);
+                $stmt->execute(); $stmt->close();
+            }
         }
         $conn->commit();
     } catch (Throwable $e) {

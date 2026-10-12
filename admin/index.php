@@ -304,11 +304,12 @@ function render_appt_calendar_html(mysqli $conn, int $year, int $month): string 
 }
 
 function render_appt_day_list_html(mysqli $conn, string $date_str): string {
+    service_is_medical($conn, 0); // makes sure services.is_medical exists
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_str)) $date_str = date('Y-m-d');
 
     $stmt = $conn->prepare("SELECT a.appointment_date, a.status,
             COALESCE(u.full_name, 'Unknown customer') AS full_name,
-            COALESCE(s.name, 'Unknown service') AS service_name,
+            COALESCE(s.name, 'Unknown service') AS service_name, IFNULL(s.is_medical, 0) AS is_medical,
             (SELECT GROUP_CONCAT(DISTINCT t.full_name SEPARATOR ', ')
              FROM appointment_therapists at2
              JOIN therapists t ON t.id = at2.therapist_id
@@ -337,7 +338,7 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
             <div style="flex:1;min-width:0;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($a['full_name']); ?></div>
                 <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($a['service_name']); ?></div>
-                <div style="font-size:0.68rem;color:var(--gray);"><?php echo htmlspecialchars($a['therapist_names'] ?: 'Unassigned'); ?></div>
+                <div style="font-size:0.68rem;color:var(--gray);"><?php echo htmlspecialchars($a['therapist_names'] ?: (!empty($a['is_medical']) ? 'Doctor / Nurse' : 'Unassigned')); ?></div>
             </div>
             <span class="badge badge-<?php echo $a['status']; ?>"><?php echo ucfirst($a['status']); ?></span>
         </div>
@@ -478,6 +479,7 @@ if (($_GET['ajax'] ?? '') === 'quick_book_pickers') {
     echo json_encode([
         'therapists' => $service_id > 0 ? quick_book_qualified_therapists($conn, $service_id) : [],
         'resources'  => quick_book_active_resources($conn),
+        'med'        => service_is_medical($conn, $service_id),
     ]);
     exit;
 }
@@ -568,7 +570,9 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
         echo json_encode(['ok' => false, 'message' => 'Please choose a valid date and time.']); exit;
     }
     if ($service_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a service.']); exit; }
-    if ($therapist_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a therapist.']); exit; }
+    // Doctor / Nurse service: no therapist (see service_is_medical()).
+    if (service_is_medical($conn, $service_id)) $therapist_id = 0;
+    elseif ($therapist_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a therapist.']); exit; }
     if ($resource_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a room, chair, or head spa.']); exit; }
     if (!in_array($rate_type, $valid_rate_types, true)) { $rate_type = 'regular'; }
     if ($rate_type === 'hotel' && $partner_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please select a hotel/partner for the Hotel rate.']); exit; }
@@ -689,11 +693,12 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
             }
         }
 
-        if (service_is_medical($conn, $service_id)) $commission = 0.00; // doctor/nurse: paid by accounting
-        $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
-        $stmt->bind_param("iid", $appointment_id, $therapist_id, $commission);
-        $stmt->execute();
-        $stmt->close();
+        if ($therapist_id > 0) { // Doctor / Nurse service: no therapist row, no commission
+            $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
+            $stmt->bind_param("iid", $appointment_id, $therapist_id, $commission);
+            $stmt->execute();
+            $stmt->close();
+        }
 
         $conn->commit();
         echo json_encode(['ok' => true, 'message' => 'Appointment booked.', 'appointment_id' => $appointment_id]);
@@ -1152,7 +1157,10 @@ function qbLoadPickers() {
         .then(function (r) { return r.json(); })
         .then(function (data) {
             var thSel = document.getElementById('qbTherapist');
-            thSel.innerHTML = '<option value="">Select therapist&hellip;</option>' + data.therapists.map(function (t) {
+            // A Doctor / Nurse service has no therapist to pick.
+            thSel.disabled = !!data.med;
+            thSel.innerHTML = data.med ? '<option value="0">Doctor / Nurse (no therapist needed)</option>' :
+                '<option value="">Select therapist&hellip;</option>' + data.therapists.map(function (t) {
                 return '<option value="' + t.id + '">' + t.full_name + (t.on_duty == 1 ? ' (on duty)' : '') + '</option>';
             }).join('');
             var rsSel = document.getElementById('qbResource');

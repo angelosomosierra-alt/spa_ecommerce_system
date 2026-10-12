@@ -1234,6 +1234,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $assigned_count = (int)$chk->get_result()->fetch_assoc()['covered']; $chk->close();
 
             $people_needed = (int)($appt['people_count'] ?? 1);
+            // Doctor / Nurse service: nobody from the therapist list is assigned.
+            if (service_is_medical($conn, (int)$appt['service_id'])) $assigned_count = max($assigned_count, $people_needed);
 
             if ($assigned_count === 0) {
                 $message = "Cannot approve — assign at least one therapist first.";
@@ -1375,7 +1377,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $ci_fc->bind_param("i", $appt_id); $ci_fc->execute();
             $ci_filled = (int)$ci_fc->get_result()->fetch_assoc()['c']; $ci_fc->close();
 
-            if ($ci_filled < $ci_people_needed) {
+            if ($ci_filled < $ci_people_needed && !service_is_medical($conn, (int)$appt['service_id'])) {
                 $message = 'Cannot check in — assign a therapist to all '
                          . $ci_people_needed . ' person slot(s) first ('
                          . $ci_filled . '/' . $ci_people_needed . ' assigned).';
@@ -1387,7 +1389,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 SELECT s.name AS svc_name
                 FROM appointment_extra_services aes
                 JOIN services s ON s.id = aes.service_id
-                WHERE aes.appointment_id = ? AND aes.therapist_id IS NULL");
+                WHERE aes.appointment_id = ? AND aes.therapist_id IS NULL AND s.is_medical = 0");
+            service_is_medical($conn, 0); // makes sure services.is_medical exists
             $et_q->bind_param("i", $appt_id); $et_q->execute();
             $_uc_extra = [];
             foreach ($et_q->get_result()->fetch_all(MYSQLI_ASSOC) as $_er)
@@ -1590,7 +1593,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $cp_unresolved = $conn->prepare("SELECT COUNT(*) AS c FROM appointment_therapists WHERE appointment_id=? AND therapist_id IS NULL");
             $cp_unresolved->bind_param("i", $appt_id); $cp_unresolved->execute();
             $cp_unresolved_count = (int)$cp_unresolved->get_result()->fetch_assoc()['c']; $cp_unresolved->close();
-            if ($cp_unresolved_count > 0) {
+            if ($cp_unresolved_count > 0 && !service_is_medical($conn, (int)$appt['service_id'])) {
                 $message = "Assign a specific therapist (not \"Any Available\") to every person slot before completing — commission can't be calculated otherwise.";
                 $message_type = "danger";
                 goto end_action;
@@ -2207,14 +2210,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $chk_slots->bind_param("i", $appt_id); $chk_slots->execute();
             $filled_slots = (int)$chk_slots->get_result()->fetch_assoc()['c']; $chk_slots->close();
 
-            if ($filled_slots < $people_needed) {
+            if ($filled_slots < $people_needed && !service_is_medical($conn, (int)$appt['service_id'])) {
                 header('Content-Type: application/json');
                 echo json_encode(['success' => false, 'message' => "Please select a therapist (or Any Available) for all {$people_needed} person slot(s) before approving."]);
                 exit();
             }
 
             // All extra services must have been explicitly set (therapist_selected=1).
-            $chk_extras = $conn->prepare("SELECT COUNT(*) AS total, SUM(therapist_selected) AS selected FROM appointment_extra_services WHERE appointment_id=?");
+            service_is_medical($conn, 0); // makes sure services.is_medical exists
+            $chk_extras = $conn->prepare("SELECT COUNT(*) AS total, SUM(aes.therapist_selected) AS selected FROM appointment_extra_services aes JOIN services s ON s.id = aes.service_id WHERE aes.appointment_id=? AND s.is_medical = 0");
             $chk_extras->bind_param("i", $appt_id); $chk_extras->execute();
             $extras_row = $chk_extras->get_result()->fetch_assoc(); $chk_extras->close();
             $extras_total    = (int)($extras_row['total'] ?? 0);

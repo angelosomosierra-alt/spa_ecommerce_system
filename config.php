@@ -478,11 +478,11 @@ function get_commission_base_price(int $service_id, ?int $service_duration_id, f
 // the full amount charged.
 function service_is_medical($conn, int $service_id): bool {
     static $cache = [], $ready = false;
-    if ($service_id <= 0) return false;
     if (!$ready) {
         $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS is_medical TINYINT(1) NOT NULL DEFAULT 0");
         $ready = true;
     }
+    if ($service_id <= 0) return false; // service_is_medical($conn, 0) = just ensure the column
     if (!array_key_exists($service_id, $cache)) {
         $q = $conn->prepare("SELECT is_medical FROM services WHERE id = ? LIMIT 1");
         $q->bind_param("i", $service_id); $q->execute();

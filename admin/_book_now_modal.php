@@ -213,7 +213,10 @@
     function canDo(t, it) { return t.on && it.svc.qual.indexOf(t.id) >= 0; }
     function thFree(id, t, d, busy) { return !busy.some(function (b) { return b.t.indexOf(id) >= 0 && ov(t, d, b.s, b.d); }); }
     function roomFree(id, t, d, busy) { return !busy.some(function (b) { return b.r === id && ov(t, d, b.s, b.d); }); }
+    // MED: a Doctor / Nurse service has no therapist -- it only needs a room.
+    var MED = -1;
     function pickTh(it, t, d, busy, rot, prefer) {
+        if (it.svc.med) return MED;
         if (it.lockT) return thFree(it.lockT, t, d, busy) ? it.lockT : null;
         var order = rot.slice();
         if (prefer && order.indexOf(prefer) >= 0) { order.splice(order.indexOf(prefer), 1); order.unshift(prefer); }
@@ -258,7 +261,7 @@
                     busy.push({ r: found.r, t: [found.t], s: found.s, d: d });
                     var ri = rot.indexOf(found.t); if (ri >= 0) { rot.splice(ri, 1); rot.push(found.t); }
                 }
-                guestEnd[gi] = found.s + d; lastTh[gi] = found.t; lastR[gi] = found.r;
+                guestEnd[gi] = found.s + d; if (found.t !== MED) lastTh[gi] = found.t; lastR[gi] = found.r;
             });
         }
         return { lines: out, wait: wait, firstWait: firstWait, end: Math.max.apply(null, guestEnd.concat([FIRST])) };
@@ -403,9 +406,11 @@
                     '<span class="sv"><b>' + esc(it.svc.name) + '</b><small>' + it.dur.m + ' min · ' + pesoShort(it.dur.p) + '</small></span>' +
                     '<span><button class="bn-ib" type="button" title="Move up" data-mv="' + gi + ',' + idx + ',-1">↑</button><button class="bn-ib" type="button" title="Move down" data-mv="' + gi + ',' + idx + ',1">↓</button><button class="bn-ib" type="button" title="Remove" data-del="' + gi + ',' + idx + '">✕</button></span>' +
                     '<span class="bn-assign">' +
-                        '<span class="bn-pick"><button class="bn-pk' + (it.lockT ? ' locked' : '') + '" type="button" data-open="t' + it.key + '"><span class="l">Therapist</span>' + (th ? esc(th.name) : '<span class="none">none free</span>') + (it.lockT ? ' 🔒' : '') + '</button>' + (S.open === 't' + it.key ? thMenu(it, L) : '') + '</span>' +
+                        (it.svc.med
+                            ? '<span class="bn-pick"><button class="bn-pk" type="button" disabled title="Done by a doctor or nurse — no therapist needed"><span class="l">Done by</span>Doctor / Nurse</button></span>'
+                            : '<span class="bn-pick"><button class="bn-pk' + (it.lockT ? ' locked' : '') + '" type="button" data-open="t' + it.key + '"><span class="l">Therapist</span>' + (th ? esc(th.name) : '<span class="none">none free</span>') + (it.lockT ? ' 🔒' : '') + '</button>' + (S.open === 't' + it.key ? thMenu(it, L) : '') + '</span>') +
                         '<span class="bn-pick"><button class="bn-pk' + (it.lockR ? ' locked' : '') + '" type="button" data-open="r' + it.key + '"><span class="l">Room</span>' + (rm ? esc(rm.name) : '<span class="none">none free</span>') + (it.lockR ? ' 🔒' : '') + '</button>' + (S.open === 'r' + it.key ? roomMenu(it, L) : '') + '</span>' +
-                        (!it.lockT && !it.lockR && th && rm ? '<span class="bn-auto">AUTO</span>' : '') +
+                        (!it.lockT && !it.lockR && (th || it.svc.med) && rm ? '<span class="bn-auto">AUTO</span>' : '') +
                         (L.waited > 0 ? '<span class="bn-wait">⚠ waits ' + L.waited + ' min</span>' : '') +
                     '</span></div>';
             }).join('') : '<div class="bn-empty">No services yet. Pick from the list on the left.</div>';
@@ -497,7 +502,7 @@
             return {
                 name: g.name.trim(),
                 items: (PLAN.lines[gi] || []).map(function (L) {
-                    return { service_id: L.item.svc.id, duration_id: L.item.dur.id, therapist_id: L.t, resource_id: L.r, start: L.s };
+                    return { service_id: L.item.svc.id, duration_id: L.item.dur.id, therapist_id: L.t === MED ? 0 : L.t, resource_id: L.r, start: L.s };
                 })
             };
         });

@@ -218,10 +218,10 @@
     function hasSlotRow(a, n) { return a.slots.some(function (s) { return s.slot === n; }); }
     function missing(a, strict) {
         var m = [];
-        for (var n = 1; n <= a.people; n++) {
+        for (var n = 1; n <= a.people && !a.service.med; n++) {
             if (strict ? !slotOf(a, n) : !hasSlotRow(a, n)) m.push('therapist' + (a.people > 1 ? ' for person ' + n : ''));
         }
-        a.addons.forEach(function (x) { if (x.rows.some(function (r) { return strict ? !r.therapist_id : !(r.selected || r.therapist_id); })) m.push('therapist for ' + x.name); });
+        a.addons.forEach(function (x) { if (!x.med && x.rows.some(function (r) { return strict ? !r.therapist_id : !(r.selected || r.therapist_id); })) m.push('therapist for ' + x.name); });
         if (!a.resource_id && !a.online) m.push('room');
         return m;
     }
@@ -362,11 +362,12 @@
         var a = byId(S.open); if (!a) return;
         var b = a.bill, na = nextAction(a), locked = a.status === 'completed';
         var stepIdx = { pending: 0, assigned: 1, approved: 2, completed: 3 }[a.status];
-        var steps = ['Booked', 'Therapist set', 'Checked in', 'Done'].map(function (l, i) { return '<span class="dk-step ' + (i < stepIdx ? 'done' : i === stepIdx ? 'now' : '') + '">' + l + '</span>'; }).join('');
+        var steps = ['Booked', a.service.med ? 'Ready' : 'Therapist set', 'Checked in', 'Done'].map(function (l, i) { return '<span class="dk-step ' + (i < stepIdx ? 'done' : i === stepIdx ? 'now' : '') + '">' + l + '</span>'; }).join('');
 
         // Main service: therapist per person + room + package sessions
-        var slotsHtml = '';
-        for (var n = 1; n <= a.people; n++) {
+        // A Doctor / Nurse service has no therapist to pick.
+        var slotsHtml = a.service.med ? '<div><label class="dk-lbl">Done by</label><div class="dk-hint">Doctor / Nurse</div></div>' : '';
+        for (var n = 1; n <= a.people && !a.service.med; n++) {
             slotsHtml += '<div><label class="dk-lbl">Therapist' + (a.people > 1 ? ' · person ' + n : '') + '</label>' +
                 (locked ? '<div class="dk-hint">' + esc(TH[slotOf(a, n)] ? TH[slotOf(a, n)].name : '—') + '</div>' : therSelect(a.service.qual, slotOf(a, n), 'data-slot="' + n + '"', a.status === 'pending')) + '</div>';
         }
@@ -398,7 +399,7 @@
                     (!locked && r.status !== 'completed' && a.status === 'approved' ? '<button type="button" class="dk-btn ok" data-xdone="' + r.id + '">Mark done</button>' : '') + '</div>';
             }).join('') + '</div>' : '';
             return '<div class="dk-svc"><div class="dk-svch"><span><b>' + esc(x.name) + '</b> <small>add-on' + (x.rows.length > 1 ? ' · ' + x.rows.length + ' sessions' : '') + (x.person ? ' · ' + esc(x.person) : '') + '</small></span><span class="dk-amt">' + peso(x.price) + '</span></div>' +
-                (locked ? '<div class="dk-hint">' + esc(TH[th] ? TH[th].name : '—') + '</div>' : '<div><label class="dk-lbl">Therapist</label>' + therSelect(x.qual, th, 'data-xth="' + xi + '"', a.status === 'pending') + '</div>') +
+                (x.med ? '<div><label class="dk-lbl">Done by</label><div class="dk-hint">Doctor / Nurse</div></div>' : locked ? '<div class="dk-hint">' + esc(TH[th] ? TH[th].name : '—') + '</div>' : '<div><label class="dk-lbl">Therapist</label>' + therSelect(x.qual, th, 'data-xth="' + xi + '"', a.status === 'pending') + '</div>') +
                 rows +
                 (!locked && !x.rows.some(function (r) { return r.paid || r.status === 'completed'; }) ? '<button type="button" class="dk-btn danger" data-xrm="' + xi + '" style="align-self:flex-start;">Remove add-on</button>' : '') +
                 '</div>';
