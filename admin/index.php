@@ -359,8 +359,18 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
 function render_quick_book_services_html(mysqli $conn): string {
     $services = $conn->query("SELECT s.*, c.name AS category_name FROM services s LEFT JOIN categories c ON s.category_id = c.id WHERE s.deleted_at IS NULL ORDER BY c.name, s.name")->fetch_all(MYSQLI_ASSOC);
 
+    // Duration options (incl. multi-session packages): one row each, so the
+    // receptionist picks the exact length / number of sessions and price.
+    $durs_by_svc = [];
+    if ($conn->query("SHOW TABLES LIKE 'service_durations'")->num_rows > 0) {
+        foreach ($conn->query("SELECT * FROM service_durations ORDER BY service_id, IFNULL(session_count, 1), duration_minutes")->fetch_all(MYSQLI_ASSOC) as $d) {
+            $durs_by_svc[(int)$d['service_id']][] = $d;
+        }
+    }
+
     $by_cat = [];
     foreach ($services as $svc) {
+        $svc['durs'] = $durs_by_svc[(int)$svc['id']] ?? [null];
         $key = $svc['category_id'] ? (int)$svc['category_id'] : 0;
         if (!isset($by_cat[$key])) $by_cat[$key] = ['label' => $svc['category_name'] ?: 'Other', 'items' => []];
         $by_cat[$key]['items'][] = $svc;
@@ -385,18 +395,25 @@ function render_quick_book_services_html(mysqli $conn): string {
             <?php foreach ($by_cat as $cat_id => $cat_data): ?>
             <section id="qb-cat-<?php echo $cat_id; ?>" data-cat-section="<?php echo $cat_id; ?>">
                 <h4 class="qb-svc-cat-title"><?php echo htmlspecialchars($cat_data['label']); ?></h4>
-                <?php foreach ($cat_data['items'] as $svc): ?>
+                <?php foreach ($cat_data['items'] as $svc): foreach ($svc['durs'] as $d):
+                    $d_min   = $d ? (int)$d['duration_minutes'] : (int)$svc['session_time'];
+                    $d_price = $d ? (float)get_active_duration_price($d)['price'] : (float)$svc['price'];
+                    $d_n     = $d ? max(1, (int)($d['session_count'] ?? 1)) : 1;
+                    $d_label = $d_min . ' min' . ($d_n > 1 ? " × {$d_n} sessions" : '');
+                ?>
                 <div class="qb-svc-row" data-service-id="<?php echo $svc['id']; ?>"
+                     data-duration-id="<?php echo $d ? (int)$d['id'] : ''; ?>"
+                     data-sessions="<?php echo $d_n; ?>"
                      data-service-name="<?php echo htmlspecialchars($svc['name'], ENT_QUOTES, 'UTF-8'); ?>"
-                     data-price="<?php echo (float)$svc['price']; ?>"
-                     data-minutes="<?php echo (int)$svc['session_time']; ?>"
+                     data-price="<?php echo $d_price; ?>"
+                     data-minutes="<?php echo $d_min; ?>"
                      data-home-price="<?php echo (float)($svc['home_service_price'] ?? 0); ?>"
                      onclick="qbSelectService(this)" ondblclick="qbSelectService(this); qbNext();">
                     <span class="qb-svc-row-name"><?php echo htmlspecialchars($svc['name']); ?></span>
-                    <span class="qb-svc-row-meta"><?php echo (int)$svc['session_time']; ?> min</span>
-                    <span class="qb-svc-row-price">₱<?php echo number_format($svc['price'], 2); ?></span>
+                    <span class="qb-svc-row-meta"><?php echo htmlspecialchars($d_label); ?></span>
+                    <span class="qb-svc-row-price">₱<?php echo number_format($d_price, 2); ?></span>
                 </div>
-                <?php endforeach; ?>
+                <?php endforeach; endforeach; ?>
             </section>
             <?php endforeach; ?>
             <div id="qbSvcNoResults" class="qb-svc-no-results" style="display:none;">No services match your search.</div>
@@ -548,6 +565,7 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $date           = $_POST['date'] ?? '';
     $time           = $_POST['time'] ?? '';
     $service_id     = (int)($_POST['service_id'] ?? 0);
+    $duration_id    = (int)($_POST['duration_id'] ?? 0);
     $therapist_id   = (int)($_POST['therapist_id'] ?? 0);
     $resource_id    = (int)($_POST['resource_id'] ?? 0);
     $rate_type      = $_POST['rate_type'] ?? 'regular';
@@ -614,11 +632,22 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $stmt->close();
     if (!$service) { echo json_encode(['ok' => false, 'message' => 'That service is no longer available.']); exit; }
 
+    // The duration option picked (length, number of sessions, price).
+    $dur_row = null; $qb_sessions = 1;
+    if ($duration_id > 0) {
+        $sd = $conn->prepare("SELECT * FROM service_durations WHERE id = ? AND service_id = ?");
+        $sd->bind_param("ii", $duration_id, $service_id); $sd->execute();
+        $dur_row = $sd->get_result()->fetch_assoc(); $sd->close();
+        if (!$dur_row) { echo json_encode(['ok' => false, 'message' => 'That duration option is no longer available. Reopen the form and pick again.']); exit; }
+        $qb_sessions = max(1, (int)($dur_row['session_count'] ?? 1));
+    }
+    $regular_rate = $dur_row ? (float)get_active_duration_price($dur_row)['price'] : (float)$service['price'];
+
     switch ($rate_type) {
         case 'home':       $charged_price = (float)($service['home_service_price'] ?? 0); break;
-        case 'hotel':      $charged_price = quick_book_partner_rate($conn, $partner_id, $service_id) ?? (float)$service['price']; break;
+        case 'hotel':      $charged_price = quick_book_partner_rate($conn, $partner_id, $service_id) ?? $regular_rate; break;
         case 'influencer': $charged_price = 0.00; break;
-        default:           $charged_price = (float)$service['price']; break;
+        default:           $charged_price = $regular_rate; break;
     }
 
     $discount_amount_calc = 0.00;
@@ -636,7 +665,8 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $advance_payment = min($advance_payment, $charged_price);
     $final_amount = max(0.00, $charged_price - $discount_amount_calc - $advance_payment);
 
-    $duration_minutes  = (int)$service['session_time'];
+    $duration_minutes  = $dur_row ? (int)$dur_row['duration_minutes'] : (int)$service['session_time'];
+    $qb_duration_id    = $dur_row ? (int)$dur_row['id'] : null;
     $appointment_date  = $date . ' ' . $time . ':00';
     $svc_type_val      = ($rate_type === 'home') ? 'home' : 'onsite';
     $appt_partner_id   = ($rate_type === 'hotel' && $partner_id > 0) ? $partner_id : null;
@@ -660,11 +690,25 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
         $order_item_id = $stmt->insert_id;
         $stmt->close();
 
-        $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method, resource_id, duration_minutes) VALUES (?, ?, ?, ?, 'assigned', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("iiisssidsdssii", $walkin_user_id, $service_id, $order_item_id, $appointment_date, $svc_type_val, $rate_type, $appt_partner_id, $charged_price, $customer_note, $advance_payment, $adv_date, $adv_pm_val, $resource_id, $duration_minutes);
+        $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method, resource_id, duration_minutes, service_duration_id) VALUES (?, ?, ?, ?, 'assigned', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("iiisssidsdssiii", $walkin_user_id, $service_id, $order_item_id, $appointment_date, $svc_type_val, $rate_type, $appt_partner_id, $charged_price, $customer_note, $advance_payment, $adv_date, $adv_pm_val, $resource_id, $duration_minutes, $qb_duration_id);
         $stmt->execute();
         $appointment_id = $stmt->insert_id;
         $stmt->close();
+
+        // Multi-session package: Session 1 at this booking's time; the rest
+        // are scheduled later from Appointments (same rows Walk-in creates).
+        if ($qb_sessions > 1) {
+            $s1_tid = $therapist_id > 0 ? $therapist_id : null;
+            $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, session_date, therapist_id, duration_minutes, status) VALUES (?, 1, ?, ?, ?, 'scheduled')");
+            $ss->bind_param("isii", $appointment_id, $appointment_date, $s1_tid, $duration_minutes);
+            $ss->execute(); $ss->close();
+            for ($sn = 2; $sn <= $qb_sessions; $sn++) {
+                $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, duration_minutes, status) VALUES (?, ?, ?, 'not_scheduled')");
+                $ss->bind_param("iii", $appointment_id, $sn, $duration_minutes);
+                $ss->execute(); $ss->close();
+            }
+        }
 
         $commission = 0.00;
         // Package service (bundles 2+ real services under one combined price,
@@ -672,7 +716,10 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
         // the SUM of each component's own standalone commission, not one rate
         // applied to this service's own price.
         $qb_pkg_components = get_package_components($conn, $service_id);
-        if (!empty($qb_pkg_components)) {
+        if ($qb_sessions > 1) {
+            // Multi-session package: ₱0 now; each session adds its own
+            // commission when it's completed (complete_session).
+        } elseif (!empty($qb_pkg_components)) {
             $commission = compute_package_commission($conn, $service_id, $therapist_id)['total'];
         } else {
             $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
@@ -687,7 +734,7 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
                     $commission = round((float)$service['price'] * (float)$cm_row['commission_percent'] / 100, 2);
                 } else {
                     $disc_frac = $charged_price > 0 ? ($discount_amount_calc / $charged_price) : 0.0;
-                    $comm_base = get_commission_base_price($service_id, null, $charged_price);
+                    $comm_base = get_commission_base_price($service_id, $qb_duration_id, $charged_price);
                     $commission = round($comm_base * (1 - $disc_frac) * (float)$cm_row['commission_percent'] / 100, 2);
                 }
             }
@@ -1147,6 +1194,8 @@ function qbSelectService(el) {
     qbState.price         = parseFloat(el.getAttribute('data-price'));
     qbState.home_price    = parseFloat(el.getAttribute('data-home-price'));
     qbState.minutes        = parseInt(el.getAttribute('data-minutes'), 10);
+    qbState.duration_id    = el.getAttribute('data-duration-id') || '';
+    qbState.sessions       = parseInt(el.getAttribute('data-sessions'), 10) || 1;
 }
 
 function qbLoadPickers() {
@@ -1210,7 +1259,7 @@ function qbBuildReviewSummary() {
     var timeLabel = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
     document.getElementById('qbReviewSummary').innerHTML =
         '<div class="qb-summary-row"><span>Date &amp; Time</span><strong>' + dateLabel + ', ' + timeLabel + '</strong></div>' +
-        '<div class="qb-summary-row"><span>Service</span><strong>' + qbState.service_name + ' (' + qbState.minutes + ' min)</strong></div>' +
+        '<div class="qb-summary-row"><span>Service</span><strong>' + qbState.service_name + ' (' + qbState.minutes + ' min' + (qbState.sessions > 1 ? ' × ' + qbState.sessions + ' sessions — session 1 now, the rest scheduled later in Appointments' : '') + ')</strong></div>' +
         '<div class="qb-summary-row"><span>Therapist</span><strong>' + qbState.therapist_name + '</strong></div>' +
         '<div class="qb-summary-row"><span>Room</span><strong>' + qbState.resource_name + '</strong></div>' +
         '<div class="qb-summary-row"><span>Rate Type</span><strong>' + qbRateTypeLabel() + (qbState.partner_name ? ' — ' + qbState.partner_name : '') + '</strong></div>';
@@ -1290,7 +1339,7 @@ function qbSubmit() {
     confirmBtn.textContent = 'Booking…';
 
     var body = new URLSearchParams({
-        date: qbState.date, time: qbState.time, service_id: qbState.service_id,
+        date: qbState.date, time: qbState.time, service_id: qbState.service_id, duration_id: qbState.duration_id || '',
         therapist_id: qbState.therapist_id, resource_id: qbState.resource_id,
         rate_type: qbState.rate_type, partner_id: qbState.partner_id,
         customer_name: qbState.customer_name, phone: qbState.phone, customer_note: qbState.customer_note,

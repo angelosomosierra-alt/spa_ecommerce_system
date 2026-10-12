@@ -349,7 +349,7 @@
         var list = D.services.filter(function (s) { return (S.cat === 'All' || s.cat === S.cat) && (!q || s.name.toLowerCase().indexOf(q) >= 0); });
         $('bnSvcs').innerHTML = list.length ? list.map(function (s) {
             return '<div class="bn-svc"><div class="nm">' + esc(s.name) + '<span>' + esc(s.cat) + '</span></div><div class="bn-durs">' +
-                s.durs.map(function (d, di) { return '<button type="button" class="bn-dur" data-s="' + s.id + '" data-d="' + di + '">+ ' + d.m + ' min · ' + pesoShort(d.p) + (d.promo ? ' promo' : '') + '</button>'; }).join('') +
+                s.durs.map(function (d, di) { return '<button type="button" class="bn-dur" data-s="' + s.id + '" data-d="' + di + '"' + (d.n > 1 ? ' title="' + d.n + '-session package: session 1 now, the rest scheduled later in Appointments"' : '') + '>+ ' + d.m + ' min' + (d.n > 1 ? ' × ' + d.n + ' sessions' : '') + ' · ' + pesoShort(d.p) + (d.promo ? ' promo' : '') + '</button>'; }).join('') +
                 (S.guests.length > 1 ? '<button type="button" class="bn-dur all" data-s="' + s.id + '" data-d="0" data-all="1">+ All guests</button>' : '') +
                 '</div></div>';
         }).join('') : '<p class="bn-hint">No service matches “' + esc($('bnQ').value) + '”.</p>';
@@ -403,7 +403,7 @@
                 var idx = g.items.indexOf(it);
                 return '<div class="bn-line">' +
                     '<span class="tm">' + fmt(L.s) + '<br><span>–' + fmt(L.s + it.dur.m) + '</span></span>' +
-                    '<span class="sv"><b>' + esc(it.svc.name) + '</b><small>' + it.dur.m + ' min · ' + pesoShort(it.dur.p) + '</small></span>' +
+                    '<span class="sv"><b>' + esc(it.svc.name) + '</b><small>' + (it.dur.n > 1 ? 'Session 1 of ' + it.dur.n + ' · ' : '') + it.dur.m + ' min · ' + pesoShort(it.dur.p) + (it.dur.n > 1 ? ' package' : '') + '</small></span>' +
                     '<span><button class="bn-ib" type="button" title="Move up" data-mv="' + gi + ',' + idx + ',-1">↑</button><button class="bn-ib" type="button" title="Move down" data-mv="' + gi + ',' + idx + ',1">↓</button><button class="bn-ib" type="button" title="Remove" data-del="' + gi + ',' + idx + '">✕</button></span>' +
                     '<span class="bn-assign">' +
                         (it.svc.med
@@ -447,7 +447,7 @@
             var sub = g.items.reduce(function (a, it) { return a + it.dur.p; }, 0);
             total += sub; n += g.items.length;
             return '<div class="bn-brow" style="--gc:' + GC[gi % 4] + '"><div class="t"><span><i></i>' + esc(gname(g, gi)) + '</span><span>' + peso(sub) + '</span></div>' +
-                g.items.map(function (it) { return '<div class="ln"><span>' + esc(it.svc.name) + ' · ' + it.dur.m + ' min</span><span>' + pesoShort(it.dur.p) + '</span></div>'; }).join('') +
+                g.items.map(function (it) { return '<div class="ln"><span>' + esc(it.svc.name) + ' · ' + (it.dur.n > 1 ? it.dur.n + ' sessions × ' : '') + it.dur.m + ' min</span><span>' + pesoShort(it.dur.p) + '</span></div>'; }).join('') +
                 '</div>';
         }).join('');
         $('bnSum').innerHTML =

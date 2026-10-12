@@ -61,14 +61,15 @@ function book_now_data(mysqli $conn): array {
         ORDER BY c.name, s.name
     ")->fetch_all(MYSQLI_ASSOC);
 
-    // Duration options. Multi-session packages (session_count > 1) are left
-    // out: Book Now is for a visit happening now, not a package to schedule.
+    // Duration options, including multi-session packages (session_count > 1):
+    // 'm' is one session's minutes, 'p' the whole package price, 'n' the
+    // number of sessions. Book Now places Session 1 now; the rest are
+    // scheduled later from Appointments.
     $durations_by_svc = [];
     if ($conn->query("SHOW TABLES LIKE 'service_durations'")->num_rows > 0) {
         $has_sc = $conn->query("SHOW COLUMNS FROM service_durations LIKE 'session_count'")->num_rows > 0;
-        $rows = $conn->query("SELECT * FROM service_durations"
-            . ($has_sc ? " WHERE session_count <= 1" : "")
-            . " ORDER BY service_id, duration_minutes")->fetch_all(MYSQLI_ASSOC);
+        $rows = $conn->query("SELECT * FROM service_durations ORDER BY service_id, "
+            . ($has_sc ? "session_count, " : "") . "duration_minutes")->fetch_all(MYSQLI_ASSOC);
         foreach ($rows as $d) {
             $active = get_active_duration_price($d);
             $durations_by_svc[(int)$d['service_id']][] = [
@@ -76,6 +77,7 @@ function book_now_data(mysqli $conn): array {
                 'm'     => (int)$d['duration_minutes'],
                 'p'     => (float)$active['price'],
                 'promo' => (bool)$active['is_promo_active'],
+                'n'     => max(1, (int)($d['session_count'] ?? 1)),
             ];
         }
     }
@@ -216,10 +218,12 @@ function book_now_save(mysqli $conn, array $guests): array {
                 $sd = $conn->prepare("SELECT * FROM service_durations WHERE id = ? AND service_id = ?");
                 $sd->bind_param("ii", $duration_id, $service_id); $sd->execute();
                 $dur_row = $sd->get_result()->fetch_assoc(); $sd->close();
-                if (!$dur_row || (int)($dur_row['session_count'] ?? 1) > 1) return ['ok' => false, 'message' => "{$svc['name']}: that duration option is no longer available."];
+                if (!$dur_row) return ['ok' => false, 'message' => "{$svc['name']}: that duration option is no longer available."];
+                $sessions = max(1, (int)($dur_row['session_count'] ?? 1));
                 $minutes = (int)$dur_row['duration_minutes'];
                 $price   = (float)get_active_duration_price($dur_row)['price'];
             } else {
+                $sessions = 1;
                 $minutes = max(1, (int)$svc['session_time']);
                 $price   = (float)$svc['price'];
             }
@@ -266,6 +270,7 @@ function book_now_save(mysqli $conn, array $guests): array {
                 'guest' => $gname, 'service_id' => $service_id, 'duration_id' => $duration_id,
                 'therapist_id' => $therapist_id, 'resource_id' => $resource_id,
                 'start_dt' => $start_dt, 'minutes' => $minutes, 'price' => $price,
+                'sessions' => $sessions,
             ];
         }
     }
@@ -291,10 +296,29 @@ function book_now_save(mysqli $conn, array $guests): array {
             $stmt->bind_param("iiisdiii", $walkin_user_id, $L['service_id'], $order_item_id, $L['start_dt'], $L['price'], $L['resource_id'], $L['minutes'], $L['duration_id']);
             $stmt->execute(); $appointment_id = $stmt->insert_id; $stmt->close();
 
+            // Multi-session package: Session 1 is scheduled now with this
+            // booking's time and therapist; the other sessions wait to be
+            // scheduled from Appointments (same rows Walk-in creates).
+            if ($L['sessions'] > 1) {
+                $s1_tid = $L['therapist_id'] > 0 ? $L['therapist_id'] : null;
+                $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, session_date, therapist_id, duration_minutes, status) VALUES (?, 1, ?, ?, ?, 'scheduled')");
+                $ss->bind_param("isii", $appointment_id, $L['start_dt'], $s1_tid, $L['minutes']);
+                $ss->execute(); $ss->close();
+                for ($sn = 2; $sn <= $L['sessions']; $sn++) {
+                    $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, duration_minutes, status) VALUES (?, ?, ?, 'not_scheduled')");
+                    $ss->bind_param("iii", $appointment_id, $sn, $L['minutes']);
+                    $ss->execute(); $ss->close();
+                }
+            }
+
             // Commission: same rules as the classic Quick Book (regular rate,
-            // no booking-time discount). Packages sum their components.
+            // no booking-time discount). Packages sum their components. A
+            // multi-session package starts at ₱0: each session adds its own
+            // commission when it's completed (complete_session).
             $commission = 0.00;
-            if (!empty(get_package_components($conn, $L['service_id']))) {
+            if ($L['sessions'] > 1) {
+                // nothing yet
+            } elseif (!empty(get_package_components($conn, $L['service_id']))) {
                 $commission = compute_package_commission($conn, $L['service_id'], $L['therapist_id'])['total'];
             } else {
                 $cm = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
