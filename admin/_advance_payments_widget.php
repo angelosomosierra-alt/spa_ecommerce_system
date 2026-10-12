@@ -207,6 +207,7 @@ $apw_pkg_remaining = $conn->query("
     LEFT JOIN users u ON u.id = a.user_id
     WHERE o.payment_status = 'paid'
       AND a.status != 'cancelled'
+      AND a.created_at < '" . PKG_SPLIT_FROM . "'
     GROUP BY a.id
     HAVING SUM(aps.status = 'completed' AND DATE(aps.completed_at) = CURDATE()) > 0
        AND done_sessions < total_sessions
@@ -218,6 +219,43 @@ foreach ($apw_pkg_remaining as &$_pr) {
     $_pr['remaining_amount']   = round((float)$_pr['charged_price'] * $_left / max(1, (int)$_pr['total_sessions']), 2);
 }
 unset($_pr);
+
+// Packages booked from PKG_SPLIT_FROM on: the later sessions' share is an
+// Advance Payment received on Session 1's day (same amount the Daily Report
+// lists — pkg_prepaid_later_sessions()), shown as soon as the order is paid.
+$_apw_new_pkg = $conn->query("
+    SELECT a.id, a.charged_price, a.advance_payment AS dp, a.advance_payment_date AS dp_date,
+           sd.session_count, s.name AS service_name,
+           (SELECT GROUP_CONCAT(x.session_number) FROM appointment_sessions x
+             WHERE x.appointment_id = a.id AND x.session_number > 1 AND x.status = 'completed'
+               AND DATE(x.completed_at) = DATE(s1.session_date)) AS same_day_done,
+
+           (SELECT COUNT(*) FROM appointment_sessions x WHERE x.appointment_id = a.id AND x.status = 'completed') AS done_sessions,
+           COALESCE(NULLIF(o.paymongo_method, ''), o.payment_method) AS pay_method,
+           COALESCE(o.customer_name, u.full_name) AS customer_name,
+           o.discount_amount, IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount
+    FROM appointments a
+    JOIN appointment_sessions s1 ON s1.appointment_id = a.id AND s1.session_number = 1
+    JOIN service_durations sd ON sd.id = a.service_duration_id AND sd.session_count > 1
+    JOIN services s ON s.id = a.service_id
+    JOIN order_items oi ON oi.id = a.order_item_id
+    JOIN orders o ON o.id = oi.order_id
+    LEFT JOIN users u ON u.id = a.user_id
+    WHERE DATE(s1.session_date) = CURDATE() AND o.payment_status = 'paid'
+      AND a.created_at >= '" . PKG_SPLIT_FROM . "' AND a.status != 'cancelled' AND a.rate_type != 'influencer'
+    ORDER BY a.id DESC
+")->fetch_all(MYSQLI_ASSOC);
+foreach ($_apw_new_pkg as $_np) {
+    $_amt = pkg_prepaid_later_sessions($_np, date('Y-m-d'));
+    if ($_amt <= 0) continue;
+    $_np['total_sessions']     = (int)$_np['session_count'];
+    $_np['remaining_sessions'] = (int)$_np['session_count'] - 1;
+    $_np['done_sessions']      = (int)$_np['done_sessions'];
+    $_np['remaining_amount']   = $_amt;
+    $_N = (int)$_np['session_count'];
+    $_np['label'] = $_np['service_name'] . ' — Session' . ($_N > 2 ? 's 2–' . $_N : ' 2') . ' of ' . $_N . ' paid in advance';
+    $apw_pkg_remaining[] = $_np;
+}
 
 $apw_voucher_total = array_sum(array_column($apw_vouchers, 'amount'));
 // Advance Payment (deposits for a future visit) and Multi-session Paid
@@ -437,7 +475,7 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total + $apw_session_tot
 
                     <?php foreach ($apw_pkg_remaining as $p):
                         $_done = (int)$p['done_sessions']; $_tot = (int)$p['total_sessions']; $_left = (int)$p['remaining_sessions'];
-                        $_lbl = $p['service_name'] . ' — ' . $_done . ' of ' . $_tot . ' done, ' . $_left . ' session' . ($_left > 1 ? 's' : '') . ' remaining';
+                        $_lbl = $p['label'] ?? ($p['service_name'] . ' — ' . $_done . ' of ' . $_tot . ' done, ' . $_left . ' session' . ($_left > 1 ? 's' : '') . ' remaining');
                     ?>
                     <div class="apw-entry" data-type="session" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;background:var(--bg3);border-radius:7px;border:1px solid var(--border2);">
                         <div style="flex:1;min-width:0;">

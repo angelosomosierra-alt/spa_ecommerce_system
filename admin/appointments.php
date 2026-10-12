@@ -2601,12 +2601,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
             // when completed same-day. Only when completed on a LATER calendar
             // date does it need its own separate commission-only report row.
             $cs_today = date('Y-m-d');
-            $cs_bd_q = $conn->prepare("SELECT DATE(created_at) AS booking_date FROM appointments WHERE id=?");
+            $cs_bd_q = $conn->prepare("SELECT DATE(created_at) AS booking_date, created_at FROM appointments WHERE id=?");
             $cs_bd_q->bind_param("i", $cs_appt_id); $cs_bd_q->execute();
-            $cs_booking_date = $cs_bd_q->get_result()->fetch_assoc()['booking_date'] ?? $cs_today;
+            $cs_bd_row = $cs_bd_q->get_result()->fetch_assoc();
+            $cs_booking_date = $cs_bd_row['booking_date'] ?? $cs_today;
             $cs_bd_q->close();
+            // Packages booked from PKG_SPLIT_FROM on get a full sales row per
+            // session in the Daily Report (with this commission), so no
+            // separate commission-only row.
+            $cs_split = ($cs_bd_row['created_at'] ?? '') >= PKG_SPLIT_FROM;
 
-            if ($cs_today !== $cs_booking_date) {
+            if ($cs_today !== $cs_booking_date && !$cs_split) {
                 $cs_th_name = null;
                 if ($cs_tid) {
                     $thq = $conn->prepare("SELECT full_name FROM therapists WHERE id=? LIMIT 1");

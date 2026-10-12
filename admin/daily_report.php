@@ -744,12 +744,13 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
                 -- next time this booking date's report is opened after the order
                 -- clears payment, this same WHERE now matches and it's picked up
                 -- automatically, dated on its original booking date.
-                (sd.session_count > 1 AND DATE(a.created_at) = ? AND o.payment_status = 'paid')
+                (sd.session_count > 1 AND DATE(a.created_at) = ? AND o.payment_status = 'paid' AND a.created_at < ?)
               )
         GROUP BY a.id
         ORDER BY a.appointment_date ASC
     ");
-    $aq->bind_param("ss", $report_date, $report_date); $aq->execute();
+    $_pkg_from_i = PKG_SPLIT_FROM;
+    $aq->bind_param("sss", $report_date, $report_date, $_pkg_from_i); $aq->execute();
     $imp_appts = $aq->get_result()->fetch_all(MYSQLI_ASSOC); $aq->close();
     if (empty($imp_appts)) return;
 
@@ -851,6 +852,97 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $ins->execute();
         if ($row_order === null) {
             $new_id = $conn->insert_id;
+            $conn->query("UPDATE daily_report_spreadsheet_rows SET row_order = $new_id WHERE id = $new_id");
+        }
+    }
+    $ins->close();
+})();
+
+// ── AUTO-IMPORT: Multi-session package sessions → one row per session ───────
+// Packages booked from PKG_SPLIT_FROM on (config.php): each completed session
+// is a sale of its share of the package on the day it's done, with that
+// session's commission. Keyed by source_session_id (not source_appointment_id,
+// which the backfills above treat as "one row = the whole appointment").
+(function() use ($conn, $report_date, $ss_resolve_cluster_row_order) {
+    $conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN IF NOT EXISTS source_session_id INT NULL DEFAULT NULL");
+    $pkg_from = PKG_SPLIT_FROM;
+
+    // A package of this kind imported earlier today under the old rule (one
+    // full-price row) is replaced by its per-session rows, unless edited.
+    $cl = $conn->prepare("
+        DELETE d FROM daily_report_spreadsheet_rows d
+        JOIN appointments a ON a.id = d.source_appointment_id
+        JOIN service_durations sd ON sd.id = a.service_duration_id AND sd.session_count > 1
+        WHERE d.report_date = ? AND a.created_at >= ?
+          AND d.created_by_name = 'import' AND (d.updated_by_name IS NULL OR d.updated_by_name = '')");
+    $cl->bind_param("ss", $report_date, $pkg_from); $cl->execute(); $cl->close();
+
+    $q = $conn->prepare("
+        SELECT aps.id AS sess_id, aps.session_number, aps.session_date, aps.completed_at,
+               IFNULL(aps.commission, 0) AS commission, aps.therapist_id, t.full_name AS therapist_name,
+               a.charged_price, a.duration_minutes, sd.session_count, sd.regular_price, sd.promo_price,
+               o.id AS order_id, o.customer_name, o.slip_number, o.payment_method, o.paymongo_method,
+               o.discount_type, o.discount_amount, o.completion_discount_type,
+               IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
+               oi.service_id, COALESCE(s.name, '[Deleted Service]') AS service_name, s.price AS svc_price
+        FROM appointment_sessions aps
+        JOIN appointments a ON a.id = aps.appointment_id
+        JOIN service_durations sd ON sd.id = a.service_duration_id AND sd.session_count > 1
+        JOIN order_items oi ON oi.id = a.order_item_id
+        JOIN orders o ON o.id = oi.order_id
+        JOIN services s ON s.id = oi.service_id
+        LEFT JOIN therapists t ON t.id = aps.therapist_id
+        WHERE aps.status = 'completed' AND DATE(aps.completed_at) = ?
+          AND a.created_at >= ? AND a.rate_type != 'influencer'
+          AND NOT EXISTS (SELECT 1 FROM daily_report_spreadsheet_rows d WHERE d.source_session_id = aps.id)
+        ORDER BY aps.completed_at, aps.id");
+    $q->bind_param("ss", $report_date, $pkg_from); $q->execute();
+    $rows = $q->get_result()->fetch_all(MYSQLI_ASSOC); $q->close();
+    if (!$rows) return;
+
+    $mop_map = ['cash' => 'Cash', 'gcash' => 'GCash', 'maya' => 'Maya', 'card' => 'Card', 'swiper' => 'Swiper',
+                'qr_ph' => 'QR PH', 'qrph' => 'QR PH', 'online' => 'GCash'];
+    $ins = $conn->prepare("
+        INSERT INTO daily_report_spreadsheet_rows
+            (report_date, row_order, time_in, time_out, slip_no, client_name,
+             service_name, service_id, stylist, therapist_id,
+             regular_price, promo_price, celeb_10,
+             disc_20_pwd, comm_30, comm_20, comm_15, comm_25, disc_50_staff,
+             net_sales, mode_of_payment, remarks, is_refund, created_by_name,
+             order_id, source_session_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'import',?,?)");
+    foreach ($rows as $r) {
+        $N = (int)$r['session_count']; $n = (int)$r['session_number']; $C = (float)$r['charged_price'];
+        $share = pkg_session_share($C, $N, $n);
+        $frac  = $C > 0 ? $share / $C : 0;
+        $celeb = 0.0;
+        if (($r['discount_type'] ?? '') === 'celebration') $celeb += round((float)$r['discount_amount'] * $frac, 2);
+        if (($r['completion_discount_type'] ?? '') === 'celebration') $celeb += round((float)$r['completion_discount_amount'] * $frac, 2);
+        $reg   = round((float)($r['regular_price'] ?: $r['svc_price']) / $N, 2);
+        $promo = (float)$r['promo_price'] > 0 ? round((float)$r['promo_price'] / $N, 2) : $reg;
+        $comm  = (float)$r['commission'];
+        $tid   = (int)($r['therapist_id'] ?? 0);
+        $b     = route_commission_to_buckets($conn, (int)$r['service_id'], $tid, $comm);
+        $net   = $share - $comm;
+        $start = $r['session_date'] ?: $r['completed_at'];
+        $time_in  = date('h:i A', strtotime($start));
+        $time_out = (int)$r['duration_minutes'] > 0 ? date('h:i A', strtotime($start) + (int)$r['duration_minutes'] * 60) : '';
+        $svc   = $r['service_name'] . ' (' . (int)$r['duration_minutes'] . ' mins × ' . $N . ' sessions) — Session ' . $n . ' of ' . $N;
+        $remarks = $n > 1 ? 'Paid in advance (package)' : ($N > 2 ? 'Sessions 2–' . $N . ' paid in advance' : 'Session 2 paid in advance');
+        $mop   = $mop_map[strtolower(trim($r['paymongo_method'] ?: ($r['payment_method'] ?? '')))] ?? 'Cash';
+        $order_id = (int)$r['order_id']; $slip = $r['slip_number'] ?? '';
+        $row_order = $ss_resolve_cluster_row_order($order_id, $slip);
+        $ro = $row_order ?? 0; $zero = 0.0; $sid = (int)$r['service_id']; $sess = (int)$r['sess_id'];
+        $client = $r['customer_name'] ?? ''; $stylist = $r['therapist_name'] ?? '';
+        $ins->bind_param("sisssssisiddddddddddssii",
+            $report_date, $ro, $time_in, $time_out, $slip, $client,
+            $svc, $sid, $stylist, $tid,
+            $reg, $promo, $celeb,
+            $zero, $b['comm_30'], $b['comm_20'], $b['comm_15'], $b['comm_25'], $zero,
+            $net, $mop, $remarks, $order_id, $sess);
+        $ins->execute();
+        if ($row_order === null) {
+            $new_id = (int)$conn->insert_id;
             $conn->query("UPDATE daily_report_spreadsheet_rows SET row_order = $new_id WHERE id = $new_id");
         }
     }

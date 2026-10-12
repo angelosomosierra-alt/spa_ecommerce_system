@@ -470,6 +470,48 @@ function get_commission_base_price(int $service_id, ?int $service_duration_id, f
     return $promo > 0 ? $promo : $fallback_price;
 }
 
+// ─── MULTI-SESSION PACKAGES IN THE DAILY REPORT ──────────────────────────────
+// A session-count package (service_durations.session_count > 1) booked from
+// PKG_SPLIT_FROM on is reported per session, like a Calendar down payment:
+//   - each session's share of the price is a sale on the day that session is
+//     completed (with that session's commission);
+//   - on Session 1's day, the later sessions' share (already collected) is an
+//     Advance Payment received, not a sale;
+//   - on each later session's day, its share is deducted as ADVANCE PAYMENT.
+// Packages booked earlier keep the old rule (full price on the booking date),
+// so past reports don't change.
+if (!defined('PKG_SPLIT_FROM')) define('PKG_SPLIT_FROM', '2026-10-12 00:00:00');
+
+// Session $n's share of a package price $total split over $count sessions.
+// The last session takes the rounding remainder so the shares add up exactly.
+function pkg_session_share(float $total, int $count, int $n): float {
+    $count = max(1, $count);
+    $each  = round($total / $count, 2);
+    return $n >= $count ? round($total - $each * ($count - 1), 2) : $each;
+}
+
+// What a paid multi-session package collected for its LATER sessions on
+// Session 1's day: the later sessions' share net of the order's discounts,
+// minus any part of an earlier Calendar down payment that went beyond
+// Session 1 (that part was already counted on its own collection day).
+// $a: charged_price, session_count, dp, dp_date, discount_amount,
+// completion_discount_amount, and optionally same_day_done: a comma list
+// of later session numbers also completed on $day (those are ordinary
+// sales that day, not an advance).
+function pkg_prepaid_later_sessions(array $a, string $day): float {
+    $C = (float)$a['charged_price']; $N = max(1, (int)$a['session_count']);
+    if ($C <= 0 || $N < 2) return 0.0;
+    $disc  = (float)($a['discount_amount'] ?? 0) + (float)($a['completion_discount_amount'] ?? 0);
+    $net   = fn(int $k) => pkg_session_share($C, $N, $k) - round($disc * pkg_session_share($C, $N, $k) / $C, 2);
+    $p1net = $net(1);
+    $later = ($C - $disc) - $p1net;
+    foreach (array_filter(array_map('intval', explode(',', (string)($a['same_day_done'] ?? '')))) as $k) {
+        if ($k >= 2 && $k <= $N) $later -= $net($k);
+    }
+    $dp    = (!empty($a['dp_date']) && $a['dp_date'] !== $day) ? (float)$a['dp'] : 0.0;
+    return round(max(0.0, $later - max(0.0, $dp - $p1net)), 2);
+}
+
 // ─── DOCTOR / NURSE SERVICES ─────────────────────────────────────────────────
 // A service ticked "Doctor / Nurse service" in Services is performed by a
 // doctor or nurse who sets their own fee; accounting pays them outside this
