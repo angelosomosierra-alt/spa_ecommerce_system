@@ -550,7 +550,8 @@ if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
     ensure_service_package_components_table($conn);
     // Main services
     $_pk = $conn->prepare("
-        SELECT d.id AS row_id, d.created_by_name, d.updated_by_name, a.id AS appt_id, a.service_id, a.charged_price
+        SELECT d.id AS row_id, d.created_by_name, d.updated_by_name, a.id AS appt_id, a.service_id, a.charged_price,
+               (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25) AS row_comm
         FROM daily_report_spreadsheet_rows d
         JOIN appointments a ON a.id = d.source_appointment_id
         WHERE d.report_date = ? AND a.rate_type != 'influencer'
@@ -572,7 +573,10 @@ if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
             $_total += $_c;
             if (!$_first_tid || (int)$_t['therapist_id'] < $_first_tid) $_first_tid = (int)$_t['therapist_id'];
         }
-        if ($_changed && $_r['created_by_name'] === 'import' && empty($_r['updated_by_name'])) {
+        // Refresh the row when a commission was just filled in, or when the
+        // row was imported with less than the appointment now carries.
+        if (($_changed || round($_total - (float)$_r['row_comm'], 2) != 0.0) && $_total > 0
+            && $_r['created_by_name'] === 'import' && empty($_r['updated_by_name'])) {
             $_b = route_commission_to_buckets($conn, (int)$_r['service_id'], $_first_tid, $_total);
             $_net = (float)$_r['charged_price'] - $_total;
             $_u = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET comm_30=?, comm_20=?, comm_15=?, comm_25=?, net_sales=? WHERE id=?");
@@ -616,6 +620,16 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
     $ths = $conn->query("SELECT t.id, t.full_name, t.pay_type FROM appointment_therapists at JOIN therapists t ON t.id = at.therapist_id WHERE at.appointment_id = " . (int)$r['source_appointment_id'])->fetch_all(MYSQLI_ASSOC);
     if (!$ths) return 'No therapist is recorded on this appointment, so no commission.';
     $comps = get_package_components($conn, (int)$a['service_id']);
+    // Looks like a package by name but has no components saved: commission
+    // falls back to one rate on the service itself, which usually isn't set.
+    if (!$comps && stripos($a['name'], 'package') !== false) {
+        $twin = $conn->prepare("SELECT s.id FROM services s WHERE s.name = ? AND s.id != ?
+                                  AND EXISTS (SELECT 1 FROM service_package_components p WHERE p.package_service_id = s.id) LIMIT 1");
+        $twin->bind_param("si", $a['name'], $a['service_id']); $twin->execute();
+        $twin_id = (int)($twin->get_result()->fetch_assoc()['id'] ?? 0); $twin->close();
+        if ($twin_id) return "This booking used service #{$a['service_id']}, but the package services are saved on another service with the same name (#{$twin_id}). Open Services → edit #{$a['service_id']} → Package Components, tick its services and Save (or archive the duplicate), then reopen this report.";
+        return "\"{$a['name']}\" (service #{$a['service_id']}) has no Package Components saved, so it isn't treated as a package. Open Services → edit it → Package Components, tick the services inside it and Save, then reopen this report.";
+    }
     $check = $comps ? array_map(fn($c) => ['id' => (int)$c['component_service_id'], 'name' => $c['name']], $comps)
                     : [['id' => (int)$a['service_id'], 'name' => $a['name']]];
     $missing = [];
