@@ -130,6 +130,7 @@
 .bn-pk .none { color:var(--red); }
 .bn-auto { font-size:0.62rem; font-weight:800; color:var(--green); letter-spacing:0.04em; }
 .bn-wait { font-size:0.7rem; font-weight:700; color:var(--amber); background:var(--amber-dim); border-radius:6px; padding:2px 7px; }
+.bn-menu-div { font-size:0.66rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:var(--gray); padding:0.45rem 0.6rem 0.2rem; border-top:1px solid var(--border2); margin-top:0.2rem; }
 .bn-menu { position:absolute; top:calc(100% + 4px); left:0; z-index:20; background:#fff; border:1px solid var(--border2); border-radius:9px; box-shadow:var(--shadow-lg); min-width:230px; max-height:300px; overflow-y:auto; padding:4px; display:flex; flex-direction:column; }
 .bn-menu button { display:flex; justify-content:space-between; gap:0.6rem; text-align:left; border:0; background:none; padding:0.45rem 0.55rem; border-radius:6px; cursor:pointer; font-size:0.78rem; color:var(--brown); }
 .bn-menu button:hover:not(:disabled) { background:var(--bg3); }
@@ -377,11 +378,21 @@
     }
     function thMenu(it, L) {
         var busy = busyExcept(L), d = it.dur.m;
+        // Who can actually take it comes first (free, then busy / on break),
+        // in rotation order; then not trained; then off duty. The #number is
+        // still each therapist's place in today's rotation.
+        var rows = D.therapists.map(function (t, i) {
+            var st = !t.on ? ['off', 'Off duty', 3] : (it.svc.qual.indexOf(t.id) < 0 ? ['off', 'Not trained', 2] :
+                     (t.brk ? ['busy', 'On break', 1] : (thFree(t.id, L.s, d, busy) ? ['free', 'Free', 0] : ['busy', 'Busy then', 1])));
+            return { t: t, i: i, st: st };
+        });
+        rows.sort(function (a, b) { return a.st[2] - b.st[2] || a.i - b.i; });
+        var shownDivider = false;
         return '<div class="bn-menu"><button type="button" data-pt="' + it.key + ',auto"><span>Auto (next in rotation)</span></button>' +
-            D.therapists.map(function (t, i) {
-                var st = !t.on ? ['off', 'Off duty'] : (it.svc.qual.indexOf(t.id) < 0 ? ['off', 'Not trained'] :
-                         (t.brk ? ['busy', 'On break'] : (thFree(t.id, L.s, d, busy) ? ['free', 'Free'] : ['busy', 'Busy then'])));
-                return '<button type="button" data-pt="' + it.key + ',' + t.id + '"' + (st[0] === 'off' ? ' disabled' : '') + '><span>' + (t.on ? '#' + (i + 1) + ' ' : '') + esc(t.name) + '</span><span class="s ' + st[0] + '">' + st[1] + '</span></button>';
+            rows.map(function (r) {
+                var t = r.t, st = r.st, div = '';
+                if (st[0] === 'off' && !shownDivider) { shownDivider = true; div = '<div class="bn-menu-div">Can\'t take this service now</div>'; }
+                return div + '<button type="button" data-pt="' + it.key + ',' + t.id + '"' + (st[0] === 'off' ? ' disabled' : '') + '><span>' + (t.on ? '#' + (r.i + 1) + ' ' : '') + esc(t.name) + '</span><span class="s ' + st[0] + '">' + st[1] + '</span></button>';
             }).join('') + '</div>';
     }
     function roomMenu(it, L) {
