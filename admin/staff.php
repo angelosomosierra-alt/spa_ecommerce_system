@@ -340,10 +340,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
             // Skipped for fixed-salary therapists — they never earn commission.
             if ($pay_type !== 'fixed' && !empty($sel_svc_ids)) {
                 $svc_ids_str = implode(',', array_map('intval', $sel_svc_ids));
+                service_is_medical($conn, 1); // makes sure services.is_medical exists
                 $missing_comm = $conn->query("
                     SELECT s.name
                     FROM services s
                     WHERE s.id IN ($svc_ids_str)
+                      AND s.is_medical = 0
                       AND s.id NOT IN (
                           SELECT service_id FROM therapist_commission
                           WHERE therapist_id = $tid
@@ -694,11 +696,14 @@ if (!empty($all_therapists)) {
     }
 }
 
-// Commission matrix data
+// Commission matrix data -- Doctor / Nurse services are left out: their
+// commission is handled by accounting, never by a rate here.
+service_is_medical($conn, 1); // makes sure services.is_medical exists
 $commission_services = $conn->query("
     SELECT s.id, s.name, s.price, IFNULL(c.name,'Uncategorized') AS category_name
     FROM services s
     LEFT JOIN categories c ON s.category_id = c.id
+    WHERE s.is_medical = 0
     ORDER BY c.name ASC, s.name ASC
 ")->fetch_all(MYSQLI_ASSOC);
 // The ₱ Preview column must reflect what commission actually gets computed

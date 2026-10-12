@@ -679,6 +679,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
         $es_new_id = 0;
         $es_duration_id_param = $es_duration_id > 0 ? $es_duration_id : null;
         $es_split_charged = round($es_charged / $es_session_count, 2);
+        if (service_is_medical($conn, $es_service_id)) $es_commission = 0.0; // doctor/nurse: paid by accounting
         $es_split_comm    = round($es_commission / $es_session_count, 2);
         $es_group_id = null;
         for ($es_sess_n = 1; $es_sess_n <= $es_session_count; $es_sess_n++) {
@@ -1855,6 +1856,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     }
                 }
 
+                if ($svc_id && service_is_medical($conn, (int)$svc_id)) $commission_amt = 0.00; // doctor/nurse: paid by accounting
                 // Write commission back to appointment_therapists
                 $cu = $conn->prepare("UPDATE appointment_therapists SET commission=? WHERE id=?");
                 $cu->bind_param("di", $commission_amt, $dt['id']); $cu->execute(); $cu->close();
@@ -2558,6 +2560,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
                     : round($comm_session_price * floatval($cm_row['commission_percent']) / 100, 2);
             }
         }
+
+        if (service_is_medical($conn, (int)$cs_row['service_id'])) $commission_amt = 0.00; // doctor/nurse: paid by accounting
 
         $conn->begin_transaction();
         try {

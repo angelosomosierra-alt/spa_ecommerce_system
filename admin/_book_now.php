@@ -298,6 +298,7 @@ function book_now_save(mysqli $conn, array $guests): array {
                     $commission = round($base * (float)$cm_row['commission_percent'] / 100, 2);
                 }
             }
+            if (service_is_medical($conn, $L['service_id'])) $commission = 0.00; // doctor/nurse: paid by accounting
             $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
             $stmt->bind_param("iid", $appointment_id, $L['therapist_id'], $commission);
             $stmt->execute(); $stmt->close();

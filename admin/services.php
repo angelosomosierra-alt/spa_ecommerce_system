@@ -49,6 +49,7 @@ if ($_sd_col_chk && $_sd_col_chk->num_rows === 0) {
 }
 unset($_sd_col_chk);
 ensure_service_package_components_table($conn);
+service_is_medical($conn, 1); // makes sure services.is_medical exists
 
 $message      = '';
 $message_type = '';
@@ -161,6 +162,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     $is_home_service    = isset($_POST['is_home_service']) ? 1 : 0;
     $home_service_price = $is_home_service ? floatval($_POST['home_service_price'] ?? 0) : 0.00;
     $at_cost            = max(0.0, floatval($_POST['at_cost'] ?? 0));
+    $is_medical         = isset($_POST['is_medical']) ? 1 : 0;
 
     // ── Duration Options rows — the ONLY pricing UI now. Every service has
     //    at least one row; services.price/session_time/promo_price/price_mode/
@@ -265,6 +267,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 
         if ($stmt->execute()) {
             $svc_logged_id = $id ?? (int)$conn->insert_id;
+            $_med = $conn->prepare("UPDATE services SET is_medical = ? WHERE id = ?");
+            $_med->bind_param("ii", $is_medical, $svc_logged_id); $_med->execute(); $_med->close();
             $_actor_svc = (is_cashier() && !empty($pr_svc_action['full_name']))
                 ? ['id' => null, 'name' => $pr_svc_action['full_name'], 'role' => 'receptionist']
                 : null;
@@ -554,6 +558,14 @@ require_once 'admin_header.php';
                            value="<?php echo floatval($edit_service['at_cost'] ?? 0); ?>"
                            placeholder="0.00">
                     <small>Used in Marketing Expense = At Cost + Therapist CF. Leave 0 for regular.</small>
+                </div>
+                <div class="form-group">
+                    <label>Doctor / Nurse</label>
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:600;cursor:pointer;margin-top:0.35rem;">
+                        <input type="checkbox" name="is_medical" value="1" style="width:auto;flex:none;margin:0;transform:scale(1.15);" <?php echo !empty($edit_service['is_medical']) ? 'checked' : ''; ?>>
+                        Doctor / Nurse service
+                    </label>
+                    <small>Done by a doctor or nurse who sets their own fee. No therapist commission is recorded; on the sales report the commission is left blank for accounting, and Net Sales is the full price.</small>
                 </div>
             </div>
 

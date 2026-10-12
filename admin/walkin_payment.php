@@ -263,6 +263,7 @@ try {
                     }
                 }
             }
+            if (service_is_medical($conn, $item_id)) $commission = 0.0; // doctor/nurse: paid by accounting
             $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
             $at->bind_param("iidi", $appointment_id, $therapist_id, $commission, $people_handled_svc);
             $at->execute(); $at->close();

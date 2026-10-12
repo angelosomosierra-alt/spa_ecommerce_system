@@ -689,6 +689,7 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
             }
         }
 
+        if (service_is_medical($conn, $service_id)) $commission = 0.00; // doctor/nurse: paid by accounting
         $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
         $stmt->bind_param("iid", $appointment_id, $therapist_id, $commission);
         $stmt->execute();

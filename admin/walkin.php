@@ -599,6 +599,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                                 }
                             }
                         }
+                        if (service_is_medical($conn, $item_id)) $commission = 0.00; // doctor/nurse: paid by accounting
                         $at = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, ?, '')");
                         $at->bind_param("iidi", $appt_id, $therapist_id, $commission, $people_handled_svc); $at->execute(); $at->close();
 

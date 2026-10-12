@@ -470,6 +470,28 @@ function get_commission_base_price(int $service_id, ?int $service_duration_id, f
     return $promo > 0 ? $promo : $fallback_price;
 }
 
+// ─── DOCTOR / NURSE SERVICES ─────────────────────────────────────────────────
+// A service ticked "Doctor / Nurse service" in Services is performed by a
+// doctor or nurse who sets their own fee; accounting pays them outside this
+// system. Such a service never stores therapist commission (₱0 everywhere),
+// and the Daily Report leaves its commission columns blank so Net Sales is
+// the full amount charged.
+function service_is_medical($conn, int $service_id): bool {
+    static $cache = [], $ready = false;
+    if ($service_id <= 0) return false;
+    if (!$ready) {
+        $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS is_medical TINYINT(1) NOT NULL DEFAULT 0");
+        $ready = true;
+    }
+    if (!array_key_exists($service_id, $cache)) {
+        $q = $conn->prepare("SELECT is_medical FROM services WHERE id = ? LIMIT 1");
+        $q->bind_param("i", $service_id); $q->execute();
+        $cache[$service_id] = !empty($q->get_result()->fetch_assoc()['is_medical']);
+        $q->close();
+    }
+    return $cache[$service_id];
+}
+
 // Bookings whose duration option was deleted (older Services saves deleted
 // and re-inserted every option, and the FK sets the booking's id to NULL)
 // lose their promo price, commission base and session count. Re-link each

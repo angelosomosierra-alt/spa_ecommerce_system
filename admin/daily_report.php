@@ -563,6 +563,7 @@ if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
           AND a.service_id IN (SELECT package_service_id FROM service_package_components)");
     $_pk->bind_param("s", $report_date); $_pk->execute();
     foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) {
+        if (service_is_medical($conn, (int)$_r['service_id'])) continue; // doctor/nurse: no commission
         $_ths = $conn->query("SELECT id, therapist_id, IFNULL(people_handled,1) AS ph, commission FROM appointment_therapists WHERE appointment_id = " . (int)$_r['appt_id'] . " AND therapist_id IS NOT NULL")->fetch_all(MYSQLI_ASSOC);
         $_changed = false; $_total = 0.0; $_first_tid = 0;
         foreach ($_ths as $_t) {
@@ -600,6 +601,7 @@ if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
           AND es.service_id IN (SELECT package_service_id FROM service_package_components)");
     $_pk->bind_param("s", $report_date); $_pk->execute();
     foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) {
+        if (service_is_medical($conn, (int)$_r['service_id'])) continue; // doctor/nurse: no commission
         $_c = compute_package_commission($conn, (int)$_r['service_id'], (int)$_r['therapist_id'])['total'];
         if ($_c <= 0) continue;
         if (round($_c - (float)$_r['es_comm'], 2) == 0.0 && round($_c - (float)$_r['row_comm'], 2) == 0.0) continue;
@@ -623,6 +625,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
     $has_comm = (float)$r['comm_30'] + (float)$r['comm_20'] + (float)$r['comm_15'] + (float)$r['comm_25'] > 0;
     $a = $conn->query("SELECT a.service_id, a.rate_type, a.charged_price, s.name FROM appointments a JOIN services s ON s.id = a.service_id WHERE a.id = " . (int)$r['source_appointment_id'])->fetch_assoc();
     if (!$a || ($a['rate_type'] ?? '') === 'influencer') return '';
+    if (service_is_medical($conn, (int)$a['service_id'])) return ''; // doctor/nurse: blank on purpose
     $ths = $conn->query("SELECT t.id, t.full_name, t.pay_type FROM appointment_therapists at JOIN therapists t ON t.id = at.therapist_id WHERE at.appointment_id = " . (int)$r['source_appointment_id'])->fetch_all(MYSQLI_ASSOC);
     if (!$ths) return 'No therapist is recorded on this appointment, so no commission.';
     $comps = get_package_components($conn, (int)$a['service_id']);
@@ -1141,7 +1144,9 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="font-weight:<?php echo $is_same_order ? '400' : '600'; ?>;white-space:nowrap;">
                         <?php echo $is_same_order ? '<span style="color:var(--gray);">↳ same</span>' : htmlspecialchars($row['customer_name']); ?>
                     </td>
-                    <td><?php echo htmlspecialchars($row['service_name']); ?></td>
+                    <td><?php echo htmlspecialchars($row['service_name']); ?>
+                        <?php if (service_is_medical($conn, (int)$row['service_id'])): ?><br><span style="display:inline-block;font-size:0.62rem;font-weight:700;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 6px;border-radius:8px;margin-top:2px;white-space:nowrap;" title="Done by a doctor or nurse. Commission is handled by accounting, so it is left blank here and Net Sales is the full price.">Doctor / Nurse · commission by accounting</span><?php endif; ?>
+                    </td>
                     <td style="color:var(--gray);white-space:nowrap;"><?php echo htmlspecialchars($row['therapists'] ?? '—'); ?></td>
                     <td style="text-align:right;color:var(--gray);">₱<?php echo number_format($row['regular_price'], 2); ?></td>
                     <td style="text-align:right;font-weight:700;color:var(--brown);">₱<?php echo number_format($_true_promo, 2); ?></td>
@@ -2160,6 +2165,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
                     <?php if ($_is_imported): ?><span style="font-size:0.62rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;" title="Auto-imported from appointment #<?php echo (int)$_ssr['source_appointment_id']; ?>">appt</span><?php endif; ?>
                 </td>
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?>
+                    <?php if (service_is_medical($conn, (int)($_ssr['service_id'] ?? 0))): ?><br><span style="display:inline-block;font-size:0.62rem;font-weight:700;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 6px;border-radius:8px;margin-top:2px;white-space:nowrap;" title="Done by a doctor or nurse. Commission is handled by accounting, so it is left blank here and Net Sales is the full price.">Doctor / Nurse · commission by accounting</span><?php endif; ?>
                     <?php $_why = ss_zero_commission_reason($conn, $_ssr, $locked); if ($_why): ?>
                     <div style="font-size:0.68rem;color:#92400e;background:rgba(234,179,8,0.12);border-radius:6px;padding:2px 6px;margin-top:3px;">⚠ <?php echo htmlspecialchars($_why); ?></div>
                     <?php endif; ?>
