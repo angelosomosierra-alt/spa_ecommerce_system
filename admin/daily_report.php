@@ -538,6 +538,74 @@ $conn->query("
       AND d.net_sales <> ROUND(a.charged_price - (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25), 2)
 ");
 
+// ── BACKFILL: Package services completed with ₱0 commission ──────────────────
+// A Package (service_package_components) pays the therapist each component's
+// own rate on that component's own promo price (compute_package_commission()).
+// A package completed BEFORE its components were set up -- or before the
+// therapist had rates for them -- saved ₱0, and its imported row kept ₱0
+// forever (imports never re-run on an existing row). Fill in only ₱0
+// commissions (never overwrite a non-zero one), only on an unlocked day, and
+// only refresh spreadsheet rows nobody has hand-edited.
+if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
+    ensure_service_package_components_table($conn);
+    // Main services
+    $_pk = $conn->prepare("
+        SELECT d.id AS row_id, d.created_by_name, d.updated_by_name, a.id AS appt_id, a.service_id, a.charged_price
+        FROM daily_report_spreadsheet_rows d
+        JOIN appointments a ON a.id = d.source_appointment_id
+        WHERE d.report_date = ? AND a.rate_type != 'influencer'
+          AND a.service_id IN (SELECT package_service_id FROM service_package_components)");
+    $_pk->bind_param("s", $report_date); $_pk->execute();
+    foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) {
+        $_ths = $conn->query("SELECT id, therapist_id, IFNULL(people_handled,1) AS ph, commission FROM appointment_therapists WHERE appointment_id = " . (int)$_r['appt_id'] . " AND therapist_id IS NOT NULL")->fetch_all(MYSQLI_ASSOC);
+        $_changed = false; $_total = 0.0; $_first_tid = 0;
+        foreach ($_ths as $_t) {
+            $_c = (float)$_t['commission'];
+            if ($_c <= 0) {
+                $_c = compute_package_commission($conn, (int)$_r['service_id'], (int)$_t['therapist_id'])['total'] * max(1, (int)$_t['ph']);
+                if ($_c > 0) {
+                    $_u = $conn->prepare("UPDATE appointment_therapists SET commission = ? WHERE id = ?");
+                    $_u->bind_param("di", $_c, $_t['id']); $_u->execute(); $_u->close();
+                    $_changed = true;
+                }
+            }
+            $_total += $_c;
+            if (!$_first_tid || (int)$_t['therapist_id'] < $_first_tid) $_first_tid = (int)$_t['therapist_id'];
+        }
+        if ($_changed && $_r['created_by_name'] === 'import' && empty($_r['updated_by_name'])) {
+            $_b = route_commission_to_buckets($conn, (int)$_r['service_id'], $_first_tid, $_total);
+            $_net = (float)$_r['charged_price'] - $_total;
+            $_u = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET comm_30=?, comm_20=?, comm_15=?, comm_25=?, net_sales=? WHERE id=?");
+            $_u->bind_param("dddddi", $_b['comm_30'], $_b['comm_20'], $_b['comm_15'], $_b['comm_25'], $_net, $_r['row_id']);
+            $_u->execute(); $_u->close();
+        }
+    }
+    $_pk->close();
+    // Add-on services that are packages
+    $_pk = $conn->prepare("
+        SELECT d.id AS row_id, d.created_by_name, d.updated_by_name, es.id AS es_id, es.service_id, es.therapist_id, es.charged_price
+        FROM daily_report_spreadsheet_rows d
+        JOIN appointment_extra_services es ON es.id = d.source_extra_service_id
+        WHERE d.report_date = ? AND IFNULL(es.commission, 0) <= 0 AND es.therapist_id IS NOT NULL
+          AND IFNULL(es.rate_type, 'regular') != 'influencer'
+          AND es.service_id IN (SELECT package_service_id FROM service_package_components)");
+    $_pk->bind_param("s", $report_date); $_pk->execute();
+    foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) {
+        $_c = compute_package_commission($conn, (int)$_r['service_id'], (int)$_r['therapist_id'])['total'];
+        if ($_c <= 0) continue;
+        $_u = $conn->prepare("UPDATE appointment_extra_services SET commission = ? WHERE id = ?");
+        $_u->bind_param("di", $_c, $_r['es_id']); $_u->execute(); $_u->close();
+        if ($_r['created_by_name'] === 'import' && empty($_r['updated_by_name'])) {
+            $_b = route_commission_to_buckets($conn, (int)$_r['service_id'], (int)$_r['therapist_id'], $_c);
+            $_net = (float)$_r['charged_price'] - $_c;
+            $_u = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET comm_30=?, comm_20=?, comm_15=?, comm_25=?, net_sales=? WHERE id=?");
+            $_u->bind_param("dddddi", $_b['comm_30'], $_b['comm_20'], $_b['comm_15'], $_b['comm_25'], $_net, $_r['row_id']);
+            $_u->execute(); $_u->close();
+        }
+    }
+    $_pk->close();
+}
+
 // ── AUTO-IMPORT: Completed appointments → spreadsheet rows ────────────────────
 // Idempotent — safe on every page load. Skips any appointment already present
 // via source_appointment_id. Never modifies live appointment records.
