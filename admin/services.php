@@ -156,8 +156,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     }
 
     $id               = isset($_POST['id']) ? intval($_POST['id']) : null;
-    $name             = sanitize_input($_POST['name']);
-    $description      = sanitize_input($_POST['description']);
+    $name             = sanitize_input($_POST['name'] ?? '');
+    $description      = sanitize_input($_POST['description'] ?? ''); // optional
     $category_id      = !empty($_POST['category_id']) ? intval($_POST['category_id']) : null;
     $is_home_service    = isset($_POST['is_home_service']) ? 1 : 0;
     $home_service_price = $is_home_service ? floatval($_POST['home_service_price'] ?? 0) : 0.00;
@@ -184,15 +184,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         $_sc = max(1, intval($_sc_list[$_vi] ?? 1));
         if ($_vd <= 0 || $_vr <= 0) continue; // skip incomplete rows
 
-        $_pm = (($_pm_list[$_vi] ?? 'regular') === 'promo') ? 'promo' : 'regular';
+        $_pm = (($_pm_list[$_vi] ?? 'regular') === 'promo' && $_vp > 0) ? 'promo' : 'regular';
         $_ps = trim($_ps_list[$_vi] ?? '');
         $_pe = trim($_pe_list[$_vi] ?? '');
         if ($_pm === 'promo') {
-            if ($_ps === '' || $_pe === '') {
-                $message = "Please set both a start and end time for every duration option using Promo Price (or switch it back to Regular Price).";
-                $message_type = "danger";
-                break;
-            }
+            // The time window is optional: with no window (or only one end
+            // set) the promo applies all day -- see _resolve_active_price().
+            if ($_ps === '' || $_pe === '') { $_ps = null; $_pe = null; }
         } else {
             // price_mode='regular' — times are ignored/cleared regardless
             // of whatever the (hidden) fields happen to contain.
@@ -502,314 +500,229 @@ require_once 'admin_header.php';
 
 <?php if ((isset($_GET['action']) && $_GET['action'] === 'add') || $edit_service): ?>
 
-<div style="margin-bottom:1rem;">
-    <a href="services.php" class="btn btn-secondary">← Back to Services</a>
-</div>
+<style>
+/* Edit Service — sectioned form with a live receptionist preview. */
+#seForm [hidden] { display: none !important; }
+#seForm input[type=text], #seForm input[type=number], #seForm input[type=search], #seForm input[type=time],
+#seForm input[type=password], #seForm select, #seForm textarea {
+    width: 100%; box-sizing: border-box; padding: 0.5rem 0.6rem; border: 1px solid var(--border2);
+    border-radius: 8px; background: var(--bg2); color: var(--brown); font: inherit; font-size: 0.86rem;
+}
+#seForm input:focus, #seForm select:focus, #seForm textarea:focus { outline: none; border-color: var(--rust); box-shadow: 0 0 0 3px var(--rust-dim); }
+#seForm .se-when input[type=time] { width: 112px; padding: 0.3rem 0.4rem; font-size: 0.78rem; }
+.se-top { position: sticky; top: 0; z-index: 20; background: var(--bg2); border: 1px solid var(--border2); border-radius: 12px; padding: 0.7rem 1rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.se-top h2 { margin: 0; font-size: 1.1rem; color: var(--brown); }
+.se-top .se-crumb { font-size: 0.72rem; color: var(--gray); }
+.se-top .se-sp { flex: 1; }
+.se-badges { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.se-badge { font-size: 0.66rem; font-weight: 800; padding: 3px 9px; border-radius: 20px; background: var(--bg4); color: var(--brown-md); }
+.se-badge.med { background: var(--blue-dim); color: #0b5f73; }
+.se-badge.pkg { background: var(--rust-dim); color: var(--rust); }
+.se-badge.home { background: var(--green-dim); color: var(--green); }
+.se-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; align-items: start; }
+@media (max-width: 1000px) { .se-grid { grid-template-columns: minmax(0, 1fr); } .se-side { position: static !important; } }
+.se-card { background: var(--bg2); border: 1px solid var(--border2); border-radius: 12px; margin-bottom: 1rem; }
+.se-card-h { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; padding: 0.85rem 1rem 0.3rem; }
+.se-card-h h3 { margin: 0; font-size: 0.92rem; color: var(--brown); }
+.se-card-h .se-hint { font-size: 0.74rem; color: var(--gray); }
+.se-card-b { padding: 0.5rem 1rem 1rem; }
+.se-lbl { display: block; font-size: 0.74rem; font-weight: 700; color: var(--brown-md); margin-bottom: 0.25rem; }
+.se-opt { font-weight: 400; color: var(--gray); }
+.se-note { font-size: 0.74rem; color: var(--gray); margin: 0.6rem 0 0; }
+.se-g2 { display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem; }
+@media (max-width: 640px) { .se-g2 { grid-template-columns: 1fr; } }
+/* Prices table */
+.se-pwrap { overflow-x: auto; }
+.se-ptable { width: 100%; border-collapse: collapse; }
+.se-ptable th { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gray); font-weight: 800; padding: 0.35rem; white-space: nowrap; }
+.se-ptable td { padding: 0.35rem; border-top: 1px solid var(--border2); vertical-align: top; }
+.se-ptable input[type=number] { width: 100%; min-width: 70px; }
+.se-ptable .se-money { min-width: 100px; }
+.se-seg { display: inline-flex; border: 1px solid var(--border2); border-radius: 8px; overflow: hidden; white-space: nowrap; }
+.se-seg button { border: 0; background: transparent; padding: 0.45rem 0.6rem; font-size: 0.74rem; font-weight: 700; cursor: pointer; color: var(--gray); }
+.se-seg button.on { background: var(--rust); color: #fff; }
+.se-seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+.se-per { font-size: 0.72rem; color: var(--gray); white-space: nowrap; padding-top: 0.6rem; display: inline-block; font-variant-numeric: tabular-nums; }
+.se-when { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-top: 0.35rem; font-size: 0.72rem; color: var(--gray); }
+.se-when input[type=time] { width: 105px; padding: 0.3rem 0.4rem; }
+.se-rm { border: 0; background: transparent; color: var(--gray); cursor: pointer; font-size: 1rem; padding: 0.4rem 0.5rem; border-radius: 6px; }
+.se-rm:hover { color: var(--red); background: var(--red-dim); }
+.se-add { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.6rem; }
+/* Switch cards */
+.se-sws { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
+@media (max-width: 760px) { .se-sws { grid-template-columns: minmax(0, 1fr); } }
+.se-sw { border: 1px solid var(--border2); border-radius: 12px; padding: 0.75rem; cursor: pointer; display: flex; flex-direction: column; gap: 0.35rem; }
+.se-sw.on { border-color: var(--rust); background: var(--rust-dim); }
+.se-sw input[type=checkbox].se-hide { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.se-sw-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-weight: 800; color: var(--brown); }
+.se-tog { width: 34px; height: 20px; border-radius: 20px; background: var(--border2); position: relative; flex: none; transition: background .15s; }
+.se-tog::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .15s; }
+.se-sw.on .se-tog { background: var(--rust); }
+.se-sw.on .se-tog::after { left: 17px; }
+.se-sw p { margin: 0; font-size: 0.74rem; color: var(--gray); }
+.se-sw .se-extra { display: none; cursor: default; }
+.se-sw.on .se-extra { display: block; }
+.se-sw:focus-within { outline: 2px solid var(--rust); outline-offset: 2px; }
+/* Bundle picker */
+.se-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; min-height: 28px; }
+.se-chip { display: inline-flex; align-items: center; gap: 0.35rem; background: var(--rust-dim); color: var(--rust); border-radius: 20px; padding: 4px 5px 4px 11px; font-size: 0.8rem; font-weight: 700; }
+.se-chip button { border: 0; background: rgba(0,0,0,0.08); color: inherit; width: 20px; height: 20px; border-radius: 50%; cursor: pointer; line-height: 1; padding: 0; }
+.se-picker { margin-top: 0.6rem; border: 1px solid var(--border2); border-radius: 10px; overflow: hidden; }
+.se-picker > input { border: 0 !important; border-bottom: 1px solid var(--border2) !important; border-radius: 0 !important; }
+.se-plist { max-height: 230px; overflow: auto; }
+.se-pcat { font-size: 0.66rem; font-weight: 800; color: var(--gray); text-transform: uppercase; letter-spacing: 0.06em; padding: 0.5rem 0.75rem 0.25rem; background: var(--bg4); }
+.se-pitem { display: flex !important; align-items: center; gap: 0.6rem; padding: 0.45rem 0.75rem; cursor: pointer; border-top: 1px solid var(--border2); margin: 0 !important; font-weight: 500 !important; }
+.se-pitem:hover { background: var(--bg3); }
+.se-pitem input { width: 16px !important; height: 16px; flex: none; margin: 0; accent-color: var(--rust); }
+.se-pitem .se-pr { margin-left: auto; color: var(--gray); font-size: 0.8rem; }
+.se-empty { color: var(--gray); font-size: 0.8rem; }
+/* Photo */
+.se-photo { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 1rem; align-items: start; }
+@media (max-width: 640px) { .se-photo { grid-template-columns: minmax(0, 1fr); } }
+.se-thumb { width: 120px; height: 120px; border-radius: 12px; border: 2px dashed var(--border2); display: grid; place-items: center; text-align: center; font-size: 0.72rem; color: var(--gray); cursor: pointer; background: var(--bg4) center/cover no-repeat; overflow: hidden; }
+/* Preview */
+.se-side { position: sticky; top: 84px; }
+.se-prev h4 { margin: 0 0 0.5rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gray); }
+.se-bn { border: 1px solid var(--border2); border-radius: 12px; padding: 0.75rem; }
+.se-bn .nm { font-weight: 800; color: var(--brown); }
+.se-bn .ct { font-size: 0.72rem; color: var(--gray); margin-bottom: 0.5rem; }
+.se-durs { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.se-dur { border: 1px solid var(--gold); border-radius: 7px; padding: 0.25rem 0.5rem; font-size: 0.74rem; font-weight: 700; color: var(--brown); }
+.se-facts { margin: 0.75rem 0 0; padding: 0; list-style: none; font-size: 0.8rem; }
+.se-facts li { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0; border-top: 1px solid var(--border2); }
+.se-facts li span:first-child { color: var(--gray); }
+.se-warn { margin-top: 0.6rem; background: var(--amber-dim); color: var(--amber); border-radius: 10px; padding: 0.5rem 0.65rem; font-size: 0.76rem; font-weight: 600; }
+.se-bottom { position: sticky; bottom: 0; z-index: 20; background: var(--bg2); border: 1px solid var(--border2); border-radius: 12px; padding: 0.65rem 1rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.se-bottom .se-dirty { font-size: 0.78rem; color: var(--gray); flex: 1; }
+.se-bottom input[name=pin] { width: 110px; letter-spacing: 0.3em; text-align: center; }
+</style>
 
-<div class="form-section">
-    <div class="form-section-header">
-        <?php echo $edit_service ? 'Edit Service' : 'Add New Service'; ?>
+<form method="POST" enctype="multipart/form-data" id="seForm" onsubmit="return validateDurationVariantsOnSubmit();">
+    <?php echo csrf_field(); ?>
+    <?php if ($edit_service): ?>
+        <input type="hidden" name="id" value="<?php echo $edit_service['id']; ?>">
+    <?php endif; ?>
+
+    <div class="se-top">
+        <div>
+            <div class="se-crumb"><a href="services.php">Services</a> › <?php echo $edit_service ? 'Edit' : 'Add new'; ?></div>
+            <h2 id="seHName"><?php echo htmlspecialchars($edit_service['name'] ?? 'New service'); ?></h2>
+        </div>
+        <div class="se-badges" id="seBadges"></div>
+        <div class="se-sp"></div>
+        <a href="services.php" class="btn btn-secondary">Cancel</a>
+        <button type="submit" class="btn btn-primary"><?php echo $edit_service ? 'Save changes' : 'Add service'; ?></button>
     </div>
-    <div class="form-section-body">
-        <form method="POST" enctype="multipart/form-data" onsubmit="return validateDurationVariantsOnSubmit();">
-            <?php echo csrf_field(); ?>
-            <?php if ($edit_service): ?>
-                <input type="hidden" name="id" value="<?php echo $edit_service['id']; ?>">
-            <?php endif; ?>
 
-            <span class="section-label-sm">Service Info</span>
-            <div class="form-grid form-grid-2" style="margin-bottom:1.25rem;">
-                <div class="form-group">
-                    <label>Service Name <span class="required">*</span></label>
-                    <input type="text" name="name" required
-                           value="<?php echo htmlspecialchars($edit_service['name'] ?? ''); ?>">
+    <div class="se-grid">
+    <div>
+        <!-- Basics -->
+        <section class="se-card">
+            <div class="se-card-h"><h3>Basics</h3></div>
+            <div class="se-card-b se-g2">
+                <div class="form-group" style="margin:0;">
+                    <label class="se-lbl" for="seName">Service name <span class="required">*</span></label>
+                    <input type="text" name="name" id="seName" required value="<?php echo htmlspecialchars($edit_service['name'] ?? ''); ?>">
                 </div>
-                <div class="form-group">
-                    <label>Category</label>
-                    <select name="category_id">
-                        <option value="">-- No Category --</option>
+                <div class="form-group" style="margin:0;">
+                    <label class="se-lbl" for="seCat">Category <span class="se-opt">(optional)</span></label>
+                    <select name="category_id" id="seCat">
+                        <option value="">— No category —</option>
                         <?php foreach ($categories as $cat): ?>
-                            <option value="<?php echo $cat['id']; ?>"
-                                <?php echo (isset($edit_service['category_id']) && $edit_service['category_id'] == $cat['id']) ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($cat['name']); ?>
-                            </option>
+                            <option value="<?php echo $cat['id']; ?>" <?php echo (isset($edit_service['category_id']) && $edit_service['category_id'] == $cat['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($cat['name']); ?></option>
                         <?php endforeach; ?>
                     </select>
-                    <small><a href="categories.php" target="_blank">+ Manage Categories</a></small>
+                    <small><a href="categories.php" target="_blank">+ Manage categories</a></small>
                 </div>
             </div>
+        </section>
 
-            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm">Pricing &amp; Duration</span>
-            </div>
-
-            <div id="durationVariantsContainer" style="margin-bottom:1.25rem;">
-                <small style="color:var(--gray);display:block;margin-bottom:0.5rem;">
-                    Every service has at least one Duration Option. Add more rows for extra durations or multi-session packages — each has its own Regular/Promo price. Receptionists pick one at booking time.
-                </small>
-                <div id="durationVariantsRows"></div>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="addDurationVariantRow()" style="margin-top:0.5rem;">+ Add Duration Option</button>
-            </div>
-
-            <div class="form-grid form-grid-3" style="margin-bottom:1.25rem;">
-                <div class="form-group">
-                    <label>At Cost (₱) <span style="font-size:0.72rem;color:var(--gray);font-weight:400;">— Influencer / Marketing</span></label>
-                    <input type="number" name="at_cost" step="0.01" min="0"
-                           value="<?php echo floatval($edit_service['at_cost'] ?? 0); ?>"
-                           placeholder="0.00">
-                    <small>Used in Marketing Expense = At Cost + Therapist CF. Leave 0 for regular.</small>
+        <!-- Prices & durations -->
+        <section class="se-card">
+            <div class="se-card-h"><h3>Prices &amp; durations</h3><span class="se-hint">One row per option the receptionist can pick · at least one row needs minutes and a regular price</span></div>
+            <div class="se-card-b">
+                <div class="se-pwrap">
+                    <table class="se-ptable">
+                        <thead><tr><th>Minutes</th><th>Sessions</th><th>Regular ₱</th><th>Promo ₱ <span class="se-opt">(optional)</span></th><th>Charge</th><th></th><th></th></tr></thead>
+                        <tbody id="durationVariantsRows"></tbody>
+                    </table>
                 </div>
-                <div class="form-group">
-                    <label>Doctor / Nurse</label>
-                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:600;cursor:pointer;margin-top:0.35rem;">
-                        <input type="checkbox" name="is_medical" value="1" style="width:auto;flex:none;margin:0;transform:scale(1.15);" <?php echo !empty($edit_service['is_medical']) ? 'checked' : ''; ?>>
-                        Doctor / Nurse service
-                    </label>
-                    <small>Done by a doctor or nurse who sets their own fee. No therapist commission is recorded; on the sales report the commission is left blank for accounting, and Net Sales is the full price.</small>
+                <div class="se-add">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="seAddOption(1)">+ Another duration</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="seAddOption(2)">+ 2-session package</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="seAddOption(3)">+ 3-session package</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="seAddOption(4)">+ 4-session package</button>
                 </div>
+                <p class="se-note">A package price is the full total for all its sessions; the share per session shows on the right. A promo with no time window applies all day. Commission uses the promo price whenever one is set.</p>
             </div>
+        </section>
 
-            <script>
-            var svcDurationVariants = <?php echo json_encode(array_values($svc_durations_list)); ?>;
-
-            var _dvRowSeq = 0;
-
-            function addDurationVariantRow(duration, regular, promo, priceMode, promoStart, promoEnd, sessionCount) {
-                var rows   = document.getElementById('durationVariantsRows');
-                var rowId  = 'dvrow' + (_dvRowSeq++);
-                var isPromo = (priceMode === 'promo');
-
-                var wrap = document.createElement('div');
-                wrap.className = 'duration-variant-option';
-                wrap.style.marginBottom = '0.75rem';
-                wrap.style.paddingBottom = '0.75rem';
-                wrap.style.borderBottom = '1px dashed var(--border2)';
-
-                var grid = document.createElement('div');
-                grid.className = 'form-grid form-grid-4';
-                grid.style.alignItems = 'end';
-                grid.innerHTML =
-                    '<div class="form-group"><label>Duration (minutes) <span class="required">*</span></label>' +
-                    '<input type="number" name="variant_duration[]" min="1" required value="' + (duration || '') + '"></div>' +
-                    '<div class="form-group"><label>Sessions <span style="font-size:0.68rem;color:var(--gray);font-weight:400;">(1 = regular)</span></label>' +
-                    '<input type="number" name="variant_session_count[]" min="1" value="' + (sessionCount || '1') + '"></div>' +
-                    '<div class="form-group"><label>Regular Price (₱) <span style="font-size:0.68rem;color:var(--gray);font-weight:400;">(full package total if Sessions &gt; 1)</span> <span class="required">*</span></label>' +
-                    '<input type="number" name="variant_regular_price[]" step="0.01" min="0.01" required value="' + (regular || '') + '"></div>' +
-                    '<div class="form-group"><label>Promo Price (₱)</label>' +
-                    '<input type="number" name="variant_promo_price[]" step="0.01" min="0" value="' + (promo || '') + '"></div>' +
-                    '<div class="form-group"><button type="button" class="btn btn-danger btn-sm dv-remove-btn" onclick="removeDurationVariantRow(this)">Remove</button></div>';
-                wrap.appendChild(grid);
-
-                var sched = document.createElement('div');
-                sched.style.marginTop = '0.5rem';
-                sched.innerHTML =
-                    '<label style="display:inline-flex;align-items:center;gap:0.4rem;cursor:pointer;font-weight:400;margin-right:1.25rem;">' +
-                        '<input type="radio" name="' + rowId + '_mode" value="regular" ' + (isPromo ? '' : 'checked') + '> Use Regular Price</label>' +
-                    '<label style="display:inline-flex;align-items:center;gap:0.4rem;cursor:pointer;font-weight:400;">' +
-                        '<input type="radio" name="' + rowId + '_mode" value="promo" ' + (isPromo ? 'checked' : '') + '> Use Promo Price</label>' +
-                    '<input type="hidden" name="variant_price_mode[]" class="dv-price-mode-input" value="' + (isPromo ? 'promo' : 'regular') + '">' +
-                    '<div class="dv-promo-time-fields" style="display:' + (isPromo ? 'flex' : 'none') + ';gap:0.75rem;margin-top:0.5rem;align-items:end;">' +
-                        '<div><label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:3px;">Active from <span class="required">*</span></label>' +
-                        '<input type="time" name="variant_promo_start[]" class="dv-promo-start" value="' + (promoStart || '') + '" ' + (isPromo ? 'required' : '') + '></div>' +
-                        '<div><label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:3px;">to <span class="required">*</span></label>' +
-                        '<input type="time" name="variant_promo_end[]"   class="dv-promo-end"   value="' + (promoEnd   || '') + '" ' + (isPromo ? 'required' : '') + '></div>' +
-                    '</div>';
-                wrap.appendChild(sched);
-                rows.appendChild(wrap);
-
-                var timeFields  = sched.querySelector('.dv-promo-time-fields');
-                var startInput  = sched.querySelector('.dv-promo-start');
-                var endInput    = sched.querySelector('.dv-promo-end');
-                var modeInput   = sched.querySelector('.dv-price-mode-input');
-                sched.querySelectorAll('input[type="radio"][name="' + rowId + '_mode"]').forEach(function(radio) {
-                    radio.addEventListener('change', function() {
-                        var promoSelected = (this.value === 'promo');
-                        modeInput.value = promoSelected ? 'promo' : 'regular';
-                        timeFields.style.display = promoSelected ? 'flex' : 'none';
-                        startInput.required = promoSelected;
-                        endInput.required   = promoSelected;
-                        if (!promoSelected) { startInput.value = ''; endInput.value = ''; }
-                    });
-                });
-
-                refreshDurationRemoveButtons();
-            }
-
-            // A service can never have zero rows — hide Remove while only one is left.
-            function refreshDurationRemoveButtons() {
-                var rows = document.querySelectorAll('#durationVariantsRows > .duration-variant-option');
-                rows.forEach(function(r) {
-                    var b = r.querySelector('.dv-remove-btn');
-                    if (b) b.style.display = rows.length <= 1 ? 'none' : '';
-                });
-            }
-
-            function removeDurationVariantRow(btn) {
-                var row = btn.closest('.duration-variant-option');
-                if (row && document.querySelectorAll('#durationVariantsRows > .duration-variant-option').length > 1) {
-                    row.remove();
-                    refreshDurationRemoveButtons();
-                }
-            }
-
-            function validateDurationVariantsOnSubmit() {
-                if (document.querySelectorAll('#durationVariantsRows > .duration-variant-option').length < 1) {
-                    alert('Add at least one Duration Option.');
-                    return false;
-                }
-                return true;
-            }
-
-            (function() {
-                if (svcDurationVariants.length > 0) {
-                    svcDurationVariants.forEach(function(v) {
-                        addDurationVariantRow(v.duration_minutes, v.regular_price, v.promo_price, v.price_mode, v.promo_start_time, v.promo_end_time, v.session_count);
-                    });
-                } else {
-                    addDurationVariantRow();
-                }
-            })();
-            </script>
-
-            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm">Availability</span>
+        <!-- Who does it & where -->
+        <section class="se-card">
+            <div class="se-card-h"><h3>Who does it &amp; where</h3><span class="se-hint">Turn on only what applies</span></div>
+            <div class="se-card-b se-sws">
+                <label class="se-sw<?php echo !empty($edit_service['is_medical']) ? ' on' : ''; ?>" data-sw>
+                    <input type="checkbox" class="se-hide" name="is_medical" value="1" <?php echo !empty($edit_service['is_medical']) ? 'checked' : ''; ?>>
+                    <span class="se-sw-top">Doctor / Nurse <span class="se-tog"></span></span>
+                    <p>No therapist needed. No commission; the sales report leaves it blank for accounting.</p>
+                </label>
+                <label class="se-sw<?php echo !empty($edit_service['is_home_service']) ? ' on' : ''; ?>" data-sw>
+                    <input type="checkbox" class="se-hide" name="is_home_service" value="1" id="homeServiceToggle" <?php echo !empty($edit_service['is_home_service']) ? 'checked' : ''; ?>>
+                    <span class="se-sw-top">Home service <span class="se-tog"></span></span>
+                    <p>Customers can book a home visit.</p>
+                    <span class="se-extra" onclick="event.preventDefault();">
+                        <span class="se-lbl">Home service price ₱ (fixed total)</span>
+                        <input type="number" name="home_service_price" id="homeServicePrice" step="0.01" min="0" placeholder="e.g. 1500" value="<?php echo (float)($edit_service['home_service_price'] ?? 0) ?: ''; ?>" onclick="this.focus();">
+                    </span>
+                </label>
+                <?php $_at_cost = (float)($edit_service['at_cost'] ?? 0); ?>
+                <label class="se-sw<?php echo $_at_cost > 0 ? ' on' : ''; ?>" data-sw data-costsw>
+                    <input type="checkbox" class="se-hide" id="seCostOn" <?php echo $_at_cost > 0 ? 'checked' : ''; ?>>
+                    <span class="se-sw-top">Influencer at cost <span class="se-tog"></span></span>
+                    <p>Cost counted as marketing expense when done free for an influencer.</p>
+                    <span class="se-extra" onclick="event.preventDefault();">
+                        <span class="se-lbl">At cost ₱</span>
+                        <input type="number" name="at_cost" id="seAtCost" step="0.01" min="0" placeholder="0.00" value="<?php echo $_at_cost ?: ''; ?>" onclick="this.focus();">
+                    </span>
+                </label>
             </div>
-            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
-                <div class="form-group">
-                    <label style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;user-select:none;">
-                        <input type="checkbox" name="is_home_service" value="1"
-                               id="homeServiceToggle"
-                               style="width:18px;height:18px;cursor:pointer;"
-                               <?php echo !empty($edit_service['is_home_service']) ? 'checked' : ''; ?>>
-                        <span>This service is available as <strong>Home Service</strong></span>
-                    </label>
-                    <small style="color:var(--gray);margin-top:0.3rem;display:block;">
-                        If enabled, customers can choose between visiting the spa or booking a home visit.
-                    </small>
-                </div>
-            </div>
-
-            <div class="form-grid form-grid-2"
-                 id="homeFeeSectionRow"
-                 style="margin-bottom:1.25rem;<?php echo empty($edit_service['is_home_service']) ? 'display:none;' : ''; ?>">
-                <div class="form-group">
-                    <label>Home Service Price (₱) — Fixed Total <span class="required">*</span></label>
-                    <input type="number" name="home_service_price" id="homeServicePrice"
-                           step="0.01" min="0"
-                           value="<?php echo floatval($edit_service['home_service_price'] ?? 0); ?>"
-                           placeholder="e.g. 1500.00">
-                    <small style="color:var(--gray);">
-                        Kumpletong halaga para sa home service booking — direktang total, hindi add-on.
-                    </small>
-                </div>
-            </div>
-
-            <script>
-            document.getElementById('homeServiceToggle').addEventListener('change', function() {
-                const row   = document.getElementById('homeFeeSectionRow');
-                const price = document.getElementById('homeServicePrice');
-                if (this.checked) {
-                    row.style.display = '';
-                    if (price) price.required = true;
-                } else {
-                    row.style.display = 'none';
-                    if (price) { price.required = false; price.value = '0.00'; }
-                }
-            });
-            // Sync display + required state on page load
-            (function(){
-                const chk   = document.getElementById('homeServiceToggle');
-                const row   = document.getElementById('homeFeeSectionRow');
-                const price = document.getElementById('homeServicePrice');
-                if (row)   row.style.display = chk.checked ? '' : 'none';
-                if (price) price.required = chk.checked;
-            })();
-            </script>
-
             <?php if (!empty($edit_service['is_two_session'])): ?>
-            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
-                <div class="form-group">
-                    <div style="padding:0.75rem 1rem;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;font-size:0.85rem;color:var(--brown);">
-                        This service still has the legacy <strong>2-Session Package</strong> enabled (Price for 2 Sessions: ₱<?php echo number_format(floatval($edit_service['session2_price'] ?? 0), 2); ?>). New services can no longer add this — it's retired in favor of Duration Options' Sessions field above. Existing bookings and this service's setting are unaffected.
-                    </div>
-                </div>
-            </div>
+            <div class="se-card-b"><div class="se-warn" style="margin:0;">This service still has the old <strong>2-Session Package</strong> setting (₱<?php echo number_format(floatval($edit_service['session2_price'] ?? 0), 2); ?> for 2 sessions). It's kept for existing bookings; new packages use the Sessions column above.</div></div>
             <?php endif; ?>
+        </section>
 
-            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm">Package Components (optional)</span>
-            </div>
-            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
-                <div class="form-group">
-                    <small style="color:var(--gray);display:block;margin-bottom:0.6rem;">
-                        Only check services here if this service is really a bundle of OTHER services sold
-                        together under one combined price (e.g. "Package 2" = Express Head Spa + Foot Massage).
-                        When set, therapist commission for this service is computed per component — each
-                        checked service's own commission rate and own price, summed — instead of one rate on
-                        this service's own price. Leave everything unchecked for an ordinary, single-treatment
-                        service; nothing here changes how it's priced or sold.
-                    </small>
-                    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border2);border-radius:8px;padding:0.75rem;">
+        <!-- Bundle -->
+        <section class="se-card">
+            <div class="se-card-h"><h3>Bundle of other services</h3><span class="se-hint">Optional · e.g. Head Spa Package = Express Head Spa + Foot Massage</span></div>
+            <div class="se-card-b">
+                <span class="se-lbl">Services inside this one</span>
+                <div class="se-chips" id="sePkChips"></div>
+                <div class="se-picker">
+                    <input type="search" id="sePkQ" placeholder="Search a service to add…" autocomplete="off">
+                    <div class="se-plist" id="sePkList">
                         <?php if (empty($component_pickable_services)): ?>
-                        <div style="color:var(--gray);font-size:0.85rem;">No other services available to pick as components.</div>
-                        <?php else:
-                            $_pkg_cat_seen = null;
-                            foreach ($component_pickable_services as $_cps):
-                                $_cps_cat = $_cps['category_name'] ?: 'Uncategorized';
-                                if ($_cps_cat !== $_pkg_cat_seen):
-                                    if ($_pkg_cat_seen !== null) echo '</div>';
-                                    echo '<div style="font-size:0.7rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.03em;margin:0.6rem 0 0.3rem;">' . htmlspecialchars($_cps_cat) . '</div><div>';
-                                    $_pkg_cat_seen = $_cps_cat;
-                                endif;
-                        ?>
-                        <label style="display:flex;align-items:center;gap:0.6rem;padding:0.3rem 0;cursor:pointer;">
-                            <input type="checkbox" name="package_component_ids[]" value="<?php echo (int)$_cps['id']; ?>"
-                                   <?php echo in_array((int)$_cps['id'], $current_pkg_component_ids, true) ? 'checked' : ''; ?>>
-                            <span><?php echo htmlspecialchars($_cps['name']); ?> <span style="color:var(--gray);">— ₱<?php echo number_format((float)$_cps['price'], 2); ?></span></span>
+                        <div class="se-empty" style="padding:0.6rem 0.75rem;">No other services available.</div>
+                        <?php else: $_pkg_cat_seen = null; foreach ($component_pickable_services as $_cps):
+                            $_cps_cat = $_cps['category_name'] ?: 'Uncategorized';
+                            if ($_cps_cat !== $_pkg_cat_seen): $_pkg_cat_seen = $_cps_cat; ?>
+                        <div class="se-pcat" data-cat="<?php echo htmlspecialchars($_cps_cat); ?>"><?php echo htmlspecialchars($_cps_cat); ?></div>
+                        <?php endif; ?>
+                        <label class="se-pitem" data-q="<?php echo htmlspecialchars(strtolower($_cps['name'] . ' ' . $_cps_cat)); ?>" data-cat="<?php echo htmlspecialchars($_cps_cat); ?>">
+                            <input type="checkbox" name="package_component_ids[]" value="<?php echo (int)$_cps['id']; ?>" data-name="<?php echo htmlspecialchars($_cps['name']); ?>" data-price="<?php echo (float)$_cps['price']; ?>" <?php echo in_array((int)$_cps['id'], $current_pkg_component_ids, true) ? 'checked' : ''; ?>>
+                            <span><?php echo htmlspecialchars($_cps['name']); ?></span>
+                            <span class="se-pr">₱<?php echo number_format((float)$_cps['price'], 2); ?></span>
                         </label>
-                        <?php
-                            endforeach;
-                            if ($_pkg_cat_seen !== null) echo '</div>';
-                        endif;
-                        ?>
+                        <?php endforeach; endif; ?>
                     </div>
                 </div>
+                <p class="se-note">Therapist commission is then paid per service inside, each at its own rate on its own promo price.</p>
             </div>
+        </section>
 
-            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm">Media</span>
-            </div>
-            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
-                <div class="form-group">
-                    <label>Service Image <?php echo !$edit_service ? '<span class="required">*</span>' : ''; ?></label>
-                    <input type="file" name="image" accept="image/*"
-                           <?php echo !$edit_service ? 'required' : ''; ?>>
-                    <?php if ($edit_service && $edit_service['image']): ?>
-                        <div style="margin-top:0.5rem;display:flex;align-items:center;gap:1rem;">
-                            <img src="../uploads/services/<?php echo htmlspecialchars($edit_service['image']); ?>" 
-                                 class="thumb" 
-                                 alt="Current Service Image" 
-                                 style="width:60px;height:60px;object-fit:cover;border-radius:8px;border:2px solid var(--border);">
-                            <small>Current image — upload new to replace</small>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
-            <div class="form-grid form-grid-1" style="margin-bottom:1.25rem;">
-                <div class="form-group">
-                    <label>Description <span class="required">*</span></label>
-                    <textarea name="description" rows="4" required><?php echo htmlspecialchars($edit_service['description'] ?? ''); ?></textarea>
-                </div>
-            </div>
-
-            <!-- ─── SUPPLIES USED PER SESSION ────────────────────────────────── -->
-            <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border);">
-                <span class="section-label-sm" style="color:var(--brown-md);">Supplies Used per Session</span>
-                <p style="font-size:0.83rem;color:var(--gray);margin:0.4rem 0 1rem;">
-                    Define which supplies are consumed per person when this service is completed.
-                    Quantities are in base units (ml, g, pcs…). Leave empty if no supplies are deducted.
-                </p>
+        <!-- Supplies -->
+        <section class="se-card">
+            <div class="se-card-h"><h3>Supplies used</h3><span class="se-hint">Optional · deducted from inventory per person when the service is completed</span></div>
+            <div class="se-card-b">
                 <style>
                 .recipe-supply-sel, .recipe-qty-inp {
                     background: #fff;
@@ -839,7 +752,7 @@ require_once 'admin_header.php';
                     <div id="recipeRows">
                         <p id="recipeEmpty"
                            style="color:var(--gray);font-size:0.83rem;margin:0.5rem 0;<?php echo count($svc_recipe) > 0 ? 'display:none;' : ''; ?>">
-                            No supplies added yet — click <strong>+ Add Supply</strong> to define which items are consumed per session.
+                            No supplies added yet — click <strong>+ Add supply</strong> to define which items are consumed per session.
                         </p>
                         <?php foreach ($svc_recipe as $rrow):
                             $rsid        = (int)$rrow['supply_id'];
@@ -858,7 +771,7 @@ require_once 'admin_header.php';
                             </div>
                             <input type="number" name="recipe_qty_per_person_archived[]"
                                    class="recipe-qty-inp"
-                                   step="0.0001" min="0.0001"
+                                   step="0.0001" min="0"
                                    value="<?php echo htmlspecialchars($rrow['quantity_per_person']); ?>"
                                    style="width:85px;flex-shrink:0;">
                             <span class="recipe-unit-label"
@@ -885,7 +798,7 @@ require_once 'admin_header.php';
                             </select>
                             <input type="number" name="recipe_qty_per_person[]"
                                    class="recipe-qty-inp"
-                                   step="0.0001" min="0.0001"
+                                   step="0.0001" min="0"
                                    value="<?php echo htmlspecialchars($rrow['quantity_per_person']); ?>"
                                    style="width:85px;flex-shrink:0;">
                             <span class="recipe-unit-label"
@@ -901,14 +814,13 @@ require_once 'admin_header.php';
                 </div>
                 <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-top:0.75rem;">
                     <button type="button" class="btn btn-secondary btn-sm" onclick="addRecipeRow()">
-                        + Add Supply
+                        + Add supply
                     </button>
                     <span id="recipeDupeWarning"
                           style="color:var(--rust);font-size:0.82rem;display:none;">
                         Duplicate supply — each supply can only appear once per service.
                     </span>
                 </div>
-            </div>
             <script>
             var _recipeOptsTpl = <?php echo json_encode($recipe_opts_html); ?>;
 
@@ -923,7 +835,7 @@ require_once 'admin_header.php';
                     '<select name="recipe_supply_id[]" class="recipe-supply-sel" onchange="updateRecipeUnit(this)" style="flex:1;min-width:200px;">' +
                         _recipeOptsTpl +
                     '</select>' +
-                    '<input type="number" name="recipe_qty_per_person[]" class="recipe-qty-inp" step="0.0001" min="0.0001" value="' + qty + '" style="width:85px;flex-shrink:0;">' +
+                    '<input type="number" name="recipe_qty_per_person[]" class="recipe-qty-inp" step="0.0001" min="0" value="' + qty + '" style="width:85px;flex-shrink:0;">' +
                     '<span class="recipe-unit-label" style="width:40px;flex-shrink:0;color:var(--gray);font-size:0.82rem;"></span>' +
                     '<button type="button" class="btn btn-danger btn-sm" onclick="removeRecipeRow(this)" style="flex-shrink:0;">×</button>';
                 container.appendChild(div);
@@ -976,24 +888,205 @@ require_once 'admin_header.php';
             });
             checkRecipeEmpty();
             </script>
-            <!-- ──────────────────────────────────────────────────────────── -->
 
-            <?php if (is_cashier()): ?>
-            <div class="form-group" style="max-width:200px;">
-                <label>Your 4-digit PIN <span class="required">*</span></label>
-                <input type="password" name="pin" maxlength="4" placeholder="••••" required
-                       style="letter-spacing:0.3em;text-align:center;font-size:1rem;">
             </div>
-            <?php endif; ?>
-            <div class="form-actions">
-                <button type="submit" class="btn btn-primary">
-                    <?php echo $edit_service ? 'Update Service' : 'Add Service'; ?>
-                </button>
-                <a href="services.php" class="btn btn-secondary">Cancel</a>
+        </section>
+
+        <!-- Photo & description -->
+        <section class="se-card">
+            <div class="se-card-h"><h3>Photo &amp; description</h3><span class="se-hint">Optional · shown to customers online</span></div>
+            <div class="se-card-b se-photo">
+                <div>
+                    <label class="se-thumb" for="seImg" id="seThumb" style="<?php echo !empty($edit_service['image']) ? "background-image:url('../uploads/services/" . htmlspecialchars($edit_service['image']) . "');" : ''; ?>">
+                        <span id="seThumbTxt" style="<?php echo !empty($edit_service['image']) ? 'display:none;' : ''; ?>">Click to add a photo</span>
+                    </label>
+                    <input type="file" name="image" id="seImg" accept="image/*" hidden>
+                    <?php if (!empty($edit_service['image'])): ?><small style="display:block;margin-top:0.3rem;">Click the photo to replace it</small><?php endif; ?>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="se-lbl" for="seDesc">Description</label>
+                    <textarea name="description" id="seDesc" rows="5" placeholder="What the customer gets, in a sentence or two"><?php echo htmlspecialchars($edit_service['description'] ?? ''); ?></textarea>
+                </div>
             </div>
-        </form>
+        </section>
     </div>
-</div>
+
+    <aside class="se-side">
+        <section class="se-card se-prev"><div class="se-card-b" style="padding-top:0.9rem;">
+            <h4>How receptionists see it</h4>
+            <div class="se-bn"><div class="nm" id="sePvName"></div><div class="ct" id="sePvCat"></div><div class="se-durs" id="sePvDurs"></div></div>
+            <ul class="se-facts" id="sePvFacts"></ul>
+            <div class="se-warn" id="sePvWarn" hidden></div>
+        </div></section>
+    </aside>
+    </div>
+
+    <div class="se-bottom">
+        <span class="se-dirty" id="seDirty">No changes yet</span>
+        <?php if (is_cashier()): ?>
+        <label class="se-lbl" for="sePin" style="margin:0;">Your PIN</label>
+        <input type="password" name="pin" id="sePin" maxlength="4" placeholder="••••" required>
+        <?php endif; ?>
+        <a href="services.php" class="btn btn-secondary">Cancel</a>
+        <button type="submit" class="btn btn-primary"><?php echo $edit_service ? 'Save changes' : 'Add service'; ?></button>
+    </div>
+</form>
+
+<script>
+var svcDurationVariants = <?php echo json_encode(array_values($svc_durations_list)); ?>;
+(function () {
+    var $ = function (id) { return document.getElementById(id); };
+    var peso = function (n) { return '₱' + Number(n || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 }); };
+    var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+    var form = $('seForm'), dirty = false;
+    function touch() { if (!dirty) { dirty = true; $('seDirty').textContent = 'Unsaved changes'; } }
+    form.addEventListener('input', function () { touch(); render(); });
+    form.addEventListener('change', function () { touch(); render(); });
+    form.addEventListener('submit', function () { dirty = false; });
+    window.addEventListener('beforeunload', function (e) { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+    // ── Price rows: same field names the server already reads ──────────
+    var seq = 0;
+    function addRow(v) {
+        v = v || {};
+        var promoOn = v.price_mode === 'promo' && parseFloat(v.promo_price) > 0;
+        var tr = document.createElement('tr');
+        tr.className = 'duration-variant-option';
+        tr.innerHTML =
+            '<td><input type="number" name="variant_duration[]" min="1" step="1" aria-label="Minutes" value="' + (v.duration_minutes || '') + '"></td>' +
+            '<td><input type="number" name="variant_session_count[]" min="1" aria-label="Sessions" value="' + (v.session_count || 1) + '"></td>' +
+            '<td><input type="number" class="se-money" name="variant_regular_price[]" step="0.01" min="0" aria-label="Regular price" value="' + (parseFloat(v.regular_price) || '') + '"></td>' +
+            '<td><input type="number" class="se-money" name="variant_promo_price[]" step="0.01" min="0" placeholder="none" aria-label="Promo price" value="' + (parseFloat(v.promo_price) || '') + '">' +
+                '<div class="se-when"' + (promoOn ? '' : ' hidden') + '>from <input type="time" name="variant_promo_start[]" value="' + (v.promo_start_time || '') + '"> to <input type="time" name="variant_promo_end[]" value="' + (v.promo_end_time || '') + '"><span>(blank = all day)</span></div></td>' +
+            '<td><input type="hidden" name="variant_price_mode[]" class="dv-price-mode-input" value="' + (promoOn ? 'promo' : 'regular') + '">' +
+                '<span class="se-seg"><button type="button" data-mode="regular">Regular</button><button type="button" data-mode="promo">Promo</button></span></td>' +
+            '<td><span class="se-per"></span></td>' +
+            '<td><button type="button" class="se-rm dv-remove-btn" title="Remove this option" aria-label="Remove this option">✕</button></td>';
+        $('durationVariantsRows').appendChild(tr);
+        tr.querySelectorAll('[data-mode]').forEach(function (b) {
+            b.onclick = function () { if (b.disabled) return; setMode(tr, b.dataset.mode); touch(); render(); };
+        });
+        tr.querySelector('.dv-remove-btn').onclick = function () {
+            if (document.querySelectorAll('#durationVariantsRows > tr').length > 1) { tr.remove(); touch(); render(); }
+        };
+        syncRow(tr);
+        return tr;
+    }
+    function setMode(tr, mode) {
+        tr.querySelector('.dv-price-mode-input').value = mode;
+        tr.querySelector('.se-when').hidden = mode !== 'promo';
+        if (mode !== 'promo') tr.querySelectorAll('.se-when input').forEach(function (i) { i.value = ''; });
+        syncRow(tr);
+    }
+    function rowData(tr) {
+        var g = function (n) { return parseFloat(tr.querySelector('[name="' + n + '[]"]').value) || 0; };
+        return { m: g('variant_duration'), n: Math.max(1, g('variant_session_count')), reg: g('variant_regular_price'), promo: g('variant_promo_price'),
+                 mode: tr.querySelector('.dv-price-mode-input').value };
+    }
+    function syncRow(tr) {
+        var d = rowData(tr);
+        if (d.mode === 'promo' && !(d.promo > 0)) { d.mode = 'regular'; tr.querySelector('.dv-price-mode-input').value = 'regular'; tr.querySelector('.se-when').hidden = true; }
+        tr.querySelectorAll('[data-mode]').forEach(function (b) {
+            b.classList.toggle('on', b.dataset.mode === d.mode);
+            if (b.dataset.mode === 'promo') { b.disabled = !(d.promo > 0); b.title = d.promo > 0 ? '' : 'Type a promo price first'; }
+        });
+        var charge = d.mode === 'promo' ? d.promo : d.reg;
+        tr.querySelector('.se-per').textContent = d.n > 1 && charge > 0 ? peso(charge / d.n) + ' / session' : '';
+    }
+    window.seAddOption = function (n) {
+        var rows = [].slice.call(document.querySelectorAll('#durationVariantsRows > tr')).map(rowData);
+        var base = rows.filter(function (r) { return r.n === 1 && r.reg > 0; })[0] || rows[0] || { m: 60, reg: 0 };
+        var tr = n === 1 ? addRow({ duration_minutes: (base.m || 30) + 30, regular_price: base.reg || '' })
+                         : addRow({ duration_minutes: base.m || '', session_count: n, regular_price: base.reg ? base.reg * n : '' });
+        tr.querySelector('input').focus();
+        touch(); render();
+    };
+    window.validateDurationVariantsOnSubmit = function () {
+        var ok = [].slice.call(document.querySelectorAll('#durationVariantsRows > tr')).map(rowData).some(function (r) { return r.m > 0 && r.reg > 0; });
+        if (!ok) {
+            var w = $('sePvWarn'); w.hidden = false; w.textContent = 'Add at least one price row with minutes and a regular price.';
+            var f = document.querySelector('#durationVariantsRows input'); if (f) f.focus();
+            return false;
+        }
+        return true;
+    };
+    $('durationVariantsRows').addEventListener('input', function (e) { var tr = e.target.closest('tr'); if (tr) syncRow(tr); });
+    if (svcDurationVariants.length) svcDurationVariants.forEach(addRow); else addRow({ duration_minutes: 60 });
+
+    // ── Switch cards ───────────────────────────────────────────────────
+    document.querySelectorAll('[data-sw]').forEach(function (c) {
+        var cb = c.querySelector('input.se-hide');
+        cb.addEventListener('change', function () {
+            c.classList.toggle('on', cb.checked);
+            if (c.hasAttribute('data-costsw') && !cb.checked) $('seAtCost').value = '';
+            if (cb === $('homeServiceToggle') && !cb.checked) $('homeServicePrice').value = '';
+        });
+    });
+
+    // ── Bundle picker ──────────────────────────────────────────────────
+    function renderChips() {
+        var on = [].slice.call(document.querySelectorAll('#sePkList input:checked'));
+        $('sePkChips').innerHTML = on.length ? on.map(function (i) {
+            return '<span class="se-chip">' + esc(i.dataset.name) + ' · ' + peso(i.dataset.price) + '<button type="button" aria-label="Remove ' + esc(i.dataset.name) + '" data-unpk="' + i.value + '">×</button></span>';
+        }).join('') : '<span class="se-empty">None — an ordinary single service.</span>';
+    }
+    $('sePkChips').addEventListener('click', function (e) {
+        var b = e.target.closest('[data-unpk]'); if (!b) return;
+        var i = document.querySelector('#sePkList input[value="' + b.dataset.unpk + '"]'); if (i) { i.checked = false; touch(); render(); }
+    });
+    $('sePkQ').addEventListener('input', function () {
+        var q = this.value.trim().toLowerCase(), shown = {};
+        document.querySelectorAll('#sePkList .se-pitem').forEach(function (it) {
+            var m = !q || it.dataset.q.indexOf(q) >= 0; it.hidden = !m; if (m) shown[it.dataset.cat] = 1;
+        });
+        document.querySelectorAll('#sePkList .se-pcat').forEach(function (h) { h.hidden = !shown[h.dataset.cat]; });
+    });
+
+    // ── Photo preview ──────────────────────────────────────────────────
+    $('seImg').addEventListener('change', function () {
+        var f = this.files && this.files[0]; if (!f) return;
+        var r = new FileReader();
+        r.onload = function () { $('seThumb').style.backgroundImage = 'url(' + r.result + ')'; $('seThumbTxt').style.display = 'none'; };
+        r.readAsDataURL(f);
+    });
+
+    // ── Live preview + header badges ───────────────────────────────────
+    function render() {
+        var name = $('seName').value.trim() || 'New service';
+        $('seHName').textContent = name; $('sePvName').textContent = name;
+        var cat = $('seCat'); $('sePvCat').textContent = cat.value ? cat.options[cat.selectedIndex].text.trim() : 'No category';
+        var rows = [].slice.call(document.querySelectorAll('#durationVariantsRows > tr')).map(rowData).filter(function (r) { return r.m > 0 && r.reg > 0; });
+        $('sePvDurs').innerHTML = rows.length ? rows.map(function (r) {
+            var promo = r.mode === 'promo' && r.promo > 0;
+            return '<span class="se-dur">+ ' + r.m + ' min' + (r.n > 1 ? ' × ' + r.n + ' sessions' : '') + ' · ' + peso(promo ? r.promo : r.reg) + (promo ? ' promo' : '') + '</span>';
+        }).join('') : '<span class="se-empty">No price yet</span>';
+        var med = form.querySelector('[name=is_medical]').checked, home = $('homeServiceToggle').checked;
+        var pk = document.querySelectorAll('#sePkList input:checked').length, sup = document.querySelectorAll('#recipeRows .recipe-row').length;
+        var b = [];
+        if (med) b.push('<span class="se-badge med">Doctor / Nurse</span>');
+        if (rows.some(function (r) { return r.n > 1; })) b.push('<span class="se-badge pkg">Multi-session</span>');
+        if (pk) b.push('<span class="se-badge pkg">Bundle of ' + pk + '</span>');
+        if (home) b.push('<span class="se-badge home">Home service</span>');
+        $('seBadges').innerHTML = b.join('');
+        var facts = [
+            ['Done by', med ? 'Doctor / Nurse (no therapist)' : 'Therapist from rotation'],
+            ['Commission', med ? 'None · accounting' : (pk ? 'Per service inside' : 'Therapist rate')],
+            ['Price options', String(rows.length)],
+            ['Home visit', home ? peso($('homeServicePrice').value) : 'Off'],
+            ['Supplies', sup ? sup + ' item' + (sup > 1 ? 's' : '') : 'None']
+        ];
+        $('sePvFacts').innerHTML = facts.map(function (f) { return '<li><span>' + f[0] + '</span><span>' + esc(f[1]) + '</span></li>'; }).join('');
+        var w = [];
+        var all = [].slice.call(document.querySelectorAll('#durationVariantsRows > tr')).map(rowData);
+        if (!rows.length) w.push('Add at least one price row with minutes and a regular price.');
+        if (all.some(function (r, i) { return r.m > 0 && all.some(function (o, j) { return j < i && o.m === r.m && o.n === r.n; }); })) w.push('Two price rows have the same minutes and sessions; only one will be kept.');
+        if (home && !(parseFloat($('homeServicePrice').value) > 0)) w.push('Home service is on but has no price yet.');
+        var wb = $('sePvWarn'); wb.hidden = !w.length; wb.innerHTML = w.map(esc).join('<br>');
+        renderChips();
+    }
+    render();
+})();
+</script>
 
 <?php endif; ?>
 

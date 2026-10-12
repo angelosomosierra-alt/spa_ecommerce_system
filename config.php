@@ -281,8 +281,12 @@ function sanitize_input(string $data): string {
 // current time via the timezone already set globally above
 // (date_default_timezone_set('Asia/Manila')).
 function _resolve_active_price(float $regular, float $promo, string $mode, ?string $promoStart, ?string $promoEnd): array {
-    if ($mode !== 'promo' || empty($promoStart) || empty($promoEnd)) {
+    if ($mode !== 'promo' || $promo <= 0) {
         return ['price' => $regular, 'is_promo_active' => false];
+    }
+    // Promo with no time window: it applies all day.
+    if (empty($promoStart) || empty($promoEnd)) {
+        return ['price' => $promo, 'is_promo_active' => true];
     }
 
     $now   = date('H:i:s');
