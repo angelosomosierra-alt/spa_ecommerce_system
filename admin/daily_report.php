@@ -538,14 +538,15 @@ $conn->query("
       AND d.net_sales <> ROUND(a.charged_price - (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25), 2)
 ");
 
-// ── BACKFILL: Package services completed with ₱0 commission ──────────────────
+// ── SYNC: Package service commission ─────────────────────────────────────────
 // A Package (service_package_components) pays the therapist each component's
 // own rate on that component's own promo price (compute_package_commission()).
-// A package completed BEFORE its components were set up -- or before the
-// therapist had rates for them -- saved ₱0, and its imported row kept ₱0
-// forever (imports never re-run on an existing row). Fill in only ₱0
-// commissions (never overwrite a non-zero one), only on an unlocked day, and
-// only refresh spreadsheet rows nobody has hand-edited.
+// A package completed before its components -- or the therapist's rates for
+// them -- were set up saved too little (₱0, or only the services that had a
+// rate), and its imported row kept that forever (imports never re-run on an
+// existing row). While the day is unlocked, package commission is kept equal
+// to the current component calculation; locking the report freezes it.
+// Spreadsheet rows somebody hand-edited are never touched.
 if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
     ensure_service_package_components_table($conn);
     // Main services
@@ -562,13 +563,12 @@ if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
         $_changed = false; $_total = 0.0; $_first_tid = 0;
         foreach ($_ths as $_t) {
             $_c = (float)$_t['commission'];
-            if ($_c <= 0) {
-                $_c = compute_package_commission($conn, (int)$_r['service_id'], (int)$_t['therapist_id'])['total'] * max(1, (int)$_t['ph']);
-                if ($_c > 0) {
-                    $_u = $conn->prepare("UPDATE appointment_therapists SET commission = ? WHERE id = ?");
-                    $_u->bind_param("di", $_c, $_t['id']); $_u->execute(); $_u->close();
-                    $_changed = true;
-                }
+            $_want = round(compute_package_commission($conn, (int)$_r['service_id'], (int)$_t['therapist_id'])['total'] * max(1, (int)$_t['ph']), 2);
+            if ($_want > 0 && round($_want - $_c, 2) != 0.0) {
+                $_c = $_want;
+                $_u = $conn->prepare("UPDATE appointment_therapists SET commission = ? WHERE id = ?");
+                $_u->bind_param("di", $_c, $_t['id']); $_u->execute(); $_u->close();
+                $_changed = true;
             }
             $_total += $_c;
             if (!$_first_tid || (int)$_t['therapist_id'] < $_first_tid) $_first_tid = (int)$_t['therapist_id'];
@@ -587,16 +587,18 @@ if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
     $_pk->close();
     // Add-on services that are packages
     $_pk = $conn->prepare("
-        SELECT d.id AS row_id, d.created_by_name, d.updated_by_name, es.id AS es_id, es.service_id, es.therapist_id, es.charged_price
+        SELECT d.id AS row_id, d.created_by_name, d.updated_by_name, es.id AS es_id, es.service_id, es.therapist_id, es.charged_price,
+               IFNULL(es.commission, 0) AS es_comm, (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25) AS row_comm
         FROM daily_report_spreadsheet_rows d
         JOIN appointment_extra_services es ON es.id = d.source_extra_service_id
-        WHERE d.report_date = ? AND IFNULL(es.commission, 0) <= 0 AND es.therapist_id IS NOT NULL
+        WHERE d.report_date = ? AND es.therapist_id IS NOT NULL
           AND IFNULL(es.rate_type, 'regular') != 'influencer'
           AND es.service_id IN (SELECT package_service_id FROM service_package_components)");
     $_pk->bind_param("s", $report_date); $_pk->execute();
     foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) {
         $_c = compute_package_commission($conn, (int)$_r['service_id'], (int)$_r['therapist_id'])['total'];
         if ($_c <= 0) continue;
+        if (round($_c - (float)$_r['es_comm'], 2) == 0.0 && round($_c - (float)$_r['row_comm'], 2) == 0.0) continue;
         $_u = $conn->prepare("UPDATE appointment_extra_services SET commission = ? WHERE id = ?");
         $_u->bind_param("di", $_c, $_r['es_id']); $_u->execute(); $_u->close();
         if ($_r['created_by_name'] === 'import' && empty($_r['updated_by_name'])) {
@@ -614,12 +616,15 @@ if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
 // staff can fix the cause themselves (a missing rate, a hand edit, a lock).
 function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string {
     if (empty($r['source_appointment_id']) || !empty($r['is_refund'])) return '';
-    if ((float)$r['comm_30'] + (float)$r['comm_20'] + (float)$r['comm_15'] + (float)$r['comm_25'] > 0) return '';
+    $has_comm = (float)$r['comm_30'] + (float)$r['comm_20'] + (float)$r['comm_15'] + (float)$r['comm_25'] > 0;
     $a = $conn->query("SELECT a.service_id, a.rate_type, a.charged_price, s.name FROM appointments a JOIN services s ON s.id = a.service_id WHERE a.id = " . (int)$r['source_appointment_id'])->fetch_assoc();
     if (!$a || ($a['rate_type'] ?? '') === 'influencer') return '';
     $ths = $conn->query("SELECT t.id, t.full_name, t.pay_type FROM appointment_therapists at JOIN therapists t ON t.id = at.therapist_id WHERE at.appointment_id = " . (int)$r['source_appointment_id'])->fetch_all(MYSQLI_ASSOC);
     if (!$ths) return 'No therapist is recorded on this appointment, so no commission.';
     $comps = get_package_components($conn, (int)$a['service_id']);
+    // A package with commission can still be short a service's rate, so
+    // packages are always checked; anything else only when it shows ₱0.
+    if ($has_comm && !$comps) return '';
     // Looks like a package by name but has no components saved: commission
     // falls back to one rate on the service itself, which usually isn't set.
     if (!$comps && stripos($a['name'], 'package') !== false) {
@@ -639,11 +644,11 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
             $q = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
             $q->bind_param("ii", $t['id'], $c['id']); $q->execute();
             $pct = (float)($q->get_result()->fetch_assoc()['commission_percent'] ?? 0); $q->close();
-            if ($pct <= 0) $missing[] = "{$t['full_name']} has no rate for {$c['name']}";
+            if ($pct <= 0) $missing[] = "{$t['full_name']} has no rate for {$c['name']}" . ($comps ? " (service #{$c['id']})" : '');
         }
     }
     if ($missing) return implode('; ', $missing) . ' — set it in Staff → Commission Matrix, then reopen this report.';
-    if (!$comps) return '';
+    if (!$comps || $has_comm) return '';
     if ($locked) return 'Package commission is missing. Unlock this report and reopen it to recalculate.';
     if (!empty($r['updated_by_name'])) return 'Package commission is missing on a hand-edited row. Delete this row and reopen the report to re-import it.';
     return '';
