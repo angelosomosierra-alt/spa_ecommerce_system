@@ -394,11 +394,17 @@
     $('dkScrim').onclick = closeDrawer;
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.open) closeDrawer(); });
 
+    function isOvr(sel) { var o = sel.options[sel.selectedIndex]; return o && o.dataset.ovr ? '1' : ''; }
     function therSelect(qual, val, attrs, allowAny) {
         var opts = D.therapists.filter(function (t) { return qual.indexOf(t.id) >= 0; });
+        // Therapists not trained for it can still be picked on purpose
+        // (e.g. the customer asks for them); the server is told it's deliberate.
+        var others = D.therapists.filter(function (t) { return qual.indexOf(t.id) < 0; });
         return '<select ' + attrs + (val ? '' : ' class="missing"') + '><option value="">Choose therapist…</option>' +
             (allowAny ? '<option value="__any__">Any available</option>' : '') +
-            opts.map(function (t) { return '<option value="' + t.id + '"' + (t.id === val ? ' selected' : '') + '>' + esc(t.name) + (t.on ? '' : ' (off duty)') + '</option>'; }).join('') + '</select>';
+            opts.map(function (t) { return '<option value="' + t.id + '"' + (t.id === val ? ' selected' : '') + '>' + esc(t.name) + (t.on ? '' : ' (off duty)') + '</option>'; }).join('') +
+            (others.length ? '<optgroup label="Not trained · pick anyway">' + others.map(function (t) { return '<option value="' + t.id + '" data-ovr="1"' + (t.id === val ? ' selected' : '') + '>' + esc(t.name) + (t.on ? '' : ' (off duty)') + '</option>'; }).join('') + '</optgroup>' : '') +
+            '</select>';
     }
     // ── Add service (any open booking: needs therapist, booked, checked in) ──
     // Uses the same catalogue as Book Now and posts to add_extra_service,
@@ -460,7 +466,8 @@
         var cancel = $('dkAddCancel'); if (cancel) cancel.onclick = function () { S.add = null; renderDrawer(); };
         var go = $('dkAddGo'); if (go) go.onclick = function () {
             var s = S.add.svc, d = s.durs[S.add.di];
-            var f = { extra_svc_id: s.id, extra_duration_id: d.id || '', extra_therapist: s.med ? '' : (S.add.th || ''), person_label: S.add.person || 'Person 1', extra_payment_method: 'cash' };
+            var f = { extra_svc_id: s.id, extra_duration_id: d.id || '', extra_therapist: s.med ? '' : (S.add.th || ''), person_label: S.add.person || 'Person 1', extra_payment_method: 'cash',
+                      override: !s.med && S.add.th && s.qual.indexOf(+S.add.th) < 0 ? '1' : '' };
             S.add = null;
             post('add_extra_service', a.id, f, true, false, s.name + ' added');
         };
@@ -623,7 +630,7 @@
         $('dkX').onclick = closeDrawer;
         var pinEl = $('dkPin'); if (pinEl) pinEl.oninput = function () { S.pin = pinEl.value; }; // kept across redraws
         wireAdd(a);
-        W.querySelectorAll('[data-slot]').forEach(function (s) { s.onchange = function () { if (s.value) post('assign_person_slot', a.id, { person_slot: s.dataset.slot, therapist_id: s.value }, true); }; });
+        W.querySelectorAll('[data-slot]').forEach(function (s) { s.onchange = function () { if (s.value) post('assign_person_slot', a.id, { person_slot: s.dataset.slot, therapist_id: s.value, override: isOvr(s) }, true); }; });
         W.querySelectorAll('[data-xth]').forEach(function (s) { s.onchange = function () {
             if (!s.value) return;
             var rows = a.addons[+s.dataset.xth].rows, chain = Promise.resolve();

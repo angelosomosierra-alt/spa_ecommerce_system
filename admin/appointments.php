@@ -627,7 +627,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
     // Package service (e.g. "Package 2" = Express Head Spa + Foot Massage) --
     // qualification is tested against every real component, not the
     // package's own id/category. See get_booking_qualified_therapist_ids().
-    if ($es_ok && $es_therapist_id > 0) {
+    if ($es_ok && $es_therapist_id > 0 && empty($_POST['override'])) {
         $es_qualified_ids = get_booking_qualified_therapist_ids($conn, $es_service_id);
         if (!in_array($es_therapist_id, $es_qualified_ids, true)) {
             $message = "The selected therapist is not qualified for this service.";
@@ -2085,7 +2085,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     // component for a Package service; see
                     // get_booking_qualified_therapist_ids()).
                     $slot_qualified_ids = get_booking_qualified_therapist_ids($conn, $slot_svc_id);
-                    if (!in_array($slot_tid, $slot_qualified_ids, true)) $slot_err = 'Therapist is not qualified for this service.';
+                    // override = "pick anyway" for a therapist not trained for it
+                    if (empty($_POST['override']) && !in_array($slot_tid, $slot_qualified_ids, true)) $slot_err = 'Therapist is not qualified for this service.';
                 }
 
                 if ($slot_err) {

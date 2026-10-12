@@ -206,6 +206,9 @@ function book_now_save(mysqli $conn, array $guests): array {
             $service_id   = (int)($it['service_id'] ?? 0);
             $duration_id  = isset($it['duration_id']) && $it['duration_id'] !== null && $it['duration_id'] !== '' ? (int)$it['duration_id'] : null;
             $therapist_id = (int)($it['therapist_id'] ?? 0);
+            // override: the receptionist knowingly picked a therapist who isn't
+            // trained for this service ("pick anyway"). 0 = assign later.
+            $override     = !empty($it['override']);
             $resource_id  = (int)($it['resource_id'] ?? 0);
             $start        = (int)($it['start'] ?? -1);
 
@@ -235,10 +238,11 @@ function book_now_save(mysqli $conn, array $guests): array {
 
             // Doctor / Nurse service: no therapist at all (see service_is_medical()).
             $is_med = service_is_medical($conn, $service_id);
-            if ($is_med) {
+            $later  = !$is_med && $therapist_id <= 0; // booked now, therapist chosen in Appointments
+            if ($is_med || $later) {
                 $therapist_id = 0;
             } else {
-                if (!in_array($therapist_id, get_booking_qualified_therapist_ids($conn, $service_id), true)) {
+                if (!$override && !in_array($therapist_id, get_booking_qualified_therapist_ids($conn, $service_id), true)) {
                     return ['ok' => false, 'message' => "The therapist picked for $gname's {$svc['name']} isn't trained for it."];
                 }
                 $td = $conn->prepare("SELECT t.full_name FROM therapists t JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE() WHERE t.id = ? AND (ta.time_out IS NULL OR ta.time_out = '')");
@@ -252,7 +256,7 @@ function book_now_save(mysqli $conn, array $guests): array {
             $room = $rs->get_result()->fetch_assoc(); $rs->close();
             if (!$room) return ['ok' => false, 'message' => "Pick a room for $gname's {$svc['name']}."];
 
-            if (!$is_med && !book_now_therapist_free($conn, $therapist_id, $start_dt, $minutes)) {
+            if ($therapist_id > 0 && !book_now_therapist_free($conn, $therapist_id, $start_dt, $minutes)) {
                 return ['ok' => false, 'message' => "{$th['full_name']} was just booked at " . date('g:i A', strtotime($start_dt)) . ". Reopen Book Now to re-plan."];
             }
             if (!is_resource_available($resource_id, $start_dt, $minutes)) {
