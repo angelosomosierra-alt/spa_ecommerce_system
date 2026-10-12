@@ -538,6 +538,109 @@ $conn->query("
       AND d.net_sales <> ROUND(a.charged_price - (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25), 2)
 ");
 
+// ── FILL-IN: commissions saved as ₱0 because the therapist had no rate yet ──
+// Commission is stored when an appointment (or added service) is completed.
+// If the therapist's rate for that service was only set afterwards, ₱0 was
+// stored. While the day is unlocked, fill those in with the same formula
+// completion uses (promo-price base, booking discount, people handled,
+// hotel / influencer rates). Only ₱0 commissions are touched, never Doctor /
+// Nurse services or bundles (synced separately below), and a Spreadsheet
+// row is refreshed only if nobody hand-edited it.
+if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
+    $_rate = function (int $tid, int $sid) use ($conn) {
+        $q = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+        $q->bind_param("ii", $tid, $sid); $q->execute();
+        $r = $q->get_result()->fetch_assoc(); $q->close();
+        return $r ?: null;
+    };
+    $_refresh_row = function (string $where_col, int $src_id, int $sid, int $tid, float $comm, float $charged) use ($conn, $report_date) {
+        $b = route_commission_to_buckets($conn, $sid, $tid, $comm);
+        $net = $charged - $comm;
+        $u = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET comm_30=?, comm_20=?, comm_15=?, comm_25=?, net_sales=?
+                              WHERE report_date=? AND $where_col=? AND created_by_name='import' AND (updated_by_name IS NULL OR updated_by_name='')");
+        $u->bind_param("dddddsi", $b['comm_30'], $b['comm_20'], $b['comm_15'], $b['comm_25'], $net, $report_date, $src_id);
+        $u->execute(); $u->close();
+    };
+    $_pkg_from_f = PKG_SPLIT_FROM;
+
+    // Main services
+    $_fq = $conn->prepare("
+        SELECT a.id AS appt_id, a.service_id, a.service_duration_id, a.rate_type, a.charged_price,
+               GREATEST(1, IFNULL(a.people_count, 1)) AS people,
+               s.price AS svc_price, IFNULL(o.total_amount, 0) AS order_total, IFNULL(o.discount_amount, 0) AS order_disc
+        FROM appointments a
+        JOIN services s ON s.id = a.service_id
+        LEFT JOIN service_durations sd ON sd.id = a.service_duration_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders o ON o.id = oi.order_id
+        WHERE a.status = 'completed' AND DATE(a.appointment_date) = ?
+          AND NOT (IFNULL(sd.session_count, 1) > 1)
+          AND EXISTS (SELECT 1 FROM appointment_therapists t WHERE t.appointment_id = a.id AND t.therapist_id IS NOT NULL AND IFNULL(t.commission, 0) <= 0)");
+    $_fq->bind_param("s", $report_date); $_fq->execute();
+    foreach ($_fq->get_result()->fetch_all(MYSQLI_ASSOC) as $_a) {
+        $sid = (int)$_a['service_id'];
+        if (service_is_medical($conn, $sid) || get_package_components($conn, $sid)) continue;
+        $infl = ($_a['rate_type'] ?? '') === 'influencer';
+        if (!$infl && (float)$_a['charged_price'] <= 0) continue;
+        $changed = false;
+        $ths = $conn->query("SELECT id, therapist_id, IFNULL(people_handled,1) AS ph, IFNULL(commission,0) AS commission FROM appointment_therapists WHERE appointment_id = " . (int)$_a['appt_id'] . " AND therapist_id IS NOT NULL")->fetch_all(MYSQLI_ASSOC);
+        foreach ($ths as $t) {
+            if ((float)$t['commission'] > 0) continue;
+            $r = $_rate((int)$t['therapist_id'], $sid); if (!$r) continue;
+            $ph = max(1, (int)$t['ph']); $pct = (float)$r['commission_percent'];
+            if ($infl) {
+                $c = (float)$r['influencer_flat_rate'] * $ph;
+            } elseif (($_a['rate_type'] ?? '') === 'hotel') {
+                $c = round((float)$_a['svc_price'] * $ph * $pct / 100, 2);
+            } else {
+                $frac = (float)$_a['order_total'] > 0 ? (float)$_a['order_disc'] / (float)$_a['order_total'] : 0.0;
+                $base = get_commission_base_price($sid, $_a['service_duration_id'] ? (int)$_a['service_duration_id'] : null, (float)$_a['svc_price']);
+                $c = round($base * (1 - $frac) * $ph * $pct / 100, 2);
+            }
+            if ($c <= 0) continue;
+            $u = $conn->prepare("UPDATE appointment_therapists SET commission = ? WHERE id = ?");
+            $u->bind_param("di", $c, $t['id']); $u->execute(); $u->close();
+            $changed = true;
+        }
+        if ($changed && !$infl) {
+            $tot = (float)$conn->query("SELECT IFNULL(SUM(commission),0) FROM appointment_therapists WHERE appointment_id = " . (int)$_a['appt_id'])->fetch_row()[0];
+            $first = (int)$conn->query("SELECT IFNULL(MIN(therapist_id),0) FROM appointment_therapists WHERE appointment_id = " . (int)$_a['appt_id'])->fetch_row()[0];
+            $_refresh_row('source_appointment_id', (int)$_a['appt_id'], $sid, $first, $tot, (float)$_a['charged_price']);
+        }
+    }
+    $_fq->close();
+
+    // Added services
+    $_fq = $conn->prepare("
+        SELECT es.id, es.service_id, es.therapist_id, es.charged_price, es.rate_type, es.service_duration_id,
+               GREATEST(1, IFNULL(es.total_sessions, 1)) AS sessions, s.price AS svc_price, sd.regular_price AS dur_regular
+        FROM appointment_extra_services es
+        JOIN appointments a ON a.id = es.appointment_id
+        JOIN services s ON s.id = es.service_id
+        LEFT JOIN service_durations sd ON sd.id = es.service_duration_id
+        WHERE a.status = 'completed' AND DATE(a.appointment_date) = ?
+          AND es.therapist_id IS NOT NULL AND IFNULL(es.commission, 0) <= 0");
+    $_fq->bind_param("s", $report_date); $_fq->execute();
+    foreach ($_fq->get_result()->fetch_all(MYSQLI_ASSOC) as $_e) {
+        $sid = (int)$_e['service_id'];
+        if (service_is_medical($conn, $sid) || get_package_components($conn, $sid)) continue;
+        $infl = ($_e['rate_type'] ?? '') === 'influencer';
+        if (!$infl && (float)$_e['charged_price'] <= 0) continue;
+        $r = $_rate((int)$_e['therapist_id'], $sid); if (!$r) continue;
+        $pct = (float)$r['commission_percent']; $n = (int)$_e['sessions'];
+        $reg = (float)($_e['dur_regular'] ?: $_e['svc_price']);
+        if ($infl)                                   $c = (float)$r['influencer_flat_rate'];
+        elseif (($_e['rate_type'] ?? '') === 'hotel') $c = round($reg * $pct / 100, 2);
+        else $c = round(get_commission_base_price($sid, $_e['service_duration_id'] ? (int)$_e['service_duration_id'] : null, $reg) * $pct / 100, 2);
+        $c = round($c / $n, 2); // a multi-session add-on is one row per session
+        if ($c <= 0) continue;
+        $u = $conn->prepare("UPDATE appointment_extra_services SET commission = ? WHERE id = ?");
+        $u->bind_param("di", $c, $_e['id']); $u->execute(); $u->close();
+        if (!$infl) $_refresh_row('source_extra_service_id', (int)$_e['id'], $sid, (int)$_e['therapist_id'], $c, (float)$_e['charged_price']);
+    }
+    $_fq->close();
+}
+
 // Re-link bookings whose duration option was deleted by an older Services
 // save, so Promo Price / commission base read the right option again.
 relink_orphan_service_durations($conn);
