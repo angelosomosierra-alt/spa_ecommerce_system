@@ -2536,7 +2536,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
         $message = "Session {$cs_row['session_number']} can't be completed yet — it is " . str_replace('_', ' ', $cs_row['status']) . ". Check it in first."; $message_type = "danger";
     } elseif (empty($cs_row['session_count']) || (int)$cs_row['session_count'] <= 1) {
         $message = "This appointment is not linked to a session-count package."; $message_type = "danger";
-    } elseif (empty($cs_row['therapist_id'])) {
+    } elseif (empty($cs_row['therapist_id']) && !service_is_medical($conn, (int)$cs_row['service_id'])) {
+        // (A Doctor / Nurse service has no therapist and no commission.)
         $message = "Assign a specific therapist to Session {$cs_row['session_number']} before completing it — commission can't be calculated otherwise."; $message_type = "danger";
     } else {
         $session_count_total = (int)$cs_row['session_count'];

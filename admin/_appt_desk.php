@@ -384,7 +384,8 @@
                 }
                 return '<div class="dk-srow"><span class="dk-dot ' + sessDot(x.status) + '">' + x.n + '</span><span>Session ' + x.n + '<small>' + esc(label) + '</small></span>' + act + '</div>' +
                     (S.schedFor === x.id ? '<div class="dk-inline"><div class="dk-g2"><div><label class="dk-lbl" for="dkSd">Date &amp; time</label><input id="dkSd" type="datetime-local"></div>' +
-                    '<div><label class="dk-lbl" for="dkSt">Therapist</label>' + therSelect(a.service.qual, x.therapist_id || slotOf(a, 1), 'id="dkSt"', false) + '</div></div>' +
+                    (a.service.med ? '<div><label class="dk-lbl">Done by</label><div class="dk-hint">Doctor / Nurse</div></div></div>'
+                        : '<div><label class="dk-lbl" for="dkSt">Therapist</label>' + therSelect(a.service.qual, x.therapist_id || slotOf(a, 1), 'id="dkSt"', false) + '</div></div>') +
                     '<div class="dk-bar"><button type="button" class="dk-btn primary" data-ssave="' + x.id + '">Save session</button><button type="button" class="dk-btn" data-sx="1">Cancel</button></div></div>' : '');
             }).join('') + '</div>' + (a.status === 'assigned' ? '<p class="dk-hint">Session 1 is checked in with the booking. Later sessions are scheduled, checked in and completed here.</p>' : '');
         }
@@ -515,7 +516,7 @@
         W.querySelectorAll('[data-ssave]').forEach(function (bt) { bt.onclick = function () {
             if (!$('dkSd').value) return err('Pick a date and time for this session.');
             S.schedFor = null;
-            post('assign_session', a.id, { session_id: bt.dataset.ssave, session_date: $('dkSd').value, session_therapist_id: $('dkSt').value || '' });
+            post('assign_session', a.id, { session_id: bt.dataset.ssave, session_date: $('dkSd').value, session_therapist_id: ($('dkSt') || {}).value || '' });
         }; });
         W.querySelectorAll('[data-sin]').forEach(function (bt) { bt.onclick = function () { post('checkin_session', a.id, { session_id: bt.dataset.sin }); }; });
         W.querySelectorAll('[data-sdone]').forEach(function (bt) { bt.onclick = function () { post('complete_session', a.id, { session_id: bt.dataset.sdone }); }; });
