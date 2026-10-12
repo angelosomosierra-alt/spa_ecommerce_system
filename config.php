@@ -474,6 +474,10 @@ function get_commission_base_price(int $service_id, ?int $service_duration_id, f
     return $promo > 0 ? $promo : $fallback_price;
 }
 
+// ─── STAFF (EMPLOYEE) DISCOUNT ───────────────────────────────────────────────
+// Percent off for the 'employee' discount type, everywhere it's applied.
+if (!defined('STAFF_DISCOUNT_PCT')) define('STAFF_DISCOUNT_PCT', 25);
+
 // ─── MULTI-SESSION PACKAGES IN THE DAILY REPORT ──────────────────────────────
 // A session-count package (service_durations.session_count > 1) booked from
 // PKG_SPLIT_FROM on is reported per session, like a Calendar down payment:

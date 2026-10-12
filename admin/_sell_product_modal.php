@@ -118,7 +118,7 @@
 
 <script>
 (function () {
-    var DISC = [{ k: 'none', l: 'None' }, { k: 'senior', l: 'Senior 20%', pct: 20 }, { k: 'pwd', l: 'PWD 20%', pct: 20 }, { k: 'employee', l: 'Staff 50%', pct: 50 }, { k: 'voucher', l: 'Voucher' }];
+    var DISC = [{ k: 'none', l: 'None' }, { k: 'senior', l: 'Senior 20%', pct: 20 }, { k: 'pwd', l: 'PWD 20%', pct: 20 }, { k: 'employee', l: 'Staff <?php echo STAFF_DISCOUNT_PCT; ?>%', pct: <?php echo STAFF_DISCOUNT_PCT; ?> }, { k: 'voucher', l: 'Voucher' }];
     var D = null, P = {}, S = null;
 
     function $(id) { return document.getElementById(id); }

@@ -127,7 +127,7 @@ $disc_labels = [
     'voucher'    => 'Voucher',
     'senior'     => 'Senior (20%)',
     'pwd'        => 'PWD (20%)',
-    'employee'   => 'Employee (50%)',
+    'employee'   => 'Employee (' . STAFF_DISCOUNT_PCT . '%)',
     'influencer' => 'Influencer (Comp)',
 ];
 $disc_colors = [
@@ -227,7 +227,7 @@ require_once 'admin_header.php';
                     <option value="voucher"    <?php echo $type_filter==='voucher'    ?'selected':''; ?>>Voucher</option>
                     <option value="senior"     <?php echo $type_filter==='senior'     ?'selected':''; ?>>Senior Citizen</option>
                     <option value="pwd"        <?php echo $type_filter==='pwd'        ?'selected':''; ?>>PWD</option>
-                    <option value="employee"   <?php echo $type_filter==='employee'   ?'selected':''; ?>>Employee (50%)</option>
+                    <option value="employee"   <?php echo $type_filter==='employee'   ?'selected':''; ?>>Employee (<?php echo STAFF_DISCOUNT_PCT; ?>%)</option>
                     <option value="influencer" <?php echo $type_filter==='influencer' ?'selected':''; ?>>Influencer / Marketing</option>
                 </select>
             </div>

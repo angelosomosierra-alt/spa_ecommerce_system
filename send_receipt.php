@@ -335,7 +335,7 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
     $disc_labels = [
         'senior'    => 'Senior Citizen (SC) 20%',
         'pwd'       => 'PWD 20%',
-        'employee'  => 'Staff (50%)',
+        'employee'  => 'Staff (' . STAFF_DISCOUNT_PCT . '%)',
         'voucher'   => 'Voucher',
         'gift_card' => 'Gift Card',
     ];

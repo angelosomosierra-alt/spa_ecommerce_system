@@ -654,7 +654,7 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     if ($discount_type === 'senior' || $discount_type === 'pwd') {
         $discount_amount_calc = round($charged_price * 0.20, 2);
     } elseif ($discount_type === 'employee') {
-        $discount_amount_calc = round($charged_price * 0.50, 2);
+        $discount_amount_calc = round($charged_price * STAFF_DISCOUNT_PCT / 100, 2);
     } elseif ($discount_type === 'celebration' && $voucher_value > 0) {
         $discount_amount_calc = round($charged_price * ($voucher_value / 100), 2);
     } elseif ($discount_type === 'voucher' && $voucher_value > 0) {
@@ -948,7 +948,7 @@ require_once 'admin_header.php';
                         <button type="button" class="qb-disc-btn" data-discount="celebration" onclick="qbSelectDiscount(this)">Celebration<br><small>% off</small></button>
                         <button type="button" class="qb-disc-btn" data-discount="senior" onclick="qbSelectDiscount(this)">Senior<br><small>20% off</small></button>
                         <button type="button" class="qb-disc-btn" data-discount="pwd" onclick="qbSelectDiscount(this)">PWD<br><small>20% off</small></button>
-                        <button type="button" class="qb-disc-btn" data-discount="employee" onclick="qbSelectDiscount(this)">Staff<br><small>50% off</small></button>
+                        <button type="button" class="qb-disc-btn" data-discount="employee" onclick="qbSelectDiscount(this)">Staff<br><small><?php echo STAFF_DISCOUNT_PCT; ?>% off</small></button>
                     </div>
                     <div class="qb-sub-box" id="qbVoucherInputs" style="display:none;">
                         <div class="qb-field-row">
@@ -1277,7 +1277,7 @@ function qbSelectDiscount(el) {
 function qbComputeDiscount(base) {
     switch (qbState.discount_type) {
         case 'senior': case 'pwd': return Math.round(base * 0.20 * 100) / 100;
-        case 'employee': return Math.round(base * 0.50 * 100) / 100;
+        case 'employee': return Math.round(base * <?php echo STAFF_DISCOUNT_PCT; ?>) / 100;
         case 'celebration': {
             var pct = parseFloat(document.getElementById('qbCelebPct').value) || 0;
             return pct > 0 ? Math.round(base * (pct / 100) * 100) / 100 : 0;

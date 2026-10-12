@@ -211,7 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 if ($discount_type === 'senior' || $discount_type === 'pwd') {
                     $discount_amount_calc = round($total_amount * 0.20, 2);
                 } elseif ($discount_type === 'employee') {
-                    $discount_amount_calc = round($total_amount * 0.50, 2);
+                    $discount_amount_calc = round($total_amount * STAFF_DISCOUNT_PCT / 100, 2);
                 } elseif ($discount_type === 'celebration' && $voucher_value > 0) {
                     $discount_amount_calc = round($total_amount * ($voucher_value / 100), 2);
                 } elseif ($discount_type === 'voucher' && $voucher_value > 0) {
@@ -330,7 +330,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['walkin_order'])) {
                 if ($discount_type === 'senior' || $discount_type === 'pwd') {
                     $discount_amount_calc = round($total_amount * 0.20, 2);
                 } elseif ($discount_type === 'employee') {
-                    $discount_amount_calc = round($total_amount * 0.50, 2);
+                    $discount_amount_calc = round($total_amount * STAFF_DISCOUNT_PCT / 100, 2);
                 } elseif ($discount_type === 'celebration' && $voucher_value > 0) {
                     $discount_amount_calc = round($total_amount * ($voucher_value / 100), 2);
                 } elseif ($discount_type === 'voucher' && $voucher_value > 0) {
@@ -1079,7 +1079,7 @@ require_once 'admin_header.php';
                         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.75rem;">
                             <button type="button" id="svc-discbtn-senior" onclick="setWalkinDiscount('service','senior')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Senior<br><small style="font-weight:400;">20% off</small></button>
                             <button type="button" id="svc-discbtn-pwd" onclick="setWalkinDiscount('service','pwd')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">PWD<br><small style="font-weight:400;">20% off</small></button>
-                            <button type="button" id="svc-discbtn-employee" onclick="setWalkinDiscount('service','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Staff<br><small style="font-weight:400;">50% off</small></button>
+                            <button type="button" id="svc-discbtn-employee" onclick="setWalkinDiscount('service','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Staff<br><small style="font-weight:400;"><?php echo STAFF_DISCOUNT_PCT; ?>% off</small></button>
                         </div>
                         <div id="svc-voucher-inputs" style="display:none;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;">
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
@@ -1247,7 +1247,7 @@ require_once 'admin_header.php';
                         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:0.75rem;">
                             <button type="button" id="prod-discbtn-senior" onclick="setWalkinDiscount('product','senior')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Senior<br><small style="font-weight:400;">20% off</small></button>
                             <button type="button" id="prod-discbtn-pwd" onclick="setWalkinDiscount('product','pwd')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">PWD<br><small style="font-weight:400;">20% off</small></button>
-                            <button type="button" id="prod-discbtn-employee" onclick="setWalkinDiscount('product','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Staff<br><small style="font-weight:400;">50% off</small></button>
+                            <button type="button" id="prod-discbtn-employee" onclick="setWalkinDiscount('product','employee')" style="padding:0.5rem 0.3rem;border:2px solid var(--border2);border-radius:8px;background:var(--bg3);cursor:pointer;text-align:center;font-size:0.75rem;font-weight:600;">Staff<br><small style="font-weight:400;"><?php echo STAFF_DISCOUNT_PCT; ?>% off</small></button>
                         </div>
                         <div id="prod-voucher-inputs" style="display:none;background:#fef9f0;border:1px solid #f59e0b;border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;">
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
@@ -2045,7 +2045,7 @@ function updateWalkinPreview(form) {
     let discountAmt = 0, label = '';
     if (type === 'senior') { discountAmt = basePrice * 0.20; label = 'Senior Citizen (20%)'; }
     else if (type === 'pwd') { discountAmt = basePrice * 0.20; label = 'PWD (20%)'; }
-    else if (type === 'employee') { discountAmt = basePrice * 0.50; label = 'Employee (50% off)'; }
+    else if (type === 'employee') { discountAmt = basePrice * <?php echo STAFF_DISCOUNT_PCT; ?> / 100; label = 'Employee (<?php echo STAFF_DISCOUNT_PCT; ?>% off)'; }
     else if (type === 'celebration') { const cpct = parseFloat(document.getElementById(p+'-celeb-pct')?.value||0); discountAmt = basePrice*(Math.min(100,cpct)/100); label='Celebration ('+cpct+'% off)'; }
     else if (type === 'voucher') { const vType = document.getElementById(p+'-voucher-type')?.value||'cash'; const vVal = parseFloat(document.getElementById(p+'-voucher-amount')?.value||0); if (vType === 'percent') { discountAmt = basePrice*(vVal/100); label='Voucher ('+vVal+'% off)'; } else { discountAmt = Math.min(vVal,basePrice); label='Voucher'; } }
     const finalPrice = Math.max(0, basePrice - discountAmt);

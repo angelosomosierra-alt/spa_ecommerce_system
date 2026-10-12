@@ -1170,7 +1170,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         <th style="text-align:right;">20%<br>Commission Fee</th>
                         <th style="text-align:right;">15%<br>Commission Fee</th>
                         <th style="text-align:right;">25%<br>Commission Fee</th>
-                        <th style="text-align:right;">50% Disc.<br>for Staff</th>
+                        <th style="text-align:right;"><?php echo STAFF_DISCOUNT_PCT; ?>% Disc.<br>for Staff</th>
                         <th style="text-align:right;">Net Sales</th>
                         <th style="text-align:center;">Mode of<br>Payment</th>
                         <th>Remarks</th>
@@ -2199,7 +2199,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 20%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 15%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 25%</th>
-                    <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc 50% Staff</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc <?php echo STAFF_DISCOUNT_PCT; ?>% Staff</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;background:rgba(255,255,255,0.15);">Net Sales</th>
                     <th style="padding:0.4rem 0.5rem;width:95px;">Mode of Pay</th>
                     <th style="padding:0.4rem 0.5rem;min-width:130px;">Remarks</th>
@@ -2478,7 +2478,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
         if (!sfRp) return;
         var rp     = parseFloat(sfRp.value) || 0;
         var pwdAmt = (sfPwdSel && sfPwdSel.value === 'valid') ? rp * 0.20 : 0;
-        var stfAmt = (sfStfSel && sfStfSel.value === 'valid') ? rp * 0.50 : 0;
+        var stfAmt = (sfStfSel && sfStfSel.value === 'valid') ? rp * <?php echo STAFF_DISCOUNT_PCT; ?> / 100 : 0;
         if (sfPwdHid) sfPwdHid.value = pwdAmt.toFixed(2);
         if (sfStfHid) sfStfHid.value = stfAmt.toFixed(2);
 

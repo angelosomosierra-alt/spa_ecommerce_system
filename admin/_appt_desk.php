@@ -156,7 +156,7 @@
     var PAYS = [['cash','Cash'],['gcash','GCash'],['maya','Maya'],['qrph','QR Ph'],['card','Card'],['swiper','Swiper']];
     // Fixed-rate discounts carry their %; Voucher (₱ or %) and Celebration (%)
     // take a value typed in by the receptionist.
-    var DISC = [['none','None',0],['senior','Senior 20%',20],['pwd','PWD 20%',20],['employee','Staff 50%',50],['voucher','Voucher',null],['celebration','Celebration',null]];
+    var DISC = [['none','None',0],['senior','Senior 20%',20],['pwd','PWD 20%',20],['employee','Staff <?php echo STAFF_DISCOUNT_PCT; ?>%',<?php echo STAFF_DISCOUNT_PCT; ?>],['voucher','Voucher',null],['celebration','Celebration',null]];
     // Discount amount on a base, for a {disc, dv (value), vt ('fixed'|'percent')} choice.
     function discAmt(base, d) {
         var row = DISC.filter(function (x) { return x[0] === d.disc; })[0] || DISC[0], v = parseFloat(d.dv) || 0;

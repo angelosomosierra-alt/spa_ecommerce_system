@@ -35,7 +35,7 @@ function book_now_ensure_schema(mysqli $conn): void {
 
 // Discounts a group payment can apply, per guest. Same rates as check-in.
 if (!defined('BOOK_NOW_DISCOUNTS')) {
-    define('BOOK_NOW_DISCOUNTS', ['none' => 0, 'senior' => 20, 'pwd' => 20, 'employee' => 50]);
+    define('BOOK_NOW_DISCOUNTS', ['none' => 0, 'senior' => 20, 'pwd' => 20, 'employee' => STAFF_DISCOUNT_PCT]);
 }
 
 if (!function_exists('book_now_resource_type')) {

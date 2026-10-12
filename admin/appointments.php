@@ -1291,7 +1291,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         if ($disc_type === 'senior' || $disc_type === 'pwd') {
                             $disc_amt = round($orig * 0.20, 2);
                         } elseif ($disc_type === 'employee') {
-                            $disc_amt = round($orig * 0.50, 2);
+                            $disc_amt = round($orig * STAFF_DISCOUNT_PCT / 100, 2);
                         } elseif ($disc_type === 'voucher' && $disc_value > 0) {
                             $disc_amt = $disc_voucher_type === 'percent'
                                 ? round($orig * ($disc_value / 100), 2)
@@ -1472,7 +1472,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         if ($ci_disc_type === 'pwd' || $ci_disc_type === 'senior') {
                             $ci_disc_amt = round($ci_base * 0.20, 2);
                         } elseif ($ci_disc_type === 'employee') {
-                            $ci_disc_amt = round($ci_base * 0.50, 2);
+                            $ci_disc_amt = round($ci_base * STAFF_DISCOUNT_PCT / 100, 2);
                         } elseif ($ci_disc_type === 'voucher') {
                             $ci_vchr_type  = sanitize_input($_POST['voucher_type']  ?? 'percent');
                             if (!in_array($ci_vchr_type, ['percent', 'fixed'])) $ci_vchr_type = 'percent';
@@ -1670,7 +1670,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     if ($cd_type === 'senior' || $cd_type === 'pwd') {
                         $cd_amount = round($sv_gross * 0.20, 2);
                     } elseif ($cd_type === 'employee') {
-                        $cd_amount = round($sv_gross * 0.50, 2);
+                        $cd_amount = round($sv_gross * STAFF_DISCOUNT_PCT / 100, 2);
                     } elseif ($cd_type === 'celebration' && $cd_vvalue > 0) {
                         $cd_amount = round($sv_gross * min(100.0, $cd_vvalue) / 100.0, 2);
                     } elseif ($cd_type === 'voucher' && $cd_vvalue > 0) {
@@ -4977,7 +4977,7 @@ function cmFmt(n) {
     return parseFloat(n).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 function cmDiscLabel(type) {
-    return {none:'None', voucher:'Voucher', senior:'Senior Citizen (20%)', pwd:'PWD (20%)', employee:'Staff (50%)', celebration:'Celebration Discount'}[type] || type;
+    return {none:'None', voucher:'Voucher', senior:'Senior Citizen (20%)', pwd:'PWD (20%)', employee:'Staff (<?php echo STAFF_DISCOUNT_PCT; ?>%)', celebration:'Celebration Discount'}[type] || type;
 }
 
 function cmSetDiscount(type) {
@@ -5010,7 +5010,7 @@ function cmRecompute() {
     if (dtype === 'senior' || dtype === 'pwd') {
         cdAmt = Math.round(gross * 0.20 * 100) / 100;
     } else if (dtype === 'employee') {
-        cdAmt = Math.round(gross * 0.50 * 100) / 100;
+        cdAmt = Math.round(gross * <?php echo STAFF_DISCOUNT_PCT; ?>) / 100;
     } else if (dtype === 'celebration') {
         var cpct = parseFloat(document.getElementById('cm-celeb-pct')?.value) || 0;
         cdAmt = Math.round(gross * Math.min(100, cpct) / 100 * 100) / 100;
@@ -5212,7 +5212,7 @@ function submitComplete() {
         <div id="modal-discount-section" style="display:none;">
         <p style="font-size:0.82rem;color:var(--gray);text-align:center;margin-bottom:1rem;">Does this customer have a discount or voucher?</p>
         <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:0.4rem;margin-bottom:1rem;">
-            <?php foreach (['none'=>['None',''],'senior'=>['Senior','20% off'],'pwd'=>['PWD','20% off'],'employee'=>['Staff','50% off']] as $dtype => [$dlbl, $dsub]): ?>
+            <?php foreach (['none'=>['None',''],'senior'=>['Senior','20% off'],'pwd'=>['PWD','20% off'],'employee'=>['Staff',STAFF_DISCOUNT_PCT . '% off']] as $dtype => [$dlbl, $dsub]): ?>
             <div id="dmod-btn-<?php echo $dtype; ?>"
                  onclick="selectDiscModal('<?php echo $dtype; ?>')"
                  style="padding:0.6rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;<?php echo $dtype==='none'?'border-color:#C96A2C;background:#fff8f2;':''; ?>">
@@ -5392,7 +5392,7 @@ function submitComplete() {
     </div>
 </div>
 <script>
-var GP_DISC = [['none', 'None', 0], ['senior', 'Senior 20%', 20], ['pwd', 'PWD 20%', 20], ['employee', 'Staff 50%', 50]];
+var GP_DISC = [['none', 'None', 0], ['senior', 'Senior 20%', 20], ['pwd', 'PWD 20%', 20], ['employee', 'Staff <?php echo STAFF_DISCOUNT_PCT; ?>%', <?php echo STAFF_DISCOUNT_PCT; ?>]];
 var _gpGuests = [];
 function _gpEsc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function openGroupPay(group) {
@@ -5506,7 +5506,7 @@ function submitGroupPay() {
                     <option value="none">None</option>
                     <option value="pwd">PWD (20%)</option>
                     <option value="senior">Senior Citizen (20%)</option>
-                    <option value="employee">Employee (50%)</option>
+                    <option value="employee">Employee (<?php echo STAFF_DISCOUNT_PCT; ?>%)</option>
                     <option value="voucher">Voucher</option>
                 </select>
                 <div id="ci-voucher-wrap" style="display:none;margin-top:0.5rem;">
@@ -5926,7 +5926,7 @@ function updateDiscModalPreview() {
     } else if (_discountType === 'pwd') {
         discAmt = orig * 0.20; label = 'PWD Discount (20%)';
     } else if (_discountType === 'employee') {
-        discAmt = orig * 0.50; label = 'Employee Discount (50%)';
+        discAmt = orig * <?php echo STAFF_DISCOUNT_PCT; ?> / 100; label = 'Employee Discount (<?php echo STAFF_DISCOUNT_PCT; ?>%)';
     } else if (_discountType === 'voucher' || _discountType === 'gift_card') {
         const vType = document.getElementById('dmod-voucher-type').value;
         const vVal  = parseFloat(document.getElementById('dmod-voucher-value').value || 0);
@@ -5962,7 +5962,7 @@ function proceedToPIN() {
         const vt = vType;
         let discAmt = 0;
         if (_discountType === 'senior' || _discountType === 'pwd') discAmt = orig * 0.20;
-        else if (_discountType === 'employee') discAmt = orig * 0.50;
+        else if (_discountType === 'employee') discAmt = orig * <?php echo STAFF_DISCOUNT_PCT; ?> / 100;
         else if (_discountType === 'voucher' || _discountType === 'gift_card')
             discAmt = vt === 'percent' ? orig * (vv / 100) : Math.min(vv, orig);
         const final = Math.max(0, orig - discAmt);
@@ -6154,7 +6154,7 @@ function ciRecomputeTotal() {
     if (discType === 'pwd' || discType === 'senior') {
         discAmt = subtotal * 0.20;
     } else if (discType === 'employee') {
-        discAmt = subtotal * 0.50;
+        discAmt = subtotal * <?php echo STAFF_DISCOUNT_PCT; ?> / 100;
     } else if (discType === 'voucher') {
         var vVal = parseFloat((document.getElementById('ci-voucher-value') || {}).value) || 0;
         if (_ciVoucherType === 'percent') {
