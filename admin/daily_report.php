@@ -606,6 +606,35 @@ if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
     $_pk->close();
 }
 
+// Why an imported row shows no commission -- shown under the service name so
+// staff can fix the cause themselves (a missing rate, a hand edit, a lock).
+function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string {
+    if (empty($r['source_appointment_id']) || !empty($r['is_refund'])) return '';
+    if ((float)$r['comm_30'] + (float)$r['comm_20'] + (float)$r['comm_15'] + (float)$r['comm_25'] > 0) return '';
+    $a = $conn->query("SELECT a.service_id, a.rate_type, a.charged_price, s.name FROM appointments a JOIN services s ON s.id = a.service_id WHERE a.id = " . (int)$r['source_appointment_id'])->fetch_assoc();
+    if (!$a || ($a['rate_type'] ?? '') === 'influencer') return '';
+    $ths = $conn->query("SELECT t.id, t.full_name, t.pay_type FROM appointment_therapists at JOIN therapists t ON t.id = at.therapist_id WHERE at.appointment_id = " . (int)$r['source_appointment_id'])->fetch_all(MYSQLI_ASSOC);
+    if (!$ths) return 'No therapist is recorded on this appointment, so no commission.';
+    $comps = get_package_components($conn, (int)$a['service_id']);
+    $check = $comps ? array_map(fn($c) => ['id' => (int)$c['component_service_id'], 'name' => $c['name']], $comps)
+                    : [['id' => (int)$a['service_id'], 'name' => $a['name']]];
+    $missing = [];
+    foreach ($ths as $t) {
+        if (($t['pay_type'] ?? '') === 'fixed') { $missing[] = "{$t['full_name']} is on fixed pay (no commission)"; continue; }
+        foreach ($check as $c) {
+            $q = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+            $q->bind_param("ii", $t['id'], $c['id']); $q->execute();
+            $pct = (float)($q->get_result()->fetch_assoc()['commission_percent'] ?? 0); $q->close();
+            if ($pct <= 0) $missing[] = "{$t['full_name']} has no rate for {$c['name']}";
+        }
+    }
+    if ($missing) return implode('; ', $missing) . ' — set it in Staff → Commission Matrix, then reopen this report.';
+    if (!$comps) return '';
+    if ($locked) return 'Package commission is missing. Unlock this report and reopen it to recalculate.';
+    if (!empty($r['updated_by_name'])) return 'Package commission is missing on a hand-edited row. Delete this row and reopen the report to re-import it.';
+    return '';
+}
+
 // ── AUTO-IMPORT: Completed appointments → spreadsheet rows ────────────────────
 // Idempotent — safe on every page load. Skips any appointment already present
 // via source_appointment_id. Never modifies live appointment records.
@@ -2107,7 +2136,11 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>
                     <?php if ($_is_imported): ?><span style="font-size:0.62rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;" title="Auto-imported from appointment #<?php echo (int)$_ssr['source_appointment_id']; ?>">appt</span><?php endif; ?>
                 </td>
-                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?>
+                    <?php $_why = ss_zero_commission_reason($conn, $_ssr, $locked); if ($_why): ?>
+                    <div style="font-size:0.68rem;color:#92400e;background:rgba(234,179,8,0.12);border-radius:6px;padding:2px 6px;margin-top:3px;">⚠ <?php echo htmlspecialchars($_why); ?></div>
+                    <?php endif; ?>
+                </td>
                 <td style="padding:0.3rem 0.5rem;color:var(--gray);"><?php echo htmlspecialchars($_ssr['stylist'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);"><?php echo $_ssr['regular_price'] ? '₱'.number_format((float)$_ssr['regular_price'],2) : ''; ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;color:var(--brown);"><?php echo $_ssr['promo_price'] ? '₱'.number_format((float)$_ssr['promo_price'],2) : ''; ?></td>
