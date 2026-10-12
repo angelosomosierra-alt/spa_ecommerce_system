@@ -340,10 +340,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_therapist'])) {
             // Skipped for fixed-salary therapists — they never earn commission.
             if ($pay_type !== 'fixed' && !empty($sel_svc_ids)) {
                 $svc_ids_str = implode(',', array_map('intval', $sel_svc_ids));
+                service_is_medical($conn, 1); // makes sure services.is_medical exists
                 $missing_comm = $conn->query("
                     SELECT s.name
                     FROM services s
                     WHERE s.id IN ($svc_ids_str)
+                      AND s.is_medical = 0
                       AND s.id NOT IN (
                           SELECT service_id FROM therapist_commission
                           WHERE therapist_id = $tid
@@ -694,11 +696,14 @@ if (!empty($all_therapists)) {
     }
 }
 
-// Commission matrix data
+// Commission matrix data -- Doctor / Nurse services are left out: their
+// commission is handled by accounting, never by a rate here.
+service_is_medical($conn, 1); // makes sure services.is_medical exists
 $commission_services = $conn->query("
     SELECT s.id, s.name, s.price, IFNULL(c.name,'Uncategorized') AS category_name
     FROM services s
     LEFT JOIN categories c ON s.category_id = c.id
+    WHERE s.is_medical = 0
     ORDER BY c.name ASC, s.name ASC
 ")->fetch_all(MYSQLI_ASSOC);
 // The ₱ Preview column must reflect what commission actually gets computed
@@ -708,6 +713,9 @@ $commission_services = $conn->query("
 // the service will actually pay out.
 foreach ($commission_services as &$_cs) {
     $_cs['comm_base'] = get_commission_base_price((int)$_cs['id'], null, (float)$_cs['price']);
+    // Package: no rate of its own -- it pays each component's rate (see
+    // compute_package_commission()), so the matrix shows those instead.
+    $_cs['components'] = array_map(fn($c) => (int)$c['component_service_id'], get_package_components($conn, (int)$_cs['id']));
 }
 unset($_cs);
 
@@ -2142,7 +2150,14 @@ function showCommission(therapistId) {
         '' + (therapistNames[therapistId] || '') + ' — Commission Rates';
 
     const saved         = savedCommissions[therapistId] || {};
-    const mySpecialties = therapistSpecialtyServices[therapistId] || [];
+    const mySpecialties = (therapistSpecialtyServices[therapistId] || []).slice();
+    // A package's services must be rateable too: its commission is the sum
+    // of their rates on their own promo prices.
+    const svcById = {};
+    Object.values(svcByCategory).forEach(list => list.forEach(x => { svcById[x.id] = x; }));
+    mySpecialties.slice().forEach(id => (svcById[id] && svcById[id].components || []).forEach(c => {
+        if (!mySpecialties.includes(c)) mySpecialties.push(c);
+    }));
     const rowsEl        = document.getElementById('commission-rows');
     rowsEl.innerHTML    = '';
     document.getElementById('commServiceSearch').value = '';
@@ -2182,6 +2197,8 @@ function showCommission(therapistId) {
 
         qualifiedSvcs.forEach(svc => {
             const s           = saved[svc.id] || { pct: '', flat: '' };
+            const comps       = (svc.components || []).map(id => svcById[id]).filter(Boolean);
+            if (comps.length) { rowsEl.appendChild(packageCommRow(svc, comps, saved, cat)); totalShown++; return; }
             const missingComm = !s.pct && !s.flat;
             if (missingComm) missingCount++;
             totalShown++;
@@ -2238,6 +2255,9 @@ function showCommission(therapistId) {
         });
     });
 
+    // Package rows read their services' rates, which may render after them.
+    rowsEl.querySelectorAll('[data-pkg]').forEach(refreshPackageRow);
+
     // No specialties assigned yet
     if (totalShown === 0) {
         const empty = document.createElement('div');
@@ -2257,7 +2277,55 @@ function showCommission(therapistId) {
         document.getElementById('commission-therapist-name').after(warn);
     }
 }
+// Package row: no % of its own. Shows each component's rate on its own
+// promo price and the total; keeps the influencer flat rate editable.
+function packageCommRow(svc, comps, saved, cat) {
+    const row = document.createElement('div');
+    row.dataset.cat = cat;
+    row.dataset.svcName = svc.name.toLowerCase();
+    row.dataset.pkg = comps.map(c => c.id).join(',');
+    row.style.cssText = 'display:grid;grid-template-columns:2fr 1.5fr 1fr;gap:0.5rem;align-items:center;padding:0.45rem 0.75rem;border-radius:8px;margin-bottom:0.3rem;background:var(--bg3);border:1px dashed var(--border2);';
+    const s = saved[svc.id] || { flat: '' };
+    const esc = t => String(t).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+    row.innerHTML = `
+        <div>
+            <input type="hidden" name="svc_id[]" value="${svc.id}">
+            <input type="hidden" name="svc_percent[]" value="0">
+            <div style="font-size:0.83rem;font-weight:600;color:var(--brown);">${esc(svc.name)}
+                <span style="background:rgba(201,106,44,0.12);color:#C96A2C;font-size:0.62rem;padding:0.1rem 0.4rem;border-radius:20px;margin-left:0.3rem;font-weight:700;">PACKAGE</span></div>
+            <div style="font-size:0.7rem;color:var(--gray);">Commission = each service's own rate on its own promo price</div>
+        </div>
+        <div data-pkg-lines style="font-size:0.72rem;line-height:1.5;"></div>
+        <div>
+            <input type="number" name="svc_flat[]" value="${s.flat !== '' && s.flat !== undefined ? s.flat : ''}" min="0" step="0.01" placeholder="e.g. 200" style="width:100%;padding:0.4rem 0.5rem;border:1px solid var(--border2);border-radius:6px;font-size:0.8rem;">
+            <div style="font-size:0.66rem;color:var(--gray);text-align:center;margin-top:2px;">₱ flat (influencer)</div>
+        </div>`;
+    row._comps = comps;
+    refreshPackageRow(row);
+    return row;
+}
+function refreshPackageRow(row) {
+    const rowsEl = document.getElementById('commission-rows');
+    let total = 0, html = '';
+    row._comps.forEach(c => {
+        // Use the rate currently picked in this form (falls back to nothing).
+        let pct = 0;
+        rowsEl.querySelectorAll('input[name="svc_id[]"]').forEach(h => {
+            if (parseInt(h.value) === parseInt(c.id)) {
+                const sel = h.closest('div[style*="grid"]').querySelector('select[name="svc_percent[]"]');
+                if (sel) pct = parseFloat(sel.value) || 0;
+            }
+        });
+        const base = parseFloat(c.comm_base) || parseFloat(c.price) || 0;
+        const amt = base * pct / 100; total += amt;
+        html += pct > 0
+            ? `${c.name}: ${pct}% × ₱${base.toFixed(2)} = <strong>₱${amt.toFixed(2)}</strong><br>`
+            : `${c.name}: <span style="color:#92400e;font-weight:700;">no rate set</span><br>`;
+    });
+    row.querySelector('[data-pkg-lines]').innerHTML = html + `Total: <strong>₱${total.toFixed(2)}</strong>`;
+}
 function updateCommPreview(sel) {
+    document.querySelectorAll('#commission-rows [data-pkg]').forEach(refreshPackageRow);
     var row = sel.closest('div[style*="grid"]');
     if (!row) return;
     var preview = row.querySelector('[data-preview]');

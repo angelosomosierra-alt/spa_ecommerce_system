@@ -304,11 +304,12 @@ function render_appt_calendar_html(mysqli $conn, int $year, int $month): string 
 }
 
 function render_appt_day_list_html(mysqli $conn, string $date_str): string {
+    service_is_medical($conn, 0); // makes sure services.is_medical exists
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_str)) $date_str = date('Y-m-d');
 
     $stmt = $conn->prepare("SELECT a.appointment_date, a.status,
             COALESCE(u.full_name, 'Unknown customer') AS full_name,
-            COALESCE(s.name, 'Unknown service') AS service_name,
+            COALESCE(s.name, 'Unknown service') AS service_name, IFNULL(s.is_medical, 0) AS is_medical,
             (SELECT GROUP_CONCAT(DISTINCT t.full_name SEPARATOR ', ')
              FROM appointment_therapists at2
              JOIN therapists t ON t.id = at2.therapist_id
@@ -337,7 +338,7 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
             <div style="flex:1;min-width:0;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--brown);"><?php echo htmlspecialchars($a['full_name']); ?></div>
                 <div style="font-size:0.72rem;color:var(--gray);"><?php echo htmlspecialchars($a['service_name']); ?></div>
-                <div style="font-size:0.68rem;color:var(--gray);"><?php echo htmlspecialchars($a['therapist_names'] ?: 'Unassigned'); ?></div>
+                <div style="font-size:0.68rem;color:var(--gray);"><?php echo htmlspecialchars($a['therapist_names'] ?: (!empty($a['is_medical']) ? 'Doctor / Nurse' : 'Unassigned')); ?></div>
             </div>
             <span class="badge badge-<?php echo $a['status']; ?>"><?php echo ucfirst($a['status']); ?></span>
         </div>
@@ -358,8 +359,18 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
 function render_quick_book_services_html(mysqli $conn): string {
     $services = $conn->query("SELECT s.*, c.name AS category_name FROM services s LEFT JOIN categories c ON s.category_id = c.id WHERE s.deleted_at IS NULL ORDER BY c.name, s.name")->fetch_all(MYSQLI_ASSOC);
 
+    // Duration options (incl. multi-session packages): one row each, so the
+    // receptionist picks the exact length / number of sessions and price.
+    $durs_by_svc = [];
+    if ($conn->query("SHOW TABLES LIKE 'service_durations'")->num_rows > 0) {
+        foreach ($conn->query("SELECT * FROM service_durations ORDER BY service_id, IFNULL(session_count, 1), duration_minutes")->fetch_all(MYSQLI_ASSOC) as $d) {
+            $durs_by_svc[(int)$d['service_id']][] = $d;
+        }
+    }
+
     $by_cat = [];
     foreach ($services as $svc) {
+        $svc['durs'] = $durs_by_svc[(int)$svc['id']] ?? [null];
         $key = $svc['category_id'] ? (int)$svc['category_id'] : 0;
         if (!isset($by_cat[$key])) $by_cat[$key] = ['label' => $svc['category_name'] ?: 'Other', 'items' => []];
         $by_cat[$key]['items'][] = $svc;
@@ -384,18 +395,25 @@ function render_quick_book_services_html(mysqli $conn): string {
             <?php foreach ($by_cat as $cat_id => $cat_data): ?>
             <section id="qb-cat-<?php echo $cat_id; ?>" data-cat-section="<?php echo $cat_id; ?>">
                 <h4 class="qb-svc-cat-title"><?php echo htmlspecialchars($cat_data['label']); ?></h4>
-                <?php foreach ($cat_data['items'] as $svc): ?>
+                <?php foreach ($cat_data['items'] as $svc): foreach ($svc['durs'] as $d):
+                    $d_min   = $d ? (int)$d['duration_minutes'] : (int)$svc['session_time'];
+                    $d_price = $d ? (float)get_active_duration_price($d)['price'] : (float)$svc['price'];
+                    $d_n     = $d ? max(1, (int)($d['session_count'] ?? 1)) : 1;
+                    $d_label = $d_min . ' min' . ($d_n > 1 ? " × {$d_n} sessions" : '');
+                ?>
                 <div class="qb-svc-row" data-service-id="<?php echo $svc['id']; ?>"
+                     data-duration-id="<?php echo $d ? (int)$d['id'] : ''; ?>"
+                     data-sessions="<?php echo $d_n; ?>"
                      data-service-name="<?php echo htmlspecialchars($svc['name'], ENT_QUOTES, 'UTF-8'); ?>"
-                     data-price="<?php echo (float)$svc['price']; ?>"
-                     data-minutes="<?php echo (int)$svc['session_time']; ?>"
+                     data-price="<?php echo $d_price; ?>"
+                     data-minutes="<?php echo $d_min; ?>"
                      data-home-price="<?php echo (float)($svc['home_service_price'] ?? 0); ?>"
                      onclick="qbSelectService(this)" ondblclick="qbSelectService(this); qbNext();">
                     <span class="qb-svc-row-name"><?php echo htmlspecialchars($svc['name']); ?></span>
-                    <span class="qb-svc-row-meta"><?php echo (int)$svc['session_time']; ?> min</span>
-                    <span class="qb-svc-row-price">₱<?php echo number_format($svc['price'], 2); ?></span>
+                    <span class="qb-svc-row-meta"><?php echo htmlspecialchars($d_label); ?></span>
+                    <span class="qb-svc-row-price">₱<?php echo number_format($d_price, 2); ?></span>
                 </div>
-                <?php endforeach; ?>
+                <?php endforeach; endforeach; ?>
             </section>
             <?php endforeach; ?>
             <div id="qbSvcNoResults" class="qb-svc-no-results" style="display:none;">No services match your search.</div>
@@ -478,6 +496,7 @@ if (($_GET['ajax'] ?? '') === 'quick_book_pickers') {
     echo json_encode([
         'therapists' => $service_id > 0 ? quick_book_qualified_therapists($conn, $service_id) : [],
         'resources'  => quick_book_active_resources($conn),
+        'med'        => service_is_medical($conn, $service_id),
     ]);
     exit;
 }
@@ -493,6 +512,50 @@ if (($_GET['ajax'] ?? '') === 'quick_book_partner_rate') {
     exit;
 }
 
+require_once __DIR__ . '/_book_now.php';
+if (($_GET['ajax'] ?? '') === 'book_now_data') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(book_now_data($conn));
+    exit;
+}
+require_once __DIR__ . '/_sell_product.php';
+if (($_GET['ajax'] ?? '') === 'sell_product_data') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(sell_product_data($conn));
+    exit;
+}
+if (($_GET['ajax'] ?? '') === 'sell_product_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    verify_csrf_token();
+    $sp_items = json_decode($_POST['items'] ?? '[]', true);
+    echo json_encode(sell_product_save(
+        $conn,
+        is_array($sp_items) ? $sp_items : [],
+        (string)($_POST['customer'] ?? ''),
+        (string)($_POST['slip'] ?? ''),
+        (string)($_POST['discount_type'] ?? 'none'),
+        max(0.0, (float)($_POST['voucher_amount'] ?? 0)),
+        (string)($_POST['payment_method'] ?? '')
+    ));
+    exit;
+}
+
+if (($_GET['ajax'] ?? '') === 'book_now_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    redirect_if_not_admin();
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    verify_csrf_token();
+    $bn_guests = json_decode($_POST['guests'] ?? '[]', true);
+    echo json_encode(book_now_save($conn, is_array($bn_guests) ? $bn_guests : []));
+    exit;
+}
+
 if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_if_not_admin();
     ob_clean();
@@ -502,6 +565,7 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $date           = $_POST['date'] ?? '';
     $time           = $_POST['time'] ?? '';
     $service_id     = (int)($_POST['service_id'] ?? 0);
+    $duration_id    = (int)($_POST['duration_id'] ?? 0);
     $therapist_id   = (int)($_POST['therapist_id'] ?? 0);
     $resource_id    = (int)($_POST['resource_id'] ?? 0);
     $rate_type      = $_POST['rate_type'] ?? 'regular';
@@ -524,7 +588,9 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
         echo json_encode(['ok' => false, 'message' => 'Please choose a valid date and time.']); exit;
     }
     if ($service_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a service.']); exit; }
-    if ($therapist_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a therapist.']); exit; }
+    // Doctor / Nurse service: no therapist (see service_is_medical()).
+    if (service_is_medical($conn, $service_id)) $therapist_id = 0;
+    elseif ($therapist_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a therapist.']); exit; }
     if ($resource_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please choose a room, chair, or head spa.']); exit; }
     if (!in_array($rate_type, $valid_rate_types, true)) { $rate_type = 'regular'; }
     if ($rate_type === 'hotel' && $partner_id <= 0) { echo json_encode(['ok' => false, 'message' => 'Please select a hotel/partner for the Hotel rate.']); exit; }
@@ -534,25 +600,28 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     if ($discount_type === 'celebration' && $voucher_value <= 0) { echo json_encode(['ok' => false, 'message' => 'Please enter the celebration discount percentage, or select None if no discount is used.']); exit; }
     if (!in_array($advance_pm, $valid_payment_methods, true)) { $advance_pm = 'cash'; }
 
-    // A booking dated after today is a reservation, not a walk-in -- there's
-    // no "pay the remaining balance now" moment for a visit that hasn't
-    // happened yet, only a down payment to hold the slot. The actual balance
-    // gets collected at check-in on the appointment date (checkin_appointment
-    // in appointments.php already handles crediting advance_payment then).
+    // A booking dated after today is a reservation, not a walk-in -- nothing
+    // is collected now; payment happens at check-in on the appointment date
+    // (checkin_appointment in appointments.php).
     $is_future_booking = $date > date('Y-m-d');
+    // This form is reached from the Calendar only (walk-ins happening now go
+    // through Book Now), so it books one of two things:
+    //   - another day: a down payment is REQUIRED to hold the slot. It is
+    //     saved on the appointment (advance_payment/_date/_method) so the
+    //     Daily Report lists it today and deducts it as ADVANCE PAYMENT on the
+    //     appointment day; the balance is collected at check-in.
+    //   - later today: a walk-in coming back when a slot frees up. No payment
+    //     now; everything is collected at check-in.
+    // Discounts are never applied here; they're chosen at check-in.
+    $discount_type = 'none';
+    $voucher_value = 0.0;
     if ($is_future_booking) {
         if ($advance_payment <= 0) {
-            echo json_encode(['ok' => false, 'message' => 'A down payment is required to book a future appointment.']); exit;
+            echo json_encode(['ok' => false, 'message' => 'A down payment is required to book another day.']); exit;
         }
-        // The down payment's own method stands in for the order's payment
-        // method -- there's nothing else being paid today to pick one for.
         $payment_method = $advance_pm;
-    } elseif (!in_array($payment_method, $valid_payment_methods, true)) {
-        echo json_encode(['ok' => false, 'message' => 'Please choose a payment method.']); exit;
     } else {
-        // A walk-in happening now is paid in full today -- there's no future
-        // visit for a deposit to be held against, so any advance_payment the
-        // client sent for a same-day booking is ignored.
+        $payment_method  = 'onsite';
         $advance_payment = 0.0;
     }
 
@@ -563,11 +632,22 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $stmt->close();
     if (!$service) { echo json_encode(['ok' => false, 'message' => 'That service is no longer available.']); exit; }
 
+    // The duration option picked (length, number of sessions, price).
+    $dur_row = null; $qb_sessions = 1;
+    if ($duration_id > 0) {
+        $sd = $conn->prepare("SELECT * FROM service_durations WHERE id = ? AND service_id = ?");
+        $sd->bind_param("ii", $duration_id, $service_id); $sd->execute();
+        $dur_row = $sd->get_result()->fetch_assoc(); $sd->close();
+        if (!$dur_row) { echo json_encode(['ok' => false, 'message' => 'That duration option is no longer available. Reopen the form and pick again.']); exit; }
+        $qb_sessions = max(1, (int)($dur_row['session_count'] ?? 1));
+    }
+    $regular_rate = $dur_row ? (float)get_active_duration_price($dur_row)['price'] : (float)$service['price'];
+
     switch ($rate_type) {
         case 'home':       $charged_price = (float)($service['home_service_price'] ?? 0); break;
-        case 'hotel':      $charged_price = quick_book_partner_rate($conn, $partner_id, $service_id) ?? (float)$service['price']; break;
+        case 'hotel':      $charged_price = quick_book_partner_rate($conn, $partner_id, $service_id) ?? $regular_rate; break;
         case 'influencer': $charged_price = 0.00; break;
-        default:           $charged_price = (float)$service['price']; break;
+        default:           $charged_price = $regular_rate; break;
     }
 
     $discount_amount_calc = 0.00;
@@ -582,19 +662,19 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
             ? round($charged_price * ($voucher_value / 100), 2)
             : min($voucher_value, $charged_price);
     }
+    $advance_payment = min($advance_payment, $charged_price);
     $final_amount = max(0.00, $charged_price - $discount_amount_calc - $advance_payment);
 
-    $duration_minutes  = (int)$service['session_time'];
+    $duration_minutes  = $dur_row ? (int)$dur_row['duration_minutes'] : (int)$service['session_time'];
+    $qb_duration_id    = $dur_row ? (int)$dur_row['id'] : null;
     $appointment_date  = $date . ' ' . $time . ':00';
     $svc_type_val      = ($rate_type === 'home') ? 'home' : 'onsite';
     $appt_partner_id   = ($rate_type === 'hotel' && $partner_id > 0) ? $partner_id : null;
     $walkin_user_id    = get_walkin_customer_id();
     $adv_pm_val        = $advance_payment > 0 ? $advance_pm : 'cash';
     $adv_date          = $advance_payment > 0 ? date('Y-m-d') : null;
-    // A walk-in always pays everything today. A future booking only pays its
-    // down payment today -- 'paid' only if that happens to cover the whole
-    // charge already; otherwise the balance is still owed at check-in.
-    $order_payment_status = (!$is_future_booking || $final_amount <= 0) ? 'paid' : 'unpaid';
+    // Paid only if a future booking's down payment already covers it all.
+    $order_payment_status = ($is_future_booking && $final_amount <= 0) ? 'paid' : 'unpaid';
 
     $conn->begin_transaction();
     try {
@@ -610,11 +690,25 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
         $order_item_id = $stmt->insert_id;
         $stmt->close();
 
-        $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method, resource_id, duration_minutes) VALUES (?, ?, ?, ?, 'assigned', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("iiisssidsdssii", $walkin_user_id, $service_id, $order_item_id, $appointment_date, $svc_type_val, $rate_type, $appt_partner_id, $charged_price, $customer_note, $advance_payment, $adv_date, $adv_pm_val, $resource_id, $duration_minutes);
+        $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method, resource_id, duration_minutes, service_duration_id) VALUES (?, ?, ?, ?, 'assigned', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("iiisssidsdssiii", $walkin_user_id, $service_id, $order_item_id, $appointment_date, $svc_type_val, $rate_type, $appt_partner_id, $charged_price, $customer_note, $advance_payment, $adv_date, $adv_pm_val, $resource_id, $duration_minutes, $qb_duration_id);
         $stmt->execute();
         $appointment_id = $stmt->insert_id;
         $stmt->close();
+
+        // Multi-session package: Session 1 at this booking's time; the rest
+        // are scheduled later from Appointments (same rows Walk-in creates).
+        if ($qb_sessions > 1) {
+            $s1_tid = $therapist_id > 0 ? $therapist_id : null;
+            $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, session_date, therapist_id, duration_minutes, status) VALUES (?, 1, ?, ?, ?, 'scheduled')");
+            $ss->bind_param("isii", $appointment_id, $appointment_date, $s1_tid, $duration_minutes);
+            $ss->execute(); $ss->close();
+            for ($sn = 2; $sn <= $qb_sessions; $sn++) {
+                $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, duration_minutes, status) VALUES (?, ?, ?, 'not_scheduled')");
+                $ss->bind_param("iii", $appointment_id, $sn, $duration_minutes);
+                $ss->execute(); $ss->close();
+            }
+        }
 
         $commission = 0.00;
         // Package service (bundles 2+ real services under one combined price,
@@ -622,7 +716,10 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
         // the SUM of each component's own standalone commission, not one rate
         // applied to this service's own price.
         $qb_pkg_components = get_package_components($conn, $service_id);
-        if (!empty($qb_pkg_components)) {
+        if ($qb_sessions > 1) {
+            // Multi-session package: ₱0 now; each session adds its own
+            // commission when it's completed (complete_session).
+        } elseif (!empty($qb_pkg_components)) {
             $commission = compute_package_commission($conn, $service_id, $therapist_id)['total'];
         } else {
             $cm = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
@@ -637,16 +734,18 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
                     $commission = round((float)$service['price'] * (float)$cm_row['commission_percent'] / 100, 2);
                 } else {
                     $disc_frac = $charged_price > 0 ? ($discount_amount_calc / $charged_price) : 0.0;
-                    $comm_base = get_commission_base_price($service_id, null, $charged_price);
+                    $comm_base = get_commission_base_price($service_id, $qb_duration_id, $charged_price);
                     $commission = round($comm_base * (1 - $disc_frac) * (float)$cm_row['commission_percent'] / 100, 2);
                 }
             }
         }
 
-        $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
-        $stmt->bind_param("iid", $appointment_id, $therapist_id, $commission);
-        $stmt->execute();
-        $stmt->close();
+        if ($therapist_id > 0) { // Doctor / Nurse service: no therapist row, no commission
+            $stmt = $conn->prepare("INSERT INTO appointment_therapists (appointment_id, therapist_id, commission, people_handled, notes) VALUES (?, ?, ?, 1, '')");
+            $stmt->bind_param("iid", $appointment_id, $therapist_id, $commission);
+            $stmt->execute();
+            $stmt->close();
+        }
 
         $conn->commit();
         echo json_encode(['ok' => true, 'message' => 'Appointment booked.', 'appointment_id' => $appointment_id]);
@@ -724,7 +823,8 @@ require_once 'admin_header.php';
         <span class="panel-title">Appointments</span>
         <div style="display:flex;gap:0.6rem;">
             <button type="button" class="btn btn-primary btn-sm" onclick="openApptCalendar()">Calendar</button>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="openQuickBook()">Book Now</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="openBookNow()">Book Now</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="openSellProduct()">Sell Product</button>
         </div>
     </div>
 </div>
@@ -840,7 +940,7 @@ require_once 'admin_header.php';
             </div>
 
             <div class="qb-panel" id="qbPanel4" style="display:none;">
-                <div class="qb-field">
+                <div class="qb-field" id="qbDiscountBlock">
                     <label>Discount / Voucher</label>
                     <div class="qb-disc-grid">
                         <button type="button" class="qb-disc-btn selected" data-discount="none" onclick="qbSelectDiscount(this)">None</button>
@@ -872,7 +972,10 @@ require_once 'admin_header.php';
                 </div>
 
                 <div id="qbFutureNotice" class="qb-notice" style="display:none;margin-top:1.25rem;background:rgba(201,106,44,0.08);border-color:var(--gold);color:var(--brown);">
-                    <strong>This is a future-dated booking.</strong> A down payment is required to hold the slot — the remaining balance is collected when the customer checks in on the appointment date.
+                    <strong>Booking for another day.</strong> A down payment is required to hold the slot. The balance and any discount (Senior, PWD, Staff, voucher) are collected at check-in in Appointments.
+                </div>
+                <div id="qbTodayNotice" class="qb-notice" style="display:none;margin-top:1.25rem;background:rgba(201,106,44,0.08);border-color:var(--gold);color:var(--brown);">
+                    <strong>Customer coming back later today.</strong> No payment now. Everything, including any discount, is collected at check-in in Appointments.
                 </div>
 
                 <div class="qb-summary" id="qbPriceSummary" style="margin-top:1.25rem;"></div>
@@ -1017,16 +1120,14 @@ function qbGotoStep(n) {
     if (scrollBody) scrollBody.scrollTop = 0;
 }
 
-// A booking dated after today can't collect "today's" payment for a visit
-// that hasn't happened yet — it needs a down payment now and the balance
-// gets settled at check-in on the day, same as any other future booking.
-// Same-day walk-ins are unaffected: pay in full now, advance stays optional.
+// Calendar bookings: another day needs a down payment (balance at check-in);
+// later today is a come-back reservation with no payment. No discounts here.
 function qbIsFutureBooking() {
     var todayStr = new Date().toISOString().slice(0, 10);
     return qbState.date > todayStr;
 }
 
-function qbConfirmBtnLabel() { return qbIsFutureBooking() ? 'Book Appointment' : 'Book Walk-In'; }
+function qbConfirmBtnLabel() { return qbIsFutureBooking() ? 'Book Appointment' : 'Save Reservation'; }
 
 // A "now" walk-in is paid in full today via the single Payment Method below --
 // there's nothing to advance against, so the whole Down Payment block (which
@@ -1034,10 +1135,18 @@ function qbConfirmBtnLabel() { return qbIsFutureBooking() ? 'Book Appointment' :
 // for it entirely, not just relabeled.
 function qbUpdateFutureBookingUI() {
     var isFuture = qbIsFutureBooking();
+    // Another day: down payment required. Later today: no payment at all.
+    // Either way no payment method or discount here; both happen at check-in.
     document.getElementById('qbFutureNotice').style.display = isFuture ? '' : 'none';
-    document.getElementById('qbPayMethodBlock').style.display = isFuture ? 'none' : '';
+    document.getElementById('qbTodayNotice').style.display  = isFuture ? 'none' : '';
+    document.getElementById('qbPayMethodBlock').style.display = 'none';
+    document.getElementById('qbDiscountBlock').style.display = 'none';
     document.getElementById('qbAdvancePaymentBlock').style.display = isFuture ? '' : 'none';
     if (!isFuture) document.getElementById('qbAdvancePayment').value = 0;
+    qbState.discount_type = 'none';
+    document.querySelectorAll('.qb-disc-btn').forEach(function (b) { b.classList.toggle('selected', b.getAttribute('data-discount') === 'none'); });
+    document.getElementById('qbVoucherInputs').style.display = 'none';
+    document.getElementById('qbCelebInputs').style.display = 'none';
     document.getElementById('qbConfirmBtn').textContent = qbConfirmBtnLabel();
     qbRecalc();
 }
@@ -1085,6 +1194,8 @@ function qbSelectService(el) {
     qbState.price         = parseFloat(el.getAttribute('data-price'));
     qbState.home_price    = parseFloat(el.getAttribute('data-home-price'));
     qbState.minutes        = parseInt(el.getAttribute('data-minutes'), 10);
+    qbState.duration_id    = el.getAttribute('data-duration-id') || '';
+    qbState.sessions       = parseInt(el.getAttribute('data-sessions'), 10) || 1;
 }
 
 function qbLoadPickers() {
@@ -1095,7 +1206,10 @@ function qbLoadPickers() {
         .then(function (r) { return r.json(); })
         .then(function (data) {
             var thSel = document.getElementById('qbTherapist');
-            thSel.innerHTML = '<option value="">Select therapist&hellip;</option>' + data.therapists.map(function (t) {
+            // A Doctor / Nurse service has no therapist to pick.
+            thSel.disabled = !!data.med;
+            thSel.innerHTML = data.med ? '<option value="0">Doctor / Nurse (no therapist needed)</option>' :
+                '<option value="">Select therapist&hellip;</option>' + data.therapists.map(function (t) {
                 return '<option value="' + t.id + '">' + t.full_name + (t.on_duty == 1 ? ' (on duty)' : '') + '</option>';
             }).join('');
             var rsSel = document.getElementById('qbResource');
@@ -1145,7 +1259,7 @@ function qbBuildReviewSummary() {
     var timeLabel = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
     document.getElementById('qbReviewSummary').innerHTML =
         '<div class="qb-summary-row"><span>Date &amp; Time</span><strong>' + dateLabel + ', ' + timeLabel + '</strong></div>' +
-        '<div class="qb-summary-row"><span>Service</span><strong>' + qbState.service_name + ' (' + qbState.minutes + ' min)</strong></div>' +
+        '<div class="qb-summary-row"><span>Service</span><strong>' + qbState.service_name + ' (' + qbState.minutes + ' min' + (qbState.sessions > 1 ? ' × ' + qbState.sessions + ' sessions — session 1 now, the rest scheduled later in Appointments' : '') + ')</strong></div>' +
         '<div class="qb-summary-row"><span>Therapist</span><strong>' + qbState.therapist_name + '</strong></div>' +
         '<div class="qb-summary-row"><span>Room</span><strong>' + qbState.resource_name + '</strong></div>' +
         '<div class="qb-summary-row"><span>Rate Type</span><strong>' + qbRateTypeLabel() + (qbState.partner_name ? ' — ' + qbState.partner_name : '') + '</strong></div>';
@@ -1209,10 +1323,8 @@ function qbSubmit() {
     var isFuture = qbIsFutureBooking();
     var advanceAmt = parseFloat(document.getElementById('qbAdvancePayment').value) || 0;
     if (isFuture) {
-        if (advanceAmt <= 0) { uiAlert('A down payment is required to book a future appointment.'); return; }
+        if (advanceAmt <= 0) { uiAlert('A down payment is required to book another day.'); return; }
         if (!qbState.advance_payment_method) { uiAlert('Please choose a down payment method.'); return; }
-    } else if (!qbState.payment_method) {
-        uiAlert('Please choose a payment method.'); return;
     }
     if (qbState.discount_type === 'voucher' && (parseFloat(document.getElementById('qbVoucherAmount').value) || 0) <= 0) {
         uiAlert('Please enter the voucher amount, or select None if no voucher is used.'); return;
@@ -1227,7 +1339,7 @@ function qbSubmit() {
     confirmBtn.textContent = 'Booking…';
 
     var body = new URLSearchParams({
-        date: qbState.date, time: qbState.time, service_id: qbState.service_id,
+        date: qbState.date, time: qbState.time, service_id: qbState.service_id, duration_id: qbState.duration_id || '',
         therapist_id: qbState.therapist_id, resource_id: qbState.resource_id,
         rate_type: qbState.rate_type, partner_id: qbState.partner_id,
         customer_name: qbState.customer_name, phone: qbState.phone, customer_note: qbState.customer_note,
@@ -1299,6 +1411,8 @@ function qbFilterServices(query) {
     if (noResults) noResults.style.display = (q && Object.keys(matchedCatIds).length === 0) ? '' : 'none';
 }
 </script>
+<?php require __DIR__ . '/_book_now_modal.php'; ?>
+<?php require __DIR__ . '/_sell_product_modal.php'; ?>
 
 <style>
 .rotation-groups-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; }

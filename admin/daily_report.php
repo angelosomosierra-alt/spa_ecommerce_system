@@ -538,6 +538,129 @@ $conn->query("
       AND d.net_sales <> ROUND(a.charged_price - (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25), 2)
 ");
 
+// Re-link bookings whose duration option was deleted by an older Services
+// save, so Promo Price / commission base read the right option again.
+relink_orphan_service_durations($conn);
+
+// ── SYNC: Package service commission ─────────────────────────────────────────
+// A Package (service_package_components) pays the therapist each component's
+// own rate on that component's own promo price (compute_package_commission()).
+// A package completed before its components -- or the therapist's rates for
+// them -- were set up saved too little (₱0, or only the services that had a
+// rate), and its imported row kept that forever (imports never re-run on an
+// existing row). While the day is unlocked, package commission is kept equal
+// to the current component calculation; locking the report freezes it.
+// Spreadsheet rows somebody hand-edited are never touched.
+if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
+    ensure_service_package_components_table($conn);
+    // Main services
+    $_pk = $conn->prepare("
+        SELECT d.id AS row_id, d.created_by_name, d.updated_by_name, a.id AS appt_id, a.service_id, a.charged_price,
+               (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25) AS row_comm
+        FROM daily_report_spreadsheet_rows d
+        JOIN appointments a ON a.id = d.source_appointment_id
+        WHERE d.report_date = ? AND a.rate_type != 'influencer'
+          AND a.service_id IN (SELECT package_service_id FROM service_package_components)");
+    $_pk->bind_param("s", $report_date); $_pk->execute();
+    foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) {
+        if (service_is_medical($conn, (int)$_r['service_id'])) continue; // doctor/nurse: no commission
+        $_ths = $conn->query("SELECT id, therapist_id, IFNULL(people_handled,1) AS ph, commission FROM appointment_therapists WHERE appointment_id = " . (int)$_r['appt_id'] . " AND therapist_id IS NOT NULL")->fetch_all(MYSQLI_ASSOC);
+        $_changed = false; $_total = 0.0; $_first_tid = 0;
+        foreach ($_ths as $_t) {
+            $_c = (float)$_t['commission'];
+            $_want = round(compute_package_commission($conn, (int)$_r['service_id'], (int)$_t['therapist_id'])['total'] * max(1, (int)$_t['ph']), 2);
+            if ($_want > 0 && round($_want - $_c, 2) != 0.0) {
+                $_c = $_want;
+                $_u = $conn->prepare("UPDATE appointment_therapists SET commission = ? WHERE id = ?");
+                $_u->bind_param("di", $_c, $_t['id']); $_u->execute(); $_u->close();
+                $_changed = true;
+            }
+            $_total += $_c;
+            if (!$_first_tid || (int)$_t['therapist_id'] < $_first_tid) $_first_tid = (int)$_t['therapist_id'];
+        }
+        // Refresh the row when a commission was just filled in, or when the
+        // row was imported with less than the appointment now carries.
+        if (($_changed || round($_total - (float)$_r['row_comm'], 2) != 0.0) && $_total > 0
+            && $_r['created_by_name'] === 'import' && empty($_r['updated_by_name'])) {
+            $_b = route_commission_to_buckets($conn, (int)$_r['service_id'], $_first_tid, $_total);
+            $_net = (float)$_r['charged_price'] - $_total;
+            $_u = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET comm_30=?, comm_20=?, comm_15=?, comm_25=?, net_sales=? WHERE id=?");
+            $_u->bind_param("dddddi", $_b['comm_30'], $_b['comm_20'], $_b['comm_15'], $_b['comm_25'], $_net, $_r['row_id']);
+            $_u->execute(); $_u->close();
+        }
+    }
+    $_pk->close();
+    // Add-on services that are packages
+    $_pk = $conn->prepare("
+        SELECT d.id AS row_id, d.created_by_name, d.updated_by_name, es.id AS es_id, es.service_id, es.therapist_id, es.charged_price,
+               IFNULL(es.commission, 0) AS es_comm, (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25) AS row_comm
+        FROM daily_report_spreadsheet_rows d
+        JOIN appointment_extra_services es ON es.id = d.source_extra_service_id
+        WHERE d.report_date = ? AND es.therapist_id IS NOT NULL
+          AND IFNULL(es.rate_type, 'regular') != 'influencer'
+          AND es.service_id IN (SELECT package_service_id FROM service_package_components)");
+    $_pk->bind_param("s", $report_date); $_pk->execute();
+    foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_r) {
+        if (service_is_medical($conn, (int)$_r['service_id'])) continue; // doctor/nurse: no commission
+        $_c = compute_package_commission($conn, (int)$_r['service_id'], (int)$_r['therapist_id'])['total'];
+        if ($_c <= 0) continue;
+        if (round($_c - (float)$_r['es_comm'], 2) == 0.0 && round($_c - (float)$_r['row_comm'], 2) == 0.0) continue;
+        $_u = $conn->prepare("UPDATE appointment_extra_services SET commission = ? WHERE id = ?");
+        $_u->bind_param("di", $_c, $_r['es_id']); $_u->execute(); $_u->close();
+        if ($_r['created_by_name'] === 'import' && empty($_r['updated_by_name'])) {
+            $_b = route_commission_to_buckets($conn, (int)$_r['service_id'], (int)$_r['therapist_id'], $_c);
+            $_net = (float)$_r['charged_price'] - $_c;
+            $_u = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET comm_30=?, comm_20=?, comm_15=?, comm_25=?, net_sales=? WHERE id=?");
+            $_u->bind_param("dddddi", $_b['comm_30'], $_b['comm_20'], $_b['comm_15'], $_b['comm_25'], $_net, $_r['row_id']);
+            $_u->execute(); $_u->close();
+        }
+    }
+    $_pk->close();
+}
+
+// Why an imported row shows no commission -- shown under the service name so
+// staff can fix the cause themselves (a missing rate, a hand edit, a lock).
+function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string {
+    if (empty($r['source_appointment_id']) || !empty($r['is_refund'])) return '';
+    $has_comm = (float)$r['comm_30'] + (float)$r['comm_20'] + (float)$r['comm_15'] + (float)$r['comm_25'] > 0;
+    $a = $conn->query("SELECT a.service_id, a.rate_type, a.charged_price, s.name FROM appointments a JOIN services s ON s.id = a.service_id WHERE a.id = " . (int)$r['source_appointment_id'])->fetch_assoc();
+    if (!$a || ($a['rate_type'] ?? '') === 'influencer') return '';
+    if (service_is_medical($conn, (int)$a['service_id'])) return ''; // doctor/nurse: blank on purpose
+    $ths = $conn->query("SELECT t.id, t.full_name, t.pay_type FROM appointment_therapists at JOIN therapists t ON t.id = at.therapist_id WHERE at.appointment_id = " . (int)$r['source_appointment_id'])->fetch_all(MYSQLI_ASSOC);
+    if (!$ths) return 'No therapist is recorded on this appointment, so no commission.';
+    $comps = get_package_components($conn, (int)$a['service_id']);
+    // A package with commission can still be short a service's rate, so
+    // packages are always checked; anything else only when it shows ₱0.
+    if ($has_comm && !$comps) return '';
+    // Looks like a package by name but has no components saved: commission
+    // falls back to one rate on the service itself, which usually isn't set.
+    if (!$comps && stripos($a['name'], 'package') !== false) {
+        $twin = $conn->prepare("SELECT s.id FROM services s WHERE s.name = ? AND s.id != ?
+                                  AND EXISTS (SELECT 1 FROM service_package_components p WHERE p.package_service_id = s.id) LIMIT 1");
+        $twin->bind_param("si", $a['name'], $a['service_id']); $twin->execute();
+        $twin_id = (int)($twin->get_result()->fetch_assoc()['id'] ?? 0); $twin->close();
+        if ($twin_id) return "This booking used service #{$a['service_id']}, but the package services are saved on another service with the same name (#{$twin_id}). Open Services → edit #{$a['service_id']} → Package Components, tick its services and Save (or archive the duplicate), then reopen this report.";
+        return "\"{$a['name']}\" (service #{$a['service_id']}) has no Package Components saved, so it isn't treated as a package. Open Services → edit it → Package Components, tick the services inside it and Save, then reopen this report.";
+    }
+    $check = $comps ? array_map(fn($c) => ['id' => (int)$c['component_service_id'], 'name' => $c['name']], $comps)
+                    : [['id' => (int)$a['service_id'], 'name' => $a['name']]];
+    $missing = [];
+    foreach ($ths as $t) {
+        if (($t['pay_type'] ?? '') === 'fixed') { $missing[] = "{$t['full_name']} is on fixed pay (no commission)"; continue; }
+        foreach ($check as $c) {
+            $q = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+            $q->bind_param("ii", $t['id'], $c['id']); $q->execute();
+            $pct = (float)($q->get_result()->fetch_assoc()['commission_percent'] ?? 0); $q->close();
+            if ($pct <= 0) $missing[] = "{$t['full_name']} has no rate for {$c['name']}" . ($comps ? " (service #{$c['id']})" : '');
+        }
+    }
+    if ($missing) return implode('; ', $missing) . ' — set it in Staff → Commission Matrix, then reopen this report.';
+    if (!$comps || $has_comm) return '';
+    if ($locked) return 'Package commission is missing. Unlock this report and reopen it to recalculate.';
+    if (!empty($r['updated_by_name'])) return 'Package commission is missing on a hand-edited row. Delete this row and reopen the report to re-import it.';
+    return '';
+}
+
 // ── AUTO-IMPORT: Completed appointments → spreadsheet rows ────────────────────
 // Idempotent — safe on every page load. Skips any appointment already present
 // via source_appointment_id. Never modifies live appointment records.
@@ -621,12 +744,13 @@ $conn->query("
                 -- next time this booking date's report is opened after the order
                 -- clears payment, this same WHERE now matches and it's picked up
                 -- automatically, dated on its original booking date.
-                (sd.session_count > 1 AND DATE(a.created_at) = ? AND o.payment_status = 'paid')
+                (sd.session_count > 1 AND DATE(a.created_at) = ? AND o.payment_status = 'paid' AND a.created_at < ?)
               )
         GROUP BY a.id
         ORDER BY a.appointment_date ASC
     ");
-    $aq->bind_param("ss", $report_date, $report_date); $aq->execute();
+    $_pkg_from_i = PKG_SPLIT_FROM;
+    $aq->bind_param("sss", $report_date, $report_date, $_pkg_from_i); $aq->execute();
     $imp_appts = $aq->get_result()->fetch_all(MYSQLI_ASSOC); $aq->close();
     if (empty($imp_appts)) return;
 
@@ -728,6 +852,97 @@ $conn->query("
         $ins->execute();
         if ($row_order === null) {
             $new_id = $conn->insert_id;
+            $conn->query("UPDATE daily_report_spreadsheet_rows SET row_order = $new_id WHERE id = $new_id");
+        }
+    }
+    $ins->close();
+})();
+
+// ── AUTO-IMPORT: Multi-session package sessions → one row per session ───────
+// Packages booked from PKG_SPLIT_FROM on (config.php): each completed session
+// is a sale of its share of the package on the day it's done, with that
+// session's commission. Keyed by source_session_id (not source_appointment_id,
+// which the backfills above treat as "one row = the whole appointment").
+(function() use ($conn, $report_date, $ss_resolve_cluster_row_order) {
+    $conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN IF NOT EXISTS source_session_id INT NULL DEFAULT NULL");
+    $pkg_from = PKG_SPLIT_FROM;
+
+    // A package of this kind imported earlier today under the old rule (one
+    // full-price row) is replaced by its per-session rows, unless edited.
+    $cl = $conn->prepare("
+        DELETE d FROM daily_report_spreadsheet_rows d
+        JOIN appointments a ON a.id = d.source_appointment_id
+        JOIN service_durations sd ON sd.id = a.service_duration_id AND sd.session_count > 1
+        WHERE d.report_date = ? AND a.created_at >= ?
+          AND d.created_by_name = 'import' AND (d.updated_by_name IS NULL OR d.updated_by_name = '')");
+    $cl->bind_param("ss", $report_date, $pkg_from); $cl->execute(); $cl->close();
+
+    $q = $conn->prepare("
+        SELECT aps.id AS sess_id, aps.session_number, aps.session_date, aps.completed_at,
+               IFNULL(aps.commission, 0) AS commission, aps.therapist_id, t.full_name AS therapist_name,
+               a.charged_price, a.duration_minutes, sd.session_count, sd.regular_price, sd.promo_price,
+               o.id AS order_id, o.customer_name, o.slip_number, o.payment_method, o.paymongo_method,
+               o.discount_type, o.discount_amount, o.completion_discount_type,
+               IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
+               oi.service_id, COALESCE(s.name, '[Deleted Service]') AS service_name, s.price AS svc_price
+        FROM appointment_sessions aps
+        JOIN appointments a ON a.id = aps.appointment_id
+        JOIN service_durations sd ON sd.id = a.service_duration_id AND sd.session_count > 1
+        JOIN order_items oi ON oi.id = a.order_item_id
+        JOIN orders o ON o.id = oi.order_id
+        JOIN services s ON s.id = oi.service_id
+        LEFT JOIN therapists t ON t.id = aps.therapist_id
+        WHERE aps.status = 'completed' AND DATE(aps.completed_at) = ?
+          AND a.created_at >= ? AND a.rate_type != 'influencer'
+          AND NOT EXISTS (SELECT 1 FROM daily_report_spreadsheet_rows d WHERE d.source_session_id = aps.id)
+        ORDER BY aps.completed_at, aps.id");
+    $q->bind_param("ss", $report_date, $pkg_from); $q->execute();
+    $rows = $q->get_result()->fetch_all(MYSQLI_ASSOC); $q->close();
+    if (!$rows) return;
+
+    $mop_map = ['cash' => 'Cash', 'gcash' => 'GCash', 'maya' => 'Maya', 'card' => 'Card', 'swiper' => 'Swiper',
+                'qr_ph' => 'QR PH', 'qrph' => 'QR PH', 'online' => 'GCash'];
+    $ins = $conn->prepare("
+        INSERT INTO daily_report_spreadsheet_rows
+            (report_date, row_order, time_in, time_out, slip_no, client_name,
+             service_name, service_id, stylist, therapist_id,
+             regular_price, promo_price, celeb_10,
+             disc_20_pwd, comm_30, comm_20, comm_15, comm_25, disc_50_staff,
+             net_sales, mode_of_payment, remarks, is_refund, created_by_name,
+             order_id, source_session_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'import',?,?)");
+    foreach ($rows as $r) {
+        $N = (int)$r['session_count']; $n = (int)$r['session_number']; $C = (float)$r['charged_price'];
+        $share = pkg_session_share($C, $N, $n);
+        $frac  = $C > 0 ? $share / $C : 0;
+        $celeb = 0.0;
+        if (($r['discount_type'] ?? '') === 'celebration') $celeb += round((float)$r['discount_amount'] * $frac, 2);
+        if (($r['completion_discount_type'] ?? '') === 'celebration') $celeb += round((float)$r['completion_discount_amount'] * $frac, 2);
+        $reg   = round((float)($r['regular_price'] ?: $r['svc_price']) / $N, 2);
+        $promo = (float)$r['promo_price'] > 0 ? round((float)$r['promo_price'] / $N, 2) : $reg;
+        $comm  = (float)$r['commission'];
+        $tid   = (int)($r['therapist_id'] ?? 0);
+        $b     = route_commission_to_buckets($conn, (int)$r['service_id'], $tid, $comm);
+        $net   = $share - $comm;
+        $start = $r['session_date'] ?: $r['completed_at'];
+        $time_in  = date('h:i A', strtotime($start));
+        $time_out = (int)$r['duration_minutes'] > 0 ? date('h:i A', strtotime($start) + (int)$r['duration_minutes'] * 60) : '';
+        $svc   = $r['service_name'] . ' (' . (int)$r['duration_minutes'] . ' mins × ' . $N . ' sessions) — Session ' . $n . ' of ' . $N;
+        $remarks = $n > 1 ? 'Paid in advance (package)' : ($N > 2 ? 'Sessions 2–' . $N . ' paid in advance' : 'Session 2 paid in advance');
+        $mop   = $mop_map[strtolower(trim($r['paymongo_method'] ?: ($r['payment_method'] ?? '')))] ?? 'Cash';
+        $order_id = (int)$r['order_id']; $slip = $r['slip_number'] ?? '';
+        $row_order = $ss_resolve_cluster_row_order($order_id, $slip);
+        $ro = $row_order ?? 0; $zero = 0.0; $sid = (int)$r['service_id']; $sess = (int)$r['sess_id'];
+        $client = $r['customer_name'] ?? ''; $stylist = $r['therapist_name'] ?? '';
+        $ins->bind_param("sisssssisiddddddddddssii",
+            $report_date, $ro, $time_in, $time_out, $slip, $client,
+            $svc, $sid, $stylist, $tid,
+            $reg, $promo, $celeb,
+            $zero, $b['comm_30'], $b['comm_20'], $b['comm_15'], $b['comm_25'], $zero,
+            $net, $mop, $remarks, $order_id, $sess);
+        $ins->execute();
+        if ($row_order === null) {
+            $new_id = (int)$conn->insert_id;
             $conn->query("UPDATE daily_report_spreadsheet_rows SET row_order = $new_id WHERE id = $new_id");
         }
     }
@@ -1021,7 +1236,9 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="font-weight:<?php echo $is_same_order ? '400' : '600'; ?>;white-space:nowrap;">
                         <?php echo $is_same_order ? '<span style="color:var(--gray);">↳ same</span>' : htmlspecialchars($row['customer_name']); ?>
                     </td>
-                    <td><?php echo htmlspecialchars($row['service_name']); ?></td>
+                    <td><?php echo htmlspecialchars($row['service_name']); ?>
+                        <?php if (service_is_medical($conn, (int)$row['service_id'])): ?><br><span style="display:inline-block;font-size:0.62rem;font-weight:700;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 6px;border-radius:8px;margin-top:2px;white-space:nowrap;" title="Done by a doctor or nurse. Commission is handled by accounting, so it is left blank here and Net Sales is the full price.">Doctor / Nurse · commission by accounting</span><?php endif; ?>
+                    </td>
                     <td style="color:var(--gray);white-space:nowrap;"><?php echo htmlspecialchars($row['therapists'] ?? '—'); ?></td>
                     <td style="text-align:right;color:var(--gray);">₱<?php echo number_format($row['regular_price'], 2); ?></td>
                     <td style="text-align:right;font-weight:700;color:var(--brown);">₱<?php echo number_format($_true_promo, 2); ?></td>
@@ -1877,6 +2094,18 @@ $ss_commissions = [];
 if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     $ss_commissions[(int)$_c['therapist_id'].'_'.(int)$_c['service_id']] = (float)$_c['commission_percent'];
 } }
+// Package services: each component's commission base (promo price when set),
+// so a hand-entered package row splits commission by component like the
+// imported rows do (see compute_package_commission()).
+ensure_service_package_components_table($conn);
+$ss_packages = [];
+foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, s.price
+                       FROM service_package_components spc JOIN services s ON s.id = spc.component_service_id")->fetch_all(MYSQLI_ASSOC) as $_p) {
+    $ss_packages[(int)$_p['package_service_id']][] = [
+        'id'   => (int)$_p['component_service_id'],
+        'base' => get_commission_base_price((int)$_p['component_service_id'], null, (float)$_p['price']),
+    ];
+}
 ?>
 <?php if (!empty($advances_received)): ?>
 <!-- Down Payment (Advance Booking) — same data as the Cash & Summary tab's
@@ -2027,7 +2256,12 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>
                     <?php if ($_is_imported): ?><span style="font-size:0.62rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;" title="Auto-imported from appointment #<?php echo (int)$_ssr['source_appointment_id']; ?>">appt</span><?php endif; ?>
                 </td>
-                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?>
+                    <?php if (service_is_medical($conn, (int)($_ssr['service_id'] ?? 0))): ?><br><span style="display:inline-block;font-size:0.62rem;font-weight:700;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 6px;border-radius:8px;margin-top:2px;white-space:nowrap;" title="Done by a doctor or nurse. Commission is handled by accounting, so it is left blank here and Net Sales is the full price.">Doctor / Nurse · commission by accounting</span><?php endif; ?>
+                    <?php $_why = ss_zero_commission_reason($conn, $_ssr, $locked); if ($_why): ?>
+                    <div style="font-size:0.68rem;color:#92400e;background:rgba(234,179,8,0.12);border-radius:6px;padding:2px 6px;margin-top:3px;">⚠ <?php echo htmlspecialchars($_why); ?></div>
+                    <?php endif; ?>
+                </td>
                 <td style="padding:0.3rem 0.5rem;color:var(--gray);"><?php echo htmlspecialchars($_ssr['stylist'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;color:var(--gray);"><?php echo $_ssr['regular_price'] ? '₱'.number_format((float)$_ssr['regular_price'],2) : ''; ?></td>
                 <td style="padding:0.3rem 0.5rem;text-align:right;font-weight:700;color:var(--brown);"><?php echo $_ssr['promo_price'] ? '₱'.number_format((float)$_ssr['promo_price'],2) : ''; ?></td>
@@ -2212,6 +2446,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
     var SS_THERAPISTS  = <?php echo json_encode($ss_therapists_list, JSON_HEX_TAG|JSON_HEX_APOS); ?>;
     var SS_MOP         = <?php echo json_encode($ss_mop_list,        JSON_HEX_TAG|JSON_HEX_APOS); ?>;
     var SS_COMMISSIONS = <?php echo json_encode($ss_commissions,     JSON_HEX_TAG|JSON_HEX_APOS); ?>;
+    var SS_PACKAGES    = <?php echo json_encode((object)$ss_packages, JSON_HEX_TAG|JSON_HEX_APOS); ?>;
 
     function canEdit() {
         if (_rptLocked) return false;
@@ -2267,7 +2502,23 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
         var stylId = sfStylist ? (parseInt(sfStylist.value) || 0) : 0;
         var pct = 0;
         var c30 = 0, c20 = 0, c15 = 0, c25 = 0, noteText = '';
-        if (svcId && stylId) {
+        var pkgFields = null;
+        if (svcId && stylId && Object.prototype.hasOwnProperty.call(SS_PACKAGES, svcId)) {
+            // Package: each component pays its own rate on its own promo price.
+            pkgFields = [];
+            SS_PACKAGES[svcId].forEach(function(cp) {
+                var r = SS_COMMISSIONS[stylId + '_' + cp.id] || 0;
+                if (!r) return;
+                var a = Math.round(cp.base * r) / 100;
+                if      (r >= 28 && r <= 32) { c30 += a; pkgFields.push(sfC30); }
+                else if (r >= 23 && r <= 27) { c25 += a; pkgFields.push(sfC25); }
+                else if (r >= 18 && r <= 22) { c20 += a; pkgFields.push(sfC20); }
+                else if (r >= 13 && r <= 17) { c15 += a; pkgFields.push(sfC15); }
+                else                         { c30 += a; pkgFields.push(sfC30); }
+            });
+            pct = pkgFields.length ? 1 : 0;
+            noteText = pkgFields.length ? 'package: per-service commission' : 'no commission set';
+        } else if (svcId && stylId) {
             var key = stylId + '_' + svcId;
             if (Object.prototype.hasOwnProperty.call(SS_COMMISSIONS, key)) {
                 pct = SS_COMMISSIONS[key];
@@ -2290,7 +2541,7 @@ if ($_ss_comm_q) { foreach ($_ss_comm_q->fetch_all(MYSQLI_ASSOC) as $_c) {
 
         [sfC30, sfC20, sfC15, sfC25].forEach(function(f) {
             if (!f) return;
-            if (f === activeField) {
+            if (pkgFields ? pkgFields.indexOf(f) !== -1 : f === activeField) {
                 f.readOnly = false;
                 f.classList.remove('ss-ec-ro');
             } else {

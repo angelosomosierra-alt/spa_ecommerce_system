@@ -208,13 +208,81 @@ $_s = $conn->prepare("
     WHERE DATE(a.appointment_date) = ?
       AND a.status     = 'completed'
       AND a.rate_type != 'influencer'
+      AND NOT (IFNULL(sd.session_count, 1) > 1 AND a.created_at >= ?)
     GROUP BY oi.id
     ORDER BY o.id ASC, oi.id ASC
 ");
-$_s->bind_param("s", $report_date);
+$_pkg_from = PKG_SPLIT_FROM;
+$_s->bind_param("ss", $report_date, $_pkg_from);
 $_s->execute();
 $service_rows = $_s->get_result()->fetch_all(MYSQLI_ASSOC);
 $_s->close();
+
+// ── Multi-session packages, per session (see PKG_SPLIT_FROM in config.php) ──
+// One sales row per session completed on this date, worth that session's
+// share of the package. Session 1 keeps any Calendar down payment as its
+// advance; every later session is fully prepaid (collected on Session 1's
+// day), so it carries its own share as an advance dated that day and is
+// deducted as ADVANCE PAYMENT (B48) here.
+$_pk = $conn->prepare("
+    SELECT aps.id AS sess_id, aps.session_number, aps.completed_at, aps.session_date,
+           IFNULL(aps.commission, 0) AS sess_commission, aps.therapist_id AS sess_tid,
+           t.full_name AS sess_therapist,
+           (SELECT DATE(x.session_date) FROM appointment_sessions x WHERE x.appointment_id = a.id AND x.session_number = 1) AS d1,
+           a.id AS appt_id, a.charged_price AS pkg_price, a.advance_payment AS pkg_dp, a.advance_payment_date AS pkg_dp_date,
+           a.duration_minutes, a.rate_type, sd.session_count, sd.regular_price AS sd_regular, sd.promo_price AS sd_promo,
+           o.id AS order_id, o.slip_number, o.customer_name, o.payment_method, o.paymongo_method,
+           o.discount_type, o.discount_amount, o.completion_discount_type,
+           IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
+           o.final_amount, o.total_amount, o.created_at,
+           oi.id AS oi_id, oi.service_id, COALESCE(s.name, '[Deleted Service]') AS service_name, s.price AS svc_price
+    FROM appointment_sessions aps
+    JOIN appointments a ON a.id = aps.appointment_id
+    JOIN service_durations sd ON sd.id = a.service_duration_id AND sd.session_count > 1
+    JOIN order_items oi ON oi.id = a.order_item_id
+    JOIN orders o ON o.id = oi.order_id
+    JOIN services s ON s.id = oi.service_id
+    LEFT JOIN therapists t ON t.id = aps.therapist_id
+    WHERE aps.status = 'completed' AND DATE(aps.completed_at) = ?
+      AND a.created_at >= ? AND a.rate_type != 'influencer'
+    ORDER BY o.id, aps.session_number
+");
+$_pk->bind_param("ss", $report_date, $_pkg_from); $_pk->execute();
+foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_p) {
+    $_N = (int)$_p['session_count']; $_n = (int)$_p['session_number']; $_C = (float)$_p['pkg_price'];
+    $_share = pkg_session_share($_C, $_N, $_n);
+    $_frac  = $_C > 0 ? $_share / $_C : 0;
+    $_disc  = round((float)$_p['discount_amount'] * $_frac, 2);
+    $_cdisc = round((float)$_p['completion_discount_amount'] * $_frac, 2);
+    if ($_n === 1) {
+        $_adv = min((float)$_p['pkg_dp'], $_share); $_adv_date = $_p['pkg_dp_date'];
+    } else {
+        $_adv = max(0.0, $_share - $_disc - $_cdisc); $_adv_date = $_p['d1'];
+    }
+    $_reg   = (float)($_p['sd_regular'] ?: $_p['svc_price']);
+    $service_rows[] = [
+        'order_id' => $_p['order_id'], 'slip_number' => $_p['slip_number'], 'customer_name' => $_p['customer_name'],
+        'payment_method' => $_p['payment_method'], 'paymongo_method' => $_p['paymongo_method'],
+        'discount_type' => $_p['discount_type'], 'discount_amount' => $_disc,
+        'completion_discount_type' => $_p['completion_discount_type'], 'completion_discount_amount' => $_cdisc,
+        'final_amount' => $_p['final_amount'], 'total_amount' => $_p['total_amount'], 'created_at' => $_p['created_at'],
+        'oi_id' => $_p['oi_id'], 'service_id' => $_p['service_id'],
+        'service_name' => $_p['service_name'] . ' — Session ' . $_n . ' of ' . $_N,
+        'regular_price' => round($_reg / $_N, 2),
+        'sd_promo_price' => (float)$_p['sd_promo'] > 0 ? round((float)$_p['sd_promo'] / $_N, 2) : null,
+        // Add-ons belong to the package once: list them with Session 1 only.
+        'appt_id' => $_n === 1 ? $_p['appt_id'] : 0,
+        'appointment_date' => $_p['session_date'] ?: $_p['completed_at'],
+        'duration_minutes' => $_p['duration_minutes'], 'rate_type' => $_p['rate_type'],
+        'charged_price' => $_share, 'celebration_discount' => 0,
+        'advance_payment' => $_adv, 'advance_payment_date' => $_adv_date,
+        'appt_status' => 'completed',
+        'therapists' => $_p['sess_therapist'], 'sr_therapist_id' => $_p['sess_tid'],
+        'total_commission' => (float)$_p['sess_commission'],
+        'pkg_session_id' => (int)$_p['sess_id'],
+    ];
+}
+$_pk->close();
 
 // ── Add-on services for completed appointments ────────────────────────────────
 $appt_ids       = array_column($service_rows, 'appt_id');
@@ -335,6 +403,45 @@ $_map_q->bind_param("s", $report_date);
 $_map_q->execute();
 $advances_received = array_merge($advances_received, $_map_q->get_result()->fetch_all(MYSQLI_ASSOC));
 $_map_q->close();
+
+// Multi-session packages (PKG_SPLIT_FROM on), paid in full: on Session 1's
+// day the later sessions' share was collected now but isn't a sale yet, so
+// it's an Advance Payment received today (cash in the drawer / non-cash DP).
+// Each later session then shows as a sale on its own day and is deducted as
+// ADVANCE PAYMENT there (see the per-session rows above).
+$_pa = $conn->prepare("
+    SELECT a.id, a.charged_price, a.advance_payment AS dp, a.advance_payment_date AS dp_date,
+           a.appointment_date, a.service_type, sd.session_count,
+           (SELECT GROUP_CONCAT(x.session_number) FROM appointment_sessions x
+             WHERE x.appointment_id = a.id AND x.session_number > 1 AND x.status = 'completed'
+               AND DATE(x.completed_at) = DATE(s1.session_date)) AS same_day_done,
+           s.name AS service_name, COALESCE(o.customer_name, u.full_name) AS customer_name,
+           COALESCE(NULLIF(o.paymongo_method, ''), o.payment_method) AS pay_method,
+           o.discount_amount, IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount
+    FROM appointments a
+    JOIN appointment_sessions s1 ON s1.appointment_id = a.id AND s1.session_number = 1
+    JOIN service_durations sd ON sd.id = a.service_duration_id AND sd.session_count > 1
+    JOIN services s ON s.id = a.service_id
+    JOIN order_items oi ON oi.id = a.order_item_id
+    JOIN orders o ON o.id = oi.order_id
+    LEFT JOIN users u ON u.id = a.user_id
+    WHERE DATE(s1.session_date) = ? AND o.payment_status = 'paid'
+      AND a.created_at >= ? AND a.status != 'cancelled' AND a.rate_type != 'influencer'
+");
+$_pa->bind_param("ss", $report_date, $_pkg_from); $_pa->execute();
+foreach ($_pa->get_result()->fetch_all(MYSQLI_ASSOC) as $_a) {
+    $_amt = pkg_prepaid_later_sessions($_a, $report_date);
+    if ($_amt <= 0) continue;
+    $_N = (int)$_a['session_count'];
+    $advances_received[] = [
+        'id' => $_a['id'], 'advance_payment' => $_amt, 'advance_payment_date' => $report_date,
+        'advance_payment_method' => $_a['pay_method'] ?: 'cash',
+        'appointment_date' => $_a['appointment_date'], 'service_type' => $_a['service_type'],
+        'service_name' => $_a['service_name'] . ' — Session' . ($_N > 2 ? 's 2–' . $_N : ' 2') . ' of ' . $_N . ' (paid, not yet rendered)',
+        'session_count' => 1, 'customer_name' => $_a['customer_name'],
+    ];
+}
+$_pa->close();
 
 $advances_received_total = array_sum(array_column($advances_received, 'advance_payment'));
 // Per-method DP totals — computed from the same advances_received dataset
@@ -476,9 +583,10 @@ $_sc = $conn->prepare("
     FROM daily_report_session_commission_rows drscr
     JOIN appointments a ON a.id = drscr.appointment_id
     WHERE drscr.report_date = ?
+      AND a.created_at < ?   -- newer packages report each session as its own sale row
     ORDER BY drscr.id ASC
 ");
-$_sc->bind_param("s", $report_date); $_sc->execute();
+$_sc->bind_param("ss", $report_date, $_pkg_from); $_sc->execute();
 $session_commission_rows = $_sc->get_result()->fetch_all(MYSQLI_ASSOC); $_sc->close();
 $session_commission_total = array_sum(array_column($session_commission_rows, 'commission'));
 
@@ -565,7 +673,9 @@ foreach ($service_rows as $row) {
     $_row_adv_date = $row['advance_payment_date'] ?? '';
     $_row_prepaid  = $_row_adv > 0
                    && $_row_adv_date !== '' && $_row_adv_date !== $report_date
-                   && $_row_adv >= ((float)$row['charged_price'] - 0.005);
+                   && $_row_adv >= ((float)$row['charged_price']
+                                    - (float)($row['discount_amount'] ?? 0)
+                                    - (float)($row['completion_discount_amount'] ?? 0) - 0.005);
     if ($_row_prepaid) continue;
 
     $pm = (!empty($row['paymongo_method']))

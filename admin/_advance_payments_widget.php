@@ -15,6 +15,8 @@
  *   - Session Package     → read-only here. Created automatically at
  *     check-in (see checkin_appointment in appointments.php); shown so
  *     every advance is visible in one place, not to be entered by hand.
+ *     Also lists session-count packages with a session completed today:
+ *     the paid value of the sessions still left (Dashboard only).
  *
  * Usage: <?php require_once 'admin/_advance_payments_widget.php'; ?>
  * Requires: $conn (DB), session with user_id, config.php already loaded.
@@ -33,6 +35,27 @@ $conn->query("CREATE TABLE IF NOT EXISTS manual_advance_payments (
     verified_by_pin VARCHAR(10) NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_map_date (report_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
+// Read below for session-count packages. Normally created by walkin.php /
+// appointments.php, but the Dashboard may be the first page opened on a
+// fresh database — same self-healing schema convention as those pages.
+$conn->query("CREATE TABLE IF NOT EXISTS appointment_sessions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    appointment_id INT NOT NULL,
+    session_number INT NOT NULL,
+    session_date DATETIME NULL,
+    therapist_id INT NULL,
+    duration_minutes INT NOT NULL,
+    status ENUM('not_scheduled','scheduled','checked_in','completed') NOT NULL DEFAULT 'not_scheduled',
+    commission DECIMAL(10,2) NULL,
+    checked_in_at DATETIME NULL,
+    completed_at DATETIME NULL,
+    completed_by INT NULL,
+    completed_by_name VARCHAR(120) NULL,
+    UNIQUE KEY uq_appt_session (appointment_id, session_number),
+    CONSTRAINT fk_appt_sessions_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+    CONSTRAINT fk_appt_sessions_therapist FOREIGN KEY (therapist_id) REFERENCES therapists(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
 $apw_msg = ''; $apw_msg_type = 'success';
@@ -139,8 +162,15 @@ $apw_deposits = $conn->query("
     ORDER BY m.id DESC
 ")->fetch_all(MYSQLI_ASSOC);
 
-$apw_sessions = $conn->query("
+// Down payments recorded on an appointment today. Two kinds:
+//   - session_group_id set: Session 2 of the retired 2-session package,
+//     credited at Session 1's check-in → Multi-session Paid.
+//   - anything else: a down payment for a booking on another day (Calendar)
+//     → Advance Payment. The Daily Report deducts it on the appointment day.
+$conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS session_group_id INT NULL DEFAULT NULL");
+$apw_appt_adv = $conn->query("
     SELECT a.id, a.advance_payment, a.advance_payment_method, a.advance_payment_date,
+           a.appointment_date, a.session_group_id,
            s.name AS service_name, IFNULL(sd.session_count, 1) AS session_count,
            COALESCE(o.customer_name, u.full_name) AS customer_name
     FROM appointments a
@@ -152,11 +182,90 @@ $apw_sessions = $conn->query("
     WHERE a.advance_payment > 0 AND a.advance_payment_date = CURDATE()
     ORDER BY a.id DESC
 ")->fetch_all(MYSQLI_ASSOC);
+$apw_sessions     = array_values(array_filter($apw_appt_adv, fn($r) => !empty($r['session_group_id'])));
+$apw_booking_advs = array_values(array_filter($apw_appt_adv, fn($r) => empty($r['session_group_id'])));
+
+// Session-count packages (service_durations.session_count > 1) are one
+// appointment paid in full upfront, with progress tracked in
+// appointment_sessions — they never set appointments.advance_payment, so the
+// query above misses them. Once a session is completed today and the order is
+// paid, the sessions still left are money already collected for service not
+// yet rendered: list that balance here. Dashboard visibility only — the Daily
+// Report already recognizes the full package price on its booking date, so
+// this is deliberately NOT fed into _daily_report_data.php's advance totals.
+$apw_pkg_remaining = $conn->query("
+    SELECT a.id, a.charged_price, s.name AS service_name,
+           COUNT(*) AS total_sessions,
+           SUM(aps.status = 'completed') AS done_sessions,
+           COALESCE(NULLIF(o.paymongo_method, ''), o.payment_method) AS pay_method,
+           COALESCE(o.customer_name, u.full_name) AS customer_name
+    FROM appointments a
+    JOIN appointment_sessions aps ON aps.appointment_id = a.id
+    JOIN services s ON s.id = a.service_id
+    JOIN order_items oi ON oi.id = a.order_item_id
+    JOIN orders o ON o.id = oi.order_id
+    LEFT JOIN users u ON u.id = a.user_id
+    WHERE o.payment_status = 'paid'
+      AND a.status != 'cancelled'
+      AND a.created_at < '" . PKG_SPLIT_FROM . "'
+    GROUP BY a.id
+    HAVING SUM(aps.status = 'completed' AND DATE(aps.completed_at) = CURDATE()) > 0
+       AND done_sessions < total_sessions
+    ORDER BY a.id DESC
+")->fetch_all(MYSQLI_ASSOC);
+foreach ($apw_pkg_remaining as &$_pr) {
+    $_left = (int)$_pr['total_sessions'] - (int)$_pr['done_sessions'];
+    $_pr['remaining_sessions'] = $_left;
+    $_pr['remaining_amount']   = round((float)$_pr['charged_price'] * $_left / max(1, (int)$_pr['total_sessions']), 2);
+}
+unset($_pr);
+
+// Packages booked from PKG_SPLIT_FROM on: the later sessions' share is an
+// Advance Payment received on Session 1's day (same amount the Daily Report
+// lists — pkg_prepaid_later_sessions()), shown as soon as the order is paid.
+$_apw_new_pkg = $conn->query("
+    SELECT a.id, a.charged_price, a.advance_payment AS dp, a.advance_payment_date AS dp_date,
+           sd.session_count, s.name AS service_name,
+           (SELECT GROUP_CONCAT(x.session_number) FROM appointment_sessions x
+             WHERE x.appointment_id = a.id AND x.session_number > 1 AND x.status = 'completed'
+               AND DATE(x.completed_at) = DATE(s1.session_date)) AS same_day_done,
+
+           (SELECT COUNT(*) FROM appointment_sessions x WHERE x.appointment_id = a.id AND x.status = 'completed') AS done_sessions,
+           COALESCE(NULLIF(o.paymongo_method, ''), o.payment_method) AS pay_method,
+           COALESCE(o.customer_name, u.full_name) AS customer_name,
+           o.discount_amount, IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount
+    FROM appointments a
+    JOIN appointment_sessions s1 ON s1.appointment_id = a.id AND s1.session_number = 1
+    JOIN service_durations sd ON sd.id = a.service_duration_id AND sd.session_count > 1
+    JOIN services s ON s.id = a.service_id
+    JOIN order_items oi ON oi.id = a.order_item_id
+    JOIN orders o ON o.id = oi.order_id
+    LEFT JOIN users u ON u.id = a.user_id
+    WHERE DATE(s1.session_date) = CURDATE() AND o.payment_status = 'paid'
+      AND a.created_at >= '" . PKG_SPLIT_FROM . "' AND a.status != 'cancelled' AND a.rate_type != 'influencer'
+    ORDER BY a.id DESC
+")->fetch_all(MYSQLI_ASSOC);
+foreach ($_apw_new_pkg as $_np) {
+    $_amt = pkg_prepaid_later_sessions($_np, date('Y-m-d'));
+    if ($_amt <= 0) continue;
+    $_np['total_sessions']     = (int)$_np['session_count'];
+    $_np['remaining_sessions'] = (int)$_np['session_count'] - 1;
+    $_np['done_sessions']      = (int)$_np['done_sessions'];
+    $_np['remaining_amount']   = $_amt;
+    $_N = (int)$_np['session_count'];
+    $_np['label'] = $_np['service_name'] . ' — Session' . ($_N > 2 ? 's 2–' . $_N : ' 2') . ' of ' . $_N . ' paid in advance';
+    $apw_pkg_remaining[] = $_np;
+}
 
 $apw_voucher_total = array_sum(array_column($apw_vouchers, 'amount'));
+// Advance Payment (deposits for a future visit) and Multi-session Paid
+// (sessions already paid for but not yet rendered) are shown and totalled
+// separately; the grand total still covers everything.
 $apw_deposit_total = array_sum(array_column($apw_deposits, 'amount'))
-                    + array_sum(array_column($apw_sessions, 'advance_payment'));
-$apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
+                    + array_sum(array_column($apw_booking_advs, 'advance_payment'));
+$apw_session_total = array_sum(array_column($apw_sessions, 'advance_payment'))
+                    + array_sum(array_column($apw_pkg_remaining, 'remaining_amount'));
+$apw_grand_total    = $apw_voucher_total + $apw_deposit_total + $apw_session_total;
 ?>
 <div class="panel" style="margin-top:1.5rem;" id="advance-payments-widget">
     <div class="panel-header">
@@ -189,9 +298,9 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
                         Other Deposit
                     </button>
                     <button type="button" class="apw-type-btn" data-type="session" onclick="apwSetType('session')"
-                            title="Session-package advances are created automatically at check-in"
+                            title="Multi-session paid entries are created automatically"
                             style="border:1.5px solid var(--border2);background:var(--bg3);border-radius:8px;padding:0.5rem 0.3rem;cursor:pointer;font-size:0.72rem;font-weight:700;color:var(--brown);text-align:center;">
-                        Session Pkg*
+                        Multi-session*
                     </button>
                 </div>
 
@@ -274,15 +383,19 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
                     </button>
                     <button type="button" class="apw-filter-btn" data-filter="voucher" onclick="apwSetFilter('voucher')"
                             style="border:1.5px solid var(--border2);background:var(--bg3);border-radius:20px;padding:0.3rem 0.75rem;font-size:0.74rem;font-weight:600;color:var(--gray);cursor:pointer;">
-                        Voucher / GC Sold
+                        Voucher / GC Sold · ₱<?php echo number_format($apw_voucher_total, 2); ?>
                     </button>
                     <button type="button" class="apw-filter-btn" data-filter="advance" onclick="apwSetFilter('advance')"
                             style="border:1.5px solid var(--border2);background:var(--bg3);border-radius:20px;padding:0.3rem 0.75rem;font-size:0.74rem;font-weight:600;color:var(--gray);cursor:pointer;">
-                        Advance Payment
+                        Advance Payment · ₱<?php echo number_format($apw_deposit_total, 2); ?>
+                    </button>
+                    <button type="button" class="apw-filter-btn" data-filter="session" onclick="apwSetFilter('session')"
+                            style="border:1.5px solid var(--border2);background:var(--bg3);border-radius:20px;padding:0.3rem 0.75rem;font-size:0.74rem;font-weight:600;color:var(--gray);cursor:pointer;">
+                        Multi-session Paid · ₱<?php echo number_format($apw_session_total, 2); ?>
                     </button>
                 </div>
 
-                <?php if (empty($apw_vouchers) && empty($apw_deposits) && empty($apw_sessions)): ?>
+                <?php if (empty($apw_vouchers) && empty($apw_deposits) && empty($apw_booking_advs) && empty($apw_sessions) && empty($apw_pkg_remaining)): ?>
                 <div id="apw-empty" style="text-align:center;padding:1.5rem;color:var(--gray);font-size:0.82rem;background:var(--bg3);border-radius:8px;border:1px solid var(--border2);">
                     No entries yet today.
                 </div>
@@ -300,7 +413,7 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
                                 &nbsp;·&nbsp;<?php echo date('h:i A', strtotime($v['created_at'])); ?>
                             </div>
                         </div>
-                        <span style="font-weight:700;color:#198754;font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($v['amount'],2); ?></span>
+                        <span class="apw-amt" style="font-weight:700;color:#198754;font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($v['amount'],2); ?></span>
                         <?php if (is_full_access()): ?>
                         <a href="?del_voucher=<?php echo $v['id']; ?>" title="Remove"
                            style="color:var(--rust);font-size:0.78rem;text-decoration:none;padding:0.15rem 0.4rem;border-radius:4px;border:1px solid var(--rust);flex-shrink:0;"
@@ -321,7 +434,7 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
                                 &nbsp;·&nbsp;<?php echo date('h:i A', strtotime($d['created_at'])); ?>
                             </div>
                         </div>
-                        <span style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($d['amount'],2); ?></span>
+                        <span class="apw-amt" style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($d['amount'],2); ?></span>
                         <?php if (is_full_access()): ?>
                         <a href="?del_deposit=<?php echo $d['id']; ?>" title="Remove"
                            style="color:var(--rust);font-size:0.78rem;text-decoration:none;padding:0.15rem 0.4rem;border-radius:4px;border:1px solid var(--rust);flex-shrink:0;"
@@ -330,19 +443,50 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
                     </div>
                     <?php endforeach; ?>
 
+                    <?php foreach ($apw_booking_advs as $b): ?>
+                    <div class="apw-entry" data-type="advance" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;background:var(--bg3);border-radius:7px;border:1px solid var(--border2);">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:0.82rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($b['customer_name'] ?? ''); ?></div>
+                            <div style="font-size:0.68rem;color:var(--gray);">
+                                <span style="color:#2d8a4e;font-weight:700;">Auto · Down payment</span>
+                                &nbsp;·&nbsp;<?php echo htmlspecialchars($b['service_name']); ?> on <?php echo date('M j, g:i A', strtotime($b['appointment_date'])); ?>
+                                &nbsp;·&nbsp;<?php echo htmlspecialchars(ucfirst($b['advance_payment_method'] ?? 'cash')); ?>
+                            </div>
+                        </div>
+                        <span class="apw-amt" style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($b['advance_payment'],2); ?></span>
+                    </div>
+                    <?php endforeach; ?>
+
                     <?php foreach ($apw_sessions as $s):
                         $_lbl = $s['service_name'] . ((int)$s['session_count'] > 1 ? ' — Session 2 of ' . (int)$s['session_count'] . ' (not yet rendered)' : '');
                     ?>
-                    <div class="apw-entry" data-type="advance" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;background:var(--bg3);border-radius:7px;border:1px solid var(--border2);">
+                    <div class="apw-entry" data-type="session" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;background:var(--bg3);border-radius:7px;border:1px solid var(--border2);">
                         <div style="flex:1;min-width:0;">
                             <div style="font-size:0.82rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($s['customer_name'] ?? ''); ?></div>
                             <div style="font-size:0.68rem;color:var(--gray);">
-                                <span style="color:#9333a6;font-weight:700;">Auto · Session Pkg</span>
+                                <span style="color:#9333a6;font-weight:700;">Auto · Multi-session Paid</span>
                                 &nbsp;·&nbsp;<?php echo htmlspecialchars($_lbl); ?>
                                 &nbsp;·&nbsp;<?php echo htmlspecialchars(ucfirst($s['advance_payment_method'] ?? 'cash')); ?>
                             </div>
                         </div>
-                        <span style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($s['advance_payment'],2); ?></span>
+                        <span class="apw-amt" style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($s['advance_payment'],2); ?></span>
+                    </div>
+                    <?php endforeach; ?>
+
+                    <?php foreach ($apw_pkg_remaining as $p):
+                        $_done = (int)$p['done_sessions']; $_tot = (int)$p['total_sessions']; $_left = (int)$p['remaining_sessions'];
+                        $_lbl = $p['label'] ?? ($p['service_name'] . ' — ' . $_done . ' of ' . $_tot . ' done, ' . $_left . ' session' . ($_left > 1 ? 's' : '') . ' remaining');
+                    ?>
+                    <div class="apw-entry" data-type="session" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;background:var(--bg3);border-radius:7px;border:1px solid var(--border2);">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:0.82rem;font-weight:600;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($p['customer_name'] ?? ''); ?></div>
+                            <div style="font-size:0.68rem;color:var(--gray);">
+                                <span style="color:#9333a6;font-weight:700;">Auto · Multi-session Paid</span>
+                                &nbsp;·&nbsp;<?php echo htmlspecialchars($_lbl); ?>
+                                &nbsp;·&nbsp;<?php echo htmlspecialchars(ucfirst($p['pay_method'] ?? 'cash')); ?>
+                            </div>
+                        </div>
+                        <span class="apw-amt" style="font-weight:700;color:var(--brown);font-size:0.85rem;white-space:nowrap;">₱<?php echo number_format($p['remaining_amount'],2); ?></span>
                     </div>
                     <?php endforeach; ?>
                 </div>
@@ -357,8 +501,8 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
             <summary style="cursor:pointer;font-size:0.76rem;font-weight:700;color:var(--gray);">Where each type lands in the Sales Report</summary>
             <div style="font-size:0.76rem;color:var(--gray);margin-top:0.5rem;line-height:1.6;">
                 <strong style="color:var(--brown);">Voucher / GC</strong> — also appears on GC &amp; Unpaids → Sold, counted once in Sold GC (Gross Sales). Shown here for visibility only.<br>
-                <strong style="color:var(--brown);">Other Deposit</strong> — counted in Advance Payment on the Summary Report, same bucket session-package advances already use.<br>
-                <strong style="color:var(--brown);">Session Package</strong> — created automatically at check-in; already counted in Advance Payment today.
+                <strong style="color:var(--brown);">Advance Payment</strong> — down payments for a booking on another day (taken automatically when booked from the Calendar) and Other Deposits. Listed today; a booking's down payment is deducted as Advance Payment on the Sales Report on the appointment day.<br>
+                <strong style="color:var(--brown);">Multi-session Paid</strong> — created automatically and listed separately from Advance Payment. When a session of a paid multi-session package is completed, the value of the sessions still left shows here. Dashboard only: the Sales Report already counts the full package price on its booking date.
             </div>
         </details>
     </div>
@@ -368,8 +512,8 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
 (function(){
     var TYPE_HINTS = {
         voucher: 'Also appears automatically on GC &amp; Unpaids → Sold — no need to enter it twice.',
-        deposit: 'Counted in Advance Payment on the Summary Report, same bucket session-package advances already use.',
-        session: 'These are created automatically at check-in — this form is disabled for reference only.'
+        deposit: 'Listed under Advance Payment, and counted in Advance Payment on the Summary Report.',
+        session: 'Multi-session Paid entries are created automatically when a session of a paid package is done. This form is disabled for reference only.'
     };
 
     window.apwSetType = function(type){
@@ -392,7 +536,7 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
             el.disabled = disable;
         });
         submitBtn.disabled = disable;
-        submitBtn.textContent = disable ? 'Created automatically at check-in' : 'Add Entry';
+        submitBtn.textContent = disable ? 'Created automatically' : 'Add Entry';
     };
 
     window.apwSetFilter = function(filter){
@@ -409,14 +553,14 @@ $apw_grand_total    = $apw_voucher_total + $apw_deposit_total;
             e.style.display = match ? '' : 'none';
             if (match) {
                 visibleCount++;
-                var amtEl = e.querySelector('span[style*="font-weight:700"]');
+                var amtEl = e.querySelector('.apw-amt');
                 if (amtEl) visibleTotal += parseFloat(amtEl.textContent.replace(/[^0-9.]/g, '')) || 0;
             }
         });
         var list = document.getElementById('apw-list');
         var empty = document.getElementById('apw-empty');
         if (list && empty) empty.style.display = (visibleCount === 0 && entries.length > 0) ? '' : 'none';
-        var totalLabel = filter === 'all' ? 'Total' : (filter === 'voucher' ? 'Voucher / GC Total' : 'Advance Payment Total');
+        var totalLabel = { all: 'Total', voucher: 'Voucher / GC Total', advance: 'Advance Payment Total', session: 'Multi-session Paid Total' }[filter] || 'Total';
         var totalEl = document.getElementById('apw-filter-total');
         if (totalEl) totalEl.textContent = totalLabel + ': ₱' + visibleTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
     };

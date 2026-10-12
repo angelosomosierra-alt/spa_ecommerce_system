@@ -281,8 +281,12 @@ function sanitize_input(string $data): string {
 // current time via the timezone already set globally above
 // (date_default_timezone_set('Asia/Manila')).
 function _resolve_active_price(float $regular, float $promo, string $mode, ?string $promoStart, ?string $promoEnd): array {
-    if ($mode !== 'promo' || empty($promoStart) || empty($promoEnd)) {
+    if ($mode !== 'promo' || $promo <= 0) {
         return ['price' => $regular, 'is_promo_active' => false];
+    }
+    // Promo with no time window: it applies all day.
+    if (empty($promoStart) || empty($promoEnd)) {
+        return ['price' => $promo, 'is_promo_active' => true];
     }
 
     $now   = date('H:i:s');
@@ -470,6 +474,94 @@ function get_commission_base_price(int $service_id, ?int $service_duration_id, f
     return $promo > 0 ? $promo : $fallback_price;
 }
 
+// ─── MULTI-SESSION PACKAGES IN THE DAILY REPORT ──────────────────────────────
+// A session-count package (service_durations.session_count > 1) booked from
+// PKG_SPLIT_FROM on is reported per session, like a Calendar down payment:
+//   - each session's share of the price is a sale on the day that session is
+//     completed (with that session's commission);
+//   - on Session 1's day, the later sessions' share (already collected) is an
+//     Advance Payment received, not a sale;
+//   - on each later session's day, its share is deducted as ADVANCE PAYMENT.
+// Packages booked earlier keep the old rule (full price on the booking date),
+// so past reports don't change.
+if (!defined('PKG_SPLIT_FROM')) define('PKG_SPLIT_FROM', '2026-10-12 00:00:00');
+
+// Session $n's share of a package price $total split over $count sessions.
+// The last session takes the rounding remainder so the shares add up exactly.
+function pkg_session_share(float $total, int $count, int $n): float {
+    $count = max(1, $count);
+    $each  = round($total / $count, 2);
+    return $n >= $count ? round($total - $each * ($count - 1), 2) : $each;
+}
+
+// What a paid multi-session package collected for its LATER sessions on
+// Session 1's day: the later sessions' share net of the order's discounts,
+// minus any part of an earlier Calendar down payment that went beyond
+// Session 1 (that part was already counted on its own collection day).
+// $a: charged_price, session_count, dp, dp_date, discount_amount,
+// completion_discount_amount, and optionally same_day_done: a comma list
+// of later session numbers also completed on $day (those are ordinary
+// sales that day, not an advance).
+function pkg_prepaid_later_sessions(array $a, string $day): float {
+    $C = (float)$a['charged_price']; $N = max(1, (int)$a['session_count']);
+    if ($C <= 0 || $N < 2) return 0.0;
+    $disc  = (float)($a['discount_amount'] ?? 0) + (float)($a['completion_discount_amount'] ?? 0);
+    $net   = fn(int $k) => pkg_session_share($C, $N, $k) - round($disc * pkg_session_share($C, $N, $k) / $C, 2);
+    $p1net = $net(1);
+    $later = ($C - $disc) - $p1net;
+    foreach (array_filter(array_map('intval', explode(',', (string)($a['same_day_done'] ?? '')))) as $k) {
+        if ($k >= 2 && $k <= $N) $later -= $net($k);
+    }
+    $dp    = (!empty($a['dp_date']) && $a['dp_date'] !== $day) ? (float)$a['dp'] : 0.0;
+    return round(max(0.0, $later - max(0.0, $dp - $p1net)), 2);
+}
+
+// ─── DOCTOR / NURSE SERVICES ─────────────────────────────────────────────────
+// A service ticked "Doctor / Nurse service" in Services is performed by a
+// doctor or nurse who sets their own fee; accounting pays them outside this
+// system. Such a service never stores therapist commission (₱0 everywhere),
+// and the Daily Report leaves its commission columns blank so Net Sales is
+// the full amount charged.
+function service_is_medical($conn, int $service_id): bool {
+    static $cache = [], $ready = false;
+    if (!$ready) {
+        $conn->query("ALTER TABLE services ADD COLUMN IF NOT EXISTS is_medical TINYINT(1) NOT NULL DEFAULT 0");
+        $ready = true;
+    }
+    if ($service_id <= 0) return false; // service_is_medical($conn, 0) = just ensure the column
+    if (!array_key_exists($service_id, $cache)) {
+        $q = $conn->prepare("SELECT is_medical FROM services WHERE id = ? LIMIT 1");
+        $q->bind_param("i", $service_id); $q->execute();
+        $cache[$service_id] = !empty($q->get_result()->fetch_assoc()['is_medical']);
+        $q->close();
+    }
+    return $cache[$service_id];
+}
+
+// Bookings whose duration option was deleted (older Services saves deleted
+// and re-inserted every option, and the FK sets the booking's id to NULL)
+// lose their promo price, commission base and session count. Re-link each
+// to the service's current option with the same minutes -- and the same
+// session count, read from its appointment_sessions rows (1 when it has
+// none). Only touches bookings with no option at all.
+function relink_orphan_service_durations($conn, ?int $service_id = null): int {
+    $where = $service_id ? ' AND a.service_id = ' . (int)$service_id : '';
+    try {
+    $conn->query("
+        UPDATE appointments a
+        JOIN service_durations sd
+          ON sd.service_id = a.service_id
+         AND sd.duration_minutes = a.duration_minutes
+         AND IFNULL(sd.session_count, 1) = GREATEST(1, (SELECT COUNT(*) FROM appointment_sessions x WHERE x.appointment_id = a.id))
+        LEFT JOIN service_durations cur ON cur.id = a.service_duration_id
+        SET a.service_duration_id = sd.id
+        WHERE cur.id IS NULL AND a.duration_minutes IS NOT NULL$where");
+    return $conn->affected_rows;
+    } catch (Throwable $e) {
+        return 0; // appointment_sessions not created yet on this install
+    }
+}
+
 // ─── PACKAGE SERVICES: commission-only components ────────────────────────────
 // A "Package" service bundles 2+ real services sold together under one combined
 // price (e.g. "Package 2" = Express Head Spa + Foot Massage). Therapist
@@ -598,8 +690,19 @@ function route_commission_to_buckets($conn, int $service_id, int $therapist_id, 
     $buckets = ['comm_30' => 0.0, 'comm_20' => 0.0, 'comm_15' => 0.0, 'comm_25' => 0.0];
     $pkg = compute_package_commission($conn, $service_id, $therapist_id);
     if (!empty($pkg['components'])) {
-        foreach ($pkg['components'] as $comp) {
-            $buckets[commission_report_bucket_key((float)$comp['rate'])] += (float)$comp['commission'];
+        // The components give the SPLIT; $total_comm (what was actually
+        // stored -- e.g. x2 when one therapist handled 2 people) gives the
+        // AMOUNT, so the columns always add up to the row's commission.
+        if ($pkg['total'] > 0) {
+            $scale = $total_comm / $pkg['total'];
+            foreach ($pkg['components'] as $comp) {
+                $buckets[commission_report_bucket_key((float)$comp['rate'])] += round((float)$comp['commission'] * $scale, 2);
+            }
+            // Keep the rounding cent in the largest column.
+            $diff = round($total_comm - array_sum($buckets), 2);
+            if ($diff != 0.0) { arsort($buckets); $buckets[array_key_first($buckets)] += $diff; }
+        } else {
+            $buckets['comm_30'] += $total_comm;
         }
         return $buckets;
     }
