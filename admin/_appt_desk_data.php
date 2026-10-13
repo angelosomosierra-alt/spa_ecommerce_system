@@ -16,6 +16,7 @@
 
 if (!function_exists('appt_desk_data')) {
 function appt_desk_data(mysqli $conn, int $done_days = 7): array {
+    ensure_upgrade_voucher_columns($conn);
     $today    = date('Y-m-d');
     $walkin_uid = get_walkin_customer_id();
     $done_days = max(1, min(366, $done_days));
@@ -29,14 +30,14 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
         SELECT a.id, a.user_id, a.status, a.appointment_date, a.people_count, a.customer_note,
                a.charged_price, a.advance_payment, a.advance_payment_date, a.advance_payment_method,
                a.resource_id, a.duration_minutes, a.service_id, a.order_item_id, a.rate_type,
-               a.session_group_id,
+               a.session_group_id, a.upgraded_from,
                s.name AS service_name, s.session_time, c.name AS category_name,
                IFNULL(sd.session_count, 1) AS session_count,
                u.full_name AS user_name, u.phone AS user_phone,
                o.id AS order_id, o.customer_name, o.phone AS order_phone, o.total_amount,
                o.discount_type, o.discount_amount, o.final_amount, o.payment_status,
                o.payment_method, o.paymongo_method, o.booking_group,
-               o.completion_discount_type, o.completion_discount_amount,
+               o.completion_discount_type, o.completion_discount_amount, o.voucher_label,
                (SELECT COUNT(DISTINCT o2.customer_name) FROM orders o2
                 WHERE o.booking_group IS NOT NULL AND o2.booking_group = o.booking_group) AS group_size
         FROM appointments a
@@ -69,7 +70,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
         foreach ($conn->query("
             SELECT aes.id, aes.appointment_id, aes.service_id, aes.therapist_id, aes.person_label, aes.charged_price,
                    aes.payment_status, aes.payment_method, aes.session_number, aes.total_sessions, aes.extra_group_id,
-                   aes.session_status, aes.therapist_selected, s.name, c.name AS category_name
+                   aes.session_status, aes.therapist_selected, aes.is_upgrade_topup, s.name, c.name AS category_name
             FROM appointment_extra_services aes
             JOIN services s ON s.id = aes.service_id
             LEFT JOIN categories c ON c.id = s.category_id
@@ -112,6 +113,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                     'res' => book_now_resource_type($e['category_name']), 'qual' => $qual((int)$e['service_id']),
                     'person' => $e['person_label'], 'rows' => [],
                     'med' => service_is_medical($conn, (int)$e['service_id']),
+                    'topup' => !empty($e['is_upgrade_topup']),
                 ];
             }
             $addons[$key]['price'] += (float)$e['charged_price'];
@@ -153,6 +155,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
             'online' => !$is_walkin,
             'people' => max(1, (int)$r['people_count']),
             'rate_type' => $r['rate_type'] ?: 'regular',
+            'upgraded_from' => $r['upgraded_from'] ?? null,
             'service' => [
                 'id' => (int)$r['service_id'], 'name' => $r['service_name'],
                 'mins' => (int)($r['duration_minutes'] ?: $r['session_time'] ?: 60),
@@ -173,6 +176,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                 'discount' => $bdisc, 'discount_type' => $r['discount_type'] ?: 'none',
                 'completion_discount' => (float)($r['completion_discount_amount'] ?? 0),
                 'completion_discount_type' => $r['completion_discount_type'] ?: '',
+                'voucher_label' => $r['voucher_label'] ?? '',
                 'advance' => $adv, 'advance_method' => $r['advance_payment_method'],
                 'advance_today' => $r['advance_payment_date'] === $today,
                 'paid' => $paid, 'paid_amount' => $paid ? (float)$r['final_amount'] : 0.0,

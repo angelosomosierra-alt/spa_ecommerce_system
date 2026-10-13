@@ -5,6 +5,7 @@
  * Access: all admins (owner, marketing, IT, cashier/receptionist)
  */
 require_once '../config.php';
+ensure_upgrade_voucher_columns($conn);
 redirect_if_not_admin();
 
 $msg      = '';
@@ -818,7 +819,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
             o.payment_method,
             o.discount_type,
             o.discount_amount,
-            o.completion_discount_type,
+            o.completion_discount_type, o.voucher_label,
             IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
             oi.service_id,
             COALESCE(s.name, '[Deleted Service]') AS service_name,
@@ -940,7 +941,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
                       . ($_sess_ct > 1 ? ' × ' . $_sess_ct . ' sessions' : '') . ')';
         }
         $stylist     = $ap['therapists']    ?? '';
-        $remarks     = '';
+        $remarks     = !empty($ap['voucher_label']) ? 'Voucher: ' . $ap['voucher_label'] : '';
         $is_refund   = 0;
         $created_by  = 'import';
         $row_order_insert = $row_order ?? 0; // placeholder; anchored to own id below if this starts a new cluster
@@ -985,7 +986,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
                IFNULL(aps.commission, 0) AS commission, aps.therapist_id, t.full_name AS therapist_name,
                a.charged_price, a.duration_minutes, sd.session_count, sd.regular_price, sd.promo_price,
                o.id AS order_id, o.customer_name, o.slip_number, o.payment_method, o.paymongo_method,
-               o.discount_type, o.discount_amount, o.completion_discount_type,
+               o.discount_type, o.discount_amount, o.completion_discount_type, o.voucher_label,
                IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
                oi.service_id, COALESCE(s.name, '[Deleted Service]') AS service_name, s.price AS svc_price
         FROM appointment_sessions aps
@@ -1032,6 +1033,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $time_out = (int)$r['duration_minutes'] > 0 ? date('h:i A', strtotime($start) + (int)$r['duration_minutes'] * 60) : '';
         $svc   = $r['service_name'] . ' (' . (int)$r['duration_minutes'] . ' mins × ' . $N . ' sessions) — Session ' . $n . ' of ' . $N;
         $remarks = $n > 1 ? 'Paid in advance (package)' : ($N > 2 ? 'Sessions 2–' . $N . ' paid in advance' : 'Session 2 paid in advance');
+        if (!empty($r['voucher_label'])) $remarks .= ($remarks ? ' · ' : '') . 'Voucher: ' . $r['voucher_label'];
         $mop   = $mop_map[strtolower(trim($r['paymongo_method'] ?: ($r['payment_method'] ?? '')))] ?? 'Cash';
         $order_id = (int)$r['order_id']; $slip = $r['slip_number'] ?? '';
         $row_order = $ss_resolve_cluster_row_order($order_id, $slip);
@@ -1081,6 +1083,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         WHERE DATE(a.appointment_date) = ?
           AND a.status = 'completed'
           AND es.payment_status = 'paid'
+          AND es.is_upgrade_topup = 0
         ORDER BY a.appointment_date ASC, es.id ASC
     ");
     $esq->bind_param("s", $report_date); $esq->execute();
@@ -1340,6 +1343,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         <?php echo $is_same_order ? '<span style="color:var(--gray);">↳ same</span>' : htmlspecialchars($row['customer_name']); ?>
                     </td>
                     <td><?php echo htmlspecialchars($row['service_name']); ?>
+                        <?php if (!empty($row['voucher_label'])): ?><br><span style="font-size:0.66rem;font-weight:700;background:var(--gold-dim,#FDF3E0);color:var(--brown-md,#6B4C30);padding:1px 6px;border-radius:8px;">Voucher: <?php echo htmlspecialchars($row['voucher_label']); ?></span><?php endif; ?>
                         <?php if (service_is_medical($conn, (int)$row['service_id'])): ?><br><span style="display:inline-block;font-size:0.62rem;font-weight:700;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 6px;border-radius:8px;margin-top:2px;white-space:nowrap;" title="Done by a doctor or nurse. Commission is handled by accounting, so it is left blank here and Net Sales is the full price.">Doctor / Nurse · commission by accounting</span><?php endif; ?>
                     </td>
                     <td style="color:var(--gray);white-space:nowrap;"><?php echo htmlspecialchars($row['therapists'] ?? '—'); ?></td>

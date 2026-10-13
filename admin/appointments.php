@@ -3,6 +3,7 @@ require_once '../config.php';
 redirect_if_not_admin();
 require_once __DIR__ . '/../notify.php';
 require_once __DIR__ . '/_book_now.php';
+ensure_upgrade_voucher_columns($conn);
 
 // ── Book Now groups: orders.booking_group links every order one Dashboard
 //    Book Now booking created (one per guest service), for "Pay for group".
@@ -1404,7 +1405,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 SELECT s.name AS svc_name
                 FROM appointment_extra_services aes
                 JOIN services s ON s.id = aes.service_id
-                WHERE aes.appointment_id = ? AND aes.therapist_id IS NULL AND s.is_medical = 0");
+                WHERE aes.appointment_id = ? AND aes.therapist_id IS NULL AND s.is_medical = 0 AND aes.is_upgrade_topup = 0");
             service_is_medical($conn, 0); // makes sure services.is_medical exists
             $et_q->bind_param("i", $appt_id); $et_q->execute();
             $_uc_extra = [];
@@ -1502,6 +1503,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
                         $u->bind_param("ssddi", $ci_pm, $ci_disc_type, $ci_disc_amt, $ci_final, $po_row['id']);
                         $u->execute(); $u->close();
+                        if ($ci_disc_type === 'voucher') save_voucher_label($conn, (int)$po_row['id'], (string)($_POST['voucher_label'] ?? ''));
 
                         if ($ci_extras_total > 0) {
                             $ci_es_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");
@@ -1690,6 +1692,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $upd_ord = $conn->prepare("UPDATE orders SET payment_status='unpaid', final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
                         $upd_ord->bind_param("dsdsdi", $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
                         $upd_ord->execute(); $upd_ord->close();
+                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], (string)($_POST['voucher_label'] ?? ''));
 
                         $unpaid_amount = max(0.0, $new_final - floatval($appt['advance_payment'] ?? 0));
                         if ($unpaid_amount > 0) {
@@ -1712,6 +1715,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
                         $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
                         $upd_ord->execute(); $upd_ord->close();
+                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], (string)($_POST['voucher_label'] ?? ''));
                     }
                 }
 
@@ -2234,7 +2238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
 
             // All extra services must have been explicitly set (therapist_selected=1).
             service_is_medical($conn, 0); // makes sure services.is_medical exists
-            $chk_extras = $conn->prepare("SELECT COUNT(*) AS total, SUM(aes.therapist_selected) AS selected FROM appointment_extra_services aes JOIN services s ON s.id = aes.service_id WHERE aes.appointment_id=? AND s.is_medical = 0");
+            $chk_extras = $conn->prepare("SELECT COUNT(*) AS total, SUM(aes.therapist_selected) AS selected FROM appointment_extra_services aes JOIN services s ON s.id = aes.service_id WHERE aes.appointment_id=? AND s.is_medical = 0 AND aes.is_upgrade_topup = 0");
             $chk_extras->bind_param("i", $appt_id); $chk_extras->execute();
             $extras_row = $chk_extras->get_result()->fetch_assoc(); $chk_extras->close();
             $extras_total    = (int)($extras_row['total'] ?? 0);
@@ -2403,6 +2407,138 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_r
                 $message = "Could not change the rate. Please try again."; $message_type = "danger";
             }
         }
+    }
+}
+
+// ── UPGRADE SERVICE ──────────────────────────────────────────────────────────
+// The customer switches the booking's main service to another (e.g. Nail Care
+// → Gel Pedicure). The booking takes the new service, its duration and price
+// everywhere (appointment, order item, order), so reports, commission and
+// the bill all show only the new service. The original name is kept as a
+// note (appointments.upgraded_from). If the order was already paid, the
+// price difference is added as an unpaid 'upgrade difference' line
+// (appointment_extra_services.is_upgrade_topup) for the payment steps to
+// collect; reports leave that line out since the main price already has it.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upgrade_service') {
+    verify_csrf_token();
+    $up_ok = true;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $up_ok = (bool)$ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$up_ok) { $message = "Incorrect PIN. Service not changed."; $message_type = "danger"; }
+    }
+    $up_appt_id = intval($_POST['appt_id'] ?? 0);
+    $up_svc_id  = intval($_POST['new_service_id'] ?? 0);
+    $up_dur_id  = intval($_POST['new_duration_id'] ?? 0);
+    if ($up_ok) {
+        $uq = $conn->prepare("
+            SELECT a.id, a.status, a.rate_type, a.partner_id, a.charged_price, a.people_count, a.advance_payment,
+                   a.service_id, a.service_duration_id, a.order_item_id, a.upgraded_from, s.name AS service_name,
+                   o.id AS order_id, o.payment_status, o.total_amount, o.discount_amount
+            FROM appointments a
+            JOIN services s ON s.id = a.service_id
+            LEFT JOIN order_items oi ON oi.id = a.order_item_id
+            LEFT JOIN orders o ON o.id = oi.order_id
+            WHERE a.id = ?");
+        $uq->bind_param("i", $up_appt_id); $uq->execute();
+        $up = $uq->get_result()->fetch_assoc(); $uq->close();
+
+        $up_cur_sessions = 1;
+        if ($up && !empty($up['service_duration_id'])) {
+            $pk = $conn->prepare("SELECT session_count FROM service_durations WHERE id = ?");
+            $pk->bind_param("i", $up['service_duration_id']); $pk->execute();
+            $up_cur_sessions = (int)($pk->get_result()->fetch_assoc()['session_count'] ?? 1); $pk->close();
+        }
+        $sv = $conn->prepare("SELECT id, name, price, session_time, home_service_price FROM services WHERE id = ? AND deleted_at IS NULL");
+        $sv->bind_param("i", $up_svc_id); $sv->execute();
+        $up_svc = $sv->get_result()->fetch_assoc(); $sv->close();
+        $up_dur = null;
+        if ($up_svc) {
+            if ($up_dur_id > 0) {
+                $dq = $conn->prepare("SELECT * FROM service_durations WHERE id = ? AND service_id = ?");
+                $dq->bind_param("ii", $up_dur_id, $up_svc_id); $dq->execute();
+                $up_dur = $dq->get_result()->fetch_assoc(); $dq->close();
+            }
+            if (!$up_dur) {
+                $dq = $conn->prepare("SELECT * FROM service_durations WHERE service_id = ? AND IFNULL(session_count,1) = 1 ORDER BY duration_minutes LIMIT 1");
+                $dq->bind_param("i", $up_svc_id); $dq->execute();
+                $up_dur = $dq->get_result()->fetch_assoc(); $dq->close();
+            }
+        }
+
+        if (!$up || !in_array($up['status'], ['pending', 'assigned', 'approved'], true)) {
+            $message = "This booking can't be changed anymore."; $message_type = "danger";
+        } elseif (empty($up['order_id'])) {
+            $message = "This booking has no order to update."; $message_type = "danger";
+        } elseif (!$up_svc) {
+            $message = "Choose the service to upgrade to."; $message_type = "danger";
+        } elseif ($up_svc_id === (int)$up['service_id'] && (int)($up_dur['id'] ?? 0) === (int)$up['service_duration_id']) {
+            $message = "That's already the booked service."; $message_type = "danger";
+        } elseif ($up_cur_sessions > 1 || ($up_dur && (int)($up_dur['session_count'] ?? 1) > 1)) {
+            $message = "Multi-session packages can't be upgraded here."; $message_type = "danger";
+        } else {
+            $people = max(1, (int)$up['people_count']);
+            $unit = $up_dur ? (float)get_active_duration_price($up_dur)['price'] : (float)$up_svc['price'];
+            switch ($up['rate_type'] ?? 'regular') {
+                case 'influencer': $unit = 0.0; break;
+                case 'home':       $unit = (float)($up_svc['home_service_price'] ?? 0) ?: $unit; break;
+                case 'hotel':
+                    if ((int)$up['partner_id'] > 0) {
+                        $pr = $conn->prepare("SELECT price FROM partner_rates WHERE partner_id = ? AND service_id = ?");
+                        $pr->bind_param("ii", $up['partner_id'], $up_svc_id); $pr->execute();
+                        $prow = $pr->get_result()->fetch_assoc(); $pr->close();
+                        if ($prow) $unit = (float)$prow['price'];
+                    }
+                    break;
+            }
+            $new_price = round($unit * $people, 2);
+            $delta     = round($new_price - (float)$up['charged_price'], 2);
+            $paid      = ($up['payment_status'] ?? '') === 'paid';
+            if ($paid && $delta < 0) {
+                $message = "Already paid, and the new service costs less. Refund the difference outside the system, or undo the payment first."; $message_type = "danger";
+            } else {
+                $new_mins = $up_dur ? (int)$up_dur['duration_minutes'] : max(1, (int)$up_svc['session_time']);
+                $new_dur_id = $up_dur ? (int)$up_dur['id'] : null;
+                $from = $up['upgraded_from'] ?: $up['service_name']; // keep the very first service
+                $conn->begin_transaction();
+                try {
+                    $u1 = $conn->prepare("UPDATE appointments SET service_id = ?, service_duration_id = ?, duration_minutes = ?, charged_price = ?, upgraded_from = ? WHERE id = ?");
+                    $u1->bind_param("iiidsi", $up_svc_id, $new_dur_id, $new_mins, $new_price, $from, $up_appt_id); $u1->execute(); $u1->close();
+                    $u2 = $conn->prepare("UPDATE order_items SET service_id = ?, price = ?, subtotal = ? WHERE id = ?");
+                    $u2->bind_param("iddi", $up_svc_id, $new_price, $new_price, $up['order_item_id']); $u2->execute(); $u2->close();
+                    $new_total = max(0.0, round((float)$up['total_amount'] + $delta, 2));
+                    if ($paid) {
+                        $u3 = $conn->prepare("UPDATE orders SET total_amount = ? WHERE id = ?");
+                        $u3->bind_param("di", $new_total, $up['order_id']); $u3->execute(); $u3->close();
+                        if ($delta > 0) {
+                            $tp_note = 'Upgrade difference: ' . $from . ' → ' . $up_svc['name'];
+                            $tp_by   = (int)($_SESSION['user_id'] ?? 0);
+                            $ti = $conn->prepare("INSERT INTO appointment_extra_services (appointment_id, service_id, therapist_id, person_label, charged_price, commission, rate_type, payment_method, payment_status, notes, added_by, session_number, total_sessions, session_status, therapist_selected, is_upgrade_topup) VALUES (?, ?, NULL, 'Person 1', ?, 0, ?, 'cash', 'unpaid', ?, ?, 1, 1, 'completed', 1, 1)");
+                            $tp_rate = $up['rate_type'] ?? 'regular';
+                            $ti->bind_param("iidssi", $up_appt_id, $up_svc_id, $delta, $tp_rate, $tp_note, $tp_by); $ti->execute(); $ti->close();
+                        }
+                    } else {
+                        $new_final = max(0.0, round($new_total - (float)$up['discount_amount'] - (float)$up['advance_payment'], 2));
+                        $u3 = $conn->prepare("UPDATE orders SET total_amount = ?, final_amount = ? WHERE id = ?");
+                        $u3->bind_param("ddi", $new_total, $new_final, $up['order_id']); $u3->execute(); $u3->close();
+                    }
+                    $conn->commit();
+                    $message = "Upgraded to {$up_svc['name']} (₱" . number_format($new_price, 2) . ")" . ($paid && $delta > 0 ? "; ₱" . number_format($delta, 2) . " difference to collect." : '.');
+                    $message_type = 'success';
+                    log_activity($conn, 'service_upgraded', "Appointment #{$up_appt_id} upgraded from {$from} to {$up_svc['name']}", 'appointment', $up_appt_id, null);
+                } catch (Throwable $e) {
+                    $conn->rollback();
+                    $message = "Could not upgrade the service. Please try again."; $message_type = "danger";
+                }
+            }
+        }
+    }
+    if (!empty($_POST['ajax'])) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => $message_type === 'success', 'message' => $message]);
+        exit();
     }
 }
 

@@ -419,11 +419,12 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
     // Normalise each guest's discount to [type, percent, fixed ₱].
-    $spec = [];
+    $spec = []; $vlabel = [];
     foreach ($discounts as $name => $d) {
         $type = is_array($d) ? (string)($d['type'] ?? 'none') : (string)$d;
         $val  = is_array($d) ? max(0.0, (float)($d['value'] ?? 0)) : 0.0;
         $vt   = is_array($d) && ($d['vtype'] ?? '') === 'percent' ? 'percent' : 'fixed';
+        $vlabel[$name] = is_array($d) && $type === 'voucher' ? (string)($d['label'] ?? '') : '';
         if (array_key_exists($type, BOOK_NOW_DISCOUNTS))      $spec[$name] = [$type, BOOK_NOW_DISCOUNTS[$type], 0.0];
         elseif ($type === 'celebration' && $val > 0)          $spec[$name] = ['celebration', min(100.0, $val), 0.0];
         elseif ($type === 'voucher' && $val > 0)              $spec[$name] = $vt === 'percent' ? ['voucher', min(100.0, $val), 0.0] : ['voucher', 0.0, $val];
@@ -458,6 +459,7 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
             $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
             $u->bind_param("ssddi", $method, $dkey, $disc, $final, $r['order_id']);
             $u->execute(); $u->close();
+            if ($dkey === 'voucher') save_voucher_label($conn, (int)$r['order_id'], $vlabel[$name] ?? '');
 
             if ((float)$r['extras'] > 0) {
                 $ue = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");
