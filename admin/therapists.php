@@ -1211,54 +1211,158 @@ function saveCommEdit(btn, recId, source) {
         </div>
     </div>
 
-    <!-- Add Therapist Form -->
-    <div class="panel">
-        <div class="panel-header"><span class="panel-title">Check In Therapist</span></div>
+    <!-- Quick check-in: tap a name to put them on today's roster -->
+    <?php
+    $_qc_on = []; // therapist_id => [attendance id, time in, time out, queue position]
+    foreach ($today_roster as $_i => $_r) {
+        $_qc_on[(int)$_r['therapist_id']] = ['aid' => (int)$_r['id'], 'tin' => $_r['time_in'], 'out' => !empty($_r['time_out']), 'q' => $_i + 1];
+    }
+    ?>
+    <style>
+    .qc-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
+    .qc-search { position:relative; flex:1 1 160px; min-width:0; margin:0; }
+    .qc-search svg { position:absolute; left:10px; top:50%; transform:translateY(-50%); width:15px; height:15px; color:var(--gray); }
+    .qc-search input { width:100%; min-height:38px; border:1px solid var(--border2); border-radius:10px; padding:0 10px 0 32px; background:var(--bg3); color:var(--brown); font-size:0.85rem; margin:0; }
+    .qc-field { display:flex; align-items:center; gap:6px; font-size:0.75rem; font-weight:700; color:var(--gray); margin:0; }
+    .qc-field input { min-height:38px; border:1px solid var(--border2); border-radius:10px; padding:0 8px; background:var(--bg3); color:var(--brown); font-size:0.85rem; margin:0; width:auto; }
+    .qc-field input[type=password] { width:74px; text-align:center; letter-spacing:.3em; }
+    .qc-hint { font-size:0.75rem; color:var(--gray); margin:0 0 10px; line-height:1.45; }
+    .qc-hint b { color:var(--green); }
+    .qc-err { background:#FBE3E0; color:#A3261B; border-radius:10px; padding:7px 10px; font-weight:700; font-size:0.8rem; margin-bottom:10px; }
+    .qc-names { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:8px; }
+    .qc-nm { display:flex; align-items:center; gap:8px; text-align:left; min-height:58px; padding:8px 10px; border-radius:12px; border:1.5px solid var(--border2); background:var(--bg2, #fff); color:var(--brown); cursor:pointer; font:inherit; transition:background .15s, border-color .15s, transform .1s; width:100%; }
+    .qc-nm:hover { border-color:var(--brown); }
+    .qc-nm:active { transform:scale(.98); }
+    .qc-av { width:34px; height:34px; border-radius:50%; background:var(--bg3); color:var(--brown); display:grid; place-items:center; font-weight:800; font-size:0.8rem; flex:none; }
+    .qc-t { min-width:0; }
+    .qc-t b { display:block; font-size:0.86rem; line-height:1.2; overflow-wrap:anywhere; }
+    .qc-t small { display:block; font-size:0.7rem; color:var(--gray); line-height:1.3; }
+    .qc-nm.on { background:var(--green-dim, #DDF1E6); border-color:var(--green, #198754); }
+    .qc-nm.on .qc-av { background:var(--green, #198754); color:#fff; }
+    .qc-nm.on .qc-t small { color:var(--green, #198754); font-weight:700; }
+    .qc-nm.out { background:var(--bg3); border-color:var(--border); cursor:default; }
+    .qc-nm.busy { opacity:.55; pointer-events:none; }
+    .qc-empty { grid-column:1/-1; text-align:center; color:var(--gray); padding:14px; font-size:0.85rem; }
+    .qc-toast { position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); background:#3B2A1A; color:#fff; padding:10px 14px; border-radius:12px; font-weight:700; font-size:0.88rem; z-index:9000; display:flex; gap:12px; align-items:center; max-width:calc(100% - 32px); box-shadow:0 10px 26px rgba(0,0,0,.25); }
+    .qc-toast button { background:transparent; border:1px solid rgba(255,255,255,.5); color:#fff; border-radius:8px; padding:4px 10px; font-weight:800; cursor:pointer; }
+    #qcPanel [hidden], .qc-toast[hidden] { display:none !important; }
+    </style>
+    <div class="panel" id="qcPanel">
+        <div class="panel-header"><span class="panel-title">Check In for Today</span><small style="color:var(--gray);font-size:0.72rem;">Tap a name</small></div>
         <div class="panel-body" style="padding:1rem;">
-            <form method="POST">
-                <?php echo csrf_field(); ?>
-                <div style="padding:0.55rem 0.85rem;background:rgba(0,112,243,0.07);
-                            border:1px solid rgba(0,112,243,0.2);border-radius:8px;
-                            font-size:0.78rem;color:#084298;margin-bottom:0.85rem;line-height:1.5;">
-                    To add a new therapist go to
-                    <a href="staff.php?tab=therapists" style="color:#0070f3;font-weight:700;">Staff → Therapists</a>.
-                </div>
-
-                <div style="margin-bottom:0.85rem;">
-                    <label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:6px;font-weight:600;">
-                        Select Therapist <span style="color:var(--rust);">*</span>
-                    </label>
-                    <select name="existing_therapist_id" required
-                            style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);
-                                   border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;">
-                        <option value="">— Select a therapist —</option>
-                        <?php foreach ($all_therapists as $th):
-                            $stars = $th['avg_rating'] ? ' · ' . number_format($th['avg_rating'],1) . '★' : '';
-                        ?>
-                        <option value="<?php echo $th['id']; ?>"
-                                <?php echo $th['on_duty_today'] ? 'style="color:var(--green);font-weight:600;"' : ''; ?>>
-                            <?php echo htmlspecialchars($th['full_name']) . $stars . ($th['on_duty_today'] ? ' ✓ On duty' : ''); ?>
-                        </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div style="margin-bottom:0.85rem;">
-                    <label style="font-size:0.78rem;color:var(--gray);display:block;margin-bottom:3px;font-weight:600;">Time In</label>
-                    <input type="time" name="time_in" value="<?php echo date('H:i'); ?>"
-                           style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);
-                                  border-radius:8px;background:var(--bg3);color:var(--brown);font-size:0.85rem;">
-                </div>
-
-                <input type="hidden" name="add_today" value="1">
-                <?php if (is_cashier()): ?><input type="hidden" name="pin" value=""><?php endif; ?>
-                <button type="<?php echo is_cashier() ? 'button' : 'submit'; ?>" class="btn btn-primary" style="width:100%;"
-                        <?php if (is_cashier()): ?>onclick="openPinGate('Check In Therapist',this.closest('form'))"<?php endif; ?>>
-                    Check In to Today's Roster
+            <div class="qc-tools">
+                <label class="qc-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                    <input type="search" id="qcQ" placeholder="Find a name…" aria-label="Find a therapist" autocomplete="off"></label>
+                <label class="qc-field">Time in <input type="time" id="qcTime" value="<?php echo date('H:i'); ?>"></label>
+                <?php if (is_cashier()): ?><label class="qc-field">Your PIN <input type="password" id="qcPin" maxlength="4" inputmode="numeric" autocomplete="off" aria-label="Your 4-digit PIN"></label><?php endif; ?>
+            </div>
+            <div class="qc-err" id="qcErr" role="alert" hidden></div>
+            <p class="qc-hint">Green = <b>on today's roster</b>. One tap checks them in at the time above.
+                New therapist? Add them in <a href="staff.php?tab=therapists" style="color:var(--rust);font-weight:700;">Staff → Therapists</a>.</p>
+            <div class="qc-names" id="qcNames">
+                <?php foreach ($all_therapists as $th):
+                    $tid = (int)$th['id']; $st = $_qc_on[$tid] ?? null;
+                    $ini = strtoupper(implode('', array_map(fn($w) => mb_substr($w, 0, 1), array_slice(preg_split('/\s+/', trim($th['full_name'])), 0, 2))));
+                    $cls = $st ? ($st['out'] ? ' out' : ' on') : '';
+                    $sub = $st ? ($st['out'] ? 'Checked out' : '✓ In ' . date('g:i A', strtotime($st['tin'])) . ' · #' . $st['q'])
+                               : ($th['specialties'] ?: ($th['avg_rating'] ? number_format($th['avg_rating'], 1) . '★' : 'Tap to check in'));
+                ?>
+                <button type="button" class="qc-nm<?php echo $cls; ?>" data-tid="<?php echo $tid; ?>"
+                        data-aid="<?php echo $st ? $st['aid'] : ''; ?>" data-name="<?php echo htmlspecialchars($th['full_name']); ?>"
+                        aria-pressed="<?php echo $st && !$st['out'] ? 'true' : 'false'; ?>">
+                    <span class="qc-av" aria-hidden="true"><?php echo $st && !$st['out'] ? '✓' : htmlspecialchars($ini); ?></span>
+                    <span class="qc-t"><b><?php echo htmlspecialchars($th['full_name']); ?></b><small><?php echo htmlspecialchars(mb_strimwidth($sub, 0, 40, '…')); ?></small></span>
                 </button>
-            </form>
-        </div><!-- end panel-body -->
-    </div><!-- end panel -->
+                <?php endforeach; ?>
+                <?php if (empty($all_therapists)): ?><div class="qc-empty">No therapists yet. Add them in Staff → Therapists.</div><?php endif; ?>
+            </div>
+            <form id="qcForm" hidden><?php echo csrf_field(); ?></form>
+        </div>
+    </div>
+    <div class="qc-toast" id="qcToast" role="status" hidden><span id="qcToastMsg"></span><button type="button" id="qcUndo">Undo</button></div>
+    <script>
+    (function () {
+        var names = document.getElementById('qcNames'), err = document.getElementById('qcErr');
+        var toast = document.getElementById('qcToast'), toastMsg = document.getElementById('qcToastMsg'), undoBtn = document.getElementById('qcUndo');
+        var pinEl = document.getElementById('qcPin');
+        var csrf = document.querySelector('#qcForm input[name="csrf_token"]').value;
+        var reloadTimer = null, toastTimer = null, last = null, pending = 0;
+
+        // Refresh the page a few seconds after the last tap so Today's Rotation,
+        // the stats and the live resource grid show the new roster.
+        function scheduleReload() {
+            clearTimeout(reloadTimer);
+            reloadTimer = setTimeout(function () { if (!pending) location.reload(); else scheduleReload(); }, 6000);
+        }
+        function showErr(m) { err.textContent = m || ''; err.hidden = !m; }
+        function showToast(m, canUndo) {
+            toastMsg.textContent = m; undoBtn.hidden = !canUndo; toast.hidden = false;
+            clearTimeout(toastTimer); toastTimer = setTimeout(function () { toast.hidden = true; last = null; }, 5500);
+        }
+        function post(fields) {
+            var fd = new FormData();
+            fd.append('csrf_token', csrf);
+            Object.keys(fields).forEach(function (k) { fd.append(k, fields[k]); });
+            if (pinEl) fd.append('pin', pinEl.value.trim());
+            return fetch('therapists.php', { method: 'POST', body: fd, credentials: 'same-origin' })
+                .then(function (r) { return r.text(); })
+                .then(function (html) { return new DOMParser().parseFromString(html, 'text/html'); });
+        }
+        function needPin() {
+            if (pinEl && !/^\d{4}$/.test(pinEl.value.trim())) { showErr('Type your 4-digit PIN first, then tap the name.'); pinEl.focus(); return true; }
+            return false;
+        }
+
+        names.addEventListener('click', function (e) {
+            var b = e.target.closest('.qc-nm'); if (!b) return;
+            var name = b.dataset.name;
+            showErr('');
+            if (b.classList.contains('out')) { showToast(name + ' already checked out today.'); return; }
+            if (b.classList.contains('on')) { showToast(name + ' is already on today\'s roster.'); return; }
+            if (needPin()) return;
+            b.classList.add('busy'); pending++;
+            post({ add_today: '1', existing_therapist_id: b.dataset.tid, time_in: document.getElementById('qcTime').value })
+                .then(function (doc) {
+                    var bad = doc.querySelector('.alert-danger');
+                    var fresh = doc.querySelector('.qc-nm[data-tid="' + b.dataset.tid + '"]');
+                    if (bad || !fresh || !fresh.classList.contains('on')) {
+                        b.classList.remove('busy');
+                        showErr(bad ? bad.textContent.trim() : 'Could not check in ' + name + '. Please try again.');
+                        return;
+                    }
+                    var nb = document.importNode(fresh, true);
+                    b.replaceWith(nb);
+                    last = nb;
+                    showToast(name + ' checked in.', true);
+                    scheduleReload();
+                })
+                .catch(function () { b.classList.remove('busy'); showErr('No connection. ' + name + ' was not checked in.'); })
+                .then(function () { pending--; });
+        });
+
+        undoBtn.addEventListener('click', function () {
+            var b = last; if (!b || !b.dataset.aid) return;
+            if (needPin()) return;
+            toast.hidden = true; last = null; b.classList.add('busy'); pending++;
+            post({ action: 'remove_today', attendance_id: b.dataset.aid })
+                .then(function (doc) {
+                    var bad = doc.querySelector('.alert-danger');
+                    var fresh = doc.querySelector('.qc-nm[data-tid="' + b.dataset.tid + '"]');
+                    if (bad || !fresh || fresh.classList.contains('on')) { b.classList.remove('busy'); showErr(bad ? bad.textContent.trim() : 'Could not undo. Use ✕ in Today\'s Rotation.'); return; }
+                    b.replaceWith(document.importNode(fresh, true));
+                    showToast(b.dataset.name + ' removed from today\'s roster.');
+                    scheduleReload();
+                })
+                .catch(function () { b.classList.remove('busy'); showErr('No connection. Undo did not go through.'); })
+                .then(function () { pending--; });
+        });
+
+        document.getElementById('qcQ').addEventListener('input', function () {
+            var q = this.value.trim().toLowerCase();
+            names.querySelectorAll('.qc-nm').forEach(function (b) { b.hidden = q && b.dataset.name.toLowerCase().indexOf(q) < 0; });
+        });
+    })();
+    </script>
 
 </div><!-- end right column -->
 </div><!-- end grid -->

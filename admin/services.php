@@ -475,30 +475,7 @@ require_once 'admin_header.php';
 <div class="alert alert-<?php echo $message_type; ?>"><?php echo $message; ?></div>
 <?php endif; ?>
 
-<?php if (!$edit_service && !isset($_GET['action'])): ?>
-<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
-    <div class="stat-card">
-        <div class="stat-icon"></div>
-        <div class="stat-number"><?php echo $total_services; ?></div>
-        <div class="stat-label">Total Services</div>
-    </div>
-    <div class="stat-card amber">
-        <div class="stat-icon"></div>
-        <div class="stat-number">₱<?php echo number_format($avg_price, 0); ?></div>
-        <div class="stat-label">Avg. Price</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon"></div>
-        <div class="stat-number"><?php echo $categorized_count; ?></div>
-        <div class="stat-label">Categorized</div>
-    </div>
-    <div class="stat-card green">
-        <div class="stat-icon"></div>
-        <div class="stat-number"><?php echo $with_recipe_count; ?></div>
-        <div class="stat-label">With Recipe</div>
-    </div>
-</div>
-<?php endif; ?>
+
 
 <?php if ((isset($_GET['action']) && $_GET['action'] === 'add') || $edit_service): ?>
 
@@ -1093,200 +1070,281 @@ var svcDurationVariants = <?php echo json_encode(array_values($svc_durations_lis
 <?php endif; ?>
 
 <?php if (!$edit_service): ?>
+<?php
+// ── List view (front end only): prices per length for the price chips.
+// Read-only; the save / archive / restore handlers above are untouched.
+$_al_prices = [];
+$_al_q = $conn->query("SELECT * FROM service_durations ORDER BY service_id, session_count, duration_minutes");
+if ($_al_q) while ($r = $_al_q->fetch_assoc()) $_al_prices[(int)$r['service_id']][] = $r;
 
-<div class="panel">
-    <div class="panel-header">
-        <span class="panel-title">All Services</span>
-        <?php if (!isset($_GET['action'])): ?>
-            <a href="services.php?action=add" class="btn btn-primary btn-sm">+ Add New Service</a>
-        <?php endif; ?>
+$_al_rows = [];
+foreach ($services as $s) {
+    $sid = (int)$s['id'];
+    $chips = []; $promo = false; $multi = false;
+    if (!empty($_al_prices[$sid])) {
+        foreach ($_al_prices[$sid] as $d) {
+            $p = get_active_duration_price($d);
+            $n = max(1, (int)($d['session_count'] ?? 1));
+            if ($n > 1) $multi = true;
+            if ($p['is_promo_active']) $promo = true;
+            $chips[] = ['m' => (int)$d['duration_minutes'], 'n' => $n, 'p' => (float)$p['price'], 'was' => $p['is_promo_active'] ? (float)$d['regular_price'] : 0];
+        }
+    } else {
+        $p = _resolve_active_price((float)$s['price'], (float)($s['promo_price'] ?? 0), (string)($s['price_mode'] ?? 'regular'), $s['promo_start_time'] ?? null, $s['promo_end_time'] ?? null);
+        if ($p['is_promo_active']) $promo = true;
+        $chips[] = ['m' => (int)$s['session_time'], 'n' => 1, 'p' => (float)$p['price'], 'was' => $p['is_promo_active'] ? (float)$s['price'] : 0];
+    }
+    $rc = (int)($svc_recipe_counts[$sid] ?? 0);
+    $flags = [];
+    $arch = !empty($s['deleted_at']);
+    if ($arch) $flags[] = 'arch';
+    else {
+        $flags[] = 'all';
+        if (!empty($s['is_home_service'])) $flags[] = 'home';
+        if (!empty($s['is_medical']))      $flags[] = 'med';
+        if ($multi)                        $flags[] = 'pkg';
+        if ($promo)                        $flags[] = 'promo';
+        if ($rc === 0)                     $flags[] = 'norecipe';
+        if (empty($s['category_id']))      $flags[] = 'nocat';
+    }
+    $_al_rows[] = ['s' => $s, 'chips' => $chips, 'promo' => $promo, 'multi' => $multi, 'rc' => $rc, 'arch' => $arch, 'flags' => $flags];
+}
+// Group by category name (Uncategorized last).
+$_al_groups = [];
+foreach ($_al_rows as $r) $_al_groups[$r['s']['category_name'] ?: ''][] = $r;
+uksort($_al_groups, function ($a, $b) { if ($a === '') return 1; if ($b === '') return -1; return strcasecmp($a, $b); });
+foreach ($_al_groups as &$_g) usort($_g, function ($a, $b) { return strcasecmp($a['s']['name'], $b['s']['name']); });
+unset($_g);
+
+$_al_count = function ($f) use ($_al_rows) { return count(array_filter($_al_rows, function ($r) use ($f) { return in_array($f, $r['flags'], true); })); };
+$_al_filters = [
+    'all' => 'All', 'home' => 'Home service', 'med' => 'Doctor / Nurse', 'pkg' => 'Multi-session',
+    'promo' => 'On promo', 'norecipe' => 'No recipe', 'nocat' => 'Uncategorized', 'arch' => 'Archived',
+];
+$_al_tiles = ['all' => 'Active services', 'home' => 'Home service', 'promo' => 'On promo', 'norecipe' => 'No recipe yet', 'arch' => 'Archived'];
+$_al_cat_req = $_GET['category'] ?? '';
+$_al_cat_init = $_al_cat_req === 'none' ? '__none' : '';
+foreach ($categories as $c) if ((string)$c['id'] === (string)$_al_cat_req) $_al_cat_init = $c['name'];
+if (isset($_GET['cat_name'])) $_al_cat_init = (string)$_GET['cat_name'];
+$_al_cat_names = array_values(array_filter(array_keys($_al_groups), function ($k) { return $k !== ''; }));
+$_al_active = $_al_count('all');
+$_al_peso = function ($n) { return '₱' . number_format($n, floor($n) == $n ? 0 : 2); };
+?>
+<style>
+/* ── Admin Services list: tiles, one toolbar, grouped photo rows ───────── */
+.al-top { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+.al-top h2 { margin:0; font-size:1.35rem; color:var(--text, #2B1D12); }
+.al-top p { margin:2px 0 0; color:var(--gray, #8A7560); font-size:0.85rem; }
+.al-tiles { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:10px; margin-bottom:14px; }
+@media (max-width:860px) { .al-tiles { grid-template-columns:repeat(3, minmax(0,1fr)); } }
+.al-tile { text-align:left; background:var(--bg2, #fff); border:1px solid var(--border, #E8DCCB); border-radius:14px; padding:12px 14px; cursor:pointer; font:inherit; color:inherit; }
+.al-tile b { display:block; font-size:1.5rem; line-height:1.1; font-variant-numeric:tabular-nums; }
+.al-tile span { color:var(--gray, #8A7560); font-size:0.8rem; font-weight:600; }
+.al-tile[aria-pressed="true"] { border-color:#3B2A1A; box-shadow:inset 0 0 0 1px #3B2A1A; }
+.al-tile.warn b { color:#A94F1D; }
+.al-bar { position:sticky; top:0; z-index:5; background:var(--bg2, #fff); border:1px solid var(--border, #E8DCCB); border-radius:14px; padding:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:18px; box-shadow:0 6px 18px rgba(59,42,26,.06); }
+.al-search { position:relative; flex:1 1 260px; min-width:0; margin:0; }
+.al-search svg { position:absolute; left:12px; top:50%; transform:translateY(-50%); width:16px; height:16px; color:var(--gray, #8A7560); }
+.al-search input { width:100%; min-height:40px; border:1px solid var(--border2, #D9C6A8); border-radius:10px; padding:0 12px 0 36px; background:var(--bg3, #F3EBDF); font:inherit; margin:0; }
+.al-search input:focus { background:#fff; border-color:#C9963A; outline:none; }
+.al-bar select { min-height:40px; border:1px solid var(--border2, #D9C6A8); border-radius:10px; padding:0 10px; background:#fff; font:inherit; font-weight:600; width:auto; max-width:100%; margin:0; }
+.al-chips { display:flex; flex-wrap:wrap; gap:6px; width:100%; }
+.al-chip { min-height:32px; padding:0 12px; border-radius:999px; border:1px solid var(--border2, #D9C6A8); background:#fff; font:inherit; font-weight:700; font-size:0.8rem; color:#5E4733; cursor:pointer; }
+.al-chip small { color:var(--gray, #8A7560); font-weight:600; margin-left:4px; }
+.al-chip[aria-pressed="true"] { background:#3B2A1A; border-color:#3B2A1A; color:#fff; }
+.al-chip[aria-pressed="true"] small { color:#E3CFB4; }
+.al-group { margin-bottom:18px; }
+.al-ghead { display:flex; align-items:baseline; gap:8px; margin:0 4px 8px; }
+.al-ghead h3 { margin:0; font-size:0.78rem; letter-spacing:0.12em; text-transform:uppercase; color:#5E4733; }
+.al-ghead span { font-size:0.8rem; color:var(--gray, #8A7560); font-weight:700; }
+.al-list { background:var(--bg2, #fff); border:1px solid var(--border, #E8DCCB); border-radius:14px; overflow:hidden; }
+.al-row, .al-colhead { display:grid; grid-template-columns:56px minmax(0,2.2fr) minmax(0,2fr) 100px 120px auto; gap:14px; align-items:center; }
+.al-row { padding:10px 14px; border-top:1px solid var(--border, #E8DCCB); }
+.al-list .al-row:first-child { border-top:0; }
+.al-row:hover { background:#FCF9F4; }
+.al-row.arch { background:#FAF8F5; }
+.al-row.arch .al-ph, .al-row.arch .al-nm { opacity:.55; }
+.al-colhead { padding:0 14px 6px; font-size:0.7rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--gray, #8A7560); }
+.al-ph { width:56px; height:56px; border-radius:12px; overflow:hidden; background:#F3EBDF; display:grid; place-items:center; color:var(--gray, #8A7560); font-weight:800; font-size:0.72rem; }
+.al-ph img { width:100%; height:100%; object-fit:cover; display:block; }
+.al-nm b { display:block; font-size:0.98rem; overflow-wrap:anywhere; color:var(--text, #2B1D12); }
+.al-nm .al-sub { color:var(--gray, #8A7560); font-size:0.8rem; }
+.al-tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
+.al-tag { font-size:0.7rem; font-weight:800; border-radius:999px; padding:2px 8px; white-space:nowrap; }
+.al-tag.home { background:#E2F2E9; color:#1F7A4D; }
+.al-tag.onsite { background:#EEEAE4; color:#5E4733; }
+.al-tag.med { background:#E5EEFB; color:#1E5FB3; }
+.al-tag.pkg { background:#EFE7F8; color:#6B3FA0; }
+.al-tag.promo { background:#F7E3D6; color:#A94F1D; }
+.al-tag.arch { background:#6B6259; color:#fff; }
+.al-tag.nocat { background:#F6EBD3; color:#7A5A12; }
+.al-prices { display:flex; flex-wrap:wrap; gap:4px; }
+.al-pp { display:inline-flex; gap:6px; align-items:baseline; border:1px solid var(--border, #E8DCCB); background:#FCFAF6; border-radius:8px; padding:3px 8px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.al-pp span { color:var(--gray, #8A7560); font-size:0.75rem; }
+.al-pp b { font-size:0.88rem; color:var(--text, #2B1D12); }
+.al-pp s { color:var(--gray, #8A7560); font-size:0.75rem; }
+.al-pp.promo { border-color:#EBC7B1; background:#F7E3D6; }
+.al-pp.promo b { color:#A94F1D; }
+.al-rc { font-size:0.8rem; color:#5E4733; white-space:nowrap; }
+.al-rc.none { color:var(--gray, #8A7560); }
+.al-rc b { display:block; font-size:0.95rem; color:var(--text, #2B1D12); }
+.al-dt { font-size:0.8rem; color:var(--gray, #8A7560); }
+.al-acts { display:flex; gap:6px; justify-content:flex-end; align-items:center; flex-wrap:wrap; }
+.al-acts form { display:inline-flex; gap:6px; align-items:center; margin:0; }
+.al-acts input[type=password] { width:64px; min-height:34px; border:1px solid var(--border2, #D9C6A8); border-radius:8px; text-align:center; letter-spacing:.2em; margin:0; padding:0 4px; }
+.al-empty { text-align:center; padding:40px 16px; background:var(--bg2, #fff); border:1px dashed var(--border2, #D9C6A8); border-radius:14px; color:var(--gray, #8A7560); }
+.al-empty b { display:block; color:var(--text, #2B1D12); font-size:1rem; margin-bottom:4px; }
+@media (max-width:900px) {
+  .al-colhead { display:none; }
+  .al-row { grid-template-columns:56px minmax(0,1fr) auto; grid-template-areas:"ph nm acts" "ph pr pr" "ph rc dt"; row-gap:8px; }
+  .al-row .al-ph { grid-area:ph; align-self:start; }
+  .al-row .al-nm { grid-area:nm; }
+  .al-row .al-prices { grid-area:pr; }
+  .al-row .al-rc { grid-area:rc; }
+  .al-row .al-dt { grid-area:dt; text-align:right; }
+  .al-row .al-acts { grid-area:acts; align-self:start; }
+  .al-rc b { display:inline; margin-right:4px; }
+}
+@media (max-width:520px) {
+  .al-tiles { grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; }
+  .al-tile { padding:10px; } .al-tile b { font-size:1.25rem; } .al-tile span { font-size:0.72rem; }
+  .al-row { grid-template-columns:48px minmax(0,1fr); grid-template-areas:"ph nm" "pr pr" "rc dt" "acts acts"; }
+  .al-ph { width:48px; height:48px; }
+  .al-row .al-acts { justify-content:stretch; }
+  .al-row .al-acts > a, .al-row .al-acts form, .al-row .al-acts form .btn { flex:1; justify-content:center; text-align:center; }
+}
+.al-page [hidden] { display:none !important; }
+</style>
+
+<div class="al-page">
+    <div class="al-top">
+        <div><h2>All services</h2><p id="alSub"><?php echo $_al_active; ?> active · <?php echo count($_al_cat_names); ?> categories</p></div>
+        <?php if (!isset($_GET['action'])): ?><a href="services.php?action=add" class="btn btn-primary btn-sm">+ Add New Service</a><?php endif; ?>
     </div>
 
-    <?php $filter_cat = $_GET['category'] ?? 'all'; ?>
-    <div style="padding:1rem 1.5rem;border-bottom:1px solid var(--border);">
-        <div class="filter-tabs">
-            <a href="services.php" class="filter-tab <?php echo $filter_cat === 'all' ? 'active' : ''; ?>">All</a>
-            <a href="services.php?category=none" class="filter-tab <?php echo $filter_cat === 'none' ? 'active' : ''; ?>">Uncategorized</a>
-            <?php foreach ($categories as $cat): ?>
-                <a href="services.php?category=<?php echo $cat['id']; ?>"
-                   class="filter-tab <?php echo $filter_cat == $cat['id'] ? 'active' : ''; ?>">
-                    <?php echo htmlspecialchars($cat['name']); ?>
-                </a>
+    <div class="al-tiles" role="group" aria-label="Quick view">
+        <?php foreach ($_al_tiles as $k => $lbl): $n = $_al_count($k); ?>
+        <button type="button" class="al-tile<?php echo ($k === 'norecipe' && $n) ? ' warn' : ''; ?>" data-f="<?php echo $k; ?>" aria-pressed="<?php echo $k === 'all' ? 'true' : 'false'; ?>"><b><?php echo $n; ?></b><span><?php echo $lbl; ?></span></button>
+        <?php endforeach; ?>
+    </div>
+
+    <div class="al-bar">
+        <label class="al-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input type="search" id="serviceSearchInput" placeholder="Search name or category…" aria-label="Search services" autocomplete="off"></label>
+        <select id="alCat" aria-label="Category">
+            <option value="">All categories</option>
+            <?php foreach ($_al_cat_names as $cn): ?><option value="<?php echo htmlspecialchars($cn); ?>"<?php echo $_al_cat_init === $cn ? ' selected' : ''; ?>><?php echo htmlspecialchars($cn); ?></option><?php endforeach; ?>
+            <option value="__none"<?php echo $_al_cat_init === '__none' ? ' selected' : ''; ?>>Uncategorized</option>
+        </select>
+        <div class="al-chips" role="group" aria-label="Filters">
+            <?php foreach ($_al_filters as $k => $lbl): ?>
+            <button type="button" class="al-chip" data-f="<?php echo $k; ?>" aria-pressed="<?php echo $k === 'all' ? 'true' : 'false'; ?>"><?php echo $lbl; ?><small><?php echo $_al_count($k); ?></small></button>
             <?php endforeach; ?>
         </div>
     </div>
 
-    <style>
-    .svc-search-wrap { position:relative; margin:1rem 1.5rem 0.75rem; display:flex; align-items:center; }
-    .svc-search-icon { position:absolute; left:0.85rem; font-size:0.9rem; pointer-events:none; opacity:0.55; }
-    .svc-search-input {
-        width:100%; padding:0.55rem 2.5rem 0.55rem 2.4rem;
-        border:1.5px solid var(--border2,#e5e0d8); border-radius:10px;
-        background:var(--bg3,#f7f5f2); color:var(--brown,#3B2A1A);
-        font-size:0.9rem; outline:none; box-sizing:border-box;
-        transition:border-color .15s, box-shadow .15s;
-    }
-    .svc-search-input:focus {
-        border-color:var(--rust,#A94F1D);
-        box-shadow:0 0 0 3px rgba(169,79,29,0.12);
-        background:#fff;
-    }
-    .svc-search-clear {
-        position:absolute; right:0.75rem; background:none; border:none;
-        color:var(--gray,#6b7280); cursor:pointer; font-size:0.85rem;
-        padding:0.2rem 0.3rem; border-radius:4px; line-height:1;
-    }
-    .svc-search-clear:hover { color:var(--rust,#A94F1D); }
-    </style>
+    <div class="al-colhead" aria-hidden="true"><span></span><span>Service</span><span>Prices &amp; durations</span><span>Recipe</span><span>Added</span><span style="text-align:right">Actions</span></div>
 
-    <div class="svc-search-wrap">
-        <span class="svc-search-icon"></span>
-        <input type="search" id="serviceSearchInput" class="svc-search-input"
-               placeholder="Search by name or category…"
-               oninput="filterServices(this.value)"
-               autocomplete="off">
-        <button type="button" id="svcSearchClear" class="svc-search-clear"
-                onclick="clearServiceSearch()" style="display:none;">✕</button>
-    </div>
-
-    <div class="table-wrap" style="border:none;border-radius:0;">
-        <table>
-            <thead>
-                <tr>
-                    <th>Image</th>
-                    <th>Name</th>
-                    <th>Category</th>
-                    <th>Type</th>
-                    <th>Price</th>
-                    <th>Duration</th>
-                    <th>Recipe</th>
-                    <th>Date Added</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php
-                $filtered = array_filter($services, function($s) use ($filter_cat) {
-                    if ($filter_cat === 'all')  return true;
-                    if ($filter_cat === 'none') return empty($s['category_id']);
-                    return $s['category_id'] == $filter_cat;
-                });
-                ?>
-                <?php if (!empty($filtered)): ?>
-                    <?php foreach ($filtered as $service): ?>
-                    <tr class="service-row"
-                        data-search="<?php echo htmlspecialchars(strtolower($service['name'].' '.($service['category_name'] ?? ''))); ?>"
-                        <?php if ($service['deleted_at']): ?> style="opacity:0.5;"<?php endif; ?>>
-                        <td>
-                            <?php if (!empty($service['image'])): ?>
-                                <img src="../uploads/services/<?php echo htmlspecialchars($service['image']); ?>"
-                                     class="thumb" 
-                                     alt="Service Thumbnail"
-                                     style="width:50px;height:50px;object-fit:cover;border-radius:6px;">
-                            <?php else: ?>
-                                <div class="no-thumb">No img</div>
-                            <?php endif; ?>
-                        </td>
-                        
-                        <td><strong><?php echo htmlspecialchars($service['name']); ?></strong><?php if ($service['deleted_at']): ?> <span class="badge" style="background:#6c757d;color:#fff;font-size:0.68rem;">ARCHIVED</span><?php endif; ?></td>
-                        <td>
-                            <?php if ($service['category_name']): ?>
-                                <span class="badge badge-approved"><?php echo htmlspecialchars($service['category_name']); ?></span>
-                            <?php else: ?>
-                                <span class="badge" style="background:var(--surface);color:var(--gray);">Uncategorized</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if (!empty($service['is_home_service'])): ?>
-                                <span class="badge badge-online">Home</span>
-                            <?php else: ?>
-                                <span class="badge badge-onsite">Onsite</span>
-                            <?php endif; ?>
-                        </td>
-                        <td><strong style="color:var(--rust);">₱<?php echo number_format($service['price'], 2); ?></strong></td>
-                        <td style="color:var(--gray);">
-                            <?php $_svc_durs = $svc_durations_by_service[$service['id']] ?? []; ?>
-                            <?php if (!empty($_svc_durs)): ?>
-                                <?php $_svc_durs_lbl = implode(' / ', array_map(fn($d) => $d['duration_minutes'] . ($d['session_count'] > 1 ? '×' . $d['session_count'] : ''), $_svc_durs)); ?>
-                                <span style="background:rgba(13,110,253,0.1);color:#0d6efd;padding:0.1rem 0.45rem;border-radius:20px;font-size:0.68rem;font-weight:700;border:1px solid #9ec5fe;display:inline-block;"><?php echo $_svc_durs_lbl; ?> mins</span>
-                            <?php else: ?>
-                                <?php echo $service['session_time']; ?> mins
-                            <?php endif; ?>
-                        </td>
-                        <td style="white-space:nowrap;">
-                            <?php $rcnt = $svc_recipe_counts[$service['id']] ?? 0; ?>
-                            <?php if ($rcnt > 0): ?>
-                                <span class="badge badge-completed" style="font-size:0.7rem;"><?php echo $rcnt; ?></span>
-                            <?php else: ?>
-                                <span style="color:var(--gray);font-size:0.8rem;">—</span>
-                            <?php endif; ?>
-                        </td>
-                        <td style="font-size:0.78rem;color:var(--gray);">
-                            <?php echo date('M d, Y', strtotime($service['created_at'])); ?>
-                        </td>
-                        <td>
-                            <?php if ($service['deleted_at']): ?>
-                            <form method="POST" style="display:inline;">
-                                <?php echo csrf_field(); ?>
-                                <input type="hidden" name="action" value="restore_service">
-                                <input type="hidden" name="id" value="<?php echo intval($service['id']); ?>">
-                                <button type="submit" class="btn btn-secondary btn-sm">Restore</button>
-                            </form>
-                            <?php else: ?>
-                            <a href="services.php?edit=<?php echo $service['id']; ?>" class="btn btn-info btn-sm">Edit</a>
-                            <form method="POST" style="display:inline;" onsubmit="event.preventDefault();uiConfirm('Archive this service?').then(ok=>{if(ok)this.submit()})">
-                                <?php echo csrf_field(); ?>
-                                <input type="hidden" name="action" value="delete_service">
-                                <input type="hidden" name="id" value="<?php echo intval($service['id']); ?>">
-                                <?php if (is_cashier()): ?>
-                                <input type="password" name="pin" maxlength="4" placeholder="PIN" required
-                                       style="width:58px;padding:0.25rem 0.4rem;border:1px solid var(--border2);border-radius:6px;font-size:0.8rem;letter-spacing:0.2em;text-align:center;vertical-align:middle;">
-                                <?php endif; ?>
-                                <button type="submit" class="btn btn-danger btn-sm">Archive</button>
-                            </form>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
+    <?php foreach ($_al_groups as $gname => $rows): ?>
+    <section class="al-group" data-cat="<?php echo htmlspecialchars($gname === '' ? '__none' : $gname); ?>">
+        <div class="al-ghead"><h3><?php echo htmlspecialchars($gname === '' ? 'Uncategorized' : $gname); ?></h3><span class="al-gcount"><?php echo count($rows); ?></span></div>
+        <div class="al-list">
+        <?php foreach ($rows as $r): $service = $r['s']; ?>
+            <div class="al-row service-row<?php echo $r['arch'] ? ' arch' : ''; ?>"
+                 data-flags="<?php echo implode(' ', $r['flags']); ?>"
+                 data-search="<?php echo htmlspecialchars(strtolower($service['name'] . ' ' . ($service['category_name'] ?? ''))); ?>">
+                <div class="al-ph">
+                    <?php if (!empty($service['image'])): ?>
+                    <img src="../uploads/services/<?php echo htmlspecialchars($service['image']); ?>" alt="" loading="lazy" onerror="this.remove()">
+                    <?php else: ?>No img<?php endif; ?>
+                </div>
+                <div class="al-nm">
+                    <b><?php echo htmlspecialchars($service['name']); ?></b>
+                    <div class="al-sub"><?php echo htmlspecialchars($service['category_name'] ?: 'No category'); ?></div>
+                    <div class="al-tags">
+                        <?php if (!empty($service['is_home_service'])): ?><span class="al-tag home">Home</span><?php else: ?><span class="al-tag onsite">Onsite</span><?php endif; ?>
+                        <?php if (!empty($service['is_medical'])): ?><span class="al-tag med">Doctor / Nurse</span><?php endif; ?>
+                        <?php if ($r['multi']): ?><span class="al-tag pkg">Multi-session</span><?php endif; ?>
+                        <?php if ($r['promo']): ?><span class="al-tag promo">Promo</span><?php endif; ?>
+                        <?php if (empty($service['category_id'])): ?><span class="al-tag nocat">Uncategorized</span><?php endif; ?>
+                        <?php if ($r['arch']): ?><span class="al-tag arch">Archived</span><?php endif; ?>
+                    </div>
+                </div>
+                <div class="al-prices">
+                    <?php foreach ($r['chips'] as $c): ?>
+                    <span class="al-pp<?php echo $c['was'] ? ' promo' : ''; ?>"><span><?php echo $c['m'] ? $c['m'] . ' min' : 'Price'; ?><?php echo $c['n'] > 1 ? ' ×' . $c['n'] : ''; ?></span><?php if ($c['was']): ?><s><?php echo $_al_peso($c['was']); ?></s><?php endif; ?><b><?php echo $_al_peso($c['p']); ?></b></span>
                     <?php endforeach; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="9" style="text-align:center;color:var(--gray);padding:2rem;">
-                            No services found in this category.
-                        </td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-</div>
+                </div>
+                <div class="al-rc<?php echo $r['rc'] ? '' : ' none'; ?>"><?php echo $r['rc'] ? '<b>' . $r['rc'] . '</b>recipe item' . ($r['rc'] > 1 ? 's' : '') : 'No recipe'; ?></div>
+                <div class="al-dt"><?php echo !empty($service['created_at']) ? 'Added ' . date('M d, Y', strtotime($service['created_at'])) : ''; ?></div>
+                <div class="al-acts">
+                    <?php if ($service['deleted_at']): ?>
+                    <form method="POST">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="restore_service">
+                        <input type="hidden" name="id" value="<?php echo intval($service['id']); ?>">
+                        <button type="submit" class="btn btn-secondary btn-sm">Restore</button>
+                    </form>
+                    <?php else: ?>
+                    <a href="services.php?edit=<?php echo $service['id']; ?>" class="btn btn-info btn-sm">Edit</a>
+                    <form method="POST" onsubmit="event.preventDefault();uiConfirm('Archive this service?').then(ok=>{if(ok)this.submit()})">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="delete_service">
+                        <input type="hidden" name="id" value="<?php echo intval($service['id']); ?>">
+                        <?php if (is_cashier()): ?>
+                        <input type="password" name="pin" maxlength="4" placeholder="PIN" required aria-label="PIN">
+                        <?php endif; ?>
+                        <button type="submit" class="btn btn-danger btn-sm">Archive</button>
+                    </form>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endforeach; ?>
+        </div>
+    </section>
+    <?php endforeach; ?>
 
-<?php endif; ?>
-
-<div id="svcNoResults" style="display:none;text-align:center;padding:2rem 1rem;color:var(--gray);font-size:0.9rem;background:var(--bg3);border-radius:12px;margin:0 1.5rem 1rem;">
-    No services match your search.
+    <div class="al-empty" id="svcNoResults" hidden><b>No services match</b>Try another word, category or filter.</div>
 </div>
 
 <script>
-function filterServices(query) {
-    var q   = query.trim().toLowerCase();
-    var rows = document.querySelectorAll('tr.service-row');
-    var visible = 0;
-    rows.forEach(function(row) {
-        var match = !q || (row.dataset.search || '').indexOf(q) !== -1;
-        row.style.display = match ? '' : 'none';
-        if (match) visible++;
+(function () {
+    var state = { f: 'all', q: '', cat: document.getElementById('alCat').value };
+    var rows = [].slice.call(document.querySelectorAll('.al-row'));
+    var groups = [].slice.call(document.querySelectorAll('.al-group'));
+    function apply() {
+        var q = state.q.trim().toLowerCase(), shown = 0;
+        groups.forEach(function (g) {
+            var inCat = !state.cat || g.dataset.cat === state.cat, n = 0;
+            g.querySelectorAll('.al-row').forEach(function (r) {
+                var ok = inCat && (' ' + r.dataset.flags + ' ').indexOf(' ' + state.f + ' ') >= 0 && (!q || r.dataset.search.indexOf(q) >= 0);
+                r.hidden = !ok; if (ok) n++;
+            });
+            g.hidden = n === 0;
+            g.querySelector('.al-gcount').textContent = n;
+            shown += n;
+        });
+        document.getElementById('svcNoResults').hidden = shown > 0;
+        document.querySelectorAll('.al-tile, .al-chip').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.f === state.f); });
+        var sub = document.getElementById('alSub');
+        sub.textContent = sub.textContent.split(' · showing')[0] + ' · showing ' + shown;
+    }
+    document.querySelector('.al-page').addEventListener('click', function (e) {
+        var b = e.target.closest('[data-f]'); if (!b) return;
+        state.f = b.dataset.f; apply();
     });
-    var noResults = document.getElementById('svcNoResults');
-    if (noResults) noResults.style.display = (q && visible === 0) ? '' : 'none';
-    var clearBtn = document.getElementById('svcSearchClear');
-    if (clearBtn) clearBtn.style.display = q ? '' : 'none';
-}
-
-function clearServiceSearch() {
-    var input = document.getElementById('serviceSearchInput');
-    if (input) { input.value = ''; input.focus(); }
-    filterServices('');
-}
+    document.getElementById('serviceSearchInput').addEventListener('input', function () { state.q = this.value; apply(); });
+    document.getElementById('alCat').addEventListener('change', function () {
+        state.cat = this.value; apply();
+        var url = new URL(location.href);
+        if (this.value) url.searchParams.set('cat_name', this.value); else url.searchParams.delete('cat_name');
+        url.searchParams.delete('category');
+        history.replaceState(null, '', url);
+    });
+    apply();
+})();
 </script>
+
+<?php endif; ?>
 
 <?php require_once 'admin_footer.php'; ?>
