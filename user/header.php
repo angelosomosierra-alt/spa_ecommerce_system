@@ -653,8 +653,8 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                             style="background:none;border:none;cursor:pointer;font-size:1.1rem;
                                    padding:0.35rem 0.55rem;border-radius:8px;position:relative;
                                    color:inherit;transition:background 0.15s;"
-                            title="Message Us">
-                        💬
+                            title="Message Us" aria-label="Message Us">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z"/></svg>
                         <span id="chatBadge" style="position:absolute;top:-2px;right:-4px;background:#dc3545;
                                      color:#fff;font-size:0.6rem;font-weight:700;min-width:16px;
                                      height:16px;border-radius:8px;display:<?php echo $chat_unread > 0 ? 'flex' : 'none'; ?>;align-items:center;
@@ -672,8 +672,8 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                             style="background:none;border:none;cursor:pointer;font-size:1.1rem;
                                    padding:0.35rem 0.55rem;border-radius:8px;position:relative;
                                    color:inherit;transition:background 0.15s;"
-                            title="Notifications">
-                        🔔
+                            title="Notifications" aria-label="Notifications">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
                         <span id="notifBadge" style="position:absolute;top:-2px;right:-4px;background:#dc3545;
                                      color:#fff;font-size:0.6rem;font-weight:700;min-width:16px;
                                      height:16px;border-radius:8px;display:<?php echo $notif_unread > 0 ? 'flex' : 'none'; ?>;align-items:center;

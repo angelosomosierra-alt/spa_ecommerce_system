@@ -118,7 +118,9 @@ $home_status  = $home_open
 
 $page_title  = 'Recovery Iloilo — Home';
 $active_page = 'home';
-require_once __DIR__ . '/header.php';
+// user/index.php (logged-in customers) keeps the account header with
+// Appointments, chat and notifications; the public home uses header.php.
+require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR__ . '/header.php';
 ?>
 <style>
 .homepage-section .section-header { margin-bottom: 2rem; }
