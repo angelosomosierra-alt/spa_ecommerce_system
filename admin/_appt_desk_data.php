@@ -86,6 +86,30 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
         }
     }
 
+    // Products/vouchers bought alongside a visit (Scenario 3a): counter
+    // sales tagged with the same booking_group + customer_name as this
+    // card, always already paid (Sell Product pays on the spot) -- shown
+    // read-only, just for visibility of what this guest bought this visit.
+    $products_by_group = [];
+    $groups = array_values(array_unique(array_filter(array_map(fn($r) => $r['booking_group'] ?? null, $rows))));
+    if ($groups) {
+        $gstmt = $conn->prepare("
+            SELECT o.booking_group, o.customer_name, o.created_at, p.name, oi.quantity, oi.subtotal
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            JOIN products p ON p.id = oi.product_id
+            WHERE o.booking_group IN (" . implode(',', array_fill(0, count($groups), '?')) . ")
+            ORDER BY o.created_at
+        ");
+        $gstmt->bind_param(str_repeat('s', count($groups)), ...$groups);
+        $gstmt->execute();
+        foreach ($gstmt->get_result()->fetch_all(MYSQLI_ASSOC) as $r) {
+            $key = $r['booking_group'] . '|' . ($r['customer_name'] ?: '');
+            $products_by_group[$key][] = ['name' => $r['name'], 'qty' => (int)$r['quantity'], 'amount' => (float)$r['subtotal']];
+        }
+        $gstmt->close();
+    }
+
     $qual_cache = [];
     $qual = function (int $sid) use ($conn, &$qual_cache) {
         if (!isset($qual_cache[$sid])) $qual_cache[$sid] = get_booking_qualified_therapist_ids($conn, $sid);
@@ -141,9 +165,13 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
             }
         }
 
+        $prod_key = ($r['booking_group'] ?? '') . '|' . ($r['customer_name'] ?: '');
+        $products = $products_by_group[$prod_key] ?? [];
+
         $out[] = [
             'id' => $id,
             'when' => $when,
+            'products' => $products,
             'status' => $r['status'],
             'date' => substr($r['appointment_date'], 0, 10),
             'overdue' => $r['status'] !== 'completed' && substr($when, 0, 10) < $today,
@@ -209,6 +237,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
         'flash' => $flash,
         'cashier' => is_cashier(),
         'full_access' => is_full_access(),
+        'products_catalog' => function_exists('sell_product_data') ? sell_product_data($conn)['products'] : [],
     ];
 }
 }

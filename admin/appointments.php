@@ -3,6 +3,7 @@ require_once '../config.php';
 redirect_if_not_admin();
 require_once __DIR__ . '/../notify.php';
 require_once __DIR__ . '/_book_now.php';
+require_once __DIR__ . '/_sell_product.php';
 ensure_upgrade_voucher_columns($conn);
 
 // ── Book Now groups: orders.booking_group links every order one Dashboard
@@ -738,6 +739,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_e
             'name'     => ($es_ok && isset($es_svc)) ? ($es_svc['name'] ?? '') : '',
             'price'    => ($es_ok && isset($es_charged)) ? $es_charged : 0.0,
         ]);
+        exit();
+    }
+}
+
+// ── ADD PRODUCT TO BOOKING — counter sale tagged to this visit's booking_group
+//    (Scenario 3a: buy a product/voucher after/alongside an appointment),
+//    so it shows up as a read-only line on the same card in the Desk. The
+//    sale itself is unchanged from Sell Product -- paid immediately, its own
+//    order -- this only tags it so it's attributed to the same visit.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_product_to_booking') {
+    verify_csrf_token();
+    $apb_appt_id = intval($_POST['appt_id'] ?? 0);
+    $apb_items   = json_decode($_POST['items'] ?? '[]', true);
+    $apb_method  = sanitize_input($_POST['payment_method'] ?? 'cash');
+    if (!in_array($apb_method, ['cash', 'gcash', 'maya', 'qrph', 'card', 'swiper'], true)) $apb_method = 'cash';
+
+    $apb_link = sell_product_booking_group_for_appointment($conn, $apb_appt_id);
+    if (!$apb_link['ok']) {
+        $message = $apb_link['message']; $message_type = 'danger';
+    } else {
+        $apb_res = sell_product_save($conn, is_array($apb_items) ? $apb_items : [], $apb_link['customer_name'], '', 'none', 0.0, $apb_method, $apb_link['booking_group']);
+        $message = $apb_res['message'];
+        $message_type = $apb_res['ok'] ? 'success' : 'danger';
+    }
+
+    if (!empty($_POST['ajax'])) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => ($message_type === 'success'), 'message' => $message]);
         exit();
     }
 }

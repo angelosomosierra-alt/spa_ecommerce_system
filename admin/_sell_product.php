@@ -38,13 +38,50 @@ function sell_product_data(mysqli $conn): array {
 }
 }
 
+if (!function_exists('sell_product_booking_group_for_appointment')) {
+/**
+ * Resolves the booking_group to tag a product sale with so it's attributed
+ * to the same visit as an existing appointment (shown together on its card
+ * in the Appointments Desk). A plain Walk-in booking has no booking_group
+ * yet (only Book Now sets one at creation) -- this backfills one onto the
+ * appointment's own order the first time a product is added to it, so
+ * every later product sale on this same visit reuses the same tag.
+ */
+function sell_product_booking_group_for_appointment(mysqli $conn, int $appointment_id): array {
+    $stmt = $conn->prepare("
+        SELECT o.id AS order_id, o.booking_group, o.customer_name
+        FROM appointments a
+        JOIN order_items oi ON oi.id = a.order_item_id
+        JOIN orders o ON o.id = oi.order_id
+        WHERE a.id = ?
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $appointment_id);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        return ['ok' => false, 'message' => 'Booking not found.'];
+    }
+    $group = $row['booking_group'];
+    if (!$group) {
+        $group = 'AP' . date('ymdHis') . bin2hex(random_bytes(2));
+        $upd = $conn->prepare("UPDATE orders SET booking_group = ? WHERE id = ?");
+        $upd->bind_param("si", $group, $row['order_id']);
+        $upd->execute();
+        $upd->close();
+    }
+    return ['ok' => true, 'booking_group' => $group, 'customer_name' => $row['customer_name'] ?: 'Walk-in'];
+}
+}
+
 if (!function_exists('sell_product_save')) {
 /**
  * $items: [ ['id' => product id, 'qty' => n], ... ]. Prices and stock come
  * from the database, never the browser; stock is locked (FOR UPDATE) so two
  * receptionists can't sell the last bottle twice.
  */
-function sell_product_save(mysqli $conn, array $items, string $customer, string $slip, string $discount_type, float $voucher_amount, string $payment_method): array {
+function sell_product_save(mysqli $conn, array $items, string $customer, string $slip, string $discount_type, float $voucher_amount, string $payment_method, ?string $booking_group = null): array {
     $qty_by_id = [];
     foreach ($items as $it) {
         $id = (int)($it['id'] ?? 0); $qty = (int)($it['qty'] ?? 0);
@@ -85,8 +122,8 @@ function sell_product_save(mysqli $conn, array $items, string $customer, string 
         $final = max(0.0, $total - $discount);
 
         $uid = get_walkin_customer_id();
-        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, '', ?, ?, 'paid', 'approved', ?, ?, ?, ?)");
-        $stmt->bind_param("isdssdds", $uid, $customer, $total, $payment_method, $discount_type, $discount, $final, $slip);
+        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group) VALUES (?, ?, '', ?, ?, 'paid', 'approved', ?, ?, ?, ?, ?)");
+        $stmt->bind_param("isdssddss", $uid, $customer, $total, $payment_method, $discount_type, $discount, $final, $slip, $booking_group);
         $stmt->execute(); $order_id = $stmt->insert_id; $stmt->close();
 
         $ins = $conn->prepare("INSERT INTO order_items (order_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)");

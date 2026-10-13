@@ -387,7 +387,7 @@
     // ── Drawer ────────────────────────────────────────────────────────────
     function openDrawer(id, panel) {
         S.open = id; S.panel = panel === 'checkin' || panel === 'complete' ? panel : null;
-        S.method = null; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.vl = ''; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false; S.add = null;
+        S.method = null; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.vl = ''; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false; S.add = null; S.addProduct = null;
         renderBoard(); renderDrawer(); $('dkDrawer').hidden = false; $('dkScrim').hidden = false;
     }
     function closeDrawer() { S.open = null; S.pin = ''; $('dkDrawer').hidden = true; $('dkScrim').hidden = true; if (D) renderBoard(); }
@@ -484,6 +484,58 @@
                       override: !s.med && S.add.th && s.qual.indexOf(+S.add.th) < 0 ? '1' : '' };
             S.add = null;
             post('add_extra_service', a.id, f, true, false, s.name + ' added');
+        };
+    }
+    // Products/vouchers bought alongside this visit (Scenario 3a). Allowed
+    // even once the booking is completed -- buying something on the way out
+    // is the common case this exists for. Reuses Sell Product's own save
+    // logic server-side; this is just a lighter picker tagged to the visit.
+    function canAddProduct(a) { return ['cancelled', 'declined'].indexOf(a.status) < 0; }
+    function productsHtml(a) {
+        var bought = (a.products || []).map(function (p) {
+            return '<div><span>' + esc(p.name) + (p.qty > 1 ? ' ×' + p.qty : '') + '</span><span>' + peso(p.amount) + '</span></div>';
+        }).join('');
+        var boughtBlock = bought ? '<div class="dk-bill">' + bought + '</div>' : '';
+        if (!canAddProduct(a)) return boughtBlock;
+        if (!S.addProduct) return boughtBlock + '<button type="button" class="dk-btn" id="dkAddProdOpen" style="align-self:flex-start;">+ Add product</button>';
+        var AP = S.addProduct;
+        if (!AP.item) {
+            var q = (AP.q || '').toLowerCase();
+            var list = (D.products_catalog || []).filter(function (p) { return !q || (p.name + ' ' + p.cat).toLowerCase().indexOf(q) >= 0; }).slice(0, 12);
+            return boughtBlock + '<div class="dk-inline" id="dkAddProdBox">' +
+                '<input class="dk-add-q" id="dkAddProdQ" type="search" placeholder="Search a product…" autocomplete="off" value="' + esc(AP.q || '') + '" aria-label="Search a product">' +
+                '<div class="dk-add-list">' + (list.length ? list.map(function (p) {
+                    return '<div class="dk-add-item"><b>' + esc(p.name) + '</b><small>' + esc(p.cat) + ' · ' + p.stock + ' in stock</small>' +
+                        '<div class="dk-add-durs"><button type="button" class="dk-add-dur" data-prodpick="' + p.id + '"' + (p.stock < 1 ? ' disabled' : '') + '>+ ' + pesoS(p.price) + '</button></div></div>';
+                }).join('') : '<span class="dk-hint">No product matches.</span>') + '</div>' +
+                '<div class="dk-bar"><button type="button" class="dk-btn" id="dkAddProdCancel">Cancel</button></div></div>';
+        }
+        var p = AP.item, qty = AP.qty || 1;
+        return boughtBlock + '<div class="dk-inline" id="dkAddProdBox">' +
+            '<div class="dk-svch"><span><b>' + esc(p.name) + '</b></span><span class="dk-amt">' + peso(p.price * qty) + '</span></div>' +
+            '<div class="dk-g2"><div><label class="dk-lbl" for="dkAddProdQty">Quantity</label><input id="dkAddProdQty" type="number" min="1" max="' + p.stock + '" value="' + qty + '"></div></div>' +
+            '<div><label class="dk-lbl">Payment method</label><div class="dk-bar">' + PAYS.map(function (m) { return '<button type="button" class="dk-chip sm' + (AP.method === m[0] ? ' sel' : '') + '" data-apm="' + m[0] + '">' + m[1] + '</button>'; }).join('') + '</div></div>' +
+            '<div class="dk-bar"><button type="button" class="dk-btn primary" id="dkAddProdGo">Add &amp; charge</button><button type="button" class="dk-btn" id="dkAddProdBack">Pick another</button><button type="button" class="dk-btn" id="dkAddProdCancel">Cancel</button></div></div>';
+    }
+    function wireProducts(a) {
+        var open = $('dkAddProdOpen');
+        if (open) open.onclick = function () { S.addProduct = { q: '', item: null, qty: 1, method: 'cash' }; renderDrawer(); var q = $('dkAddProdQ'); if (q) q.focus(); };
+        var q = $('dkAddProdQ');
+        if (q) q.oninput = function () { S.addProduct.q = q.value; var pos = q.selectionStart; renderDrawer(); var n = $('dkAddProdQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } };
+        document.querySelectorAll('[data-prodpick]').forEach(function (b) { b.onclick = function () {
+            var p = (D.products_catalog || []).filter(function (x) { return x.id === +b.dataset.prodpick; })[0];
+            if (!p) return;
+            S.addProduct.item = p; S.addProduct.qty = 1;
+            renderDrawer();
+        }; });
+        var qty = $('dkAddProdQty'); if (qty) qty.onchange = function () { S.addProduct.qty = Math.max(1, Math.min(S.addProduct.item.stock, +qty.value || 1)); renderDrawer(); };
+        document.querySelectorAll('[data-apm]').forEach(function (b) { b.onclick = function () { S.addProduct.method = b.dataset.apm; renderDrawer(); }; });
+        var back = $('dkAddProdBack'); if (back) back.onclick = function () { S.addProduct.item = null; renderDrawer(); };
+        var cancel = $('dkAddProdCancel'); if (cancel) cancel.onclick = function () { S.addProduct = null; renderDrawer(); };
+        var go = $('dkAddProdGo'); if (go) go.onclick = function () {
+            var p = S.addProduct.item, qty = S.addProduct.qty || 1, method = S.addProduct.method || 'cash';
+            S.addProduct = null;
+            post('add_product_to_booking', a.id, { items: JSON.stringify([{ id: p.id, qty: qty }]), payment_method: method }, true, false, p.name + ' added');
         };
     }
     function roomSelect(a) {
@@ -587,6 +639,7 @@
             '<div class="dk-sec"><h4>Services</h4>' + mainHtml + addHtml +
                 addServiceHtml(a) +
                 (!locked ? '<a class="dk-hint" href="appointments.php?view=classic&appt_date=' + a.date + '">Edit other details in the classic view</a>' : '') + '</div>' +
+            '<div class="dk-sec"><h4>Products</h4>' + productsHtml(a) + '</div>' +
             '<div class="dk-sec"><h4><span>Payment</span>' + (a.group && a.group_size > 1 && groupOwes(a) && !locked ? '<button type="button" class="dk-btn" id="dkGrpOpen">' + (S.grp ? 'Back to this guest' : 'Pay for group') + '</button>' : '') + '</h4>' + billHtml + inflHtml(a) + payForm + groupHtml + '</div>' +
             (extra ? '<div class="dk-sec">' + extra + '</div>' : '') +
             '<p class="dk-err" id="dkErr"></p></div>' +
@@ -647,6 +700,7 @@
         $('dkX').onclick = closeDrawer;
         var pinEl = $('dkPin'); if (pinEl) pinEl.oninput = function () { S.pin = pinEl.value; }; // kept across redraws
         wireAdd(a);
+        wireProducts(a);
         W.querySelectorAll('[data-slot]').forEach(function (s) { s.onchange = function () { if (s.value) post('assign_person_slot', a.id, { person_slot: s.dataset.slot, therapist_id: s.value, override: isOvr(s) }, true); }; });
         W.querySelectorAll('[data-xth]').forEach(function (s) { s.onchange = function () {
             if (!s.value) return;
