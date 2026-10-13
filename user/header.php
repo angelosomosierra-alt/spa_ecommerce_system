@@ -518,6 +518,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
     display: block;
 }
     </style>
+<link rel="stylesheet" href="../assets/header.css?v=<?php echo filemtime(__DIR__ . '/../assets/header.css'); ?>">
 </head>
 <body>
 
@@ -576,7 +577,8 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
         <a href="auth.php?logout=1" style="color:#ff8a8a;">🚪 Logout</a>
         <?php else: ?>
         <div class="nav-drawer-divider"></div>
-        <a href="auth.php">🔑 Login / Register</a>
+        <a href="auth.php">🔑 Login</a>
+        <a href="auth.php?register=1" class="hd-drawer-register">✨ Register</a>
         <?php endif; ?>
     </div>
 </div>
@@ -593,7 +595,7 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
         </a>
         <?php endif; ?>
 
-<div class="logo">
+<div class="logo hd-logo-acct">
     <img src="../img/logo.png" width="75" height="60" alt="Logo">
     <span>RECOVERY ILOILO</span>
 </div>
@@ -772,8 +774,8 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                 </script>
                 <?php endif; ?>
             <?php else: ?>
-                <a href="auth.php">Login</a>
-                <a href="auth.php?register=1">Register</a>
+                <a href="auth.php" class="hd-login">Login</a>
+                <a href="auth.php?register=1" class="hd-register">Register</a>
             <?php endif; ?>
         </div>
 

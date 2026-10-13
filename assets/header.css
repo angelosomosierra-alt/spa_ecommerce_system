@@ -1,0 +1,93 @@
+/* ── Header polish for both header.php (public) and user/header.php
+   (account pages). Loaded last in <head>, so these win over style.css and
+   responsive.css without touching their rules. Nothing is hidden on
+   desktop; on phones the text links that are already in the menu drawer
+   step aside so Login / Register stay big enough to tap. ─────────────── */
+header { padding: 0.65rem 0 !important; }
+header nav { gap: 1rem; min-height: 56px; }
+header .logo { gap: 10px; flex: none; }
+header .logo span { white-space: nowrap; }
+header .nav-links { align-items: center; }
+header .auth-links { align-items: center; gap: 0.6rem; flex-wrap: nowrap; }
+
+/* Login: outline pill. Register: gold pill. */
+header .auth-links a.hd-login,
+header .auth-links a.hd-register {
+    display: inline-flex !important; align-items: center; justify-content: center;
+    min-height: 42px; padding: 0 20px !important; border-radius: 999px !important;
+    font-size: 0.95rem !important; font-weight: 700 !important; line-height: 1;
+    text-decoration: none !important; white-space: nowrap;
+    transition: background .2s, color .2s, border-color .2s, transform .15s, box-shadow .2s;
+}
+header .auth-links a.hd-login {
+    background: transparent !important; color: #FAF3E8 !important;
+    border: 1.5px solid rgba(240,207,138,.6);
+}
+header .auth-links a.hd-login:hover { background: rgba(240,207,138,.14) !important; border-color: #F0CF8A; }
+header .auth-links a.hd-register {
+    background: #C9963A !important; color: #1E130A !important; border: 1.5px solid #C9963A;
+    box-shadow: 0 6px 18px rgba(201,150,58,.35);
+}
+header .auth-links a.hd-register:hover { background: #D9A847 !important; transform: translateY(-1px); }
+header .auth-links a.hd-login:focus-visible,
+header .auth-links a.hd-register:focus-visible,
+header .auth-links a.hd-link:focus-visible { outline: 3px solid #F0CF8A; outline-offset: 2px; }
+
+/* Logged-in text links on the public header (My Appointments, My Profile, Logout). */
+header .auth-links a.hd-link {
+    background: transparent !important; color: #FAF3E8 !important; padding: 0 6px !important;
+    min-height: 40px; display: inline-flex !important; align-items: center;
+    font-size: 0.95rem !important; font-weight: 600 !important; white-space: nowrap; border-radius: 8px !important;
+}
+header .auth-links a.hd-link:hover { color: #F0CF8A !important; }
+header .auth-links a.hd-logout {
+    border: 1.5px solid rgba(240,207,138,.45); padding: 0 14px !important; border-radius: 999px !important;
+}
+
+/* Menu button, cart and icon buttons: quiet round buttons instead of the
+   orange boxes style.css gives every .auth-links link/button. */
+header .auth-links .nav-hamburger {
+    background: rgba(255,255,255,.08) !important; border: 1.5px solid rgba(240,207,138,.45) !important;
+    border-radius: 12px !important; padding: 0 !important;
+}
+header .auth-links .nav-hamburger:hover { background: rgba(240,207,138,.16) !important; }
+header .auth-links a.cart-icon-btn {
+    width: 40px; height: 40px; padding: 0 !important; border-radius: 50% !important;
+    background: rgba(255,255,255,.12) !important; display: inline-flex !important; align-items: center; justify-content: center; flex: none;
+}
+header .auth-links a.cart-icon-btn:hover { background: rgba(240,207,138,.22) !important; }
+
+/* Drawer: Login / Register as two clear rows */
+.nav-drawer-links a.hd-drawer-register { color: #F0CF8A !important; font-weight: 700; }
+
+@media (max-width: 1024px) {
+    /* Tablets: the five page links move into the menu drawer (they're all there) instead of shrinking to tiny text. */
+    header .nav-links { display: none !important; }
+    header .nav-hamburger { display: flex !important; order: 99; }
+    header .auth-links a.hd-login, header .auth-links a.hd-register { padding: 0 16px !important; font-size: 0.9rem !important; }
+}
+@media (max-width: 768px) {
+    header nav { gap: 0.5rem; min-height: 52px; }
+    header .nav-hamburger { order: 99; width: 42px; height: 42px; }
+    header .auth-links a.hd-link { display: none !important; } /* same links are in the menu drawer */
+    header .auth-links a.hd-login, header .auth-links a.hd-register { min-height: 40px; padding: 0 14px !important; font-size: 0.88rem !important; }
+}
+@media (max-width: 480px) {
+    header .logo span { font-size: 0.88rem !important; letter-spacing: 0.03em !important; }
+    header .auth-links { gap: 0.4rem !important; }
+    header .auth-links a.hd-login, header .auth-links a.hd-register { min-height: 38px; padding: 0 11px !important; font-size: 0.8rem !important; }
+    header .nav-hamburger { width: 40px; height: 40px; }
+}
+@media (max-width: 440px) {
+    /* Account pages carry five icons; keep the logo image, drop its text. */
+    header .hd-logo-acct span { display: none !important; }
+    header .hd-logo-acct img { width: 34px !important; height: 27px !important; }
+    header .auth-links a.cart-icon-btn { width: 36px; height: 36px; }
+    header .profile-avatar-btn { width: 34px !important; height: 34px !important; }
+}
+@media (max-width: 370px) {
+    header .logo span { display: none; } /* very small phones: logo image only, buttons stay readable */
+}
+@media (prefers-reduced-motion: reduce) {
+    header .auth-links a { transition: none !important; }
+}

@@ -2,16 +2,16 @@
 require_once '../config.php';
 redirect_if_not_user();
 
-// ── AJAX: must be BEFORE any HTML output ─────────────────────────────────────
+// ── AJAX: must be BEFORE any HTML output (kept for anything still polling it)
 if (isset($_GET['ajax_check_status'])) {
     header('Content-Type: application/json');
     $user_id = $_SESSION['user_id'];
     $stmt = $conn->prepare("
-        SELECT id, approval_status, payment_status, payment_method 
-        FROM orders 
-        WHERE user_id = ? 
+        SELECT id, approval_status, payment_status, payment_method
+        FROM orders
+        WHERE user_id = ?
           AND payment_status != 'pending_payment'
-        ORDER BY created_at DESC 
+        ORDER BY created_at DESC
         LIMIT 20
     ");
     $stmt->bind_param("i", $user_id);
@@ -22,21 +22,17 @@ if (isset($_GET['ajax_check_status'])) {
     exit();
 }
 
-$user_id = $_SESSION['user_id'];
-
+$user_id = (int)$_SESSION['user_id'];
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ACTION: CUSTOMER CANCEL ORDER
+// ACTION: CUSTOMER CANCEL ORDER (product order still waiting for approval)
 // ═══════════════════════════════════════════════════════════════════════════
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancel_order') {
     verify_csrf_token();
     $order_id      = intval($_POST['order_id'] ?? 0);
     $cancel_reason = trim($_POST['cancel_reason'] ?? '');
 
-    $chk = $conn->prepare("
-        SELECT id FROM orders
-        WHERE id = ? AND user_id = ? AND approval_status = 'pending'
-    ");
+    $chk = $conn->prepare("SELECT id FROM orders WHERE id = ? AND user_id = ? AND approval_status = 'pending'");
     $chk->bind_param("ii", $order_id, $user_id);
     $chk->execute();
     $ord = $chk->get_result()->fetch_assoc();
@@ -61,118 +57,166 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
         ");
         $restock->bind_param("i", $order_id);
         $restock->execute(); $restock->close();
-        $_SESSION['flash_success'] = "Order cancelled successfully.";
+        $_SESSION['flash_success'] = "Order cancelled.";
     } else {
-        $_SESSION['flash_error'] = "Cannot cancel this order.";
+        $_SESSION['flash_error'] = "This order can no longer be cancelled. Please message us.";
     }
     header("Location: appointments.php#orders");
     exit();
 }
 
-$filter_status = isset($_GET['filter']) ? sanitize_input($_GET['filter']) : '';
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTION: CUSTOMER CANCEL APPOINTMENT — only while it is still waiting for
+// confirmation, not paid, and in the future. Anything else goes through
+// staff (Message us), so paid bookings and refunds stay with the desk.
+// ═══════════════════════════════════════════════════════════════════════════
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancel_appointment') {
+    verify_csrf_token();
+    $appt_id = intval($_POST['appt_id'] ?? 0);
+    $reason  = trim(mb_substr((string)($_POST['cancel_reason'] ?? ''), 0, 200));
 
-// ── Fetch appointments ────────────────────────────────────────────────────────
-$status_options = ['pending', 'approved', 'assigned', 'declined', 'completed', 'cancelled'];
-$appointments   = [];
+    $q = $conn->prepare("
+        SELECT a.id, a.status, a.appointment_date, a.order_item_id, s.name AS service_name,
+               o.id AS order_id, o.payment_status
+        FROM appointments a
+        JOIN services s ON s.id = a.service_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders o ON o.id = oi.order_id
+        WHERE a.id = ? AND a.user_id = ?
+    ");
+    $q->bind_param("ii", $appt_id, $user_id); $q->execute();
+    $row = $q->get_result()->fetch_assoc(); $q->close();
 
-if ($filter_status && in_array($filter_status, $status_options)) {
-    $stmt = $conn->prepare("
-        SELECT a.*, s.name AS service_name, s.price, s.session_time, s.image
-        FROM appointments a
-        JOIN services s ON a.service_id = s.id
-        WHERE a.user_id = ?
-          AND a.status = ?
-          AND (
-              a.order_item_id IS NULL
-              OR EXISTS (
-                  SELECT 1 FROM order_items oi
-                  JOIN orders o ON oi.order_id = o.id
-                  WHERE oi.id = a.order_item_id
-                    AND o.payment_status != 'pending_payment'
-              )
-          )
-        ORDER BY a.appointment_date DESC
-    ");
-    $stmt->bind_param("is", $user_id, $filter_status);
-} else {
-    $stmt = $conn->prepare("
-        SELECT a.*, s.name AS service_name, s.price, s.session_time, s.image
-        FROM appointments a
-        JOIN services s ON a.service_id = s.id
-        WHERE a.user_id = ?
-          AND (
-              a.order_item_id IS NULL
-              OR EXISTS (
-                  SELECT 1 FROM order_items oi
-                  JOIN orders o ON oi.order_id = o.id
-                  WHERE oi.id = a.order_item_id
-                    AND o.payment_status != 'pending_payment'
-              )
-          )
-        ORDER BY a.appointment_date DESC
-    ");
-    $stmt->bind_param("i", $user_id);
+    $can = $row && $row['status'] === 'pending'
+        && ($row['payment_status'] ?? '') !== 'paid'
+        && strtotime($row['appointment_date']) > time();
+
+    if ($can) {
+        $wn = $conn->prepare("SELECT full_name FROM users WHERE id = ?");
+        $wn->bind_param("i", $user_id); $wn->execute();
+        $who_name = ($wn->get_result()->fetch_assoc()['full_name'] ?? '') ?: 'Customer'; $wn->close();
+        $full_reason = 'Cancelled by customer' . ($reason !== '' ? ': ' . $reason : '');
+        $upd = $conn->prepare("UPDATE appointments SET status = 'cancelled', cancel_reason = ?, cancelled_by = ?, cancelled_by_name = ? WHERE id = ? AND status = 'pending'");
+        $upd->bind_param("sisi", $full_reason, $user_id, $who_name, $appt_id);
+        $upd->execute(); $upd->close();
+
+        // The booking's own order goes too when this appointment was its only item.
+        if (!empty($row['order_id'])) {
+            $c = $conn->prepare("SELECT COUNT(*) AS n FROM order_items WHERE order_id = ?");
+            $c->bind_param("i", $row['order_id']); $c->execute();
+            $n = (int)$c->get_result()->fetch_assoc()['n']; $c->close();
+            if ($n === 1) {
+                $oc = $conn->prepare("UPDATE orders SET approval_status = 'cancelled' WHERE id = ? AND user_id = ? AND payment_status <> 'paid'");
+                $oc->bind_param("ii", $row['order_id'], $user_id); $oc->execute(); $oc->close();
+            }
+        }
+        require_once __DIR__ . '/../notify.php';
+        if (function_exists('log_activity')) {
+            log_activity($conn, 'appointment_cancelled', "Customer cancelled appointment #{$appt_id} — {$row['service_name']}" . ($reason !== '' ? " ({$reason})" : ''), 'appointment', $appt_id);
+        }
+        $_SESSION['flash_success'] = "Your {$row['service_name']} booking was cancelled.";
+    } else {
+        $_SESSION['flash_error'] = "This booking can no longer be cancelled online. Please message us and we'll help you.";
+    }
+    header("Location: appointments.php");
+    exit();
 }
+
+// ── Appointments (bookings still in online checkout are left out) ────────────
+$appointments = [];
+$stmt = $conn->prepare("
+    SELECT a.*, s.name AS service_name, s.price, s.session_time, s.image, s.category_id
+    FROM appointments a
+    JOIN services s ON a.service_id = s.id
+    WHERE a.user_id = ?
+      AND (
+          a.order_item_id IS NULL
+          OR EXISTS (
+              SELECT 1 FROM order_items oi
+              JOIN orders o ON oi.order_id = o.id
+              WHERE oi.id = a.order_item_id
+                AND o.payment_status != 'pending_payment'
+          )
+      )
+    ORDER BY a.appointment_date DESC
+");
+$stmt->bind_param("i", $user_id);
 $stmt->execute();
 $result = $stmt->get_result();
 while ($row = $result->fetch_assoc()) $appointments[] = $row;
 $stmt->close();
 
-// ── Fetch assigned therapists & extra services per appointment ────────────────
+$has_sessions = false;
+$t = $conn->query("SHOW TABLES LIKE 'appointment_sessions'");
+if ($t && $t->num_rows) $has_sessions = true;
+
 foreach ($appointments as &$appt) {
     $ts = $conn->prepare("
-        SELECT t.full_name, t.specialties, at2.notes
+        SELECT t.full_name
         FROM appointment_therapists at2
         JOIN therapists t ON at2.therapist_id = t.id
         WHERE at2.appointment_id = ?
-        ORDER BY at2.assigned_at ASC
     ");
     $ts->bind_param("i", $appt['id']); $ts->execute();
-    $appt['assigned_therapists'] = $ts->get_result()->fetch_all(MYSQLI_ASSOC);
+    $appt['therapists'] = array_column($ts->get_result()->fetch_all(MYSQLI_ASSOC), 'full_name');
     $ts->close();
 
     $es = $conn->prepare("
-        SELECT aes.charged_price AS price, s.name AS svc_name, s.image AS svc_image, t.full_name AS therapist_name
+        SELECT aes.charged_price AS price, s.name AS svc_name
         FROM appointment_extra_services aes
         JOIN services s ON s.id = aes.service_id
-        LEFT JOIN therapists t ON t.id = aes.therapist_id
         WHERE aes.appointment_id = ?
     ");
     $es->bind_param("i", $appt['id']); $es->execute();
-    $appt['extra_services'] = $es->get_result()->fetch_all(MYSQLI_ASSOC);
+    $appt['extras'] = $es->get_result()->fetch_all(MYSQLI_ASSOC);
     $es->close();
+
+    $appt['order'] = null;
+    if (!empty($appt['order_item_id'])) {
+        $pm = $conn->prepare("
+            SELECT o.id, o.payment_method, o.payment_status, o.approval_status, o.paymongo_method,
+                   o.total_amount, o.discount_type, o.discount_amount, o.final_amount
+            FROM orders o JOIN order_items oi ON oi.order_id = o.id
+            WHERE oi.id = ? LIMIT 1
+        ");
+        $pm->bind_param("i", $appt['order_item_id']); $pm->execute();
+        $appt['order'] = $pm->get_result()->fetch_assoc() ?: null; $pm->close();
+    }
+
+    $appt['sessions'] = null;
+    if ($has_sessions) {
+        $ss = $conn->prepare("SELECT COUNT(*) AS n, SUM(status = 'completed') AS done FROM appointment_sessions WHERE appointment_id = ?");
+        $ss->bind_param("i", $appt['id']); $ss->execute();
+        $sr = $ss->get_result()->fetch_assoc(); $ss->close();
+        if ((int)$sr['n'] > 1) $appt['sessions'] = ['n' => (int)$sr['n'], 'done' => (int)$sr['done']];
+    }
+
+    $appt['rating'] = 0;
+    if ($appt['status'] === 'completed') {
+        try {
+            $fb = $conn->prepare("SELECT rating FROM feedback WHERE appointment_id = ? AND user_id = ?");
+            $fb->bind_param("ii", $appt['id'], $user_id); $fb->execute();
+            $appt['rating'] = (int)($fb->get_result()->fetch_assoc()['rating'] ?? 0); $fb->close();
+        } catch (Throwable $e) {}
+    }
 }
 unset($appt);
 
-// ── Stats ─────────────────────────────────────────────────────────────────────
-$stats = [];
-foreach ($status_options as $status) {
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) AS count FROM appointments a
-        WHERE a.user_id = ? AND a.status = ?
-          AND (a.order_item_id IS NULL OR EXISTS (
-              SELECT 1 FROM order_items oi JOIN orders o ON oi.order_id = o.id
-              WHERE oi.id = a.order_item_id AND o.payment_status != 'pending_payment'
-          ))
-    ");
-    $stmt->bind_param("is", $user_id, $status);
-    $stmt->execute();
-    $stats[$status] = $stmt->get_result()->fetch_assoc()['count'];
-    $stmt->close();
+// Upcoming = still active and not yet past; the soonest one is "Your next visit".
+$upcoming = []; $past = []; $now = time();
+foreach ($appointments as $a) {
+    $done = in_array($a['status'], ['completed', 'declined', 'cancelled'], true);
+    $ts   = strtotime($a['appointment_date']);
+    // Checked in today stays upcoming until it's completed.
+    if (!$done && ($ts >= $now - 4 * 3600 || $a['status'] === 'approved')) $upcoming[] = $a;
+    else $past[] = $a;
 }
-
-// ── Split upcoming vs history ─────────────────────────────────────────────────
-$upcoming = []; $history = []; $now = new DateTime();
-foreach ($appointments as $appt) {
-    $appt_date = new DateTime($appt['appointment_date']);
-    if (in_array($appt['status'], ['completed','declined','cancelled']) || $appt_date < $now)
-        $history[] = $appt;
-    else
-        $upcoming[] = $appt;
-}
+usort($upcoming, function ($x, $y) { return strtotime($x['appointment_date']) <=> strtotime($y['appointment_date']); });
+$next = $upcoming[0] ?? null;
+$upcoming_rest = array_slice($upcoming, 1);
 
 // ── Product orders ────────────────────────────────────────────────────────────
-$product_orders = [];
+$grouped_orders = [];
 $stmt = $conn->prepare("
     SELECT o.id AS order_id, o.created_at AS order_date, o.total_amount,
            o.payment_method, o.payment_status, o.approval_status,
@@ -190,836 +234,342 @@ $stmt = $conn->prepare("
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
 $result = $stmt->get_result();
-while ($row = $result->fetch_assoc()) $product_orders[] = $row;
-$stmt->close();
-
-$grouped_orders = [];
-foreach ($product_orders as $row) {
+while ($row = $result->fetch_assoc()) {
     $oid = $row['order_id'];
     if (!isset($grouped_orders[$oid])) {
-        $grouped_orders[$oid] = [
-            'order_id' => $oid, 'order_date' => $row['order_date'],
-            'total_amount' => $row['total_amount'], 'payment_method' => $row['payment_method'],
-            'payment_status' => $row['payment_status'], 'approval_status' => $row['approval_status'],
-            'discount_type' => $row['discount_type'] ?? 'none',
-            'discount_amount' => floatval($row['discount_amount'] ?? 0),
-            'final_amount' => floatval($row['final_amount'] ?? 0),
-            'paymongo_method' => $row['paymongo_method'] ?? null,
-            'items' => [],
-        ];
+        $grouped_orders[$oid] = $row + ['items' => []];
     }
-    $grouped_orders[$oid]['items'][] = [
-        'product_name' => $row['product_name'], 'product_image' => $row['product_image'],
-        'quantity' => $row['quantity'], 'price' => $row['price'], 'subtotal' => $row['subtotal'],
-    ];
+    $grouped_orders[$oid]['items'][] = ['name' => $row['product_name'], 'image' => $row['product_image'], 'qty' => (int)$row['quantity']];
 }
+$stmt->close();
+foreach ($grouped_orders as &$o) {
+    $o['rating'] = 0;
+    if (($o['approval_status'] ?? '') === 'completed') {
+        try {
+            $fb = $conn->prepare("SELECT rating FROM feedback WHERE order_id = ? AND user_id = ? AND appointment_id IS NULL");
+            $fb->bind_param("ii", $o['order_id'], $user_id); $fb->execute();
+            $o['rating'] = (int)($fb->get_result()->fetch_assoc()['rating'] ?? 0); $fb->close();
+        } catch (Throwable $e) {}
+    }
+}
+unset($o);
 
-// ── Fetch logged-in user info (shown in "Your Information" collapsible) ───────
-$ui_stmt = $conn->prepare("SELECT full_name, email, phone, address FROM users WHERE id = ? LIMIT 1");
-$ui_stmt->bind_param("i", $user_id); $ui_stmt->execute();
-$user_info = $ui_stmt->get_result()->fetch_assoc() ?? [];
-$ui_stmt->close();
+$me = $conn->prepare("SELECT full_name FROM users WHERE id = ?");
+$me->bind_param("i", $user_id); $me->execute();
+$first_name = trim(strtok((string)($me->get_result()->fetch_assoc()['full_name'] ?? ''), ' ')) ?: 'there';
+$me->close();
 
-$page_title = 'My Appointments & Orders';
-require_once 'header.php';
-
-// ── Shared helper: render price cell with discount breakdown ─────────────────
-function render_price_cell(float $service_price, array $pm_row): void {
-    $orig      = floatval($pm_row['total_amount'] ?? $service_price) ?: $service_price;
-    $disc_type = $pm_row['discount_type']   ?? 'none';
-    $disc_amt  = floatval($pm_row['discount_amount'] ?? 0);
-    $final_amt = floatval($pm_row['final_amount']    ?? 0);
-
-    $has_disc  = ($disc_type !== 'none' && $disc_type !== '');
-    $confirmed = $has_disc && $disc_amt > 0;   // admin has set a real amount
-    $pending   = $has_disc && $disc_amt === 0; // declared but not yet confirmed onsite
-
-    $disc_labels = [
-        'senior'   => 'Senior (20%)',
-        'pwd'      => 'PWD (20%)',
-        'voucher'  => 'Voucher',
-        'employee' => 'Employee',
+// ── Display helpers ──────────────────────────────────────────────────────────
+function ac_h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+function ac_peso($n) { return '₱' . number_format((float)$n, 2); }
+function ac_img($file, $dir) { return $file ? BASE_URL . 'uploads/' . $dir . '/' . rawurlencode($file) : ''; }
+function ac_len($a) {
+    $m = (int)($a['duration_minutes'] ?? 0) ?: (int)($a['session_time'] ?? 0);
+    if ($m <= 0) return '';
+    $h = intdiv($m, 60); $r = $m % 60;
+    return trim(($h ? $h . ' hr ' : '') . ($r ? $r . ' min' : ''));
+}
+function ac_status($s) {
+    $map = [
+        'pending'          => ['warn', 'Waiting for confirmation'],
+        'assigned'         => ['ok',   'Confirmed'],
+        'approved'         => ['ok',   'Checked in'],
+        'completed'        => ['ok',   'Completed'],
+        'declined'         => ['bad',  'Declined'],
+        'cancelled'        => ['grey', 'Cancelled'],
+        'refund_requested' => ['warn', 'Refund pending'],
     ];
-    $dlbl = $disc_labels[$disc_type] ?? ucfirst($disc_type);
+    return $map[$s] ?? ['grey', ucfirst(str_replace('_', ' ', $s))];
+}
+function ac_method($o) {
+    $labels = ['cash' => 'Cash', 'gcash' => 'GCash', 'maya' => 'Maya', 'bpi_debit' => 'BPI Debit', 'bpi_credit' => 'BPI Credit',
+               'qrph' => 'QRPH', 'bank' => 'Bank transfer', 'card' => 'Card', 'online' => 'Online', 'onsite' => 'At the spa'];
+    $m = $o['paymongo_method'] ?: $o['payment_method'];
+    return $labels[$m] ?? ucfirst((string)$m);
+}
+function ac_pay($o) {
+    if (!$o) return null;
+    $ps = $o['payment_status'] ?? '';
+    if ($ps === 'paid')     return ['ok', 'Paid · ' . ac_method($o)];
+    if ($ps === 'refunded') return ['grey', 'Refunded'];
+    if ($ps === 'rejected') return ['bad', 'Payment rejected'];
+    return ['grey', 'Pay at the spa'];
+}
+function ac_total($a) {
+    $o = $a['order'];
+    $extras = array_sum(array_map(function ($x) { return (float)$x['price']; }, $a['extras']));
+    if ($o) {
+        $full  = (float)($o['total_amount'] ?: $a['price']);
+        $final = (float)($o['final_amount'] ?: $full);
+        return [$final, $final < $full ? $full : 0];
+    }
+    $base = (float)($a['charged_price'] ?? 0) ?: (float)$a['price'];
+    return [$base + $extras, 0];
+}
+function ac_where($a) { return ($a['service_type'] ?? '') === 'home' ? 'Home service' : 'Recovery Iloilo, Molo'; }
+function ac_can_cancel($a) {
+    return $a['status'] === 'pending' && (($a['order']['payment_status'] ?? '') !== 'paid') && strtotime($a['appointment_date']) > time();
+}
+function ac_rel_day($ts) {
+    $d = (int)floor((strtotime(date('Y-m-d', $ts)) - strtotime(date('Y-m-d'))) / 86400);
+    if ($d < 0) return 'today';
+    if ($d === 0) return 'today';
+    if ($d === 1) return 'tomorrow';
+    return 'in ' . $d . ' days';
+}
+function ac_book_again($a) { return 'services.php?category=' . (int)$a['category_id'] . '&item=svc-' . (int)$a['service_id']; }
 
-    echo '<p><strong>Price:</strong><br>';
-    if ($confirmed) {
-        // Strikethrough original + green final + discount chip
-        echo '<span style="text-decoration:line-through;color:#9ca3af;font-size:0.85rem;">₱' . number_format($orig, 2) . '</span> ';
-        echo '<span style="color:#15803d;font-weight:800;">₱' . number_format($final_amt, 2) . '</span><br>';
-        echo '<span style="display:inline-flex;align-items:center;gap:0.2rem;margin-top:0.2rem;'
-           . 'font-size:0.72rem;font-weight:700;padding:0.1rem 0.5rem;border-radius:20px;'
-           . 'background:#fef3c7;color:#92400e;border:1px solid #fde68a;">'
-           . '−₱' . number_format($disc_amt, 2) . '</span>';
-    } elseif ($pending) {
-        // Full price shown; discount declared but not yet applied
-        echo '₱' . number_format($orig, 2) . '<br>';
-        echo '<span style="display:inline-flex;align-items:center;gap:0.2rem;margin-top:0.2rem;'
-           . 'font-size:0.72rem;font-weight:700;padding:0.1rem 0.5rem;border-radius:20px;'
-           . 'background:#fef3c7;color:#92400e;border:1px solid #fde68a;">'
-           . $dlbl . ' — pending</span>';
+function ac_rate_html($rating, $link) {
+    $h = '<div class="ac-rate">';
+    if ($rating) {
+        $h .= '<span>Your rating</span>';
+        for ($i = 1; $i <= 5; $i++) $h .= '<b class="' . ($i <= $rating ? 'on' : '') . '" aria-hidden="true">★</b>';
+        $h .= '<span class="sr-only" style="position:absolute;left:-9999px">' . $rating . ' out of 5</span>';
     } else {
-        echo '₱' . number_format($orig, 2);
+        $h .= '<span>How was it?</span>';
+        for ($i = 1; $i <= 5; $i++) $h .= '<a href="' . ac_h($link) . '" aria-label="Rate ' . $i . ' star' . ($i > 1 ? 's' : '') . '">★</a>';
     }
-    echo '</p>';
+    return $h . '</div>';
 }
 
-// ── Shared helper: render payment badge ──────────────────────────────────────
-function render_payment_badge(string $pay_method, string $pay_status, string $apvl_status, ?string $pm_actual): void {
-    // Resolve the actual method name (PayMongo fills paymongo_method after payment)
-    $method_labels = [
-        'cash'       => ['Onsite', 'Cash'],
-        'gcash'      => ['Online', 'GCash'],
-        'maya'       => ['Online', 'Maya'],
-        'bpi_debit'  => ['Online', 'BPI Debit'],
-        'bpi_credit' => ['Online', 'BPI Credit'],
-        'qrph'       => ['Online', 'QRPH'],
-        'bank'       => ['Onsite', 'Bank Transfer'],
-        'card'       => ['Onsite', 'Card'],
-        'online'     => ['Online', 'Online'],
-        'onsite'     => ['Onsite', 'Onsite'],
-    ];
-
-    $display = $pm_actual ?: $pay_method;
-    [$channel, $specific] = $method_labels[$display] ?? ['Onsite', ucfirst($display)];
-
-    echo '<span class="payment-badge method-' . ($pay_method === 'online' ? 'online' : 'onsite') . '">'
-       . $channel . ' · ' . $specific . '</span>';
-}
-?>
-
-<style>
-.tab-nav { display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:2rem; }
-.tab-btn { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0.3rem; padding:1.1rem 1rem; border:2px solid #EAD8C0; border-radius:14px; background:#fff; color:#9a7c68; cursor:pointer; font-weight:700; transition:all 0.2s; position:relative; width:100%; box-shadow:0 2px 6px rgba(0,0,0,.04); }
-.tab-btn .tab-icon  { font-size:1.6rem; line-height:1; }
-.tab-btn .tab-label { font-size:0.9rem; font-weight:700; }
-.tab-btn .tab-count { display:inline-flex; align-items:center; justify-content:center; min-width:26px; height:22px; padding:0 8px; border-radius:20px; font-size:0.78rem; font-weight:800; background:#EAD8C0; color:#3B2A1A; transition:all 0.2s; }
-.tab-btn.active { background:#3B2A1A; border-color:#3B2A1A; color:#FAF3E8; box-shadow:0 4px 14px rgba(59,42,26,.25); }
-.tab-btn.active .tab-count { background:#C96A2C; color:#fff; }
-.tab-btn:not(.active):hover { border-color:#C96A2C; color:#C96A2C; background:#FFF8F3; }
-.tab-btn:not(.active):hover .tab-count { background:#C96A2C; color:#fff; }
-.tab-notify-dot { position:absolute; top:10px; right:10px; width:10px; height:10px; background:#C96A2C; border-radius:50%; border:2px solid #fff; animation:pulse-dot 1.8s infinite; }
-@keyframes pulse-dot { 0%,100%{transform:scale(1);opacity:1;} 50%{transform:scale(1.3);opacity:.7;} }
-@media(max-width:480px) { .tab-btn { padding:0.85rem 0.5rem; } .tab-btn .tab-icon { font-size:1.3rem; } .tab-btn .tab-label { font-size:0.78rem; } }
-.tab-panel { display:none; }
-.tab-panel.active { display:block; }
-.appointment-card { background:#fff; border-radius:12px; padding:1.5rem; margin-bottom:1rem; box-shadow:0 2px 10px rgba(0,0,0,0.07); border-left:4px solid #C96A2C; }
-.order-card { background:#fff; border-radius:12px; padding:1.5rem; margin-bottom:1rem; box-shadow:0 2px 10px rgba(0,0,0,0.07); border-left:4px solid #C96A2C; }
-.appointment-status, .payment-badge { padding:0.3rem 0.8rem; border-radius:20px; font-size:0.82rem; font-weight:bold; }
-.status-pending          { background:#fff3cd; color:#664d03; }
-.status-approved         { background:#d1e7dd; color:#0a3622; }
-.status-assigned         { background:#cfe2ff; color:#084298; }
-.status-declined         { background:#f8d7da; color:#842029; }
-.status-completed        { background:#cff4fc; color:#055160; }
-.status-cancelled        { background:#f3f4f6; color:#374151; }
-.method-onsite { background:#e2e3e5; color:#41464b; }
-.method-online { background:#cfe2ff; color:#084298; }
-.order-item-row { display:flex; align-items:center; gap:1rem; padding:0.75rem 0; border-bottom:1px solid #EAD8C0; }
-.order-item-row:last-child { border-bottom:none; }
-.stats-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:1rem; margin-bottom:2rem; }
-.stat-card { background:#fff; border-radius:10px; padding:1rem; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,0.07); }
-.stat-number { font-size:1.8rem; font-weight:bold; color:#C96A2C; }
-.stat-label { font-size:0.85rem; color:#888; margin-top:0.3rem; }
-.filter-bar { display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:1.5rem; }
-.section-title { color:#3B2A1A; margin:1.5rem 0 1rem 0; font-size:1.2rem; }
-.feedback-btn { display:inline-block; padding:0.45rem 1rem; background:#C96A2C; color:#fff; border-radius:8px; font-size:0.82rem; font-weight:600; text-decoration:none; transition:background 0.2s; }
-.feedback-btn:hover { background:#A94F1D; }
-.receipt-btn { display:inline-block; padding:0.45rem 1rem; background:#FAF3E8; color:#3B2A1A; border:1px solid #C8A46B; border-radius:8px; font-size:0.82rem; font-weight:600; text-decoration:none; transition:all 0.2s; }
-.receipt-btn:hover { background:#C8A46B; color:#3B2A1A; }
-.cancel-btn { display:inline-block; padding:0.45rem 1rem; background:transparent; color:#6b7280; border:1px solid #d1d5db; border-radius:8px; font-size:0.82rem; font-weight:600; cursor:pointer; transition:all 0.2s; }
-.cancel-btn:hover { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
-.feedback-stars { display:flex; align-items:center; gap:0.4rem; }
-.therapist-pill { display:inline-flex; align-items:center; gap:0.35rem; background:#FFF3E8; border:1px solid #EAD8C0; color:#A94F1D; border-radius:20px; padding:0.25rem 0.7rem; font-size:0.8rem; font-weight:600; }
-.therapist-pill .avatar { width:20px; height:20px; border-radius:50%; background:linear-gradient(135deg,#C96A2C,#A94F1D); color:#fff; font-size:0.65rem; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.spa-footer { margin-top:8rem; }
-.modal-overlay { display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.5); backdrop-filter:blur(3px); align-items:center; justify-content:center; }
-.modal-overlay.open { display:flex; }
-.modal-box { background:#fff; border-radius:16px; padding:2rem; width:min(480px, 92vw); box-shadow:0 24px 60px rgba(0,0,0,0.2); animation: modalIn 0.2s ease; }
-@keyframes modalIn { from { transform:scale(0.92); opacity:0; } to { transform:scale(1); opacity:1; } }
-details.card-section { border-top:1px solid #EAD8C0; margin-top:0.85rem; padding-top:0.85rem; }
-details.card-section > summary { font-weight:600; color:#3B2A1A; cursor:pointer; font-size:0.88rem; list-style:none; display:flex; align-items:center; justify-content:space-between; padding:0.1rem 0; }
-details.card-section > summary::after { content:'▸'; font-size:0.75rem; color:#9a7c68; margin-left:0.5rem; flex-shrink:0; }
-details.card-section[open] > summary::after { content:'▾'; }
-details.card-section summary::-webkit-details-marker { display:none; }
-.info-grid { display:grid; grid-template-columns:max-content 1fr; gap:0.35rem 1.25rem; margin-top:0.6rem; font-size:0.87rem; }
-.info-grid .lbl { color:#9a7c68; font-weight:600; white-space:nowrap; }
-.info-grid .val { color:#3B2A1A; word-break:break-word; }
-</style>
-
-<div class="container">
-<h1 style="color:#3B2A1A; margin:2rem 0;">My Appointments & Orders</h1>
-
-<?php if (isset($_GET['cancelled'])): ?>
-<div style="background:#d1e7dd;color:#0a3622;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #a3cfbb;">
-    Your appointment has been successfully cancelled.
-</div>
-<?php endif; ?>
-
-
-<?php if (!empty($_SESSION['flash_success'])): ?>
-<div style="background:#d1e7dd;color:#0a3622;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #a3cfbb;">
-    <?php echo htmlspecialchars($_SESSION['flash_success']); unset($_SESSION['flash_success']); ?>
-</div>
-<?php endif; ?>
-<?php if (!empty($_SESSION['flash_error'])): ?>
-<div style="background:#f8d7da;color:#842029;padding:1rem 1.25rem;border-radius:10px;margin-bottom:1.5rem;font-weight:600;border:1px solid #f1aeb5;">
-    <?php echo htmlspecialchars($_SESSION['flash_error']); unset($_SESSION['flash_error']); ?>
-</div>
-<?php endif; ?>
-
-<div class="tab-nav">
-    <button class="tab-btn active" id="tab-btn-appointments" onclick="switchTab('appointments', this)">
-        <span class="tab-label">My Appointments</span>
-        <span class="tab-count"><?php echo count($appointments); ?></span>
-    </button>
-    <button class="tab-btn" id="tab-btn-orders" onclick="switchTab('orders', this)">
-        <?php if (count($grouped_orders) > 0): ?>
-        <span class="tab-notify-dot" id="orders-notify-dot"></span>
+function ac_appt_card($a) {
+    [$cls, $label] = ac_status($a['status']);
+    $pay = ac_pay($a['order']);
+    [$total, $was] = ac_total($a);
+    $ts  = strtotime($a['appointment_date']);
+    $sub = date('D, M j', $ts) . ' · ' . date('g:i A', $ts) . (ac_len($a) ? ' · ' . ac_len($a) : '');
+    $faded = in_array($a['status'], ['declined', 'cancelled'], true);
+    ob_start(); ?>
+    <article class="ac-card<?php echo $faded ? ' faded' : ''; ?>">
+        <div class="ac-main">
+            <div class="ac-th"><?php if ($a['image']): ?><img src="<?php echo ac_h(ac_img($a['image'], 'services')); ?>" alt="" loading="lazy" onerror="this.remove()"><?php endif; ?></div>
+            <div>
+                <h3><?php echo ac_h($a['service_name']); ?></h3>
+                <div class="ac-sub"><?php echo ac_h($sub); ?><?php echo ($a['service_type'] ?? '') === 'home' ? ' · Home service' : ''; ?><?php echo (int)$a['people_count'] > 1 ? ' · ' . (int)$a['people_count'] . ' people' : ''; ?></div>
+                <div class="ac-meta">
+                    <span class="ac-pill <?php echo $cls; ?>"><?php echo ac_h($label); ?></span>
+                    <?php if ($pay): ?><span class="ac-pill <?php echo $pay[0]; ?>"><?php echo ac_h($pay[1]); ?></span><?php endif; ?>
+                </div>
+                <?php if ($a['sessions']): ?>
+                <div class="ac-sess"><?php for ($i = 0; $i < $a['sessions']['n']; $i++): ?><i class="<?php echo $i < $a['sessions']['done'] ? 'on' : ''; ?>"></i><?php endfor; ?><span><?php echo $a['sessions']['done']; ?> of <?php echo $a['sessions']['n']; ?> sessions done</span></div>
+                <?php endif; ?>
+                <?php if ($a['therapists']): ?><div class="ac-sub" style="margin-top:6px">Therapist: <?php echo ac_h(implode(', ', $a['therapists'])); ?></div>
+                <?php elseif (!in_array($a['status'], ['completed', 'declined', 'cancelled'], true)): ?><div class="ac-sub" style="margin-top:6px">Therapist will be assigned</div><?php endif; ?>
+                <?php if ($a['extras']): ?><div class="ac-extras">Added: <?php echo ac_h(implode(', ', array_column($a['extras'], 'svc_name'))); ?></div><?php endif; ?>
+            </div>
+            <div class="ac-amt"><?php if ($was): ?><s><?php echo ac_peso($was); ?></s><?php endif; ?><?php echo ac_peso($total); ?><small>Total</small></div>
+        </div>
+        <?php if ($a['status'] === 'declined' || $a['status'] === 'cancelled' || $a['status'] === 'refund_requested'): ?>
+            <?php if (!empty($a['cancel_reason'])): ?><div class="ac-reason<?php echo $a['status'] === 'declined' ? '' : ' grey'; ?>"><b>Why:</b> <?php echo ac_h($a['cancel_reason']); ?></div><?php endif; ?>
         <?php endif; ?>
-        <span class="tab-label">My Product Orders</span>
-        <span class="tab-count"><?php echo count($grouped_orders); ?></span>
-    </button>
-</div>
-
-<!-- ── APPOINTMENTS TAB ───────────────────────────────────────────────────── -->
-<div class="tab-panel active" id="tab-appointments">
-
-    <div class="stats-grid">
-        <?php
-        $stat_labels = [
-            'pending'          => 'Pending Confirmation',
-            'approved'         => 'Checked In',
-            'assigned'         => 'Confirmed',
-            'declined'         => 'Declined',
-            'completed'        => 'Completed',
-            'cancelled'        => 'Cancelled',
-        ];
-        foreach ($status_options as $status):
-            $label = $stat_labels[$status];
-        ?>
-        <div class="stat-card">
-            <div class="stat-number"><?php echo $stats[$status]; ?></div>
-            <div class="stat-label"><?php echo $label; ?></div>
-        </div>
-        <?php endforeach; ?>
-    </div>
-
-    <div class="filter-bar">
-        <a href="appointments.php" class="btn <?php echo !$filter_status ? 'btn-primary' : 'btn-secondary'; ?>">All</a>
-        <?php foreach ($status_options as $status): ?>
-        <a href="appointments.php?filter=<?php echo $status; ?>"
-           class="btn <?php echo $filter_status === $status ? 'btn-primary' : 'btn-secondary'; ?>">
-            <?php echo $stat_labels[$status]; ?>
-        </a>
-        <?php endforeach; ?>
-    </div>
-
-    <?php
-    $status_labels_map = [
-        'pending'          => 'Pending Confirmation',
-        'approved'         => 'Checked In',
-        'assigned'         => 'Confirmed',
-        'declined'         => 'Declined',
-        'completed'        => 'Completed',
-        'cancelled'        => 'Cancelled',
-    ];
-
-    function render_therapists(array $appt): void {
-        $therapists = $appt['assigned_therapists'] ?? [];
-        echo '<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.5rem;">';
-        if (empty($therapists)) {
-            echo '<span style="font-size:0.82rem;color:#9a7c68;font-style:italic;">Therapist to be assigned</span>';
-        } else {
-            foreach ($therapists as $t) {
-                $initials = strtoupper(substr($t['full_name'], 0, 1));
-                echo '<span class="therapist-pill"><span class="avatar">' . $initials . '</span>';
-                echo htmlspecialchars($t['full_name']);
-                if (!empty($t['specialties'])) echo ' <span style="opacity:0.7;">· ' . htmlspecialchars($t['specialties']) . '</span>';
-                echo '</span>';
-            }
-        }
-        echo '</div>';
-    }
-
-    // ── Shared: fetch full order row (price + discount + payment) for an appointment
-    function fetch_order_row($conn, $order_item_id): array {
-        $default = [
-            'id' => null, 'payment_method' => '', 'payment_status' => '',
-            'approval_status' => '', 'paymongo_method' => null,
-            'total_amount' => 0, 'discount_type' => 'none',
-            'discount_amount' => 0, 'final_amount' => 0,
-        ];
-        if (!$order_item_id) return $default;
-        $pm = $GLOBALS['conn']->prepare("
-            SELECT o.id, o.payment_method, o.payment_status, o.approval_status,
-                   o.paymongo_method,
-                   o.total_amount, o.discount_type, o.discount_amount, o.final_amount
-            FROM orders o
-            JOIN order_items oi ON oi.order_id = o.id
-            WHERE oi.id = ? LIMIT 1
-        ");
-        $pm->bind_param("i", $order_item_id); $pm->execute();
-        $row = $pm->get_result()->fetch_assoc(); $pm->close();
-        return $row ?: $default;
-    }
-    ?>
-
-    <?php if (!empty($upcoming)): ?>
-    <h2 class="section-title">Upcoming Appointments</h2>
-    <?php foreach ($upcoming as $appt):
-        $border_colors = ['pending'=>'#C96A2C','approved'=>'#198754','assigned'=>'#0070f3','declined'=>'#dc3545','completed'=>'#0F6E56','cancelled'=>'#6b7280','refund_requested'=>'#f59e0b'];
-        $border   = $border_colors[$appt['status']] ?? '#C96A2C';
-        $orow     = fetch_order_row($conn, $appt['order_item_id'] ?? null);
-        $appt_order_id = $orow['id'];
-        $pay_method    = $orow['payment_method'];
-        $pay_status    = $orow['payment_status'];
-        $apvl_status   = $orow['approval_status'];
-        $pm_actual     = $orow['paymongo_method'];
-    ?>
-    <div class="appointment-card" style="border-left-color:<?php echo $border; ?>;">
-        <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;">
-            <img src="../uploads/services/<?php echo htmlspecialchars($appt['image']); ?>"
-                 style="width:110px;height:110px;object-fit:cover;border-radius:10px;flex-shrink:0;">
-            <div style="flex:1;min-width:220px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-                    <h3 style="color:#3B2A1A;margin:0;"><?php echo htmlspecialchars($appt['service_name']); ?></h3>
-                    <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;">
-                        <span class="appointment-status status-<?php echo $appt['status']; ?>">
-                            <?php echo $status_labels_map[$appt['status']] ?? ucfirst($appt['status']); ?>
-                        </span>
-                        <?php if ($pay_method): ?>
-                        <?php render_payment_badge($pay_method, $pay_status, $apvl_status, $pm_actual); ?>
-                        <span class="payment-badge" style="<?php
-                            if ($appt['status'] === 'assigned') echo 'background:#fff3cd;color:#664d03;border:1px solid #ffe69c;';
-                            elseif ($appt['status'] === 'approved') echo 'background:#d1e7dd;color:#0a3622;border:1px solid #86efac;';
-                            elseif ($pay_status === 'paid' && $apvl_status === 'approved') echo 'background:#d1e7dd;color:#0a3622;';
-                            else echo 'background:#e2e3e5;color:#41464b;';
-                        ?>">
-                            <?php
-                            if ($appt['status'] === 'assigned') echo 'Arrive 15-20 mins early';
-                            elseif ($appt['status'] === 'approved') echo 'Checked in';
-                            elseif ($pay_status === 'paid' && $apvl_status === 'pending') echo 'Paid — Awaiting Approval';
-                            elseif ($pay_status === 'unpaid') echo 'Pay at counter';
-                            else echo ucfirst($pay_status);
-                            ?>
-                        </span>
-                        <?php endif; ?>
-                    </div>
-                </div>
-
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.3rem 2rem;font-size:0.92rem;color:#444;">
-                    <p><strong>Date & Time:</strong><br><?php echo date('F d, Y — h:i A', strtotime($appt['appointment_date'])); ?></p>
-                    <p><strong>Duration:</strong><br><?php echo $appt['session_time']; ?> minutes</p>
-                    <?php render_price_cell(floatval($appt['price']), $orow); ?>
-                    <p><strong>People:</strong><br><?php echo $appt['people_count']; ?></p>
-                </div>
-
-                <?php render_therapists($appt); ?>
-
-                <!-- Meta pills: booked date, service type, rate -->
-                <div style="display:flex;flex-wrap:wrap;gap:0.3rem 1.5rem;margin-top:0.55rem;font-size:0.82rem;color:#6b7280;">
-                    <span>Booked <?php echo date('M d, Y', strtotime($appt['created_at'])); ?></span>
-                    <?php if (!empty($appt['service_type'])): ?><span><?php echo ucfirst(str_replace('_',' ',$appt['service_type'])); ?></span><?php endif; ?>
-                    <?php if (!empty($appt['rate_type'])): ?><span><?php echo ucfirst($appt['rate_type']); ?> rate</span><?php endif; ?>
-                </div>
-
-                <details class="card-section">
-                    <summary>Your Information</summary>
-                    <div class="info-grid">
-                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
-                        <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
-                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
-                        <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
-                    </div>
-                </details>
-
-                <?php if ($pay_method): ?>
-                <details class="card-section">
-                    <summary>Payment & Pricing</summary>
-                    <div class="info-grid">
-                        <span class="lbl">Original Price</span>
-                        <span class="val">₱<?php echo number_format(floatval($orow['total_amount'] ?: $appt['price']), 2); ?></span>
-                        <?php if (!empty($orow['discount_type']) && $orow['discount_type'] !== 'none'): ?>
-                        <span class="lbl">Discount</span>
-                        <span class="val"><?php echo ucfirst($orow['discount_type']); echo floatval($orow['discount_amount']) > 0 ? ' — ₱'.number_format(floatval($orow['discount_amount']),2) : ' (pending confirmation)'; ?></span>
-                        <?php endif; ?>
-                        <span class="lbl">Final Amount</span>
-                        <span class="val" style="font-weight:700;color:#15803d;">₱<?php echo number_format(floatval($orow['final_amount'] ?: ($orow['total_amount'] ?: $appt['price'])), 2); ?></span>
-                        <span class="lbl">Payment Method</span>
-                        <span class="val"><?php echo $pm_actual ? ucfirst($pm_actual) : ucfirst($pay_method); ?></span>
-                        <span class="lbl">Payment Status</span>
-                        <span class="val"><?php echo $pay_status ? ucfirst($pay_status) : '—'; ?></span>
-                    </div>
-                </details>
-                <?php endif; ?>
-
-                <?php if (!empty($appt['extra_services'])): ?>
-                <details class="card-section">
-                    <summary>Extra Services (<?php echo count($appt['extra_services']); ?>)</summary>
-                    <div style="margin-top:0.5rem;">
-                        <?php foreach ($appt['extra_services'] as $xsvc): ?>
-                        <div style="display:flex;align-items:center;gap:0.65rem;padding:0.4rem 0;border-bottom:1px solid #f3f4f6;font-size:0.87rem;">
-                            <?php if (!empty($xsvc['svc_image'])): ?>
-                            <img src="../uploads/services/<?php echo htmlspecialchars($xsvc['svc_image']); ?>"
-                                 style="width:40px;height:40px;object-fit:cover;border-radius:7px;flex-shrink:0;" alt="">
-                            <?php endif; ?>
-                            <div style="flex:1;min-width:0;">
-                                <span style="color:#3B2A1A;font-weight:600;"><?php echo htmlspecialchars($xsvc['svc_name']); ?></span>
-                                <?php if (!empty($xsvc['therapist_name'])): ?><span style="color:#9a7c68;"> · <?php echo htmlspecialchars($xsvc['therapist_name']); ?></span><?php endif; ?>
-                            </div>
-                            <span style="color:#C96A2C;font-weight:700;flex-shrink:0;">₱<?php echo number_format(floatval($xsvc['price']), 2); ?></span>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                </details>
-                <?php endif; ?>
-
-                <?php if ($appt['status'] === 'pending'): ?>
-                <div style="margin-top:0.75rem;padding:0.6rem 0.9rem;background:#fff8f2;border-left:3px solid #f59e0b;border-radius:6px;font-size:0.82rem;color:#92400e;">
-                    Your appointment is awaiting confirmation. We'll notify you once a therapist is assigned.
-                </div>
-                <?php elseif ($appt['status'] === 'assigned'): ?>
-                <div style="margin-top:0.75rem;padding:0.6rem 0.9rem;background:#fff3cd;border-left:3px solid #ffc107;border-radius:6px;font-size:0.82rem;color:#664d03;">
-                    <strong>Reminder:</strong> Please arrive at least 15–20 minutes before your scheduled time.
-                </div>
-                <?php elseif ($appt['status'] === 'approved'): ?>
-                <div style="margin-top:0.75rem;padding:0.6rem 0.9rem;background:#d1e7dd;border-left:3px solid #16a34a;border-radius:6px;font-size:0.82rem;color:#065f46;">
-                    You have been checked in. Your session will begin shortly.
-                </div>
-                <?php elseif ($appt['status'] === 'completed'): ?>
-                <div style="margin-top:0.75rem;padding:0.6rem 0.9rem;background:#f0f9ff;border-left:3px solid #0891b2;border-radius:6px;font-size:0.82rem;color:#0c4a6e;">
-                    Your session is complete. Thank you for visiting Recovery Spa!
-                </div>
-                <?php endif; ?>
-
-                <?php if ($pay_status === 'paid' && $appt_order_id): ?>
-                <div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #EAD8C0;">
-                    <a href="payment_success.php?order_id=<?php echo $appt_order_id; ?>" class="receipt-btn">View Receipt</a>
-                </div>
-                <?php endif; ?>
-
-            </div>
-        </div>
-    </div>
-    <?php endforeach; endif; ?>
-
-    <!-- History -->
-    <?php if (!empty($history)): ?>
-    <h2 class="section-title">Appointment History</h2>
-    <?php foreach ($history as $appt):
-        $border_colors = ['pending'=>'#C96A2C','approved'=>'#198754','assigned'=>'#0070f3','declined'=>'#dc3545','completed'=>'#0F6E56','cancelled'=>'#6b7280','refund_requested'=>'#f59e0b'];
-        $border   = $border_colors[$appt['status']] ?? '#adb5bd';
-        $orow     = fetch_order_row($conn, $appt['order_item_id'] ?? null);
-        $appt_order_id = $orow['id'];
-        $pay_method    = $orow['payment_method'];
-        $pay_status    = $orow['payment_status'];
-        $apvl_status   = $orow['approval_status'];
-        $pm_actual     = $orow['paymongo_method'];
-    ?>
-    <div class="appointment-card" style="opacity:0.88;border-left-color:<?php echo $border; ?>;">
-        <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;">
-            <img src="../uploads/services/<?php echo htmlspecialchars($appt['image']); ?>"
-                 style="width:110px;height:110px;object-fit:cover;border-radius:10px;flex-shrink:0;filter:grayscale(15%);">
-            <div style="flex:1;min-width:220px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-                    <h3 style="color:#3B2A1A;margin:0;"><?php echo htmlspecialchars($appt['service_name']); ?></h3>
-                    <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;">
-                        <span class="appointment-status status-<?php echo $appt['status']; ?>"><?php echo $status_labels_map[$appt['status']] ?? ucfirst($appt['status']); ?></span>
-                        <?php if ($pay_method): ?>
-                        <?php render_payment_badge($pay_method, $pay_status, $apvl_status, $pm_actual); ?>
-                        <span class="payment-badge" style="<?php
-                            if ($pay_status === 'paid' && $apvl_status === 'approved') echo 'background:#d1e7dd;color:#0a3622;';
-                            elseif ($pay_status === 'refunded') echo 'background:#f8d7da;color:#842029;';
-                            elseif ($pay_status === 'rejected') echo 'background:#f8d7da;color:#842029;';
-                            else echo 'background:#e2e3e5;color:#41464b;';
-                        ?>">
-                            <?php
-                            if ($pay_status === 'paid' && $apvl_status === 'approved') echo 'Paid';
-                            elseif ($pay_status === 'refunded') echo 'Refunded';
-                            elseif ($pay_status === 'rejected') echo 'Rejected';
-                            elseif ($pay_status === 'unpaid') echo 'Unpaid';
-                            else echo ucfirst($pay_status);
-                            ?>
-                        </span>
-                        <?php endif; ?>
-                    </div>
-                </div>
-
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.3rem 2rem;font-size:0.92rem;color:#444;">
-                    <p><strong>Date & Time:</strong><br><?php echo date('F d, Y — h:i A', strtotime($appt['appointment_date'])); ?></p>
-                    <p><strong>Duration:</strong><br><?php echo $appt['session_time']; ?> minutes</p>
-                    <?php render_price_cell(floatval($appt['price']), $orow); ?>
-                    <p><strong>People:</strong><br><?php echo $appt['people_count']; ?></p>
-                    <p><strong>Booked on:</strong><br><?php echo date('F d, Y', strtotime($appt['created_at'])); ?></p>
-                </div>
-
-                <?php render_therapists($appt); ?>
-
-                <!-- Meta pills: service type, rate (booked date already in grid above) -->
-                <div style="display:flex;flex-wrap:wrap;gap:0.3rem 1.5rem;margin-top:0.55rem;font-size:0.82rem;color:#6b7280;">
-                    <?php if (!empty($appt['service_type'])): ?><span><?php echo ucfirst(str_replace('_',' ',$appt['service_type'])); ?></span><?php endif; ?>
-                    <?php if (!empty($appt['rate_type'])): ?><span><?php echo ucfirst($appt['rate_type']); ?> rate</span><?php endif; ?>
-                </div>
-
-                <details class="card-section">
-                    <summary>Your Information</summary>
-                    <div class="info-grid">
-                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
-                        <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
-                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
-                        <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
-                    </div>
-                </details>
-
-                <?php if ($pay_method): ?>
-                <details class="card-section">
-                    <summary>Payment & Pricing</summary>
-                    <div class="info-grid">
-                        <span class="lbl">Original Price</span>
-                        <span class="val">₱<?php echo number_format(floatval($orow['total_amount'] ?: $appt['price']), 2); ?></span>
-                        <?php if (!empty($orow['discount_type']) && $orow['discount_type'] !== 'none'): ?>
-                        <span class="lbl">Discount</span>
-                        <span class="val"><?php echo ucfirst($orow['discount_type']); echo floatval($orow['discount_amount']) > 0 ? ' — ₱'.number_format(floatval($orow['discount_amount']),2) : ' (pending confirmation)'; ?></span>
-                        <?php endif; ?>
-                        <span class="lbl">Final Amount</span>
-                        <span class="val" style="font-weight:700;color:#15803d;">₱<?php echo number_format(floatval($orow['final_amount'] ?: ($orow['total_amount'] ?: $appt['price'])), 2); ?></span>
-                        <span class="lbl">Payment Method</span>
-                        <span class="val"><?php echo $pm_actual ? ucfirst($pm_actual) : ucfirst($pay_method); ?></span>
-                        <span class="lbl">Payment Status</span>
-                        <span class="val"><?php echo $pay_status ? ucfirst($pay_status) : '—'; ?></span>
-                    </div>
-                </details>
-                <?php endif; ?>
-
-                <?php if (!empty($appt['extra_services'])): ?>
-                <details class="card-section">
-                    <summary>Extra Services (<?php echo count($appt['extra_services']); ?>)</summary>
-                    <div style="margin-top:0.5rem;">
-                        <?php foreach ($appt['extra_services'] as $xsvc): ?>
-                        <div style="display:flex;align-items:center;gap:0.65rem;padding:0.4rem 0;border-bottom:1px solid #f3f4f6;font-size:0.87rem;">
-                            <?php if (!empty($xsvc['svc_image'])): ?>
-                            <img src="../uploads/services/<?php echo htmlspecialchars($xsvc['svc_image']); ?>"
-                                 style="width:40px;height:40px;object-fit:cover;border-radius:7px;flex-shrink:0;" alt="">
-                            <?php endif; ?>
-                            <div style="flex:1;min-width:0;">
-                                <span style="color:#3B2A1A;font-weight:600;"><?php echo htmlspecialchars($xsvc['svc_name']); ?></span>
-                                <?php if (!empty($xsvc['therapist_name'])): ?><span style="color:#9a7c68;"> · <?php echo htmlspecialchars($xsvc['therapist_name']); ?></span><?php endif; ?>
-                            </div>
-                            <span style="color:#C96A2C;font-weight:700;flex-shrink:0;">₱<?php echo number_format(floatval($xsvc['price']), 2); ?></span>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                </details>
-                <?php endif; ?>
-
-                <?php if ($appt['status'] === 'cancelled' && !empty($appt['cancel_reason'])): ?>
-                <div style="margin-top:0.65rem;padding:0.55rem 0.85rem;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;font-size:0.82rem;color:#374151;">
-                    <strong>Cancellation reason:</strong> <?php echo htmlspecialchars($appt['cancel_reason']); ?>
-                </div>
-                <?php endif; ?>
-
-                <?php if ($appt['status'] === 'refund_requested'): ?>
-                <div style="margin-top:0.65rem;padding:0.55rem 0.85rem;background:#fef9c3;border-radius:8px;border:1px solid #fde047;font-size:0.82rem;color:#854d0e;">
-                    <strong>Refund pending.</strong> Owner is reviewing your request.
-                    <?php if (!empty($appt['cancel_reason'])): ?> Reason: <?php echo htmlspecialchars($appt['cancel_reason']); ?><?php endif; ?>
-                </div>
-                <?php endif; ?>
-
-                <?php if ($appt['status'] === 'completed'):
-                    $fb = $conn->prepare("SELECT rating FROM feedback WHERE appointment_id = ? AND user_id = ?");
-                    $fb->bind_param("ii", $appt['id'], $user_id); $fb->execute();
-                    $fb_row = $fb->get_result()->fetch_assoc(); $fb->close();
-                ?>
-                <div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #EAD8C0;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
-                    <?php if ($fb_row): ?>
-                    <div class="feedback-stars">
-                        <span style="font-size:0.82rem;color:#888;">Your rating:</span>
-                        <?php for ($s = 1; $s <= 5; $s++): ?>
-                        <span style="font-size:1.15rem;color:<?php echo $s <= $fb_row['rating'] ? '#f59e0b' : '#e5e7eb'; ?>;">&#9733;</span>
-                        <?php endfor; ?>
-                    </div>
-                    <?php else: ?>
-                    <a href="feedback.php?type=appointment&id=<?php echo $appt['id']; ?>" class="feedback-btn">Leave Feedback</a>
-                    <?php endif; ?>
-                    <?php if ($pay_status === 'paid' && $appt_order_id): ?>
-                    <a href="payment_success.php?order_id=<?php echo $appt_order_id; ?>" class="receipt-btn">View Receipt</a>
-                    <?php endif; ?>
-                </div>
-                <?php endif; ?>
-
-                <?php if ($pay_status === 'paid' && $appt_order_id && $appt['status'] !== 'completed'): ?>
-                <div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #EAD8C0;">
-                    <a href="payment_success.php?order_id=<?php echo $appt_order_id; ?>" class="receipt-btn">View Receipt</a>
-                </div>
-                <?php endif; ?>
-            </div>
-        </div>
-    </div>
-    <?php endforeach; endif; ?>
-
-    <?php if (empty($appointments)): ?>
-    <div style="text-align:center;padding:3rem;background:#fff;border-radius:10px;">
-        <h2 style="color:#3B2A1A;margin-bottom:0.5rem;">No Appointments Yet</h2>
-        <p style="color:#666;margin-bottom:1.5rem;">You haven't booked any services yet.</p>
-        <a href="services.php" class="btn btn-primary">Browse Services</a>
-    </div>
-    <?php endif; ?>
-</div>
-
-<!-- ── PRODUCT ORDERS TAB ─────────────────────────────────────────────────── -->
-<div class="tab-panel" id="tab-orders">
-    <?php if (!empty($grouped_orders)):
-        $paid_count = 0; $unpaid_count = 0; $total_spent = 0;
-        foreach ($grouped_orders as $o) {
-            if (in_array($o['approval_status'] ?? '', ['approved','completed'])) $paid_count++;
-            else $unpaid_count++;
-            $total_spent += $o['total_amount'];
-        }
-    ?>
-    <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
-        <div class="stat-card"><div class="stat-number"><?php echo count($grouped_orders); ?></div><div class="stat-label">Total Orders</div></div>
-        <div class="stat-card"><div class="stat-number" style="color:#198754;"><?php echo $paid_count; ?></div><div class="stat-label">Confirmed</div></div>
-        <div class="stat-card"><div class="stat-number" style="color:#664d03;"><?php echo $unpaid_count; ?></div><div class="stat-label">Pending</div></div>
-        <div class="stat-card"><div class="stat-number" style="font-size:1.3rem;">₱<?php echo number_format($total_spent, 2); ?></div><div class="stat-label">Total Spent</div></div>
-    </div>
-
-    <?php foreach ($grouped_orders as $order):
-        $pstatus = $order['payment_status']  ?? 'unpaid';
-        $apvl    = $order['approval_status'] ?? '';
-        $method  = $order['payment_method']  ?? 'onsite';
-        if ($apvl === 'completed') { $badge_style = 'background:#0dcaf0;color:#fff;'; $badge_label = 'Completed — Item Picked Up'; }
-        elseif ($apvl === 'approved') {
-            if ($method === 'online') { $badge_style = 'background:#d1e7dd;color:#0a3622;'; $badge_label = 'Paid — Ready for Pickup'; }
-            else { $badge_style = 'background:#fff3cd;color:#664d03;'; $badge_label = 'Ready for Pickup — Pay at Shop'; }
-        } elseif ($pstatus === 'paid' && $apvl === 'pending') { $badge_style = 'background:#fff3cd;color:#664d03;'; $badge_label = 'Paid — Awaiting Approval'; }
-        elseif ($apvl === 'declined' || $pstatus === 'refunded') { $badge_style = 'background:#f8d7da;color:#842029;'; $badge_label = ($pstatus === 'refunded') ? 'Refunded' : 'Declined'; }
-        elseif ($apvl === 'cancelled') { $badge_style = 'background:#f3f4f6;color:#374151;'; $badge_label = 'Cancelled'; }
-        else { $badge_style = 'background:#fff3cd;color:#664d03;'; $badge_label = ($method === 'online') ? 'Awaiting Online Payment' : 'Unpaid — Pay at counter'; }
-        $order_border = in_array($apvl, ['approved','completed']) ? '#198754' : ($apvl === 'cancelled' ? '#6b7280' : '#C96A2C');
-        $first_image  = $order['items'][0]['product_image'] ?? null;
-        $item_count   = count($order['items']);
-        $card_title   = $item_count === 1 ? $order['items'][0]['product_name'] : $item_count . ' Products';
-    ?>
-    <div class="order-card" style="border-left-color:<?php echo $order_border; ?>;">
-        <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;">
-            <!-- Card image: first product -->
-            <?php if ($first_image): ?>
-            <img src="../uploads/products/<?php echo htmlspecialchars($first_image); ?>"
-                 style="width:110px;height:110px;object-fit:cover;border-radius:10px;flex-shrink:0;">
-            <?php else: ?>
-            <div style="width:110px;height:110px;border-radius:10px;flex-shrink:0;background:#EAD8C0;"></div>
+        <div class="ac-more">
+            <?php if ($a['status'] === 'completed'): ?>
+                <?php echo ac_rate_html($a['rating'], 'feedback.php?type=appointment&id=' . (int)$a['id']); ?>
             <?php endif; ?>
+            <span class="ac-sp"></span>
+            <?php if (($a['order']['payment_status'] ?? '') === 'paid'): ?><a class="ac-btn ac-btn-line ac-btn-sm" href="payment_success.php?order_id=<?php echo (int)$a['order']['id']; ?>">Receipt</a><?php endif; ?>
+            <?php if (ac_can_cancel($a)): ?>
+                <button type="button" class="ac-btn ac-btn-bad ac-btn-sm" data-cancel-appt="<?php echo (int)$a['id']; ?>" data-name="<?php echo ac_h($a['service_name']); ?>">Cancel</button>
+            <?php elseif (in_array($a['status'], ['completed', 'declined', 'cancelled'], true)): ?>
+                <a class="ac-btn ac-btn-dark ac-btn-sm" href="<?php echo ac_h(ac_book_again($a)); ?>">Book again</a>
+            <?php else: ?>
+                <button type="button" class="ac-btn ac-btn-line ac-btn-sm" data-chat>Change or cancel</button>
+            <?php endif; ?>
+        </div>
+    </article>
+    <?php return ob_get_clean();
+}
 
-            <div style="flex:1;min-width:220px;">
-                <!-- Header row: title + status badge -->
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-                    <div>
-                        <h3 style="color:#3B2A1A;margin:0;font-size:1rem;"><?php echo htmlspecialchars($card_title); ?></h3>
-                        <span style="font-size:0.82rem;color:#9a7c68;">Ordered <?php echo date('F d, Y h:i A', strtotime($order['order_date'])); ?></span>
-                    </div>
-                    <span id="order-status-<?php echo $order['order_id']; ?>" class="payment-badge" style="<?php echo $badge_style; ?>"><?php echo $badge_label; ?></span>
-                </div>
+$page_title = 'My Bookings';
+require_once 'header.php';
+$csrf = csrf_field();
+?>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=DM+Sans:wght@400;500;700;800&display=swap">
+<link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/account.css?v=<?php echo filemtime(__DIR__ . '/../assets/account.css'); ?>">
 
-                <!-- Quick info row -->
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.3rem 2rem;font-size:0.92rem;color:#444;margin-bottom:0.25rem;">
-                    <p><strong>Payment:</strong><br>
-                        <?php echo $method === 'online' ? 'Online' : 'Onsite'; ?>
-                        <?php
-                        $pm_icon_map = ['cash'=>'Cash','gcash'=>'GCash','maya'=>'Maya','qrph'=>'QRPH','bank'=>'Bank'];
-                        if ($method !== 'online' && isset($pm_icon_map[$method])) echo ' · ' . $pm_icon_map[$method];
-                        ?>
-                    </p>
-                    <p><strong>Total:</strong><br>
-                        <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none' && $order['discount_amount'] > 0): ?>
-                        <span style="text-decoration:line-through;color:#9ca3af;font-size:0.85rem;">₱<?php echo number_format($order['total_amount'], 2); ?></span>
-                        <span style="color:#15803d;font-weight:800;"> ₱<?php echo number_format($order['final_amount'] ?: $order['total_amount'], 2); ?></span>
-                        <?php else: ?>
-                        ₱<?php echo number_format($order['total_amount'], 2); ?>
-                        <?php endif; ?>
-                    </p>
-                </div>
+<div class="ac-page">
+<div class="ac-wrap">
+    <div class="ac-hello">
+        <div><span class="ac-eyebrow">My bookings</span><h1>Hi, <em><?php echo ac_h($first_name); ?></em></h1></div>
+        <a class="ac-btn ac-btn-gold" href="services.php">+ Book a service</a>
+    </div>
 
-                <!-- Products collapsible -->
-                <details class="card-section">
-                    <summary>Products in this order (<?php echo $item_count; ?>)</summary>
-                    <div style="margin-top:0.5rem;">
-                        <?php foreach ($order['items'] as $item): ?>
-                        <div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0;border-bottom:1px solid #f3f4f6;">
-                            <?php if ($item['product_image']): ?>
-                            <img src="../uploads/products/<?php echo htmlspecialchars($item['product_image']); ?>"
-                                 style="width:60px;height:60px;object-fit:cover;border-radius:8px;flex-shrink:0;">
-                            <?php else: ?>
-                            <div style="width:60px;height:60px;border-radius:8px;flex-shrink:0;background:#EAD8C0;"></div>
-                            <?php endif; ?>
-                            <div style="flex:1;min-width:0;">
-                                <div style="font-weight:700;color:#3B2A1A;font-size:0.9rem;"><?php echo htmlspecialchars($item['product_name']); ?></div>
-                                <div style="font-size:0.82rem;color:#9a7c68;">×<?php echo $item['quantity']; ?> &nbsp;·&nbsp; ₱<?php echo number_format($item['price'], 2); ?> each</div>
-                            </div>
-                            <div style="font-weight:700;color:#C96A2C;white-space:nowrap;font-size:0.92rem;">₱<?php echo number_format($item['subtotal'], 2); ?></div>
-                        </div>
-                        <?php endforeach; ?>
-                        <div style="display:flex;justify-content:flex-end;align-items:baseline;gap:0.4rem;padding-top:0.5rem;font-size:0.9rem;font-weight:700;color:#3B2A1A;">
-                            Total:
-                            <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none' && $order['discount_amount'] > 0): ?>
-                            <span style="text-decoration:line-through;color:#9ca3af;font-size:0.82rem;">₱<?php echo number_format($order['total_amount'], 2); ?></span>
-                            <span style="color:#15803d;">₱<?php echo number_format($order['final_amount'] ?: $order['total_amount'], 2); ?></span>
-                            <span style="font-size:0.72rem;color:#92400e;">−₱<?php echo number_format($order['discount_amount'], 2); ?> <?php echo ucfirst($order['discount_type']); ?></span>
-                            <?php else: ?>
-                            <span>₱<?php echo number_format($order['total_amount'], 2); ?></span>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                </details>
+    <?php if (!empty($_SESSION['flash_success'])): ?><div class="ac-flash ok" role="status"><?php echo ac_h($_SESSION['flash_success']); unset($_SESSION['flash_success']); ?></div><?php endif; ?>
+    <?php if (!empty($_SESSION['flash_error'])): ?><div class="ac-flash bad" role="alert"><?php echo ac_h($_SESSION['flash_error']); unset($_SESSION['flash_error']); ?></div><?php endif; ?>
+    <?php if (isset($_GET['cancelled'])): ?><div class="ac-flash ok" role="status">Your appointment has been cancelled.</div><?php endif; ?>
 
-                <!-- Your Information collapsible -->
-                <details class="card-section">
-                    <summary>Your Information</summary>
-                    <div class="info-grid">
-                        <span class="lbl">Full Name</span><span class="val"><?php echo htmlspecialchars($user_info['full_name'] ?? '—'); ?></span>
-                        <span class="lbl">Email</span><span class="val"><?php echo htmlspecialchars($user_info['email'] ?? '—'); ?></span>
-                        <span class="lbl">Phone</span><span class="val"><?php echo !empty($user_info['phone']) ? htmlspecialchars($user_info['phone']) : '—'; ?></span>
-                        <span class="lbl">Address</span><span class="val"><?php echo !empty($user_info['address']) ? htmlspecialchars($user_info['address']) : '—'; ?></span>
-                    </div>
-                </details>
-
-                <!-- Footer: cancel + feedback + receipt -->
-                <div style="margin-top:0.85rem;padding-top:0.75rem;border-top:1px solid #EAD8C0;display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center;justify-content:space-between;">
-                    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
-                        <?php if ($apvl === 'pending'): ?>
-                        <button type="button" class="cancel-btn" onclick="openCancelOrderModal(<?php echo $order['order_id']; ?>)">
-                            Cancel Order
-                        </button>
-                        <?php endif; ?>
-
-                        <?php if ($apvl === 'completed'):
-                            $fb = $conn->prepare("SELECT rating FROM feedback WHERE order_id = ? AND user_id = ? AND appointment_id IS NULL");
-                            $fb->bind_param("ii", $order['order_id'], $user_id); $fb->execute();
-                            $fb_row = $fb->get_result()->fetch_assoc(); $fb->close();
-                        ?>
-                            <?php if ($fb_row): ?>
-                            <div class="feedback-stars">
-                                <span style="font-size:0.82rem;color:#888;">Your rating:</span>
-                                <?php for ($s = 1; $s <= 5; $s++): ?><span style="font-size:1.15rem;color:<?php echo $s <= $fb_row['rating'] ? '#f59e0b' : '#e5e7eb'; ?>;">&#9733;</span><?php endfor; ?>
-                            </div>
-                            <?php else: ?>
-                            <a href="feedback.php?type=order&id=<?php echo $order['order_id']; ?>" class="feedback-btn">Leave Feedback</a>
-                            <?php endif; ?>
-                        <?php endif; ?>
-                    </div>
-
-                    <?php if ($pstatus === 'paid'): ?>
-                    <a href="payment_success.php?order_id=<?php echo $order['order_id']; ?>" class="receipt-btn">View Receipt</a>
-                    <?php endif; ?>
-                </div>
+    <?php if ($next):
+        $ts = strtotime($next['appointment_date']);
+        $pay = ac_pay($next['order']);
+        [$total] = ac_total($next);
+        $steps = ['pending' => 1, 'assigned' => 2, 'approved' => 3, 'completed' => 4];
+        $step = $steps[$next['status']] ?? 1;
+        $tips = [
+            'pending'  => "We'll confirm your booking and assign a therapist soon. You'll get a notification.",
+            'assigned' => 'Please arrive 15–20 minutes before your time.',
+            'approved' => "You're checked in. Your session will start shortly.",
+            'refund_requested' => 'Your refund request is being reviewed.',
+        ];
+    ?>
+    <article class="ac-next" aria-label="Your next visit">
+        <div class="ac-next-top">
+            <div class="ac-next-ph"><?php if ($next['image']): ?><img src="<?php echo ac_h(ac_img($next['image'], 'services')); ?>" alt="" onerror="this.remove()"><?php endif; ?></div>
+            <div>
+                <span class="ac-eyebrow">Your next visit · <?php echo ac_rel_day($ts); ?></span>
+                <h2><?php echo ac_h($next['service_name']); ?></h2>
+                <div class="ac-when"><?php echo date('l, M j', $ts) . ' · ' . date('g:i A', $ts); ?><small><?php echo ac_h(trim(ac_len($next) . ' · ' . ac_where($next), ' ·')); ?></small></div>
             </div>
         </div>
-    </div>
-    <?php endforeach; ?>
-
-    <?php else: ?>
-    <div style="text-align:center;padding:3rem;background:#fff;border-radius:10px;">
-        <h2 style="color:#3B2A1A;">No Orders Yet</h2>
-        <p style="color:#666;margin-bottom:1.5rem;">You haven't purchased any products yet.</p>
-        <a href="products.php" class="btn btn-primary">Browse Products</a>
-    </div>
+        <div class="ac-track" aria-label="Booking progress">
+            <?php foreach (['Requested', 'Confirmed', 'Checked in', 'Done'] as $i => $lbl): ?><div class="<?php echo $i < $step ? 'done' : ''; ?>"><?php echo $lbl; ?></div><?php endforeach; ?>
+        </div>
+        <?php if (!empty($tips[$next['status']])): ?><div class="ac-tip"><?php echo ac_h($tips[$next['status']]); ?></div><?php endif; ?>
+        <div class="ac-facts">
+            <div><span>Therapist</span><b><?php echo $next['therapists'] ? ac_h(implode(', ', $next['therapists'])) : 'To be assigned'; ?></b></div>
+            <div><span>Payment</span><b><?php echo $pay ? ac_h($pay[1]) : 'Pay at the spa'; ?></b></div>
+            <div><span>Total</span><b><?php echo ac_peso($total); ?></b></div>
+        </div>
+        <div class="ac-next-acts">
+            <?php if (($next['order']['payment_status'] ?? '') === 'paid'): ?><a class="ac-btn ac-btn-gold ac-btn-sm" href="payment_success.php?order_id=<?php echo (int)$next['order']['id']; ?>">View receipt</a><?php endif; ?>
+            <button type="button" class="ac-btn ac-btn-ghost ac-btn-sm" data-chat>Message us</button>
+            <?php if (ac_can_cancel($next)): ?><button type="button" class="ac-btn ac-btn-ghost ac-btn-sm" data-cancel-appt="<?php echo (int)$next['id']; ?>" data-name="<?php echo ac_h($next['service_name']); ?>">Cancel</button><?php endif; ?>
+        </div>
+    </article>
     <?php endif; ?>
-</div>
-</div>
 
-<!-- Cancel Order Modal -->
-<div class="modal-overlay" id="cancelOrderModal">
-    <div class="modal-box">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
-            <h3 style="margin:0;color:#991b1b;font-size:1.1rem;">Cancel Order</h3>
-            <button onclick="closeCancelOrderModal()" style="border:none;background:none;font-size:1.3rem;cursor:pointer;color:#9ca3af;line-height:1;">✕</button>
-        </div>
-        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.83rem;color:#991b1b;">
-            <strong>Are you sure?</strong> This action cannot be undone.
-        </div>
-        <form method="POST" id="cancelOrderForm">
-            <?php echo csrf_field(); ?>
-            <input type="hidden" name="action"   value="cancel_order">
-            <input type="hidden" name="order_id" id="cancel-order-id" value="">
-            <div style="margin-bottom:1rem;">
-                <label style="display:block;font-size:0.85rem;font-weight:600;color:#374151;margin-bottom:0.4rem;">
-                    Reason <span style="font-weight:400;color:#9ca3af;">(optional)</span>
-                </label>
-                <textarea name="cancel_reason" id="cancel-order-reason" rows="3"
-                          placeholder="e.g. Changed mind, wrong item..."
-                          style="width:100%;padding:0.6rem 0.75rem;border:1px solid #d1d5db;border-radius:8px;font-size:0.88rem;color:#374151;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea>
+    <div class="ac-tabs" role="tablist" aria-label="Bookings">
+        <button type="button" role="tab" data-tab="up" aria-selected="true">Upcoming<span><?php echo count($upcoming_rest); ?></span></button>
+        <button type="button" role="tab" data-tab="past" aria-selected="false">Past<span><?php echo count($past); ?></span></button>
+        <button type="button" role="tab" data-tab="orders" aria-selected="false">Orders<span><?php echo count($grouped_orders); ?></span></button>
+    </div>
+
+    <div class="ac-list" data-panel="up">
+        <?php if ($upcoming_rest): foreach ($upcoming_rest as $a) echo ac_appt_card($a); else: ?>
+        <div class="ac-empty"><b><?php echo $next ? 'No other upcoming bookings' : 'No upcoming bookings'; ?></b>When you book a service, it shows up here.<br><a class="ac-btn ac-btn-gold" href="services.php">Browse services</a></div>
+        <?php endif; ?>
+    </div>
+    <div class="ac-list" data-panel="past" hidden>
+        <?php if ($past): foreach ($past as $a) echo ac_appt_card($a); else: ?>
+        <div class="ac-empty"><b>No past visits yet</b>Your finished and cancelled bookings will show here.</div>
+        <?php endif; ?>
+    </div>
+    <div class="ac-list" data-panel="orders" hidden>
+        <?php if ($grouped_orders): foreach ($grouped_orders as $o):
+            $apvl = $o['approval_status'] ?? ''; $ps = $o['payment_status'] ?? 'unpaid'; $method = $o['payment_method'] ?? 'onsite';
+            if ($apvl === 'completed') $st = ['ok', 'Picked up'];
+            elseif ($apvl === 'approved') $st = $ps === 'paid' ? ['ok', 'Ready for pick-up'] : ['warn', 'Ready · pay at the spa'];
+            elseif ($apvl === 'cancelled') $st = ['grey', 'Cancelled'];
+            elseif ($apvl === 'declined' || $ps === 'refunded') $st = ['bad', $ps === 'refunded' ? 'Refunded' : 'Declined'];
+            elseif ($ps === 'paid') $st = ['warn', 'Paid · waiting for approval'];
+            else $st = ['warn', 'Waiting for approval'];
+            $pay = $ps === 'paid' ? ['ok', 'Paid · ' . ac_method($o)] : ($ps === 'refunded' ? ['grey', 'Refunded'] : ['grey', 'Pay on pick-up']);
+            $n = count($o['items']);
+            $title = $n === 1 ? $o['items'][0]['name'] : $o['items'][0]['name'] . ' + ' . ($n - 1) . ' more';
+            $qty = array_sum(array_column($o['items'], 'qty'));
+            $full = (float)$o['total_amount']; $final = (float)($o['final_amount'] ?: $full);
+        ?>
+        <article class="ac-card<?php echo in_array($apvl, ['cancelled', 'declined'], true) ? ' faded' : ''; ?>">
+            <div class="ac-main">
+                <div class="ac-th"><?php if ($o['items'][0]['image']): ?><img src="<?php echo ac_h(ac_img($o['items'][0]['image'], 'products')); ?>" alt="" loading="lazy" onerror="this.remove()"><?php endif; ?></div>
+                <div>
+                    <h3><?php echo ac_h($title); ?></h3>
+                    <div class="ac-sub">Ordered <?php echo date('M j, Y', strtotime($o['order_date'])); ?> · <?php echo $qty; ?> item<?php echo $qty > 1 ? 's' : ''; ?></div>
+                    <div class="ac-meta"><span class="ac-pill <?php echo $st[0]; ?>"><?php echo ac_h($st[1]); ?></span><span class="ac-pill <?php echo $pay[0]; ?>"><?php echo ac_h($pay[1]); ?></span></div>
+                    <?php if ($n > 1): ?><div class="ac-items"><?php foreach ($o['items'] as $it): if ($it['image']): ?><img src="<?php echo ac_h(ac_img($it['image'], 'products')); ?>" alt="<?php echo ac_h($it['name']); ?>" title="<?php echo ac_h($it['name'] . ' ×' . $it['qty']); ?>" loading="lazy" onerror="this.remove()"><?php endif; endforeach; ?></div><?php endif; ?>
+                </div>
+                <div class="ac-amt"><?php if ($final < $full): ?><s><?php echo ac_peso($full); ?></s><?php endif; ?><?php echo ac_peso($final); ?><small>Total</small></div>
             </div>
-            <div style="display:flex;gap:0.75rem;justify-content:flex-end;">
-                <button type="button" onclick="closeCancelOrderModal()" style="padding:0.55rem 1.25rem;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#374151;font-size:0.88rem;font-weight:600;cursor:pointer;">Keep Order</button>
-                <button type="submit" style="padding:0.55rem 1.25rem;border:none;border-radius:8px;background:#dc2626;color:#fff;font-size:0.88rem;font-weight:600;cursor:pointer;">Yes, Cancel Order</button>
+            <div class="ac-more">
+                <?php if ($apvl === 'pending'): ?>
+                    <button type="button" class="ac-btn ac-btn-bad ac-btn-sm" data-cancel-order="<?php echo (int)$o['order_id']; ?>" data-name="<?php echo ac_h($title); ?>">Cancel order</button>
+                <?php elseif ($apvl === 'completed'): ?>
+                    <?php echo ac_rate_html($o['rating'], 'feedback.php?type=order&id=' . (int)$o['order_id']); ?>
+                <?php endif; ?>
+                <span class="ac-sp"></span>
+                <?php if ($ps === 'paid'): ?><a class="ac-btn ac-btn-line ac-btn-sm" href="payment_success.php?order_id=<?php echo (int)$o['order_id']; ?>">Receipt</a><?php endif; ?>
             </div>
-        </form>
+        </article>
+        <?php endforeach; else: ?>
+        <div class="ac-empty"><b>No product orders yet</b>Products you buy from our shop show up here.<br><a class="ac-btn ac-btn-gold" href="products.php">Browse products</a></div>
+        <?php endif; ?>
     </div>
 </div>
+</div>
 
+<div class="ac-scrim" id="acScrim" hidden></div>
+<div class="ac-sheet" id="acSheet" role="dialog" aria-modal="true" aria-labelledby="acShT" hidden>
+    <h2 id="acShT">Cancel this booking?</h2>
+    <p id="acShName"></p>
+    <form method="POST" action="appointments.php" id="acCancelForm">
+        <?php echo $csrf; ?>
+        <input type="hidden" name="action" id="acAction" value="cancel_appointment">
+        <input type="hidden" name="appt_id" id="acApptId" value="">
+        <input type="hidden" name="order_id" id="acOrderId" value="">
+        <input type="hidden" name="cancel_reason" id="acReason" value="">
+        <div><div style="font-weight:800;margin-bottom:6px">Reason (optional)</div>
+            <div class="ac-chips" id="acChips">
+                <button type="button" aria-pressed="false">Change of schedule</button>
+                <button type="button" aria-pressed="false">Not feeling well</button>
+                <button type="button" aria-pressed="false">Booked by mistake</button>
+                <button type="button" aria-pressed="false">Other</button>
+            </div>
+        </div>
+        <div class="ac-acts">
+            <button type="button" class="ac-btn ac-btn-line" id="acKeep">Keep it</button>
+            <button type="submit" class="ac-btn ac-btn-dark" style="background:var(--ac-bad)" id="acYes">Yes, cancel</button>
+        </div>
+    </form>
+</div>
 
 <script>
-
-window.addEventListener('DOMContentLoaded', () => {
-    const savedTab = localStorage.getItem('activeTab');
-    if (savedTab) {
-        const btn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick')?.includes(savedTab));
-        if (btn) switchTab(savedTab, btn);
+(function () {
+    var panels = document.querySelectorAll('[data-panel]');
+    function show(tab) {
+        panels.forEach(function (p) { p.hidden = p.dataset.panel !== tab; });
+        document.querySelectorAll('.ac-tabs button').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === tab); });
     }
-});
-function switchTab(tabName, btn) {
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('tab-' + tabName).classList.add('active');
-    btn.classList.add('active');
-    localStorage.setItem('activeTab', tabName);
-    // Dismiss the pulse dot once the user actually views product orders
-    if (tabName === 'orders') {
-        const dot = document.getElementById('orders-notify-dot');
-        if (dot) dot.style.display = 'none';
-    }
-}
-function updateOrderStatuses() {
-    fetch('appointments.php?ajax_check_status=1').then(r => r.json()).then(data => {
-        if (!data.orders) return;
-        data.orders.forEach(order => {
-            const badge = document.getElementById('order-status-' + order.id);
-            if (!badge) return;
-            let newText = '', newStyle = '';
-            if (order.approval_status === 'completed') { newText = 'Completed — Item Picked Up'; newStyle = 'background:#0dcaf0;color:#fff;'; }
-            else if (order.approval_status === 'approved') {
-                if (order.payment_method === 'online') { newText = 'Paid — Ready for Pickup'; newStyle = 'background:#d1e7dd;color:#0a3622;'; }
-                else { newText = 'Ready for Pickup — Pay at Shop'; newStyle = 'background:#fff3cd;color:#664d03;'; }
-            } else if (order.approval_status === 'declined' || order.payment_status === 'refunded') {
-                newText = order.payment_status === 'refunded' ? 'Refunded' : 'Declined'; newStyle = 'background:#f8d7da;color:#842029;';
-            } else if (order.payment_status === 'paid' && order.approval_status === 'pending') {
-                newText = 'Paid — Awaiting Approval'; newStyle = 'background:#fff3cd;color:#664d03;';
-            } else {
-                newText = order.payment_method === 'online' ? 'Awaiting Online Payment' : 'Unpaid — Pay at counter';
-                newStyle = 'background:#fff3cd;color:#664d03;';
-            }
-            if (badge.textContent.trim() !== newText) {
-                badge.textContent = newText;
-                badge.style.cssText = newStyle + 'padding:0.3rem 0.8rem;border-radius:20px;font-size:0.82rem;font-weight:bold;';
-                const card = badge.closest('.order-card');
-                if (card) { card.style.transition = 'background-color 0.5s'; card.style.backgroundColor = '#fff9db'; setTimeout(() => card.style.backgroundColor = '#fff', 2000); }
-            }
-        });
-    }).catch(err => console.error('Real-time update error:', err));
-}
-setInterval(updateOrderStatuses, 3000);
+    document.querySelector('.ac-tabs').addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        show(b.dataset.tab);
+        history.replaceState(null, '', b.dataset.tab === 'up' ? location.pathname : '#' + b.dataset.tab);
+    });
+    if (location.hash === '#orders' || location.hash === '#past') show(location.hash.slice(1));
 
-function openCancelOrderModal(orderId) {
-    document.getElementById('cancel-order-id').value    = orderId;
-    document.getElementById('cancel-order-reason').value = '';
-    document.getElementById('cancelOrderModal').classList.add('open');
-    document.body.style.overflow = 'hidden';
-}
-function closeCancelOrderModal() {
-    document.getElementById('cancelOrderModal').classList.remove('open');
-    document.body.style.overflow = '';
-}
-document.getElementById('cancelOrderModal').addEventListener('click', function(e) { if (e.target === this) closeCancelOrderModal(); });
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeCancelOrderModal(); });
+    // Message us: opens the chat drawer from the account header when it's there.
+    document.addEventListener('click', function (e) {
+        if (!e.target.closest('[data-chat]')) return;
+        if (typeof window.openChatDrawer === 'function') window.openChatDrawer();
+        else location.href = '<?php echo BASE_URL; ?>index.php#contact';
+    });
+
+    var sheet = document.getElementById('acSheet'), scrim = document.getElementById('acScrim'), last = null;
+    function open(kind, id, name) {
+        last = document.activeElement;
+        document.getElementById('acAction').value = kind === 'order' ? 'cancel_order' : 'cancel_appointment';
+        document.getElementById('acApptId').value = kind === 'order' ? '' : id;
+        document.getElementById('acOrderId').value = kind === 'order' ? id : '';
+        document.getElementById('acReason').value = '';
+        document.getElementById('acShT').textContent = kind === 'order' ? 'Cancel this order?' : 'Cancel this booking?';
+        document.getElementById('acShName').innerHTML = '<b></b>';
+        document.querySelector('#acShName b').textContent = name;
+        document.getElementById('acYes').textContent = kind === 'order' ? 'Yes, cancel order' : 'Yes, cancel';
+        document.querySelectorAll('#acChips button').forEach(function (c) { c.setAttribute('aria-pressed', 'false'); });
+        sheet.hidden = false; scrim.hidden = false;
+        document.getElementById('acKeep').focus();
+    }
+    function close() { sheet.hidden = true; scrim.hidden = true; if (last) last.focus(); }
+    document.addEventListener('click', function (e) {
+        var a = e.target.closest('[data-cancel-appt]'); if (a) { open('appt', a.dataset.cancelAppt, a.dataset.name); return; }
+        var o = e.target.closest('[data-cancel-order]'); if (o) open('order', o.dataset.cancelOrder, o.dataset.name);
+    });
+    document.getElementById('acKeep').addEventListener('click', close);
+    scrim.addEventListener('click', close);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !sheet.hidden) close(); });
+    document.getElementById('acChips').addEventListener('click', function (e) {
+        var c = e.target.closest('button'); if (!c) return;
+        this.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', x === c); });
+        document.getElementById('acReason').value = c.textContent;
+    });
+})();
 </script>
-
 <?php require_once __DIR__ . '/../footer.php'; ?>

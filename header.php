@@ -114,6 +114,7 @@ if (isset($_SESSION['user_id'])) {
     }
     <?php if (!empty($page_extra_css)) echo $page_extra_css; ?>
     </style>
+    <link rel="stylesheet" href="assets/header.css?v=<?php echo filemtime(__DIR__ . '/assets/header.css'); ?>">
 </head>
 <body>
 
@@ -137,7 +138,8 @@ if (isset($_SESSION['user_id'])) {
         <a href="user/profile.php">👤 My Profile</a>
         <a href="user/auth.php?logout=1" style="color:#ff8a8a;">🚪 Logout</a>
         <?php else: ?>
-        <a href="user/auth.php">🔑 Login / Register</a>
+        <a href="user/auth.php">🔑 Login</a>
+        <a href="user/auth.php?register=1" class="hd-drawer-register">✨ Register</a>
         <?php endif; ?>
     </div>
 </div>
@@ -172,18 +174,18 @@ if (isset($_SESSION['user_id'])) {
                 <span></span><span></span><span></span>
             </button>
             <?php if (isset($_SESSION['user_id'])): ?>
-                <a href="user/appointments.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">My Appointments</a>
-                <a href="user/profile.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">My Profile</a>
+                <a href="user/appointments.php" class="hd-link">My Appointments</a>
+                <a href="user/profile.php" class="hd-link">My Profile</a>
                 <a href="user/cart.php" class="cart-icon-btn" title="View Cart" aria-label="View cart, <?php echo $cart_count; ?> items">
                     🛒
                     <span class="cart-icon-badge" id="cartIconBadge" style="<?php echo $cart_count === 0 ? 'display:none' : ''; ?>">
                         <?php echo $cart_count > 99 ? '99+' : $cart_count; ?>
                     </span>
                 </a>
-                <a href="user/auth.php?logout=1" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">Logout</a>
+                <a href="user/auth.php?logout=1" class="hd-link hd-logout">Logout</a>
             <?php else: ?>
-                <a href="user/auth.php" style="font-size:1rem;color:#FAF3E8;text-decoration:none;font-weight:600;">Login</a>
-                <a href="user/auth.php?register=1" class="hero-btn-primary" style="padding:0.5rem 1.1rem;font-size:0.9rem;">Register</a>
+                <a href="user/auth.php" class="hd-login">Login</a>
+                <a href="user/auth.php?register=1" class="hd-register">Register</a>
             <?php endif; ?>
         </div>
     </nav>
