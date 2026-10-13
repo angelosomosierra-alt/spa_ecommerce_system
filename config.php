@@ -205,41 +205,6 @@ unset($_is_hostinger);
 define('UPLOAD_DIR_SERVICES', __DIR__ . '/uploads/services/');
 define('UPLOAD_DIR_PRODUCTS', __DIR__ . '/uploads/products/');
 
-// Hostinger's git deploy dereferences any symlink sitting at uploads/services or
-// uploads/products, baking it back into a plain directory on every single push —
-// so the symlink to persistent storage (set up over SSH, outside the deploy path)
-// doesn't survive a second deploy. Re-create it here, on the first request after
-// each deploy, merging in anything written to the plain directory in the meantime
-// so nothing uploaded in that gap is lost.
-if (strpos($host, 'hostingersite.com') !== false) {
-    foreach (['services' => UPLOAD_DIR_SERVICES, 'products' => UPLOAD_DIR_PRODUCTS] as $_sub => $_live) {
-        $_live = rtrim($_live, '/');
-        if (is_link($_live)) {
-            continue;
-        }
-        $_persistent = '/home/u655952816/persistent_uploads/' . $_sub;
-        if (!is_dir($_persistent)) {
-            @mkdir($_persistent, 0755, true);
-        }
-        if (is_dir($_live)) {
-            foreach (scandir($_live) as $_f) {
-                if ($_f === '.' || $_f === '..' || $_f === '.gitkeep') continue;
-                $_dst = $_persistent . '/' . $_f;
-                if (!file_exists($_dst)) {
-                    @rename($_live . '/' . $_f, $_dst);
-                } else {
-                    @unlink($_live . '/' . $_f);
-                }
-            }
-            @rmdir($_live);
-        } elseif (file_exists($_live)) {
-            @unlink($_live);
-        }
-        @symlink($_persistent, $_live);
-    }
-    unset($_sub, $_live, $_persistent, $_f, $_dst);
-}
-
 // ─── SESSION ──────────────────────────────────────────────────────────────────
 // SameSite=None + Secure keeps the cookie alive after PayMongo cross-site redirect.
 // On non-HTTPS (local dev / HTTP), SameSite falls back to Lax so the cookie is not dropped.
