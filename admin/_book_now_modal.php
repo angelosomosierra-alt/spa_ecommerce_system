@@ -130,6 +130,7 @@
 .bn-pk .none { color:var(--red); }
 .bn-auto { font-size:0.62rem; font-weight:800; color:var(--green); letter-spacing:0.04em; }
 .bn-wait { font-size:0.7rem; font-weight:700; color:var(--amber); background:var(--amber-dim); border-radius:6px; padding:2px 7px; }
+.bn-menu-div { font-size:0.66rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:var(--gray); padding:0.45rem 0.6rem 0.2rem; border-top:1px solid var(--border2); margin-top:0.2rem; }
 .bn-menu { position:absolute; top:calc(100% + 4px); left:0; z-index:20; background:#fff; border:1px solid var(--border2); border-radius:9px; box-shadow:var(--shadow-lg); min-width:230px; max-height:300px; overflow-y:auto; padding:4px; display:flex; flex-direction:column; }
 .bn-menu button { display:flex; justify-content:space-between; gap:0.6rem; text-align:left; border:0; background:none; padding:0.45rem 0.55rem; border-radius:6px; cursor:pointer; font-size:0.78rem; color:var(--brown); }
 .bn-menu button:hover:not(:disabled) { background:var(--bg3); }
@@ -214,9 +215,10 @@
     function thFree(id, t, d, busy) { return !busy.some(function (b) { return b.t.indexOf(id) >= 0 && ov(t, d, b.s, b.d); }); }
     function roomFree(id, t, d, busy) { return !busy.some(function (b) { return b.r === id && ov(t, d, b.s, b.d); }); }
     // MED: a Doctor / Nurse service has no therapist -- it only needs a room.
-    var MED = -1;
+    var MED = -1, LATER = -2; // LATER: booked now, therapist chosen in Appointments
     function pickTh(it, t, d, busy, rot, prefer) {
         if (it.svc.med) return MED;
+        if (it.lockT === 'later') return LATER;
         if (it.lockT) return thFree(it.lockT, t, d, busy) ? it.lockT : null;
         var order = rot.slice();
         if (prefer && order.indexOf(prefer) >= 0) { order.splice(order.indexOf(prefer), 1); order.unshift(prefer); }
@@ -253,6 +255,12 @@
                     if (!rm) continue;
                     found = { s: t, t: th, r: rm };
                 }
+                // Nobody free (or trained) today: still book it with a room and
+                // time, therapist to be chosen later in Appointments.
+                for (var t2 = earliest; t2 <= DAY_END - d && !found; t2 += 5) {
+                    var rm2 = pickRoom(it, t2, d, busy, lastR[gi]);
+                    if (rm2) found = { s: t2, t: LATER, r: rm2, auto: true };
+                }
                 if (!found) found = { s: earliest, t: null, r: null };
                 found.waited = found.s - earliest; wait += found.waited;
                 if (k === 0) firstWait += found.waited;
@@ -261,7 +269,7 @@
                     busy.push({ r: found.r, t: [found.t], s: found.s, d: d });
                     var ri = rot.indexOf(found.t); if (ri >= 0) { rot.splice(ri, 1); rot.push(found.t); }
                 }
-                guestEnd[gi] = found.s + d; if (found.t !== MED) lastTh[gi] = found.t; lastR[gi] = found.r;
+                guestEnd[gi] = found.s + d; if (found.t > 0) lastTh[gi] = found.t; lastR[gi] = found.r;
             });
         }
         return { lines: out, wait: wait, firstWait: firstWait, end: Math.max.apply(null, guestEnd.concat([FIRST])) };
@@ -377,11 +385,24 @@
     }
     function thMenu(it, L) {
         var busy = busyExcept(L), d = it.dur.m;
+        // Who can actually take it comes first (free, then busy / on break),
+        // in rotation order; then not trained; then off duty. The #number is
+        // still each therapist's place in today's rotation.
+        var rows = D.therapists.map(function (t, i) {
+            var st = !t.on ? ['off', 'Off duty', 3] : (it.svc.qual.indexOf(t.id) < 0 ? ['off', 'Not trained', 2] :
+                     (t.brk ? ['busy', 'On break', 1] : (thFree(t.id, L.s, d, busy) ? ['free', 'Free', 0] : ['busy', 'Busy then', 1])));
+            return { t: t, i: i, st: st };
+        });
+        rows.sort(function (a, b) { return a.st[2] - b.st[2] || a.i - b.i; });
+        var shownDivider = false;
         return '<div class="bn-menu"><button type="button" data-pt="' + it.key + ',auto"><span>Auto (next in rotation)</span></button>' +
-            D.therapists.map(function (t, i) {
-                var st = !t.on ? ['off', 'Off duty'] : (it.svc.qual.indexOf(t.id) < 0 ? ['off', 'Not trained'] :
-                         (t.brk ? ['busy', 'On break'] : (thFree(t.id, L.s, d, busy) ? ['free', 'Free'] : ['busy', 'Busy then'])));
-                return '<button type="button" data-pt="' + it.key + ',' + t.id + '"' + (st[0] === 'off' ? ' disabled' : '') + '><span>' + (t.on ? '#' + (i + 1) + ' ' : '') + esc(t.name) + '</span><span class="s ' + st[0] + '">' + st[1] + '</span></button>';
+            '<button type="button" data-pt="' + it.key + ',later"><span>Assign later</span><span class="s busy">Choose in Appointments</span></button>' +
+            rows.map(function (r) {
+                var t = r.t, st = r.st, div = '';
+                // Not trained but on duty: can still be picked on purpose.
+                var anyway = st[1] === 'Not trained' && t.on;
+                if (st[2] >= 2 && !shownDivider) { shownDivider = true; div = '<div class="bn-menu-div">Not trained or off duty</div>'; }
+                return div + '<button type="button" data-pt="' + it.key + ',' + t.id + '"' + (st[0] === 'off' && !anyway ? ' disabled' : '') + (anyway ? ' title="Not trained for this service — pick anyway"' : '') + '><span>' + (t.on ? '#' + (r.i + 1) + ' ' : '') + esc(t.name) + '</span><span class="s ' + (anyway ? 'busy' : st[0]) + '">' + (anyway ? 'Not trained · pick anyway' : st[1]) + '</span></button>';
             }).join('') + '</div>';
     }
     function roomMenu(it, L) {
@@ -408,9 +429,10 @@
                     '<span class="bn-assign">' +
                         (it.svc.med
                             ? '<span class="bn-pick"><button class="bn-pk" type="button" disabled title="Done by a doctor or nurse — no therapist needed"><span class="l">Done by</span>Doctor / Nurse</button></span>'
-                            : '<span class="bn-pick"><button class="bn-pk' + (it.lockT ? ' locked' : '') + '" type="button" data-open="t' + it.key + '"><span class="l">Therapist</span>' + (th ? esc(th.name) : '<span class="none">none free</span>') + (it.lockT ? ' 🔒' : '') + '</button>' + (S.open === 't' + it.key ? thMenu(it, L) : '') + '</span>') +
+                            : '<span class="bn-pick"><button class="bn-pk' + (it.lockT ? ' locked' : '') + '" type="button" data-open="t' + it.key + '"><span class="l">Therapist</span>' + (th ? esc(th.name) + (it.svc.qual.indexOf(L.t) < 0 ? ' <span class="none">(not trained)</span>' : '') : (L.t === LATER ? '<span class="none">Assign later</span>' : '<span class="none">none free</span>')) + (it.lockT ? ' 🔒' : '') + '</button>' + (S.open === 't' + it.key ? thMenu(it, L) : '') + '</span>') +
                         '<span class="bn-pick"><button class="bn-pk' + (it.lockR ? ' locked' : '') + '" type="button" data-open="r' + it.key + '"><span class="l">Room</span>' + (rm ? esc(rm.name) : '<span class="none">none free</span>') + (it.lockR ? ' 🔒' : '') + '</button>' + (S.open === 'r' + it.key ? roomMenu(it, L) : '') + '</span>' +
                         (!it.lockT && !it.lockR && (th || it.svc.med) && rm ? '<span class="bn-auto">AUTO</span>' : '') +
+                        (L.t === LATER && L.auto ? '<span class="bn-wait">No trained therapist free · assign later</span>' : '') +
                         (L.waited > 0 ? '<span class="bn-wait">⚠ waits ' + L.waited + ' min</span>' : '') +
                     '</span></div>';
             }).join('') : '<div class="bn-empty">No services yet. Pick from the list on the left.</div>';
@@ -433,7 +455,7 @@
                 renderAll();
             };
         });
-        P.querySelectorAll('[data-pt]').forEach(function (b) { b.onclick = function () { var a = b.dataset.pt.split(','); findItem(+a[0]).lockT = a[1] === 'auto' ? null : +a[1]; S.open = null; renderAll(); }; });
+        P.querySelectorAll('[data-pt]').forEach(function (b) { b.onclick = function () { var a = b.dataset.pt.split(','); findItem(+a[0]).lockT = a[1] === 'auto' ? null : (a[1] === 'later' ? 'later' : +a[1]); S.open = null; renderAll(); }; });
         P.querySelectorAll('[data-pr]').forEach(function (b) { b.onclick = function () { var a = b.dataset.pr.split(','); findItem(+a[0]).lockR = a[1] === 'auto' ? null : +a[1]; S.open = null; renderAll(); }; });
     }
     document.addEventListener('click', function (e) {
@@ -502,7 +524,8 @@
             return {
                 name: g.name.trim(),
                 items: (PLAN.lines[gi] || []).map(function (L) {
-                    return { service_id: L.item.svc.id, duration_id: L.item.dur.id, therapist_id: L.t === MED ? 0 : L.t, resource_id: L.r, start: L.s };
+                    return { service_id: L.item.svc.id, duration_id: L.item.dur.id, therapist_id: L.t > 0 ? L.t : 0, resource_id: L.r, start: L.s,
+                             override: L.t > 0 && L.item.svc.qual.indexOf(L.t) < 0 };
                 })
             };
         });

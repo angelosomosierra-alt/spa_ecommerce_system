@@ -35,7 +35,7 @@ function book_now_ensure_schema(mysqli $conn): void {
 
 // Discounts a group payment can apply, per guest. Same rates as check-in.
 if (!defined('BOOK_NOW_DISCOUNTS')) {
-    define('BOOK_NOW_DISCOUNTS', ['none' => 0, 'senior' => 20, 'pwd' => 20, 'employee' => 50]);
+    define('BOOK_NOW_DISCOUNTS', ['none' => 0, 'senior' => 20, 'pwd' => 20, 'employee' => STAFF_DISCOUNT_PCT]);
 }
 
 if (!function_exists('book_now_resource_type')) {
@@ -206,6 +206,9 @@ function book_now_save(mysqli $conn, array $guests): array {
             $service_id   = (int)($it['service_id'] ?? 0);
             $duration_id  = isset($it['duration_id']) && $it['duration_id'] !== null && $it['duration_id'] !== '' ? (int)$it['duration_id'] : null;
             $therapist_id = (int)($it['therapist_id'] ?? 0);
+            // override: the receptionist knowingly picked a therapist who isn't
+            // trained for this service ("pick anyway"). 0 = assign later.
+            $override     = !empty($it['override']);
             $resource_id  = (int)($it['resource_id'] ?? 0);
             $start        = (int)($it['start'] ?? -1);
 
@@ -235,10 +238,11 @@ function book_now_save(mysqli $conn, array $guests): array {
 
             // Doctor / Nurse service: no therapist at all (see service_is_medical()).
             $is_med = service_is_medical($conn, $service_id);
-            if ($is_med) {
+            $later  = !$is_med && $therapist_id <= 0; // booked now, therapist chosen in Appointments
+            if ($is_med || $later) {
                 $therapist_id = 0;
             } else {
-                if (!in_array($therapist_id, get_booking_qualified_therapist_ids($conn, $service_id), true)) {
+                if (!$override && !in_array($therapist_id, get_booking_qualified_therapist_ids($conn, $service_id), true)) {
                     return ['ok' => false, 'message' => "The therapist picked for $gname's {$svc['name']} isn't trained for it."];
                 }
                 $td = $conn->prepare("SELECT t.full_name FROM therapists t JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE() WHERE t.id = ? AND (ta.time_out IS NULL OR ta.time_out = '')");
@@ -252,7 +256,7 @@ function book_now_save(mysqli $conn, array $guests): array {
             $room = $rs->get_result()->fetch_assoc(); $rs->close();
             if (!$room) return ['ok' => false, 'message' => "Pick a room for $gname's {$svc['name']}."];
 
-            if (!$is_med && !book_now_therapist_free($conn, $therapist_id, $start_dt, $minutes)) {
+            if ($therapist_id > 0 && !book_now_therapist_free($conn, $therapist_id, $start_dt, $minutes)) {
                 return ['ok' => false, 'message' => "{$th['full_name']} was just booked at " . date('g:i A', strtotime($start_dt)) . ". Reopen Book Now to re-plan."];
             }
             if (!is_resource_available($resource_id, $start_dt, $minutes)) {
@@ -358,8 +362,8 @@ if (!function_exists('book_now_group_bill')) {
  */
 function book_now_group_bill(mysqli $conn, string $group): array {
     $stmt = $conn->prepare("
-        SELECT o.id AS order_id, o.customer_name, o.total_amount, a.id AS appt_id, a.appointment_date,
-               s.name AS service_name,
+        SELECT o.id AS order_id, o.customer_name, o.total_amount, (o.payment_status = 'paid') AS order_paid,
+               a.id AS appt_id, a.appointment_date, s.name AS service_name,
                (SELECT COALESCE(SUM(aes.charged_price), 0) FROM appointment_extra_services aes
                 WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras
         FROM orders o
@@ -367,8 +371,8 @@ function book_now_group_bill(mysqli $conn, string $group): array {
         JOIN appointments a ON a.order_item_id = oi.id
         JOIN services s ON s.id = a.service_id
         WHERE o.booking_group = ?
-          AND o.payment_status != 'paid'
           AND a.status NOT IN ('cancelled', 'declined', 'refunded')
+        HAVING order_paid = 0 OR extras > 0   -- a paid guest's later add-ons still count
         ORDER BY o.customer_name, a.appointment_date
     ");
     $stmt->bind_param("s", $group); $stmt->execute();
@@ -378,8 +382,9 @@ function book_now_group_bill(mysqli $conn, string $group): array {
     foreach ($rows as $r) {
         $name = $r['customer_name'] ?: 'Guest';
         if (!isset($guests[$name])) $guests[$name] = ['name' => $name, 'services' => [], 'subtotal' => 0.0];
-        $amt = (float)$r['total_amount'] + (float)$r['extras'];
-        $guests[$name]['services'][] = ['name' => $r['service_name'] . ((float)$r['extras'] > 0 ? ' + extras' : ''), 'amount' => $amt];
+        $amt = ($r['order_paid'] ? 0.0 : (float)$r['total_amount']) + (float)$r['extras'];
+        $label = $r['order_paid'] ? $r['service_name'] . ' — added services' : $r['service_name'] . ((float)$r['extras'] > 0 ? ' + added services' : '');
+        $guests[$name]['services'][] = ['name' => $label, 'amount' => $amt];
         $guests[$name]['subtotal'] += $amt;
     }
     return array_values($guests);
@@ -400,32 +405,35 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
     if (!$discounts) return ['ok' => false, 'message' => 'Choose at least one guest to pay for.'];
 
     $stmt = $conn->prepare("
-        SELECT o.id AS order_id, o.customer_name, o.total_amount, a.id AS appt_id,
+        SELECT o.id AS order_id, o.customer_name, o.total_amount, (o.payment_status = 'paid') AS order_paid, a.id AS appt_id,
                (SELECT COALESCE(SUM(aes.charged_price), 0) FROM appointment_extra_services aes
                 WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras
         FROM orders o
         JOIN order_items oi ON oi.order_id = o.id
         JOIN appointments a ON a.order_item_id = oi.id
         WHERE o.booking_group = ?
-          AND o.payment_status != 'paid'
           AND a.status NOT IN ('cancelled', 'declined', 'refunded')
+        HAVING order_paid = 0 OR extras > 0
     ");
     $stmt->bind_param("s", $group); $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
     // Normalise each guest's discount to [type, percent, fixed ₱].
-    $spec = [];
+    $spec = []; $vlabel = [];
     foreach ($discounts as $name => $d) {
         $type = is_array($d) ? (string)($d['type'] ?? 'none') : (string)$d;
         $val  = is_array($d) ? max(0.0, (float)($d['value'] ?? 0)) : 0.0;
         $vt   = is_array($d) && ($d['vtype'] ?? '') === 'percent' ? 'percent' : 'fixed';
+        $vlabel[$name] = is_array($d) && $type === 'voucher' ? (string)($d['label'] ?? '') : '';
         if (array_key_exists($type, BOOK_NOW_DISCOUNTS))      $spec[$name] = [$type, BOOK_NOW_DISCOUNTS[$type], 0.0];
         elseif ($type === 'celebration' && $val > 0)          $spec[$name] = ['celebration', min(100.0, $val), 0.0];
         elseif ($type === 'voucher' && $val > 0)              $spec[$name] = $vt === 'percent' ? ['voucher', min(100.0, $val), 0.0] : ['voucher', 0.0, $val];
         else                                                  $spec[$name] = ['none', 0, 0.0];
     }
     $guest_base = [];
-    foreach ($rows as $r) { $n = $r['customer_name'] ?: 'Guest'; $guest_base[$n] = ($guest_base[$n] ?? 0) + (float)$r['total_amount'] + (float)$r['extras']; }
+    // An order already paid only owes its unpaid add-ons; its own payment
+    // and discount stay as recorded (no new discount on those add-ons).
+    foreach ($rows as $r) { if ($r['order_paid']) continue; $n = $r['customer_name'] ?: 'Guest'; $guest_base[$n] = ($guest_base[$n] ?? 0) + (float)$r['total_amount'] + (float)$r['extras']; }
 
     $paid_total = 0.0; $paid_guests = [];
     $conn->begin_transaction();
@@ -434,6 +442,13 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
             $name = $r['customer_name'] ?: 'Guest';
             if (!isset($spec[$name])) continue;
             [$dkey, $pct, $fixed] = $spec[$name];
+            if ($r['order_paid']) {
+                $ue = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");
+                $ue->bind_param("si", $method, $r['appt_id']);
+                $ue->execute(); $ue->close();
+                $paid_total += (float)$r['extras']; $paid_guests[$name] = true;
+                continue;
+            }
             $base = (float)$r['total_amount'] + (float)$r['extras'];
             $disc = $fixed > 0
                 ? round(min($fixed, $guest_base[$name]) * ($guest_base[$name] > 0 ? $base / $guest_base[$name] : 0), 2)
@@ -444,6 +459,7 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
             $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
             $u->bind_param("ssddi", $method, $dkey, $disc, $final, $r['order_id']);
             $u->execute(); $u->close();
+            if ($dkey === 'voucher') save_voucher_label($conn, (int)$r['order_id'], $vlabel[$name] ?? '');
 
             if ((float)$r['extras'] > 0) {
                 $ue = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");

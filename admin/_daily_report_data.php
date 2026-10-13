@@ -8,6 +8,8 @@
  * Sets all data arrays, summary totals, payment-mix, and analysis variables.
  */
 
+ensure_upgrade_voucher_columns($conn);
+
 // ── Idempotent DB migrations ──────────────────────────────────────────────────
 (function() use ($conn) {
     $appt_cols = [];
@@ -174,7 +176,7 @@ $_s = $conn->prepare("
         o.paymongo_method,
         o.discount_type,
         o.discount_amount,
-        o.completion_discount_type,
+        o.completion_discount_type, o.voucher_label,
         IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
         o.final_amount,
         o.total_amount,
@@ -232,7 +234,7 @@ $_pk = $conn->prepare("
            a.id AS appt_id, a.charged_price AS pkg_price, a.advance_payment AS pkg_dp, a.advance_payment_date AS pkg_dp_date,
            a.duration_minutes, a.rate_type, sd.session_count, sd.regular_price AS sd_regular, sd.promo_price AS sd_promo,
            o.id AS order_id, o.slip_number, o.customer_name, o.payment_method, o.paymongo_method,
-           o.discount_type, o.discount_amount, o.completion_discount_type,
+           o.discount_type, o.discount_amount, o.completion_discount_type, o.voucher_label,
            IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
            o.final_amount, o.total_amount, o.created_at,
            oi.id AS oi_id, oi.service_id, COALESCE(s.name, '[Deleted Service]') AS service_name, s.price AS svc_price
@@ -265,6 +267,7 @@ foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_p) {
         'payment_method' => $_p['payment_method'], 'paymongo_method' => $_p['paymongo_method'],
         'discount_type' => $_p['discount_type'], 'discount_amount' => $_disc,
         'completion_discount_type' => $_p['completion_discount_type'], 'completion_discount_amount' => $_cdisc,
+        'voucher_label' => $_p['voucher_label'] ?? null,
         'final_amount' => $_p['final_amount'], 'total_amount' => $_p['total_amount'], 'created_at' => $_p['created_at'],
         'oi_id' => $_p['oi_id'], 'service_id' => $_p['service_id'],
         'service_name' => $_p['service_name'] . ' — Session ' . $_n . ' of ' . $_N,
@@ -301,6 +304,7 @@ if (!empty($appt_ids)) {
         JOIN services  s ON s.id  = aes.service_id
         LEFT JOIN therapists t ON t.id = aes.therapist_id
         WHERE aes.appointment_id IN ($in_placeholders)
+          AND aes.is_upgrade_topup = 0  -- the upgraded main service already has the full price
         ORDER BY aes.appointment_id ASC, aes.created_at ASC
     ");
     $_a->bind_param($in_types, ...$appt_ids);

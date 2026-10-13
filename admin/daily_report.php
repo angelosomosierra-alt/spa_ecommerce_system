@@ -5,6 +5,7 @@
  * Access: all admins (owner, marketing, IT, cashier/receptionist)
  */
 require_once '../config.php';
+ensure_upgrade_voucher_columns($conn);
 redirect_if_not_admin();
 
 $msg      = '';
@@ -538,6 +539,109 @@ $conn->query("
       AND d.net_sales <> ROUND(a.charged_price - (d.comm_30 + d.comm_20 + d.comm_15 + d.comm_25), 2)
 ");
 
+// ── FILL-IN: commissions saved as ₱0 because the therapist had no rate yet ──
+// Commission is stored when an appointment (or added service) is completed.
+// If the therapist's rate for that service was only set afterwards, ₱0 was
+// stored. While the day is unlocked, fill those in with the same formula
+// completion uses (promo-price base, booking discount, people handled,
+// hotel / influencer rates). Only ₱0 commissions are touched, never Doctor /
+// Nurse services or bundles (synced separately below), and a Spreadsheet
+// row is refreshed only if nobody hand-edited it.
+if (!($LOCK_FEATURE_ENABLED && !empty($rpt['is_locked']))) {
+    $_rate = function (int $tid, int $sid) use ($conn) {
+        $q = $conn->prepare("SELECT commission_percent, influencer_flat_rate FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+        $q->bind_param("ii", $tid, $sid); $q->execute();
+        $r = $q->get_result()->fetch_assoc(); $q->close();
+        return $r ?: null;
+    };
+    $_refresh_row = function (string $where_col, int $src_id, int $sid, int $tid, float $comm, float $charged) use ($conn, $report_date) {
+        $b = route_commission_to_buckets($conn, $sid, $tid, $comm);
+        $net = $charged - $comm;
+        $u = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET comm_30=?, comm_20=?, comm_15=?, comm_25=?, net_sales=?
+                              WHERE report_date=? AND $where_col=? AND created_by_name='import' AND (updated_by_name IS NULL OR updated_by_name='')");
+        $u->bind_param("dddddsi", $b['comm_30'], $b['comm_20'], $b['comm_15'], $b['comm_25'], $net, $report_date, $src_id);
+        $u->execute(); $u->close();
+    };
+    $_pkg_from_f = PKG_SPLIT_FROM;
+
+    // Main services
+    $_fq = $conn->prepare("
+        SELECT a.id AS appt_id, a.service_id, a.service_duration_id, a.rate_type, a.charged_price,
+               GREATEST(1, IFNULL(a.people_count, 1)) AS people,
+               s.price AS svc_price, IFNULL(o.total_amount, 0) AS order_total, IFNULL(o.discount_amount, 0) AS order_disc
+        FROM appointments a
+        JOIN services s ON s.id = a.service_id
+        LEFT JOIN service_durations sd ON sd.id = a.service_duration_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders o ON o.id = oi.order_id
+        WHERE a.status = 'completed' AND DATE(a.appointment_date) = ?
+          AND NOT (IFNULL(sd.session_count, 1) > 1)
+          AND EXISTS (SELECT 1 FROM appointment_therapists t WHERE t.appointment_id = a.id AND t.therapist_id IS NOT NULL AND IFNULL(t.commission, 0) <= 0)");
+    $_fq->bind_param("s", $report_date); $_fq->execute();
+    foreach ($_fq->get_result()->fetch_all(MYSQLI_ASSOC) as $_a) {
+        $sid = (int)$_a['service_id'];
+        if (service_is_medical($conn, $sid) || get_package_components($conn, $sid)) continue;
+        $infl = ($_a['rate_type'] ?? '') === 'influencer';
+        if (!$infl && (float)$_a['charged_price'] <= 0) continue;
+        $changed = false;
+        $ths = $conn->query("SELECT id, therapist_id, IFNULL(people_handled,1) AS ph, IFNULL(commission,0) AS commission FROM appointment_therapists WHERE appointment_id = " . (int)$_a['appt_id'] . " AND therapist_id IS NOT NULL")->fetch_all(MYSQLI_ASSOC);
+        foreach ($ths as $t) {
+            if ((float)$t['commission'] > 0) continue;
+            $r = $_rate((int)$t['therapist_id'], $sid); if (!$r) continue;
+            $ph = max(1, (int)$t['ph']); $pct = (float)$r['commission_percent'];
+            if ($infl) {
+                $c = (float)$r['influencer_flat_rate'] * $ph;
+            } elseif (($_a['rate_type'] ?? '') === 'hotel') {
+                $c = round((float)$_a['svc_price'] * $ph * $pct / 100, 2);
+            } else {
+                $frac = (float)$_a['order_total'] > 0 ? (float)$_a['order_disc'] / (float)$_a['order_total'] : 0.0;
+                $base = get_commission_base_price($sid, $_a['service_duration_id'] ? (int)$_a['service_duration_id'] : null, (float)$_a['svc_price']);
+                $c = round($base * (1 - $frac) * $ph * $pct / 100, 2);
+            }
+            if ($c <= 0) continue;
+            $u = $conn->prepare("UPDATE appointment_therapists SET commission = ? WHERE id = ?");
+            $u->bind_param("di", $c, $t['id']); $u->execute(); $u->close();
+            $changed = true;
+        }
+        if ($changed && !$infl) {
+            $tot = (float)$conn->query("SELECT IFNULL(SUM(commission),0) FROM appointment_therapists WHERE appointment_id = " . (int)$_a['appt_id'])->fetch_row()[0];
+            $first = (int)$conn->query("SELECT IFNULL(MIN(therapist_id),0) FROM appointment_therapists WHERE appointment_id = " . (int)$_a['appt_id'])->fetch_row()[0];
+            $_refresh_row('source_appointment_id', (int)$_a['appt_id'], $sid, $first, $tot, (float)$_a['charged_price']);
+        }
+    }
+    $_fq->close();
+
+    // Added services
+    $_fq = $conn->prepare("
+        SELECT es.id, es.service_id, es.therapist_id, es.charged_price, es.rate_type, es.service_duration_id,
+               GREATEST(1, IFNULL(es.total_sessions, 1)) AS sessions, s.price AS svc_price, sd.regular_price AS dur_regular
+        FROM appointment_extra_services es
+        JOIN appointments a ON a.id = es.appointment_id
+        JOIN services s ON s.id = es.service_id
+        LEFT JOIN service_durations sd ON sd.id = es.service_duration_id
+        WHERE a.status = 'completed' AND DATE(a.appointment_date) = ?
+          AND es.therapist_id IS NOT NULL AND IFNULL(es.commission, 0) <= 0");
+    $_fq->bind_param("s", $report_date); $_fq->execute();
+    foreach ($_fq->get_result()->fetch_all(MYSQLI_ASSOC) as $_e) {
+        $sid = (int)$_e['service_id'];
+        if (service_is_medical($conn, $sid) || get_package_components($conn, $sid)) continue;
+        $infl = ($_e['rate_type'] ?? '') === 'influencer';
+        if (!$infl && (float)$_e['charged_price'] <= 0) continue;
+        $r = $_rate((int)$_e['therapist_id'], $sid); if (!$r) continue;
+        $pct = (float)$r['commission_percent']; $n = (int)$_e['sessions'];
+        $reg = (float)($_e['dur_regular'] ?: $_e['svc_price']);
+        if ($infl)                                   $c = (float)$r['influencer_flat_rate'];
+        elseif (($_e['rate_type'] ?? '') === 'hotel') $c = round($reg * $pct / 100, 2);
+        else $c = round(get_commission_base_price($sid, $_e['service_duration_id'] ? (int)$_e['service_duration_id'] : null, $reg) * $pct / 100, 2);
+        $c = round($c / $n, 2); // a multi-session add-on is one row per session
+        if ($c <= 0) continue;
+        $u = $conn->prepare("UPDATE appointment_extra_services SET commission = ? WHERE id = ?");
+        $u->bind_param("di", $c, $_e['id']); $u->execute(); $u->close();
+        if (!$infl) $_refresh_row('source_extra_service_id', (int)$_e['id'], $sid, (int)$_e['therapist_id'], $c, (float)$_e['charged_price']);
+    }
+    $_fq->close();
+}
+
 // Re-link bookings whose duration option was deleted by an older Services
 // save, so Promo Price / commission base read the right option again.
 relink_orphan_service_durations($conn);
@@ -715,7 +819,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
             o.payment_method,
             o.discount_type,
             o.discount_amount,
-            o.completion_discount_type,
+            o.completion_discount_type, o.voucher_label,
             IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
             oi.service_id,
             COALESCE(s.name, '[Deleted Service]') AS service_name,
@@ -837,7 +941,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
                       . ($_sess_ct > 1 ? ' × ' . $_sess_ct . ' sessions' : '') . ')';
         }
         $stylist     = $ap['therapists']    ?? '';
-        $remarks     = '';
+        $remarks     = !empty($ap['voucher_label']) ? 'Voucher: ' . $ap['voucher_label'] : '';
         $is_refund   = 0;
         $created_by  = 'import';
         $row_order_insert = $row_order ?? 0; // placeholder; anchored to own id below if this starts a new cluster
@@ -882,7 +986,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
                IFNULL(aps.commission, 0) AS commission, aps.therapist_id, t.full_name AS therapist_name,
                a.charged_price, a.duration_minutes, sd.session_count, sd.regular_price, sd.promo_price,
                o.id AS order_id, o.customer_name, o.slip_number, o.payment_method, o.paymongo_method,
-               o.discount_type, o.discount_amount, o.completion_discount_type,
+               o.discount_type, o.discount_amount, o.completion_discount_type, o.voucher_label,
                IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
                oi.service_id, COALESCE(s.name, '[Deleted Service]') AS service_name, s.price AS svc_price
         FROM appointment_sessions aps
@@ -929,6 +1033,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $time_out = (int)$r['duration_minutes'] > 0 ? date('h:i A', strtotime($start) + (int)$r['duration_minutes'] * 60) : '';
         $svc   = $r['service_name'] . ' (' . (int)$r['duration_minutes'] . ' mins × ' . $N . ' sessions) — Session ' . $n . ' of ' . $N;
         $remarks = $n > 1 ? 'Paid in advance (package)' : ($N > 2 ? 'Sessions 2–' . $N . ' paid in advance' : 'Session 2 paid in advance');
+        if (!empty($r['voucher_label'])) $remarks .= ($remarks ? ' · ' : '') . 'Voucher: ' . $r['voucher_label'];
         $mop   = $mop_map[strtolower(trim($r['paymongo_method'] ?: ($r['payment_method'] ?? '')))] ?? 'Cash';
         $order_id = (int)$r['order_id']; $slip = $r['slip_number'] ?? '';
         $row_order = $ss_resolve_cluster_row_order($order_id, $slip);
@@ -978,6 +1083,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         WHERE DATE(a.appointment_date) = ?
           AND a.status = 'completed'
           AND es.payment_status = 'paid'
+          AND es.is_upgrade_topup = 0
         ORDER BY a.appointment_date ASC, es.id ASC
     ");
     $esq->bind_param("s", $report_date); $esq->execute();
@@ -1170,7 +1276,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         <th style="text-align:right;">20%<br>Commission Fee</th>
                         <th style="text-align:right;">15%<br>Commission Fee</th>
                         <th style="text-align:right;">25%<br>Commission Fee</th>
-                        <th style="text-align:right;">50% Disc.<br>for Staff</th>
+                        <th style="text-align:right;"><?php echo STAFF_DISCOUNT_PCT; ?>% Disc.<br>for Staff</th>
                         <th style="text-align:right;">Net Sales</th>
                         <th style="text-align:center;">Mode of<br>Payment</th>
                         <th>Remarks</th>
@@ -1237,6 +1343,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                         <?php echo $is_same_order ? '<span style="color:var(--gray);">↳ same</span>' : htmlspecialchars($row['customer_name']); ?>
                     </td>
                     <td><?php echo htmlspecialchars($row['service_name']); ?>
+                        <?php if (!empty($row['voucher_label'])): ?><br><span style="font-size:0.66rem;font-weight:700;background:var(--gold-dim,#FDF3E0);color:var(--brown-md,#6B4C30);padding:1px 6px;border-radius:8px;">Voucher: <?php echo htmlspecialchars($row['voucher_label']); ?></span><?php endif; ?>
                         <?php if (service_is_medical($conn, (int)$row['service_id'])): ?><br><span style="display:inline-block;font-size:0.62rem;font-weight:700;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 6px;border-radius:8px;margin-top:2px;white-space:nowrap;" title="Done by a doctor or nurse. Commission is handled by accounting, so it is left blank here and Net Sales is the full price.">Doctor / Nurse · commission by accounting</span><?php endif; ?>
                     </td>
                     <td style="color:var(--gray);white-space:nowrap;"><?php echo htmlspecialchars($row['therapists'] ?? '—'); ?></td>
@@ -2199,7 +2306,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 20%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 15%</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:70px;">Comm 25%</th>
-                    <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc 50% Staff</th>
+                    <th style="padding:0.4rem 0.5rem;text-align:right;width:78px;">Disc <?php echo STAFF_DISCOUNT_PCT; ?>% Staff</th>
                     <th style="padding:0.4rem 0.5rem;text-align:right;width:82px;background:rgba(255,255,255,0.15);">Net Sales</th>
                     <th style="padding:0.4rem 0.5rem;width:95px;">Mode of Pay</th>
                     <th style="padding:0.4rem 0.5rem;min-width:130px;">Remarks</th>
@@ -2478,7 +2585,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
         if (!sfRp) return;
         var rp     = parseFloat(sfRp.value) || 0;
         var pwdAmt = (sfPwdSel && sfPwdSel.value === 'valid') ? rp * 0.20 : 0;
-        var stfAmt = (sfStfSel && sfStfSel.value === 'valid') ? rp * 0.50 : 0;
+        var stfAmt = (sfStfSel && sfStfSel.value === 'valid') ? rp * <?php echo STAFF_DISCOUNT_PCT; ?> / 100 : 0;
         if (sfPwdHid) sfPwdHid.value = pwdAmt.toFixed(2);
         if (sfStfHid) sfStfHid.value = stfAmt.toFixed(2);
 

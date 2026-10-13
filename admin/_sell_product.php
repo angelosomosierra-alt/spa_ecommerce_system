@@ -80,7 +80,7 @@ function sell_product_save(mysqli $conn, array $items, string $customer, string 
         // Same discount rules as walkin.php's product sale.
         $discount = 0.0;
         if ($discount_type === 'senior' || $discount_type === 'pwd') $discount = round($total * 0.20, 2);
-        elseif ($discount_type === 'employee')                        $discount = round($total * 0.50, 2);
+        elseif ($discount_type === 'employee')                        $discount = round($total * STAFF_DISCOUNT_PCT / 100, 2);
         elseif ($discount_type === 'voucher')                         $discount = min($voucher_amount, $total);
         $final = max(0.0, $total - $discount);
 
