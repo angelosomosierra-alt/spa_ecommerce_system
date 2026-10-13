@@ -199,11 +199,74 @@ $host          = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $_is_hostinger = strpos($host, 'hostingersite.com') !== false;
 $folder        = $_is_hostinger ? '/' : (getenv('APP_SUBFOLDER') ?: '/spa_ecommerce_system/');
 define('BASE_URL', $protocol . '://' . $host . $folder);
-unset($_is_hostinger);
 
 // ─── UPLOAD DIRECTORIES ───────────────────────────────────────────────────────
 define('UPLOAD_DIR_SERVICES', __DIR__ . '/uploads/services/');
 define('UPLOAD_DIR_PRODUCTS', __DIR__ . '/uploads/products/');
+
+// ─── PERSISTENT UPLOAD STORAGE (Hostinger) ────────────────────────────────────
+// Hostinger's git deploy wipes any file in uploads/services or uploads/products
+// that isn't tracked in git, on every single push -- it used to silently delete
+// every photo uploaded directly on the live site this way. A copy of each upload
+// is also kept in ~/persistent_uploads/, outside the deploy path, so a deploy can
+// never reach it. restore_persistent_uploads() below copies anything missing
+// back into the live folder on the first request after a deploy.
+// (An earlier attempt used PHP's symlink() for this; that function is disabled
+// on this hosting plan and took the whole site down, so this copies files
+// instead -- copy()/scandir()/touch() are never in a host's disable_functions list.)
+define('PERSISTENT_DIR_SERVICES', '/home/u655952816/persistent_uploads/services/');
+define('PERSISTENT_DIR_PRODUCTS', '/home/u655952816/persistent_uploads/products/');
+define('PERSISTENT_UPLOADS_ENABLED', $_is_hostinger);
+unset($_is_hostinger);
+
+function mirror_upload_to_persistent(string $uploadDir, string $persistentDir, string $filename): void {
+    if (!PERSISTENT_UPLOADS_ENABLED) {
+        return;
+    }
+    if (!is_dir($persistentDir)) {
+        @mkdir($persistentDir, 0755, true);
+    }
+    @copy($uploadDir . $filename, $persistentDir . $filename);
+}
+
+function remove_persistent_upload(string $persistentDir, string $filename): void {
+    if (!PERSISTENT_UPLOADS_ENABLED) {
+        return;
+    }
+    $path = $persistentDir . $filename;
+    if (is_file($path)) {
+        @unlink($path);
+    }
+}
+
+function restore_persistent_uploads(string $uploadDir, string $persistentDir): void {
+    if (!PERSISTENT_UPLOADS_ENABLED) {
+        return;
+    }
+    $sentinel = $uploadDir . '.restored';
+    if (file_exists($sentinel)) {
+        return;
+    }
+    if (is_dir($persistentDir)) {
+        $files = @scandir($persistentDir);
+        if (is_array($files)) {
+            foreach ($files as $f) {
+                if ($f === '.' || $f === '..') {
+                    continue;
+                }
+                $src = $persistentDir . $f;
+                $dst = $uploadDir . $f;
+                if (is_file($src) && !file_exists($dst)) {
+                    @copy($src, $dst);
+                }
+            }
+        }
+    }
+    @touch($sentinel);
+}
+
+restore_persistent_uploads(UPLOAD_DIR_SERVICES, PERSISTENT_DIR_SERVICES);
+restore_persistent_uploads(UPLOAD_DIR_PRODUCTS, PERSISTENT_DIR_PRODUCTS);
 
 // ─── SESSION ──────────────────────────────────────────────────────────────────
 // SameSite=None + Secure keeps the cookie alive after PayMongo cross-site redirect.

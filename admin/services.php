@@ -230,11 +230,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         $target_path = UPLOAD_DIR_SERVICES . $image_name;
 
         if (move_uploaded_file($file_tmp, $target_path)) {
+            mirror_upload_to_persistent(UPLOAD_DIR_SERVICES, PERSISTENT_DIR_SERVICES, $image_name);
             if ($id) {
                 $check = $conn->query("SELECT image FROM services WHERE id = $id");
                 $old = $check->fetch_assoc();
                 if ($old && $old['image'] && file_exists(UPLOAD_DIR_SERVICES . $old['image'])) {
                     unlink(UPLOAD_DIR_SERVICES . $old['image']);
+                    remove_persistent_upload(PERSISTENT_DIR_SERVICES, $old['image']);
                 }
             }
         } else {

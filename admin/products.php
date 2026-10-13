@@ -125,6 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                 $upload_path = UPLOAD_DIR_PRODUCTS . $image_name;
 
                 if (move_uploaded_file($file['tmp_name'], $upload_path)) {
+                    mirror_upload_to_persistent(UPLOAD_DIR_PRODUCTS, PERSISTENT_DIR_PRODUCTS, $image_name);
                     if ($id) {
                         $stmt = $conn->prepare("SELECT image FROM products WHERE id = ?");
                         $stmt->bind_param("i", $id);
@@ -133,6 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                         $stmt->close();
                         if ($old && $old['image'] && file_exists(UPLOAD_DIR_PRODUCTS . $old['image'])) {
                             unlink(UPLOAD_DIR_PRODUCTS . $old['image']);
+                            remove_persistent_upload(PERSISTENT_DIR_PRODUCTS, $old['image']);
                         }
                     }
                 } else {
