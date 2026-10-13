@@ -164,9 +164,11 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
 .hm-list { display: grid; gap: 18px; }
 @media (min-width: 760px) { .hm-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .hm-card { background: #fff; border: 2px solid #E8D9C3; border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; }
-.hm-pic { position: relative; aspect-ratio: 16 / 10; background: #F3EADC; }
-.hm-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.hm-nopic { width: 100%; height: 100%; display: grid; place-items: center; align-content: center; gap: 0.3rem; color: var(--brown-md); font-weight: 700; text-align: center; font-size: 2.4rem;
+/* Every photo box has a fixed shape; the photo is cropped to fill it, so a
+   tall upload can't make one card bigger than its neighbours. */
+.hm-pic { position: relative; aspect-ratio: 16 / 10; background: #F3EADC; overflow: hidden; min-height: 0; }
+.hm-pic img { position: absolute; inset: 0; width: 100% !important; height: 100% !important; max-width: none; object-fit: cover; display: block; }
+.hm-nopic { position: absolute; inset: 0; width: 100%; height: 100%; display: grid; place-items: center; align-content: center; gap: 0.3rem; color: var(--brown-md); font-weight: 700; text-align: center; font-size: 2.4rem;
     background: repeating-linear-gradient(45deg, #F3EADC, #F3EADC 14px, #F6EBD3 14px, #F6EBD3 28px); }
 .hm-nopic small { font-size: 0.95rem; }
 .hm-ribbon { position: absolute; top: 12px; left: 12px; background: #9C3F17; color: #fff; font-weight: 700; font-size: 0.95rem; border-radius: 10px; padding: 3px 12px; }
