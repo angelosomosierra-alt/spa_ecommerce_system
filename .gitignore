@@ -4,6 +4,16 @@
 !.env.example
 config.local.php
 
+# User-uploaded content — lives only on the live server (symlinked on
+# production to ~/persistent_uploads/, outside the deploy path, so a deploy
+# never wipes a photo staff uploaded directly). Never committed: these
+# change constantly and a fresh checkout doesn't need the current catalog's
+# images to run.
+/uploads/services/*
+/uploads/products/*
+!/uploads/services/.gitkeep
+!/uploads/products/.gitkeep
+
 # Composer
 /vendor/
 
