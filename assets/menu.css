@@ -11,6 +11,7 @@
   --sv-body: 'DM Sans', 'Segoe UI', Tahoma, sans-serif;
 }
 [class^="sv-"], [class^="sv-"] *, [class*=" sv-"] { box-sizing: border-box; }
+.sv-page [hidden], .sv-sheet[hidden], .sv-scrim[hidden], .sv-totop[hidden], .sv-clear[hidden] { display: none !important; }
 /* responsive.css sets overflow-x:hidden on html/body for phones, which turns
    body into a scroll box and stops the category bar from sticking. clip
    hides sideways overflow the same way without breaking sticky. */
