@@ -285,11 +285,15 @@
             // Sorted by time, with a heading each time the day changes
             // (Earlier days first, flagged overdue, then Today, Tomorrow, …).
             list.sort(function (x, y) { return x.when < y.when ? -1 : x.when > y.when ? 1 : 0; });
-            // Guests booked together (same booking group) share one card per
-            // lane and day, placed at the group's earliest time.
+            // Bookings made together (same booking group) share one card per
+            // lane and day, placed at the group's earliest time -- whether
+            // that's several guests (group_size > 1) or one guest who picked
+            // more than one service at once (group_size == 1, several
+            // services under the one name: groupCard merges those further,
+            // see its own name-bucketing below).
             var items = [], byGroup = {};
             list.forEach(function (a) {
-                if (a.group && a.group_size > 1) {
+                if (a.group) {
                     var key = a.group + '|' + String(a.when).slice(0, 10);
                     if (!byGroup[key]) { byGroup[key] = { group: true, when: a.when, list: [] }; items.push(byGroup[key]); }
                     byGroup[key].list.push(a);
@@ -304,11 +308,16 @@
             return '<section class="dk-lane"><h2><span>' + L.l + '<small>' + L.s + '</small></span><span class="dk-count">' + list.length + '</span></h2>' +
                 (list.length ? html : '<div class="dk-empty">Nothing here.</div>') + '</section>';
         }).join('');
-        $('dkBoard').querySelectorAll('.dk-card[data-id], .dk-grow[data-id]').forEach(function (c) {
-            c.onclick = function (e) { if (e.target.closest('[data-go]')) return; e.stopPropagation(); openDrawer(+c.dataset.id); };
+        $('dkBoard').querySelectorAll('.dk-card[data-id], .dk-grow[data-id], .dk-srow[data-id]').forEach(function (c) {
+            c.onclick = function (e) { if (e.target.closest('[data-go], [data-rmwait]')) return; e.stopPropagation(); openDrawer(+c.dataset.id); };
             c.onkeydown = function (e) { if (e.key === 'Enter' && e.target === c) openDrawer(+c.dataset.id); };
         });
         $('dkBoard').querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { openDrawer(+b.dataset.id, b.dataset.go); }; });
+        $('dkBoard').querySelectorAll('[data-rmwait]').forEach(function (b) { b.onclick = function (e) {
+            e.stopPropagation();
+            if (!confirm('Remove this service? The customer no longer wants it.')) return;
+            post('cancel', +b.dataset.rmwait, { cancel_reason: 'Removed before it started' });
+        }; });
     }
     function payPill(a) {
         var b = a.bill;
@@ -330,23 +339,47 @@
             (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + a.id + '">' + na.l + '</button>' : '') +
             '</article>';
     }
+    // Checked in == status 'approved' or later (see stepIdx in renderDrawer).
+    // A service that hasn't reached that yet is still waiting its turn.
+    function isCheckedInOrDone(a) { return a.status === 'approved' || a.status === 'completed'; }
     function groupCard(list, stripe) {
         var names = list.map(function (a) { return a.name; }).filter(function (n, i, arr) { return arr.indexOf(n) === i; });
         var due = list.reduce(function (s, a) { return s + (a.rate_type === 'influencer' ? 0 : a.bill.due); }, 0);
         var times = list.map(function (a) { return tm(a.when); }).filter(function (t, i, arr) { return arr.indexOf(t) === i; });
+        // One guest, several services booked together (Scenario 1): bucket
+        // by name, earliest service in a bucket is "main" and drives that
+        // bucket's own check-in/status; the rest list as waiting their turn,
+        // removable with ✕ until started, opened individually once it's
+        // their turn (same drawer every other booking uses).
+        var buckets = [], byName = {};
+        list.forEach(function (a) {
+            if (!byName[a.name]) { byName[a.name] = { name: a.name, items: [] }; buckets.push(byName[a.name]); }
+            byName[a.name].items.push(a);
+        });
         return '<article class="dk-card dk-gcard" style="--stripe:' + stripe + '">' +
             '<div class="dk-ctop"><span class="dk-time">' + times.join(' · ') + '</span><span class="dk-pill p-src">' + esc(list[0].source) + '</span></div>' +
-            '<div class="dk-name">' + esc(names.join(' & ')) + ' <span class="dk-meta">· group of ' + list[0].group_size + '</span></div>' +
-            '<div class="dk-grows">' + list.map(function (a) {
-                var na = nextAction(a), th = therNames(a);
-                var pkg = isPkg(a) ? ' <span class="dk-pill p-pkg">' + a.sessions.filter(function (s) { return s.status === 'completed'; }).length + '/' + a.sessions.length + '</span>' : '';
-                return '<div class="dk-grow' + (S.open === a.id ? ' sel' : '') + '" data-id="' + a.id + '" tabindex="0">' +
-                    '<div class="dk-grow-top"><b>' + esc(a.name) + '</b>' + (times.length > 1 ? '<span class="dk-meta">' + tm(a.when) + '</span>' : '') + '</div>' +
-                    '<div class="dk-svcs"><span>' + esc(a.service.name) + ' · ' + a.service.mins + 'm' + pkg + '</span>' +
-                        a.addons.map(function (x) { return '<span>+ ' + (x.topup ? 'upgrade difference' : esc(x.name)) + '</span>'; }).join('') + '</div>' +
-                    '<div class="dk-meta">' + (th ? esc(th) : (a.service.med ? 'Doctor / Nurse' : '<span class="dk-pill p-need">No therapist yet</span>')) + (a.resource_id && RES[a.resource_id] ? ' · ' + esc(RES[a.resource_id].name) : '') + '</div>' +
-                    '<div class="dk-pills">' + payPill(a) + '</div>' +
-                    (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + a.id + '">' + na.l + '</button>' : '') +
+            '<div class="dk-name">' + esc(names.join(' & ')) + (list[0].group_size > 1 ? ' <span class="dk-meta">· group of ' + list[0].group_size + '</span>' : '') + '</div>' +
+            '<div class="dk-grows">' + buckets.map(function (bk) {
+                bk.items.sort(function (x, y) { return x.when < y.when ? -1 : x.when > y.when ? 1 : 0; });
+                var main = bk.items[0], waiting = bk.items.slice(1);
+                var na = nextAction(main), th = therNames(main);
+                var pkg = isPkg(main) ? ' <span class="dk-pill p-pkg">' + main.sessions.filter(function (s) { return s.status === 'completed'; }).length + '/' + main.sessions.length + '</span>' : '';
+                return '<div class="dk-grow' + (S.open === main.id ? ' sel' : '') + '" data-id="' + main.id + '" tabindex="0">' +
+                    '<div class="dk-grow-top"><b>' + esc(main.name) + '</b>' + (times.length > 1 ? '<span class="dk-meta">' + tm(main.when) + '</span>' : '') + '</div>' +
+                    '<div class="dk-svcs"><span>' + esc(main.service.name) + ' · ' + main.service.mins + 'm' + pkg + (waiting.length ? ' <small>· main service</small>' : '') + '</span>' +
+                        main.addons.map(function (x) { return '<span>+ ' + (x.topup ? 'upgrade difference' : esc(x.name)) + '</span>'; }).join('') + '</div>' +
+                    '<div class="dk-meta">' + (th ? esc(th) : (main.service.med ? 'Doctor / Nurse' : '<span class="dk-pill p-need">No therapist yet</span>')) + (main.resource_id && RES[main.resource_id] ? ' · ' + esc(RES[main.resource_id].name) : '') + '</div>' +
+                    '<div class="dk-pills">' + payPill(main) + '</div>' +
+                    (waiting.length ? '<div class="dk-sess">' + waiting.map(function (w) {
+                        var done = w.status === 'completed', inSession = isCheckedInOrDone(w) && !done;
+                        var label = done ? 'Done' : inSession ? 'In session' : 'Waiting its turn';
+                        var dot = done ? 'done' : inSession ? 'in' : '';
+                        return '<div class="dk-srow" data-id="' + w.id + '" tabindex="0"><span class="dk-dot ' + dot + '">' + (done ? '✓' : inSession ? '●' : '') + '</span>' +
+                            '<span>' + esc(w.service.name) + ' — ' + peso(w.service.price) + '<small>' + label + '</small></span>' +
+                            (!isCheckedInOrDone(w) ? '<button type="button" class="dk-btn danger" data-rmwait="' + w.id + '">✕</button>' : '') +
+                            '</div>';
+                    }).join('') + '</div>' : '') +
+                    (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + main.id + '">' + na.l + '</button>' : '') +
                     '</div>';
             }).join('') + '</div>' +
             (due > 0 ? '<div class="dk-meta">Group still to collect: <b>' + peso(due) + '</b> · use <b>Pay for group</b> in any guest\'s panel</div>' : '') +

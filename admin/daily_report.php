@@ -437,15 +437,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 $conn->query("ALTER TABLE daily_report_spreadsheet_rows ADD COLUMN IF NOT EXISTS order_id INT NULL DEFAULT NULL");
 
 /**
- * Resolve the row_order for a new import row belonging to $order_id / $slip_no.
- * Checks order_id first (same real order), then slip_no (separate orders,
- * same hand-typed slip) — whichever already has a row today wins. Returns
- * null when this starts a brand-new cluster; the caller then anchors
- * row_order to this new row's own id, so a cluster's position in the list
- * reflects when it was FIRST detected as completed (the only time imports
- * ever run), not booking time or time-in/time-out.
+ * Resolve the row_order for a new import row belonging to $order_id / $slip_no,
+ * or — one guest, several services booked together in one visit (Scenario 1:
+ * each its own order, no shared order_id/slip_no) — $booking_group +
+ * $customer_name. Checks order_id first (same real order), then slip_no
+ * (separate orders, same hand-typed slip), then booking_group+customer_name
+ * (separate orders from the same Book Now visit) — whichever already has a
+ * row today wins. Returns null when this starts a brand-new cluster; the
+ * caller then anchors row_order to this new row's own id, so a cluster's
+ * position in the list reflects when it was FIRST detected as completed (the
+ * only time imports ever run), not booking time or time-in/time-out.
  */
-$ss_resolve_cluster_row_order = function($order_id, $slip_no) use ($conn, $report_date) {
+$ss_resolve_cluster_row_order = function($order_id, $slip_no, $booking_group = '', $customer_name = '') use ($conn, $report_date) {
     $slip_no = trim((string)$slip_no);
     if ($order_id > 0) {
         $q = $conn->prepare("SELECT row_order FROM daily_report_spreadsheet_rows WHERE report_date=? AND order_id=? ORDER BY id ASC LIMIT 1");
@@ -458,6 +461,22 @@ $ss_resolve_cluster_row_order = function($order_id, $slip_no) use ($conn, $repor
     if ($slip_no !== '') {
         $q = $conn->prepare("SELECT row_order FROM daily_report_spreadsheet_rows WHERE report_date=? AND slip_no=? ORDER BY id ASC LIMIT 1");
         $q->bind_param("ss", $report_date, $slip_no);
+        $q->execute();
+        $row = $q->get_result()->fetch_assoc();
+        $q->close();
+        if ($row) return (int)$row['row_order'];
+    }
+    $booking_group = trim((string)$booking_group);
+    $customer_name = trim((string)$customer_name);
+    if ($booking_group !== '' && $customer_name !== '') {
+        $q = $conn->prepare("
+            SELECT d.row_order
+            FROM daily_report_spreadsheet_rows d
+            JOIN orders o2 ON o2.id = d.order_id
+            WHERE d.report_date = ? AND o2.booking_group = ? AND d.client_name = ?
+            ORDER BY d.id ASC LIMIT 1
+        ");
+        $q->bind_param("sss", $report_date, $booking_group, $customer_name);
         $q->execute();
         $row = $q->get_result()->fetch_assoc();
         $q->close();
@@ -517,6 +536,26 @@ $ss_recluster2 = $conn->prepare("
 $ss_recluster2->bind_param("ss", $report_date, $report_date);
 $ss_recluster2->execute();
 $ss_recluster2->close();
+// Pass 3: merge further by (booking_group, client_name) -- one guest, several
+// services booked together in one visit (Scenario 1), each its own order with
+// no shared order_id or slip_no, so passes 1-2 never catch these. Runs after
+// pass 2 so a whole order_id/slip_no cluster moves together as one unit.
+$ss_recluster3 = $conn->prepare("
+    UPDATE daily_report_spreadsheet_rows d
+    JOIN orders o3 ON o3.id = d.order_id
+    JOIN (
+        SELECT o4.booking_group AS bg, d2.client_name AS cn, MIN(d2.row_order) AS anchor
+        FROM daily_report_spreadsheet_rows d2
+        JOIN orders o4 ON o4.id = d2.order_id
+        WHERE d2.report_date = ? AND o4.booking_group IS NOT NULL AND o4.booking_group != ''
+        GROUP BY o4.booking_group, d2.client_name
+    ) anc ON anc.bg = o3.booking_group AND anc.cn = d.client_name
+    SET d.row_order = anc.anchor
+    WHERE d.report_date = ? AND o3.booking_group IS NOT NULL AND o3.booking_group != ''
+");
+$ss_recluster3->bind_param("ss", $report_date, $report_date);
+$ss_recluster3->execute();
+$ss_recluster3->close();
 
 // ── BACKFILL: correct Net Sales on rows imported before commit adbcae0 ────────
 // Before that fix, a main service row's net_sales was computed as
@@ -815,6 +854,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
             MIN(at2.therapist_id)     AS appt_therapist_id,
             o.id                      AS order_id,
             o.customer_name,
+            o.booking_group,
             o.slip_number,
             o.payment_method,
             o.discount_type,
@@ -922,12 +962,14 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $mode_of_pay = $mop_map[$raw_mop] ?? 'Cash';
         $order_id    = (int)($ap['order_id'] ?? 0);
         $slip_no     = $ap['slip_number']   ?? '';
+        $client_name = $ap['customer_name'] ?? '';
         // Join this order's/slip's existing cluster if one was already started
         // today (e.g. a sibling service on the same order or slip, or this
-        // row's own extra services imported on an earlier page load); null
+        // row's own extra services imported on an earlier page load), or —
+        // one guest, several services booked together in one visit, each its
+        // own order (Scenario 1) — this guest's booking_group cluster; null
         // means this is the first row for it, anchored to its own id below.
-        $row_order   = $ss_resolve_cluster_row_order($order_id, $slip_no);
-        $client_name = $ap['customer_name'] ?? '';
+        $row_order   = $ss_resolve_cluster_row_order($order_id, $slip_no, $ap['booking_group'] ?? '', $client_name);
         $svc_name    = $ap['service_name']  ?? '';
         // Duration Variants — freeze the booked duration (and, for a
         // session-count package, the session count) into the spreadsheet
