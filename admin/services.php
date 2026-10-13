@@ -1219,7 +1219,7 @@ $_al_peso = function ($n) { return '₱' . number_format($n, floor($n) == $n ? 0
 <div class="al-page">
     <div class="al-top">
         <div><h2>All services</h2><p id="alSub"><?php echo $_al_active; ?> active · <?php echo count($_al_cat_names); ?> categories</p></div>
-        <?php if (!isset($_GET['action'])): ?><a href="services.php?action=add" class="btn btn-primary btn-sm">+ Add New Service</a><?php endif; ?>
+        <span style="display:inline-flex;gap:8px;flex-wrap:wrap;"><?php if (current_admin_role() === 'owner'): ?><a href="service_photos.php" class="btn btn-secondary btn-sm">Bulk photos</a><?php endif; ?><?php if (!isset($_GET['action'])): ?><a href="services.php?action=add" class="btn btn-primary btn-sm">+ Add New Service</a><?php endif; ?></span>
     </div>
 
     <div class="al-tiles" role="group" aria-label="Quick view">
