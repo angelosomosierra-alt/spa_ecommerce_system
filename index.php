@@ -108,13 +108,21 @@ if ($best_services) {
     }
 }
 
-// Open / closed line for the hero (Mon–Fri 9AM–10PM, Sat–Sun 9AM–12AM).
-$home_weekend = (int)date('N') >= 6;
-$home_hour    = (int)date('G');
-$home_open    = $home_hour >= 9 && $home_hour < ($home_weekend ? 24 : 22);
-$home_status  = $home_open
-    ? 'Open now · until ' . ($home_weekend ? '12:00 midnight' : '10:00 PM')
-    : 'Closed now · opens at 9:00 AM';
+// Operating hours — one list used by the hero status line and the
+// Operating Hours box in Contact, so the two always match.
+// [label, first weekday (1=Mon), last weekday, opens, closes (24 = midnight), shown text]
+$home_hours = [
+    ['Monday – Friday',   1, 5, 9, 22, '9:00 AM – 10:00 PM'],
+    ['Saturday – Sunday', 6, 7, 9, 24, '9:00 AM – 12:00 AM'],
+];
+$home_dow   = (int)date('N');
+$home_hour  = (int)date('G');
+$home_today = null;
+foreach ($home_hours as $hh) {
+    if ($home_dow >= $hh[1] && $home_dow <= $hh[2]) { $home_today = $hh; break; }
+}
+$home_open   = $home_today && $home_hour >= $home_today[3] && $home_hour < $home_today[4];
+$home_status = ($home_open ? 'Open now' : 'Closed now') . ($home_today ? ' · Today ' . $home_today[5] : '');
 
 $page_title  = 'Recovery Iloilo — Home';
 $active_page = 'home';
@@ -131,6 +139,7 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
 .hm-hero { background: linear-gradient(160deg, #5A3C26, #3B2A1A 75%); color: #FAF3E8; padding: 3rem 0 3.25rem; }
 .hm-hero .spa-container { max-width: 900px; }
 .hm-eyebrow { font-size: 0.85rem; letter-spacing: 0.2em; text-transform: uppercase; color: #E8C87A; font-weight: 700; margin-bottom: 0.75rem; }
+.hm-hero h1 em { color: #E8C87A; }
 .hm-hero h1 { font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: clamp(2.3rem, 7vw, 3.6rem); line-height: 1.08; color: #FAF3E8; margin-bottom: 0.9rem; }
 .hm-hero p { font-size: 1.15rem; color: #F0E2CF; line-height: 1.6; max-width: 34ch; margin-bottom: 1.5rem; }
 [class^="hm-"], [class^="hm-"] *, .hm-btn { box-sizing: border-box; }
@@ -265,7 +274,7 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
 <section class="hm-hero" id="index">
     <div class="spa-container">
         <p class="hm-eyebrow">Welcome to Recovery Iloilo</p>
-        <h1>Relax. We'll take good care of you.</h1>
+        <h1>Skin <em>and</em> Wellness</h1>
         <p>Gentle wellness massage and spa care in Iloilo City.</p>
         <a href="<?php echo $home_base; ?>services.php" class="hm-btn hm-btn-gold">See our services</a>
         <p class="hm-alt">Prefer to talk? Call <a href="tel:+639853359998">+63 985 335 9998</a> and we'll book for you.</p>
@@ -430,8 +439,9 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
                 </div>
                 <div class="hours-box">
                     <h4>Operating Hours</h4>
-                    <div class="hours-row"><span>Monday – Friday</span><span>9:00 AM – 10:00 PM</span></div>
-                    <div class="hours-row"><span>Saturday – Sunday</span><span>9:00 AM – 12:00 AM</span></div>
+                    <?php foreach ($home_hours as $hh): ?>
+                    <div class="hours-row"><span><?php echo htmlspecialchars($hh[0]); ?></span><span><?php echo htmlspecialchars($hh[5]); ?></span></div>
+                    <?php endforeach; ?>
                 </div>
             </div>
             <div class="contact-form-card">
