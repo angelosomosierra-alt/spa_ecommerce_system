@@ -1,5 +1,7 @@
 <?php
-require_once 'config.php';
+// Shared by index.php and user/index.php (which just requires this file),
+// so every path here is absolute (__DIR__ / BASE_URL).
+require_once __DIR__ . '/config.php';
 
 // 1. SESSION & LOGOUT LOGIC
 if (isset($_GET['logout'])) {
@@ -32,30 +34,170 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
     }
 }
 
-// 3. DATA — best sellers + category showcase (Phase 1 helpers in config.php)
-$best_services = get_best_selling_services($conn, 10, 90);
-$best_products = get_best_selling_products($conn, 10, 90);
+// 3. DATA — category picture tiles, most-booked services, shop teaser
+// A logged-in customer browses the account-area copies (user/*.php), same
+// rule footer.php uses.
+$home_base = (is_logged_in() && !is_admin()) ? BASE_URL . 'user/' : BASE_URL;
 
+// Category tiles: the 5 biggest service categories, then "See all".
 $svc_categories = get_customer_categories_with_counts($conn, 'service');
-$prd_categories = get_customer_categories_with_counts($conn, 'product');
-$cat_icons = [
-    'Nail Care' => '💅', 'Nail Extension' => '💅', 'Hair Services' => '💇',
-    'Brows Services' => '👁️', 'Facial' => '🧖', 'Japanese Head Spa' => '🧴',
-    'Lashes' => '👁️', 'Massage Service' => '💆', 'Body Treatment' => '🧴',
-    'Body Scrub' => '🫧', 'Foot Services' => '🦶', 'Waxing Service' => '🪒',
-    'Packages' => '🎁', 'Drip Packages' => '💧', 'Other Services' => '✨',
-    'Skincare' => '🧴', 'Bath & Body' => '🧼', 'Lotions & Oils' => '💧', 'oils' => '💧',
-];
-function showcase_icon($name, $icons) { return $icons[$name] ?? '✨'; }
+usort($svc_categories, function ($a, $b) { return (int)$b['item_count'] <=> (int)$a['item_count']; });
+$home_tiles = array_slice($svc_categories, 0, 5);
+
+$best_services = get_best_selling_services($conn, 4, 90);
+$best_products = get_best_selling_products($conn, 4, 90);
+
+// "1 hour 30 minutes" reads easier than "90 min".
+function home_minutes_label(int $m): string {
+    if ($m <= 0) return '';
+    $h = intdiv($m, 60); $r = $m % 60; $out = [];
+    if ($h) $out[] = $h . ($h === 1 ? ' hour' : ' hours');
+    if ($r) $out[] = $r . ' minutes';
+    return implode(' ', $out);
+}
+
+// Price, length and description for each most-booked service. Duration
+// options (service_durations) win over the service's own price, the same
+// way Book Now prices them; promos use the shared active-price resolver.
+$home_cards = [];
+if ($best_services) {
+    $ids = implode(',', array_map(function ($s) { return (int)$s['id']; }, $best_services));
+    $info = [];
+    $res = $conn->query("SELECT * FROM services WHERE id IN ($ids)");
+    while ($r = $res->fetch_assoc()) $info[(int)$r['id']] = $r;
+
+    $durs = [];
+    $has_durs = $conn->query("SHOW TABLES LIKE 'service_durations'");
+    if ($has_durs && $has_durs->num_rows) {
+        $res = $conn->query("SELECT * FROM service_durations WHERE service_id IN ($ids) ORDER BY duration_minutes");
+        while ($r = $res->fetch_assoc()) {
+            if ((int)($r['session_count'] ?? 1) > 1) continue; // multi-session packages aren't a "length"
+            $durs[(int)$r['service_id']][] = $r;
+        }
+    }
+
+    foreach ($best_services as $s) {
+        $id  = (int)$s['id'];
+        $row = $info[$id] ?? $s;
+        $card = [
+            'id' => $id, 'name' => $s['name'], 'image' => $s['image'] ?? '',
+            'category_id' => (int)($s['category_id'] ?? 0), 'category' => $s['category_name'] ?? '',
+            'desc' => trim((string)($row['description'] ?? '')),
+            'home' => !empty($row['is_home_service']),
+            'from' => false, 'was' => 0, 'promo' => false, 'lengths' => '',
+        ];
+        if (!empty($durs[$id])) {
+            $min = null; $labels = [];
+            foreach ($durs[$id] as $d) {
+                $p = get_active_duration_price($d);
+                if ($min === null || $p['price'] < $min) $min = $p['price'];
+                if ($p['is_promo_active']) $card['promo'] = true;
+                $labels[] = home_minutes_label((int)$d['duration_minutes']);
+            }
+            $card['price']   = (float)$min;
+            $card['from']    = count($durs[$id]) > 1;
+            $card['lengths'] = implode(' or ', array_slice(array_unique(array_filter($labels)), 0, 3));
+        } else {
+            $p = _resolve_active_price((float)$row['price'], (float)($row['promo_price'] ?? 0), (string)($row['price_mode'] ?? 'regular'),
+                                       $row['promo_start_time'] ?? null, $row['promo_end_time'] ?? null);
+            $card['price'] = (float)$p['price'];
+            if ($p['is_promo_active']) { $card['promo'] = true; $card['was'] = (float)$row['price']; }
+            $card['lengths'] = home_minutes_label((int)($row['session_time'] ?? 0));
+        }
+        $home_cards[] = $card;
+    }
+}
+
+// Open / closed line for the hero (Mon–Fri 9AM–10PM, Sat–Sun 9AM–12AM).
+$home_weekend = (int)date('N') >= 6;
+$home_hour    = (int)date('G');
+$home_open    = $home_hour >= 9 && $home_hour < ($home_weekend ? 24 : 22);
+$home_status  = $home_open
+    ? 'Open now · until ' . ($home_weekend ? '12:00 midnight' : '10:00 PM')
+    : 'Closed now · opens at 9:00 AM';
 
 $page_title  = 'Recovery Iloilo — Home';
 $active_page = 'home';
-require_once 'header.php';
+require_once __DIR__ . '/header.php';
 ?>
 <style>
-.hero-scroll-hint { display:none; } /* replaced hero-scroll anchor target below */
-
 .homepage-section .section-header { margin-bottom: 2rem; }
+
+/* ── Home: simple, senior-friendly layout — one main action in the hero,
+   big picture tiles per category, and photo cards for services and
+   products (no carousels, nothing that moves by itself). ─────────────── */
+.hm-hero { background: linear-gradient(160deg, #5A3C26, #3B2A1A 75%); color: #FAF3E8; padding: 3rem 0 3.25rem; }
+.hm-hero .spa-container { max-width: 900px; }
+.hm-eyebrow { font-size: 0.85rem; letter-spacing: 0.2em; text-transform: uppercase; color: #E8C87A; font-weight: 700; margin-bottom: 0.75rem; }
+.hm-hero h1 { font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: clamp(2.3rem, 7vw, 3.6rem); line-height: 1.08; color: #FAF3E8; margin-bottom: 0.9rem; }
+.hm-hero p { font-size: 1.15rem; color: #F0E2CF; line-height: 1.6; max-width: 34ch; margin-bottom: 1.5rem; }
+[class^="hm-"], [class^="hm-"] *, .hm-btn { box-sizing: border-box; }
+.hm-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.6rem; min-height: 3.4rem; padding: 0 1.6rem; border-radius: 14px; font-weight: 700; font-size: 1.1rem; text-decoration: none; text-align: center; border: 2px solid transparent; transition: filter .2s; }
+.hm-btn:hover { filter: brightness(1.07); }
+.hm-btn-gold { background: #C9963A; color: #1C120A; }
+.hm-btn-dark { background: #3B2A1A; color: #FAF3E8; }
+.hm-btn-line { background: #fff; color: var(--brown); border-color: #D9C6A8; }
+.hm-hero .hm-btn { width: 100%; max-width: 420px; min-height: 3.7rem; font-size: 1.2rem; }
+.hm-hero .hm-alt { margin: 1.1rem 0 0; font-size: 1.05rem; }
+.hm-hero .hm-alt a { color: #E8C87A; font-weight: 700; white-space: nowrap; }
+.hm-status { display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 1rem; font-weight: 700; }
+.hm-status i { width: 12px; height: 12px; border-radius: 50%; background: #7FD6A3; display: inline-block; }
+.hm-status.closed i { background: #E8A07A; }
+
+.hm-section { padding: 2.75rem 0 0.5rem; }
+.hm-h2 { font-family: 'Cormorant Garamond', serif; font-size: clamp(1.9rem, 5vw, 2.5rem); font-weight: 700; color: var(--brown); line-height: 1.15; margin-bottom: 0.3rem; }
+.hm-sub { color: var(--brown-md); font-size: 1.05rem; margin-bottom: 1.25rem; }
+.hm-more { display: block; text-align: center; margin-top: 1.25rem; color: var(--brown); font-weight: 700; font-size: 1.1rem; text-decoration: underline; text-underline-offset: 4px; padding: 0.75rem; }
+
+.hm-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (min-width: 760px) { .hm-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.hm-tile { position: relative; display: block; border-radius: 18px; overflow: hidden; aspect-ratio: 1 / 1; background: #F3EADC; text-decoration: none; }
+.hm-tile img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .4s; }
+.hm-tile:hover img { transform: scale(1.04); }
+.hm-tile .hm-tile-ph { width: 100%; height: 100%; display: grid; place-items: center; font-size: 3rem; }
+.hm-tile span { position: absolute; left: 0; right: 0; bottom: 0; padding: 2.2rem 0.9rem 0.8rem; background: linear-gradient(transparent, rgba(20,12,6,0.85)); color: #fff; font-weight: 700; font-size: 1.15rem; line-height: 1.25; }
+.hm-tile span small { display: block; font-weight: 400; font-size: 0.9rem; color: #F0E2CF; }
+.hm-tile.hm-all { background: #3B2A1A; display: grid; place-items: center; color: #E8C87A; font-weight: 700; font-size: 1.2rem; text-align: center; padding: 1rem; }
+
+.hm-list { display: grid; gap: 18px; }
+@media (min-width: 760px) { .hm-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.hm-card { background: #fff; border: 2px solid #E8D9C3; border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; }
+.hm-pic { position: relative; aspect-ratio: 16 / 10; background: #F3EADC; }
+.hm-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hm-nopic { width: 100%; height: 100%; display: grid; place-items: center; align-content: center; gap: 0.3rem; color: var(--brown-md); font-weight: 700; text-align: center; font-size: 2.4rem;
+    background: repeating-linear-gradient(45deg, #F3EADC, #F3EADC 14px, #F6EBD3 14px, #F6EBD3 28px); }
+.hm-nopic small { font-size: 0.95rem; }
+.hm-ribbon { position: absolute; top: 12px; left: 12px; background: #9C3F17; color: #fff; font-weight: 700; font-size: 0.95rem; border-radius: 10px; padding: 3px 12px; }
+.hm-oos { position: absolute; inset: 0; background: rgba(20,12,6,0.55); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 1.1rem; }
+.hm-cbody { padding: 1.1rem 1.2rem 1.2rem; display: flex; flex-direction: column; gap: 0.45rem; flex: 1; }
+.hm-cat { font-size: 0.9rem; font-weight: 700; color: var(--gold-dark); text-transform: uppercase; letter-spacing: 0.06em; }
+.hm-card h3 { font-size: 1.35rem; color: var(--brown); line-height: 1.25; }
+.hm-card p { color: var(--brown-md); font-size: 1.02rem; line-height: 1.55; margin: 0; }
+.hm-facts { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; border-top: 2px dashed #E8D9C3; padding-top: 0.65rem; margin-top: auto; }
+.hm-len { color: var(--brown-md); font-weight: 700; }
+.hm-price { font-size: 1.6rem; font-weight: 800; color: var(--brown); line-height: 1.1; }
+.hm-price small { font-size: 0.95rem; font-weight: 400; }
+.hm-price s { font-size: 1rem; color: var(--gray); font-weight: 400; margin-left: 6px; }
+.hm-card .hm-btn { margin-top: 0.5rem; width: 100%; }
+
+.hm-pgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (min-width: 760px) { .hm-pgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.hm-pcard .hm-pic { aspect-ratio: 1 / 1; }
+.hm-pcard .hm-cbody { padding: 0.85rem 0.95rem 0.95rem; gap: 0.3rem; }
+.hm-pcard h3 { font-size: 1.1rem; }
+.hm-pcard .hm-price { font-size: 1.35rem; margin-bottom: 0.4rem; }
+.hm-pcard .hm-btn { margin-top: auto; min-height: 3rem; font-size: 1rem; padding: 0 0.6rem; }
+
+/* Phones: 3 big labelled tabs at the bottom (Home, Services, Products). */
+.hm-tabs { display: none; }
+@media (max-width: 760px) {
+    .hm-tabs { display: grid; grid-template-columns: repeat(3, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 90; background: #fff; border-top: 2px solid #E8D9C3; padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .hm-tabs a { min-height: 4.2rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-weight: 700; font-size: 0.95rem; color: var(--brown-md); text-decoration: none; border-top: 5px solid transparent; }
+    .hm-tabs a svg { width: 1.6rem; height: 1.6rem; }
+    .hm-tabs a[aria-current="page"] { color: var(--brown); border-top-color: #C9963A; background: #F6EBD3; }
+    body { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
+    .hm-hero { padding: 2.25rem 0 2.5rem; }
+}
 
 /* ── About / Values / Contact — restored (this CSS lived only in the old
    index.php's inline block, which the redesign's rewrite deleted without
@@ -114,357 +256,109 @@ require_once 'header.php';
 @media (max-width: 560px) {
     .cf-row { grid-template-columns: 1fr; }
 }
-
-/* ── Best-Sellers carousel (services + products) ─────────────────────────
-   Structure/JS pattern adapted from the old per-category service slider
-   this codebase used to have (track + translateX, arrows, dots) rather
-   than inventing a new mechanism — extended here with autoplay, swipe,
-   hover-pause and prefers-reduced-motion support none of the old sliders
-   needed. ────────────────────────────────────────────────────────────── */
-.bs-carousel { position: relative; display: flex; align-items: center; gap: 0.85rem; margin-top: 1.5rem; }
-.bs-viewport { overflow: hidden; flex: 1; min-width: 0; }
-/* ── Fanned/overlapping card stack — like a hand of playing cards laid out
-   sideways: each card overlaps the next (negative margin instead of a
-   gap), so more/bigger cards fit in the same width, and the centered card
-   sits on top of its neighbors (z-index + slight scale-up in JS) rather
-   than every card sitting flat in its own separate slot. ──────────────── */
-.bs-track { display: flex; gap: 0; transition: transform 0.55s cubic-bezier(.4,0,.2,1), opacity 0.35s ease; will-change: transform, opacity; }
-.bs-track.bs-fading { opacity: 0.25; }
-.bs-slide {
-    flex: 0 0 28%; display: block; position: relative;
-    margin-left: -3rem; /* the overlap — how much of the previous card this one covers */
-    /* Flex items default to min-width:auto, so a long single-line product
-       name (white-space:nowrap below) could force THAT ONE slide wider
-       than its flex-basis instead of truncating — exactly what made one
-       card visibly wider than its neighbors and threw the centered/
-       highlighted card out of alignment. */
-    min-width: 0;
-    /* Spotlight: opacity/scale/z-index all recalculated in JS on every
-       render/resize so the centered card reads as "on top" of the fan. */
-    opacity: 1; transition: opacity 0.4s ease, transform 0.4s ease;
-}
-.bs-slide:first-child { margin-left: 0; }
-@media (max-width: 900px) { .bs-slide { flex: 0 0 58%; margin-left: -1.75rem; } } /* bigger cards on mobile too, still overlapping */
-/* Center card reads as the clear focal point — stronger lift + a thin gold
-   edge, not just the scale-up JS already applies to every card by distance,
-   matching the reference mockup where the middle card is unmistakably "it". */
-.bs-slide.bs-active .bs-photo-card {
-    box-shadow: 0 26px 50px rgba(20,12,6,0.4);
-    outline: 3px solid var(--gold);
-    outline-offset: -3px;
-}
-
-/* ── Photo card: image on top, white body below with price/name/short
-   description/action button — the "ELIZA"-style reference layout, not the
-   text-on-image treatment this carousel used before. ────────────────────── */
-.bs-photo-card {
-    background: var(--white); border-radius: 14px; overflow: hidden;
-    box-shadow: 0 14px 34px rgba(20,12,6,0.22);
-    transition: transform 0.35s cubic-bezier(.4,0,.2,1), box-shadow 0.35s;
-    display: flex; flex-direction: column; height: 100%;
-}
-.bs-slide:hover .bs-photo-card { transform: translateY(-6px); box-shadow: 0 22px 46px rgba(20,12,6,0.3); }
-.bs-photo-img-wrap { position: relative; aspect-ratio: 4/3; overflow: hidden; background: var(--warm); }
-.bs-photo-img-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.6s ease; }
-.bs-slide:hover .bs-photo-img-wrap img { transform: scale(1.07); }
-.bs-photo-badge {
-    position: absolute; top: 0.75rem; left: 0.75rem; z-index: 2;
-    background: rgba(59,42,26,0.8); backdrop-filter: blur(6px);
-    color: #fff; font-size: 1.15rem; font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; padding: 0.3rem 0.7rem; border-radius: 50px;
-    max-width: calc(100% - 1.5rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.bs-photo-body { padding: 1.2rem 1.3rem 1.3rem; display: flex; flex-direction: column; flex: 1; }
-/* Enlarged for senior/low-vision readability — price and name are the two
-   things a customer actually needs to read at a glance, so both get a
-   meaningfully bigger, bolder treatment than the rest of the card. */
-.bs-photo-price { font-size: 1.35rem; font-weight: 800; color: var(--rust-dark); margin-bottom: 0.3rem; }
-.bs-photo-name {
-    font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 1.4rem;
-    color: var(--brown); line-height: 1.2; margin-bottom: 0.5rem;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-/* Description removed from these cards entirely (per request) — price,
-   name, and the action button are enough; .bs-photo-desc markup is gone
-   from the two carousels below, this selector is kept only in case
-   something else still references it. */
-.bs-photo-desc { display: none; }
-.bs-photo-btn {
-    display: block; text-align: center; padding: 0.8rem 0.5rem;
-    background: linear-gradient(135deg, var(--gold), var(--gold)); color: #2b1c0d;
-    border-radius: 8px; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.05em;
-    text-transform: uppercase; text-decoration: none; transition: filter 0.2s, transform 0.15s;
-}
-.bs-photo-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
-.bs-photo-img-wrap .oos-overlay { z-index: 3; }
-@media (max-width: 900px) {
-    /* 3 narrow cards leaves very little width each — the 1.75rem track gap
-       alone was eating a big share of it (confirmed by measuring: only
-       ~90px per card at 375px width, causing even short 5-letter names
-       like "Chinn" to hit the ellipsis). Tighten the gap and simplify each
-       card's content instead of shrinking text past legibility. */
-    .bs-track { gap: 0.45rem; }
-    /* Unusually long names (e.g. "The Pamper Set (Holiday Gift Bag)...")
-       otherwise wrap unbounded here and make one card much taller than its
-       row-mates — 2-line clamp keeps card heights consistent. Sizes bumped
-       up from 0.88rem for the same senior/low-vision readability request,
-       balanced against the tighter gap above so cards don't shrink further. */
-    .bs-photo-name {
-        font-size: 1.02rem; line-height: 1.15;
-        white-space: normal; display: -webkit-box; width: 100%;
-        -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-    }
-    .bs-photo-price { font-size: 1.02rem; }
-    .bs-photo-badge { font-size: 0.58rem; padding: 0.22rem 0.55rem; top: 0.5rem; left: 0.5rem; }
-    .bs-photo-body { padding: 0.65rem 0.6rem 0.7rem; }
-    .bs-photo-btn { font-size: 0.64rem; padding: 0.55rem 0.3rem; }
-}
-/* Arrows/dots/CTA now sit on the dark photo band, so they use gold tones
-   (matching the reference) rather than the brown used when this carousel
-   sat on the plain page background. */
-.bs-arrow {
-    flex-shrink: 0; width: 46px; height: 46px; border-radius: 50%;
-    background: linear-gradient(135deg, var(--gold), var(--gold-dark)); color: #2b1c0d; border: none; cursor: pointer;
-    font-size: 1.4rem; line-height: 1; display: flex; align-items: center; justify-content: center;
-    transition: filter 0.2s, transform 0.15s; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
-}
-.bs-arrow:hover { filter: brightness(1.08); transform: scale(1.07); }
-.bs-arrow:disabled { opacity: 0.4; cursor: default; transform: none; }
-
-.bs-dots { display: flex; justify-content: center; align-items: center; gap: 0.6rem; margin-top: 1.5rem; }
-.bs-dot {
-    width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.4);
-    border: none; cursor: pointer; padding: 0; transition: background 0.2s, width 0.2s, height 0.2s, box-shadow 0.2s;
-}
-/* assets/responsive.css has a mobile "44px touch target minimum" rule
-   (`.btn, button:not([style*="width:28px"])...{ min-height: 44px }`) whose
-   compounded :not() selectors outrank a plain `.bs-dot` class on
-   specificity alone, so it kept winning and stretching these dots into
-   tall ovals on phone widths even with min-height set. Scoped selector +
-   !important to reliably beat it — dots are a decorative index, not a
-   primary touch target. */
-.bs-dots .bs-dot { min-height: 0 !important; min-width: 0 !important; }
-/* Small circle throughout (not an elongated pill) — active state still
-   changes more than color alone: it's a touch larger with a soft gold ring
-   around it, not just a different fill. */
-.bs-dot.active { background: var(--gold); width: 11px; height: 11px; box-shadow: 0 0 0 3px rgba(240,201,135,0.4); }
-
-.bs-cta-wrap { text-align: center; margin-top: 2rem; }
-.bs-cta-btn {
-    display: inline-block; padding: 1rem 2.75rem; background: linear-gradient(135deg, var(--gold), var(--gold-dark)); color: #2b1c0d;
-    border-radius: 50px; font-weight: 700; font-size: 1.05rem; text-decoration: none;
-    transition: filter 0.2s, transform 0.2s; box-shadow: 0 6px 20px rgba(0,0,0,0.3);
-}
-.bs-cta-btn:hover { filter: brightness(1.08); transform: translateY(-2px); }
-
-@media (max-width: 900px) {
-    /* Arrows beside the viewport eat a big share of a narrow screen's width
-       (confirmed by measuring the live rendered card during testing — with
-       3 cards now visible on mobile too, the same crowding risk applies).
-       Overlay them on the photo band instead; swipe/dots remain the
-       primary controls. */
-    .bs-carousel { gap: 0; }
-    .bs-arrow {
-        position: absolute; top: 50%; transform: translateY(-50%); z-index: 4;
-        width: 36px; height: 36px; font-size: 1.1rem;
-        background: rgba(20,12,6,0.55); backdrop-filter: blur(3px);
-    }
-    .bs-arrow:hover { transform: translateY(-50%) scale(1.07); }
-    .bs-prev { left: 0.5rem; }
-    .bs-next { right: 0.5rem; }
-}
-
-/* ── Full-bleed photo band behind each carousel — like a mini hero banner,
-   matching the reference design, instead of the flat page background.
-   Breaks out to the viewport edges via the negative-margin trick (safe:
-   scoped to this element only, nothing else on the page is affected).
-   Same base photo as .hero for zero extra asset risk, but a different
-   color-wash overlay per section (warm gold vs. terracotta) so Services
-   and Products stay visually distinguishable as requested. ─────────────── */
-.bs-panel {
-    position: relative; left: 50%; right: 50%; margin-left: -50vw; margin-right: -50vw;
-    width: 100vw; padding: 3.5rem 1.5rem 3rem;
-    background-size: cover; background-position: center;
-}
-/* An even, uniformly dark wash — the source photo has a bright patch (the
-   oil-pouring hand) that sat off-center and made the left side of the band
-   read as "highlighted"/lopsided against the cards. A flat, strong overlay
-   (instead of the lighter vertical-only gradient this had before) hides the
-   photo's own uneven lighting so the band reads as a calm, even backdrop. */
-.bs-panel-services { background-image:
-    linear-gradient(rgba(37,22,8,0.86), rgba(37,22,8,0.86)),
-    url('https://images.unsplash.com/photo-1544161515-4ab6ce6db874?w=1600&q=80'); }
-.bs-panel-products { background-image:
-    linear-gradient(rgba(42,18,8,0.86), rgba(42,18,8,0.86)),
-    url('https://images.unsplash.com/photo-1526947425960-945c6e72858f?w=1600&q=80'); }
-.bs-panel .section-header .section-label { color: #F0C987; }
-.bs-panel .section-header .section-title-spa { color: #fff; }
-.bs-panel .section-header .section-title-spa em { color: #F0C987; }
-@media (max-width: 620px) { .bs-panel { padding: 2.5rem 1rem 2rem; } }
-
-/* ── Ornamental divider between the Services and Products carousels —
-   a thin gold gradient rule with a centered mark, blending with the
-   site's existing brown/gold palette rather than a plain <hr>. ────────── */
-.theme-divider {
-    display: flex; align-items: center; gap: 1.25rem;
-    max-width: 100%;
-    padding: 0 1rem;
-    background: linear-gradient(160deg, var(--white), var(--gold), var(--white));
-
-
-}
-.theme-divider::before, .theme-divider::after {
-    content: ""; flex: 1; height: 1px;
-    background: linear-gradient(to right, transparent, var(--gold) 50%, transparent);
-}
-.theme-divider::after { background: linear-gradient(to left, transparent, var(--gold) 50%, transparent); }
-.theme-divider-mark { display: none; }
 </style>
 
-<section class="hero" id="index">
-    <p class="hero-eyebrow">Welcome to RECOVERY ILOILO</p>
-    <h1>Skin <em>and</em> Wellness</h1>
-    <p>Experience the ultimate spa and wellness journey — where every treatment is a ritual of renewal.</p>
-    <div class="hero-ctas">
-        <a href="<?php echo BASE_URL; ?>services.php" class="hero-btn-primary">Book a Service</a>
-        <a href="<?php echo BASE_URL; ?>products.php" class="hero-btn-outline">Shop Products</a>
+<section class="hm-hero" id="index">
+    <div class="spa-container">
+        <p class="hm-eyebrow">Welcome to Recovery Iloilo</p>
+        <h1>Relax. We'll take good care of you.</h1>
+        <p>Gentle wellness massage and spa care in Iloilo City.</p>
+        <a href="<?php echo $home_base; ?>services.php" class="hm-btn hm-btn-gold">See our services</a>
+        <p class="hm-alt">Prefer to talk? Call <a href="tel:+639853359998">+63 985 335 9998</a> and we'll book for you.</p>
+        <div class="hm-status<?php echo $home_open ? '' : ' closed'; ?>"><i aria-hidden="true"></i> <?php echo htmlspecialchars($home_status); ?></div>
     </div>
 </section>
 
 <div class="spa-container">
-<div class="theme-divider" role="separator" aria-hidden="true"><span class="theme-divider-mark">✦</span></div>
 
-<!-- ── BEST SELLERS: SERVICES ─────────────────────────────────────────────── -->
-<section class="homepage-section" id="best-services">
-    <div class="bs-panel bs-panel-services">
-    <div class="section-header">
-        <div>
-            <p class="section-label">Customer Favorites</p>
-            <h2 class="section-title-spa">Best-Selling <em>Services</em></h2>
-        </div>
-    </div>
-    <?php if (!empty($best_services)): ?>
-    <div class="bs-carousel" data-bs-key="services">
-        <button type="button" class="bs-arrow bs-prev" aria-label="Previous service">‹</button>
-        <div class="bs-viewport">
-            <div class="bs-track">
-                <?php foreach ($best_services as $svc): ?>
-                <div class="bs-slide">
-                <div class="bs-photo-card">
-                    <div class="bs-photo-img-wrap">
-                        <?php if (!empty($svc['image'])): ?>
-                        <img src="<?php echo BASE_URL; ?>uploads/services/<?php echo htmlspecialchars($svc['image']); ?>" alt="<?php echo htmlspecialchars($svc['name']); ?>" loading="lazy"
-                             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-                        <div class="img-placeholder" style="display:none">💆<small>Spa Service</small></div>
-                        <?php else: ?>
-                        <div class="img-placeholder">💆<small>Spa Service</small></div>
-                        <?php endif; ?>
-                        <?php if (!empty($svc['category_name'])): ?><span class="bs-photo-badge"><?php echo htmlspecialchars($svc['category_name']); ?></span><?php endif; ?>
-                    </div>
-                    <div class="bs-photo-body">
-                        <div class="bs-photo-price">₱<?php echo number_format($svc['price'],2); ?></div>
-                        <h3 class="bs-photo-name"><?php echo htmlspecialchars($svc['name']); ?></h3>
-                        <a class="bs-photo-btn" href="<?php echo BASE_URL; ?>services.php?category=<?php echo (int)($svc['category_id'] ?? 0); ?>&item=svc-<?php echo $svc['id']; ?>">Book Service</a>
-                    </div>
-                </div>
-                </div>
-                <?php endforeach; ?>
-            </div>
-        </div>
-        <button type="button" class="bs-arrow bs-next" aria-label="Next service">›</button>
-    </div>
-    <div class="bs-dots" data-bs-dots="services"></div>
-    <?php endif; ?>
-    <div class="bs-cta-wrap"><a href="<?php echo BASE_URL; ?>services.php" class="bs-cta-btn">View Services</a></div>
-    </div>
-</section>
-
-<!-- ── DIVIDER ──────────────────────────────────────────────────────────────── -->
-<div class="theme-divider" role="separator" aria-hidden="true"><span class="theme-divider-mark">✦</span></div>
-
-<!-- ── BEST SELLERS: PRODUCTS ──────────────────────────────────────────────── -->
-<section class="homepage-section" id="best-products">
-    <div class="bs-panel bs-panel-products">
-    <div class="section-header">
-        <div>
-            <p class="section-label">Take It Home</p>
-            <h2 class="section-title-spa">Best-Selling <em>Products</em></h2>
-        </div>
-    </div>
-    <?php if (!empty($best_products)): ?>
-    <div class="bs-carousel" data-bs-key="products">
-        <button type="button" class="bs-arrow bs-prev" aria-label="Previous product">‹</button>
-        <div class="bs-viewport">
-            <div class="bs-track">
-                <?php foreach ($best_products as $prd): $oos = $prd['stock'] <= 0; ?>
-                <div class="bs-slide">
-                <div class="bs-photo-card">
-                    <div class="bs-photo-img-wrap">
-                        <?php if (!empty($prd['image'])): ?>
-                        <img src="<?php echo BASE_URL; ?>uploads/products/<?php echo htmlspecialchars($prd['image']); ?>" alt="<?php echo htmlspecialchars($prd['name']); ?>" loading="lazy"
-                             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-                        <div class="img-placeholder" style="display:none">🧴<small>Spa Product</small></div>
-                        <?php else: ?>
-                        <div class="img-placeholder">🧴<small>Spa Product</small></div>
-                        <?php endif; ?>
-                        <?php if ($oos): ?><div class="oos-overlay"><span class="oos-text">Out of Stock</span></div><?php endif; ?>
-                        <?php if (!empty($prd['category_name'])): ?><span class="bs-photo-badge"><?php echo htmlspecialchars($prd['category_name']); ?></span><?php endif; ?>
-                    </div>
-                    <div class="bs-photo-body">
-                        <div class="bs-photo-price">₱<?php echo number_format($prd['price'],2); ?></div>
-                        <h3 class="bs-photo-name"><?php echo htmlspecialchars($prd['name']); ?></h3>
-                        <a class="bs-photo-btn" href="<?php echo BASE_URL; ?>products.php?category=<?php echo (int)($prd['category_id'] ?? 0); ?>&item=prd-<?php echo $prd['id']; ?>"><?php echo $oos ? 'Out of Stock' : 'Shop Now'; ?></a>
-                    </div>
-                </div>
-                </div>
-                <?php endforeach; ?>
-            </div>
-        </div>
-        <button type="button" class="bs-arrow bs-next" aria-label="Next product">›</button>
-    </div>
-    <div class="bs-dots" data-bs-dots="products"></div>
-    <?php endif; ?>
-    <div class="bs-cta-wrap"><a href="<?php echo BASE_URL; ?>products.php" class="bs-cta-btn">View Products</a></div>
-    </div>
-</section>
-
-<!-- ── EXPLORE CATEGORIES ──────────────────────────────────────────────────── -->
-<section class="homepage-section" id="categories">
-    <div class="section-header">
-        <div>
-            <p class="section-label">The Full Menu</p>
-            <h2 class="section-title-spa">Explore Our <em>Categories</em></h2>
-        </div>
-    </div>
-    <div class="category-showcase-grid">
-        <?php foreach ($svc_categories as $cat): ?>
-        <a class="category-tile" href="<?php echo BASE_URL; ?>services.php?category=<?php echo (int)$cat['id']; ?>">
+<!-- ── CATEGORY PICTURE TILES ─────────────────────────────────────────────── -->
+<?php if (!empty($home_tiles)): ?>
+<section class="hm-section" id="categories" aria-labelledby="hm-what">
+    <h2 class="hm-h2" id="hm-what">What would you like today?</h2>
+    <p class="hm-sub">Tap a picture.</p>
+    <div class="hm-tiles">
+        <?php foreach ($home_tiles as $cat): ?>
+        <a class="hm-tile" href="<?php echo $home_base; ?>services.php?category=<?php echo (int)$cat['id']; ?>">
             <?php if (!empty($cat['sample_image'])): ?>
-            <img class="category-tile-img" src="<?php echo BASE_URL; ?>uploads/services/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div class="category-tile-icon" style="display:none;"><?php echo showcase_icon($cat['name'], $cat_icons); ?></div>
+            <img src="<?php echo BASE_URL; ?>uploads/services/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
+            <div class="hm-tile-ph" style="display:none" aria-hidden="true">💆</div>
             <?php else: ?>
-            <div class="category-tile-icon"><?php echo showcase_icon($cat['name'], $cat_icons); ?></div>
+            <div class="hm-tile-ph" aria-hidden="true">💆</div>
             <?php endif; ?>
-            <span class="category-tile-name"><?php echo htmlspecialchars($cat['name']); ?></span>
-            <span class="category-tile-count"><?php echo (int)$cat['item_count']; ?> service<?php echo $cat['item_count'] == 1 ? '' : 's'; ?></span>
+            <span><?php echo htmlspecialchars($cat['name']); ?><small><?php echo (int)$cat['item_count']; ?> service<?php echo $cat['item_count'] == 1 ? '' : 's'; ?></small></span>
         </a>
         <?php endforeach; ?>
-        <?php foreach ($prd_categories as $cat): ?>
-        <a class="category-tile" href="<?php echo BASE_URL; ?>products.php?category=<?php echo (int)$cat['id']; ?>">
-            <?php if (!empty($cat['sample_image'])): ?>
-            <img class="category-tile-img" src="<?php echo BASE_URL; ?>uploads/products/<?php echo htmlspecialchars($cat['sample_image']); ?>" alt="" loading="lazy"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div class="category-tile-icon" style="display:none;"><?php echo showcase_icon($cat['name'], $cat_icons); ?></div>
-            <?php else: ?>
-            <div class="category-tile-icon"><?php echo showcase_icon($cat['name'], $cat_icons); ?></div>
-            <?php endif; ?>
-            <span class="category-tile-name"><?php echo htmlspecialchars($cat['name']); ?></span>
-            <span class="category-tile-count"><?php echo (int)$cat['item_count']; ?> product<?php echo $cat['item_count'] == 1 ? '' : 's'; ?></span>
-        </a>
-        <?php endforeach; ?>
+        <a class="hm-tile hm-all" href="<?php echo $home_base; ?>services.php">See all services →</a>
     </div>
 </section>
+<?php endif; ?>
+
+<!-- ── MOST BOOKED SERVICES ───────────────────────────────────────────────── -->
+<?php if (!empty($home_cards)): ?>
+<section class="hm-section" id="best-services" aria-labelledby="hm-pop">
+    <h2 class="hm-h2" id="hm-pop">Most booked</h2>
+    <p class="hm-sub">Our guests' favorites.</p>
+    <div class="hm-list">
+        <?php foreach ($home_cards as $c): ?>
+        <article class="hm-card">
+            <div class="hm-pic">
+                <?php if ($c['image'] !== ''): ?>
+                <img src="<?php echo BASE_URL; ?>uploads/services/<?php echo htmlspecialchars($c['image']); ?>" alt="<?php echo htmlspecialchars($c['name']); ?>" loading="lazy"
+                     onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
+                <div class="hm-nopic" style="display:none">💆<small>Photo coming soon</small></div>
+                <?php else: ?>
+                <div class="hm-nopic">💆<small>Photo coming soon</small></div>
+                <?php endif; ?>
+                <?php if ($c['promo']): ?><span class="hm-ribbon">Promo</span><?php endif; ?>
+            </div>
+            <div class="hm-cbody">
+                <?php if ($c['category'] !== ''): ?><span class="hm-cat"><?php echo htmlspecialchars($c['category']); ?></span><?php endif; ?>
+                <h3><?php echo htmlspecialchars($c['name']); ?></h3>
+                <?php if ($c['desc'] !== ''): ?><p><?php echo htmlspecialchars(mb_strimwidth($c['desc'], 0, 130, '…')); ?></p><?php endif; ?>
+                <?php if ($c['home']): ?><p><b>Home service</b> available</p><?php endif; ?>
+                <div class="hm-facts">
+                    <span class="hm-len"><?php echo htmlspecialchars($c['lengths']); ?></span>
+                    <span class="hm-price"><?php if ($c['from']): ?><small>from </small><?php endif; ?>₱<?php echo number_format($c['price'], 2); ?><?php if ($c['was'] > $c['price']): ?><s>₱<?php echo number_format($c['was'], 2); ?></s><?php endif; ?></span>
+                </div>
+                <a class="hm-btn hm-btn-dark" href="<?php echo $home_base; ?>services.php?category=<?php echo $c['category_id']; ?>&amp;item=svc-<?php echo $c['id']; ?>">Book this</a>
+            </div>
+        </article>
+        <?php endforeach; ?>
+    </div>
+    <a class="hm-more" href="<?php echo $home_base; ?>services.php">See all services →</a>
+</section>
+<?php endif; ?>
+
+<!-- ── FROM OUR SHOP ──────────────────────────────────────────────────────── -->
+<?php if (!empty($best_products)): ?>
+<section class="hm-section" id="best-products" aria-labelledby="hm-shop">
+    <h2 class="hm-h2" id="hm-shop">From our shop</h2>
+    <p class="hm-sub">The same products we use in the spa.</p>
+    <div class="hm-pgrid">
+        <?php foreach ($best_products as $prd): $oos = (int)$prd['stock'] <= 0; ?>
+        <article class="hm-card hm-pcard">
+            <div class="hm-pic">
+                <?php if (!empty($prd['image'])): ?>
+                <img src="<?php echo BASE_URL; ?>uploads/products/<?php echo htmlspecialchars($prd['image']); ?>" alt="<?php echo htmlspecialchars($prd['name']); ?>" loading="lazy"
+                     onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
+                <div class="hm-nopic" style="display:none">🧴<small>Photo coming soon</small></div>
+                <?php else: ?>
+                <div class="hm-nopic">🧴<small>Photo coming soon</small></div>
+                <?php endif; ?>
+                <?php if ($oos): ?><div class="hm-oos">Out of stock</div><?php endif; ?>
+            </div>
+            <div class="hm-cbody">
+                <h3><?php echo htmlspecialchars($prd['name']); ?></h3>
+                <span class="hm-price">₱<?php echo number_format($prd['price'], 2); ?></span>
+                <a class="hm-btn hm-btn-line" href="<?php echo $home_base; ?>products.php?category=<?php echo (int)($prd['category_id'] ?? 0); ?>&amp;item=prd-<?php echo (int)$prd['id']; ?>"><?php echo $oos ? 'View' : 'View &amp; buy'; ?></a>
+            </div>
+        </article>
+        <?php endforeach; ?>
+    </div>
+    <a class="hm-more" href="<?php echo $home_base; ?>products.php">See all products →</a>
+</section>
+<?php endif; ?>
 
 <!-- ── ABOUT SECTION ──────────────────────────────────────────────────────── -->
 <section class="spa-section" id="about">
@@ -563,232 +457,18 @@ require_once 'header.php';
 
 </div>
 
-<?php require_once 'footer.php'; ?>
-<script>
-/* ── Best-Sellers carousel: autoplay + arrows + dots + swipe + hover-pause,
-   with prefers-reduced-motion disabling autoplay (manual controls still
-   work). One instance per data-bs-key carousel on the page. ──────────── */
-(function () {
-    "use strict";
-    var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    var AUTOPLAY_MS = 4000; // ~4s per card, as requested
+<nav class="hm-tabs" aria-label="Pages">
+    <a href="<?php echo $home_base; ?>index.php" aria-current="page">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21H3z"/></svg>Home
+    </a>
+    <a href="<?php echo $home_base; ?>services.php">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.5-7 10-7 10z"/></svg>Services
+    </a>
+    <a href="<?php echo $home_base; ?>products.php">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 0 1-8 0"/></svg>Products
+    </a>
+</nav>
 
-    function initCarousel(root) {
-        var track      = root.querySelector('.bs-track');
-        var realSlides = Array.prototype.slice.call(track.children);
-        var prevBtn    = root.querySelector('.bs-prev');
-        var nextBtn    = root.querySelector('.bs-next');
-        var key        = root.dataset.bsKey;
-        var dotsWrap   = document.querySelector('[data-bs-dots="' + key + '"]');
-        if (!realSlides.length) return;
-
-        // True infinite loop: a full clone of the set is appended before AND
-        // after the real slides (so track = [clone][real][clone]). Moving
-        // "past" the real set just scrolls into a clone that looks identical
-        // to the real start/end — once the slide transition finishes we
-        // silently snap the position back by one real-set-length with
-        // transitions off, invisibly, so it can keep going forever without
-        // ever visibly resetting to card #1. ─────────────────────────────
-        var REAL = realSlides.length;
-        realSlides.forEach(function (s) { track.appendChild(s.cloneNode(true)); });      // trailing clone
-        // Build in reverse before inserting: each insertBefore(..., firstChild) puts
-        // the new node at position 0, so inserting [1,2,3,4,5] in that order ends up
-        // reversed to [5,4,3,2,1] — making the card immediately before slide #1 a
-        // clone of #1 itself instead of #5. Reversing the array first corrects this.
-        var leadingClones = realSlides.map(function (s) { return s.cloneNode(true); }).reverse();
-        leadingClones.forEach(function (s) { track.insertBefore(s, track.firstChild); }); // leading clone
-        var slides = Array.prototype.slice.call(track.children); // length = 3 * REAL
-
-        var pos = REAL; // start on the real set's first card
-        var timer = null;
-        var resumeTimer = null;
-        var viewportEl = root.querySelector('.bs-viewport');
-
-        // Real measurements from the DOM (not a fixed 5/3 guess) — the old
-        // constant assumed the CSS flex-basis and the guess were kept in
-        // sync, which broke the moment cards became wider (30%) than the
-        // guess implied for this overlapping "fan" layout.
-        //
-        // step is read from two real adjacent slides' actual offsetLeft
-        // (not computed as cardW + marginLeft): the flex layout algorithm
-        // distributes sub-pixel rounding across items when a percentage
-        // flex-basis doesn't divide the container evenly, so an item's
-        // rendered width/step can be a fraction of a pixel off the
-        // theoretical cardW+margin value. That per-card drift compounded
-        // over a dozen-plus slides threw the "centered" card off by 100px+
-        // — reading the real gap between two live slides sidesteps it.
-        function measure() {
-            var slide = slides[1] || slides[0];
-            var cardW = slide.offsetWidth;
-            var next = slides[2] || slide;
-            var step = (next.offsetLeft - slide.offsetLeft) || cardW || 1;
-            var vpWidth = viewportEl ? viewportEl.getBoundingClientRect().width : 0;
-            return { cardW: cardW, step: step, vpWidth: vpWidth };
-        }
-
-        function applySpotlight() {
-            // Cards nearer the active card are full opacity AND sit on top of
-            // the overlapping fan (higher z-index) at full scale; ones toward
-            // either edge dim, shrink more, and tuck underneath — like the
-            // reference mockup, where only the center card reads clearly and
-            // its neighbors are visibly smaller, muted, half-hidden behind it.
-            // centerIndex is simply `pos` now: applyTransform() below places
-            // slide `pos`'s center exactly on the viewport's center by
-            // construction, so there's no separate formula to keep in sync
-            // (the earlier derived-formula approach left a small residual
-            // offset whenever the ideal center index wasn't an integer).
-            var m = measure();
-            var vis = m.step ? m.vpWidth / m.step : 3;
-            var maxDist = Math.max(1, vis) / 2;
-            slides.forEach(function (slide, i) {
-                var dist = Math.min(1, Math.abs(i - pos) / maxDist);
-                slide.style.opacity = String(1 - dist * 0.55);
-                slide.style.zIndex = String(Math.round((1 - dist) * 100));
-                slide.style.transform = 'scale(' + (1 - dist * 0.22) + ')';
-                slide.classList.toggle('bs-active', i === pos);
-            });
-        }
-
-        function activeDotIndex() {
-            // Normalize pos (which can drift into clone territory before a
-            // silent snap-back) into the 0..REAL-1 range dots represent.
-            return ((pos - REAL) % REAL + REAL) % REAL;
-        }
-
-        function applyTransform() {
-            // Step distance is card width MINUS the overlap (a negative
-            // margin-left on every slide but the first) — cards no longer
-            // sit in a gapped row, so the old columnGap-based math would
-            // step by a full card width and skip past the fanned overlap.
-            // measure() uses offsetWidth (not getBoundingClientRect, which
-            // reflects the scale() transform applySpotlight() applies per
-            // card) — mixing a post-scale measurement into this math made
-            // the step size drift depending on which slide happened to get
-            // measured and its current spotlight scale, throwing the
-            // centered card's actual screen position off from where the
-            // spotlight math thought it was.
-            //
-            // Positioned so the ACTIVE slide's own center lands exactly on
-            // the viewport's center. Uses the active slide's REAL offsetLeft
-            // (not pos*step) — with 30 slides in the track, per-card
-            // sub-pixel rounding from the flex-basis percentage layout
-            // compounds across that many items and made a pos*step estimate
-            // drift by 100px+ from the slide's true rendered position.
-            // Reading the live layout value directly has no such drift.
-            var m = measure();
-            var activeSlide = slides[pos] || slides[0];
-            var offset = activeSlide.offsetLeft + activeSlide.offsetWidth / 2 - m.vpWidth / 2;
-            track.style.transform = 'translateX(-' + offset + 'px)';
-            if (dotsWrap) {
-                var active = activeDotIndex();
-                Array.prototype.forEach.call(dotsWrap.children, function (d, i) {
-                    d.classList.toggle('active', i === active);
-                });
-            }
-            applySpotlight();
-        }
-
-        // After the slide settles, if we've drifted a full lap into either
-        // clone zone, jump back by one real-set-length with transitions
-        // suspended — imperceptible, since the clone is pixel-identical to
-        // the real set it stands in for.
-        function correctLoopPosition() {
-            if (pos >= REAL * 2 || pos < REAL) {
-                var wasFading = track.classList.contains('bs-fading');
-                track.style.transition = 'none';
-                pos = ((pos - REAL) % REAL + REAL) % REAL + REAL;
-                applyTransform();
-                // Force layout so the transition:none actually takes effect
-                // before restoring it, or the snap itself would animate.
-                void track.offsetHeight;
-                track.style.transition = '';
-                if (wasFading) track.classList.remove('bs-fading');
-            }
-        }
-
-        // Cards fade out briefly, reposition, then fade back in — a calm
-        // crossfade on every advance rather than a flat slide. Skipped for
-        // the very first paint and (per prefers-reduced-motion) reduced to
-        // an instant position change with no fade.
-        function render(animate) {
-            if (!animate || reduceMotion) { applyTransform(); correctLoopPosition(); return; }
-            track.classList.add('bs-fading');
-            setTimeout(function () {
-                applyTransform();
-                setTimeout(function () { track.classList.remove('bs-fading'); }, 30);
-                // Wait for the FULL 0.55s transform transition to actually
-                // finish before silently snapping the loop position back —
-                // firing this early (it used to run only 30ms after the
-                // transform started) cut the slide animation short right in
-                // the middle whenever a wrap-around happened, which is
-                // exactly what looked "not smooth" going from the last card
-                // back to the first.
-                setTimeout(correctLoopPosition, 580);
-            }, 260);
-        }
-
-        function buildDots() {
-            if (!dotsWrap) return;
-            dotsWrap.innerHTML = '';
-            for (var i = 0; i < REAL; i++) {
-                var b = document.createElement('button');
-                b.type = 'button';
-                b.className = 'bs-dot' + (i === 0 ? ' active' : '');
-                b.setAttribute('aria-label', 'Go to slide ' + (i + 1));
-                (function (idx) { b.addEventListener('click', function () { goTo(REAL + idx); restartAutoplay(); }); })(i);
-                dotsWrap.appendChild(b);
-            }
-        }
-
-        function goTo(newPos, animate) {
-            pos = newPos;
-            render(animate !== false);
-        }
-        function next() { goTo(pos + 1); } // always advances — wraps forever, never stops at the last card
-        function prev() { goTo(pos - 1); } // always retreats — wraps forever, never stops at the first card
-
-        function startAutoplay() {
-            if (reduceMotion) return; // disabled entirely, not just slowed — manual controls only
-            stopAutoplay();
-            timer = setInterval(next, AUTOPLAY_MS);
-        }
-        function stopAutoplay() { if (timer) { clearInterval(timer); timer = null; } }
-        function restartAutoplay() {
-            stopAutoplay();
-            clearTimeout(resumeTimer);
-            resumeTimer = setTimeout(startAutoplay, AUTOPLAY_MS);
-        }
-
-        if (prevBtn) prevBtn.addEventListener('click', function () { prev(); restartAutoplay(); });
-        if (nextBtn) nextBtn.addEventListener('click', function () { next(); restartAutoplay(); });
-
-        // Pause on hover (desktop) — reading a card shouldn't be interrupted.
-        root.addEventListener('mouseenter', stopAutoplay);
-        root.addEventListener('mouseleave', startAutoplay);
-
-        // Touch/swipe — swiping overrides autoplay briefly, then resumes.
-        var touchStartX = null;
-        track.addEventListener('touchstart', function (e) {
-            touchStartX = e.touches[0].clientX;
-            stopAutoplay();
-        }, { passive: true });
-        track.addEventListener('touchend', function (e) {
-            if (touchStartX === null) return;
-            var dx = e.changedTouches[0].clientX - touchStartX;
-            if (Math.abs(dx) > 40) { dx < 0 ? next() : prev(); }
-            touchStartX = null;
-            restartAutoplay();
-        }, { passive: true });
-
-        window.addEventListener('resize', function () { render(false); });
-
-        buildDots();
-        render(false);
-        startAutoplay();
-    }
-
-    document.querySelectorAll('.bs-carousel').forEach(initCarousel);
-}());
-</script>
+<?php require_once __DIR__ . '/footer.php'; ?>
 </body>
 </html>
