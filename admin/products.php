@@ -238,31 +238,7 @@ document.addEventListener('DOMContentLoaded', function() {
 <?php endif; ?>
 <?php endif; ?>
 
-<?php if (!$edit_product && !isset($_GET['action'])): ?>
-<!-- ── STATS ──────────────────────────────────────────────────────────────── -->
-<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.5rem;">
-    <div class="stat-card">
-        <div class="stat-icon"></div>
-        <div class="stat-number"><?php echo $total_products; ?></div>
-        <div class="stat-label">Total Products</div>
-    </div>
-    <div class="stat-card green">
-        <div class="stat-icon"></div>
-        <div class="stat-number"><?php echo $in_stock; ?></div>
-        <div class="stat-label">In Stock</div>
-    </div>
-    <div class="stat-card amber">
-        <div class="stat-icon"></div>
-        <div class="stat-number"><?php echo $low_stock_count; ?></div>
-        <div class="stat-label">Low Stock</div>
-    </div>
-    <div class="stat-card red">
-        <div class="stat-icon"></div>
-        <div class="stat-number"><?php echo $out_of_stock; ?></div>
-        <div class="stat-label">Out of Stock</div>
-    </div>
-</div>
-<?php endif; ?>
+
 
 <!-- ── ADD / EDIT FORM ────────────────────────────────────────────────────── -->
 <?php if ((isset($_GET['action']) && $_GET['action'] === 'add') || $edit_product): ?>
@@ -367,125 +343,181 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <?php endif; ?>
 
-<!-- ── PRODUCTS TABLE ─────────────────────────────────────────────────────── -->
+<!-- ── PRODUCTS LIST (front end only) ─────────────────────────────────────── -->
 <?php if (!$edit_product): ?>
+<?php
+$_pl_rows = [];
+foreach ($products as $p) {
+    $arch  = !empty($p['deleted_at']);
+    $stock = (int)$p['stock'];
+    $hasImg = !empty($p['image']) && is_file(UPLOAD_DIR_PRODUCTS . $p['image']);
+    $flags = [];
+    if ($arch) $flags[] = 'arch';
+    else {
+        $flags[] = 'all';
+        if ($stock <= 0) $flags[] = 'out';
+        elseif ($stock <= 10) $flags[] = 'low';
+        else $flags[] = 'instock';
+        if (empty($p['category_id'])) $flags[] = 'nocat';
+        if (!$hasImg) $flags[] = 'nophoto';
+    }
+    $_pl_rows[] = ['p' => $p, 'arch' => $arch, 'stock' => $stock, 'img' => $hasImg, 'flags' => $flags];
+}
+$_pl_groups = [];
+foreach ($_pl_rows as $r) $_pl_groups[$r['p']['category_name'] ?: ''][] = $r;
+uksort($_pl_groups, function ($a, $b) { if ($a === '') return 1; if ($b === '') return -1; return strcasecmp($a, $b); });
+foreach ($_pl_groups as &$_g) usort($_g, function ($a, $b) { return strcasecmp($a['p']['name'], $b['p']['name']); });
+unset($_g);
+$_pl_count = function ($f) use ($_pl_rows) { return count(array_filter($_pl_rows, function ($r) use ($f) { return in_array($f, $r['flags'], true); })); };
+$_pl_filters = ['all' => 'All', 'instock' => 'In stock', 'low' => 'Low stock', 'out' => 'Out of stock', 'nophoto' => 'No photo', 'nocat' => 'Uncategorized', 'arch' => 'Archived'];
+$_pl_tiles   = ['all' => 'Active products', 'instock' => 'In stock', 'low' => 'Low stock (10 or less)', 'out' => 'Out of stock', 'arch' => 'Archived'];
+$_pl_cat_req = $_GET['category'] ?? '';
+$_pl_cat_init = $_pl_cat_req === 'none' ? '__none' : '';
+foreach ($categories as $c) if ((string)$c['id'] === (string)$_pl_cat_req) $_pl_cat_init = $c['name'];
+if (isset($_GET['cat_name'])) $_pl_cat_init = (string)$_GET['cat_name'];
+$_pl_cat_names = array_values(array_filter(array_keys($_pl_groups), function ($k) { return $k !== ''; }));
+?>
+<link rel="stylesheet" href="../assets/admin-list.css?v=<?php echo filemtime(__DIR__ . '/../assets/admin-list.css'); ?>">
+<style>
+/* Products: price, stock and added columns instead of price chips + recipe */
+.al-prod.al-row, .al-prod.al-colhead { grid-template-columns:56px minmax(0,2.6fr) 110px 130px 120px auto; }
+.al-stock { font-size:0.8rem; white-space:nowrap; }
+.al-stock b { display:block; font-size:0.95rem; color:var(--text, #2B1D12); font-variant-numeric:tabular-nums; }
+.al-stock .bar { display:block; height:6px; border-radius:3px; background:#F3EBDF; margin-top:4px; overflow:hidden; width:90px; }
+.al-stock .bar i { display:block; height:100%; border-radius:3px; }
+.al-stock.out b { color:#A3261B; } .al-stock.low b { color:#A94F1D; }
+.al-desc { color:var(--gray, #8A7560); font-size:0.78rem; margin-top:3px; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; }
+.al-tag.out { background:#FBE3E0; color:#A3261B; } .al-tag.low { background:#F7E3D6; color:#A94F1D; } .al-tag.nophoto { background:#EEEAE4; color:#5E4733; }
+.al-price { font-weight:800; font-size:1rem; color:var(--text, #2B1D12); font-variant-numeric:tabular-nums; }
+@media (max-width:900px) {
+  .al-prod.al-row { grid-template-columns:56px minmax(0,1fr) auto; grid-template-areas:"ph nm acts" "ph pr rc" "ph dt dt"; }
+  .al-prod .al-dt { text-align:left; }
+}
+@media (max-width:520px) {
+  .al-prod.al-row { grid-template-columns:48px minmax(0,1fr) minmax(0,1fr); grid-template-areas:"ph nm nm" "pr pr rc" "dt dt dt" "acts acts acts"; }
+}
+</style>
 
-<div class="panel">
-    <div class="panel-header">
-        <span class="panel-title">All Products</span>
-        <?php if (!isset($_GET['action'])): ?>
-            <a href="products.php?action=add" class="btn btn-primary btn-sm">+ Add New Product</a>
-        <?php endif; ?>
+<div class="al-page">
+    <div class="al-top">
+        <div><h2>All products</h2><p id="alSub"><?php echo $_pl_count('all'); ?> active · <?php echo count($_pl_cat_names); ?> categories</p></div>
+        <?php if (!isset($_GET['action'])): ?><a href="products.php?action=add" class="btn btn-primary btn-sm">+ Add New Product</a><?php endif; ?>
     </div>
 
-    <?php
-    $filter_cat = $_GET['category'] ?? 'all';
-    ?>
-    <div style="padding:1rem 1.5rem;border-bottom:1px solid var(--border);">
-        <div class="filter-tabs">
-            <a href="products.php" class="filter-tab <?php echo $filter_cat === 'all' ? 'active' : ''; ?>">All</a>
-            <a href="products.php?category=none" class="filter-tab <?php echo $filter_cat === 'none' ? 'active' : ''; ?>">Uncategorized</a>
-            <?php foreach ($categories as $cat): ?>
-                <a href="products.php?category=<?php echo $cat['id']; ?>"
-                   class="filter-tab <?php echo $filter_cat == $cat['id'] ? 'active' : ''; ?>">
-                    <?php echo htmlspecialchars($cat['name']); ?>
-                </a>
+    <div class="al-tiles" role="group" aria-label="Quick view">
+        <?php foreach ($_pl_tiles as $k => $lbl): $n = $_pl_count($k); ?>
+        <button type="button" class="al-tile<?php echo (in_array($k, ['low', 'out'], true) && $n) ? ' warn' : ''; ?>" data-f="<?php echo $k; ?>" aria-pressed="<?php echo $k === 'all' ? 'true' : 'false'; ?>"><b><?php echo $n; ?></b><span><?php echo $lbl; ?></span></button>
+        <?php endforeach; ?>
+    </div>
+
+    <div class="al-bar">
+        <label class="al-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input type="search" id="serviceSearchInput" placeholder="Search name, category or description…" aria-label="Search products" autocomplete="off"></label>
+        <select id="alCat" aria-label="Category">
+            <option value="">All categories</option>
+            <?php foreach ($_pl_cat_names as $cn): ?><option value="<?php echo htmlspecialchars($cn); ?>"<?php echo $_pl_cat_init === $cn ? ' selected' : ''; ?>><?php echo htmlspecialchars($cn); ?></option><?php endforeach; ?>
+            <option value="__none"<?php echo $_pl_cat_init === '__none' ? ' selected' : ''; ?>>Uncategorized</option>
+        </select>
+        <div class="al-chips" role="group" aria-label="Filters">
+            <?php foreach ($_pl_filters as $k => $lbl): ?>
+            <button type="button" class="al-chip" data-f="<?php echo $k; ?>" aria-pressed="<?php echo $k === 'all' ? 'true' : 'false'; ?>"><?php echo $lbl; ?><small><?php echo $_pl_count($k); ?></small></button>
             <?php endforeach; ?>
         </div>
     </div>
 
-    <div class="table-wrap" style="border:none;border-radius:0;">
-        <table>
-            <thead>
-                <tr>
-                    <th>Image</th>
-                    <th>Name</th>
-                    <th>Category</th>
-                    <th>Price</th>
-                    <th>Stock</th>
-                    <th>Description</th>
-                    <th>Date Added</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php
-                $filtered = array_filter($products, function($p) use ($filter_cat) {
-                    if ($filter_cat === 'all')  return true;
-                    if ($filter_cat === 'none') return empty($p['category_id']);
-                    return $p['category_id'] == $filter_cat;
-                });
-                ?>
-                <?php if (!empty($filtered)): ?>
-                    <?php foreach ($filtered as $product): ?>
-                    <tr<?php if ($product['deleted_at']): ?> style="opacity:0.5;"<?php endif; ?>>
-                        <td>
-                            <?php if ($product['image']): ?>
-                                <img src="../uploads/products/<?php echo htmlspecialchars($product['image']); ?>"
-                                     class="thumb" alt="">
-                            <?php else: ?>
-                                <div class="thumb" style="background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--gray);font-size:0.7rem;">No img</div>
-                            <?php endif; ?>
-                        </td>
-                        <td><strong><?php echo htmlspecialchars($product['name']); ?></strong><?php if ($product['deleted_at']): ?> <span class="badge" style="background:#6c757d;color:#fff;font-size:0.68rem;">ARCHIVED</span><?php endif; ?></td>
-                        <td>
-                            <?php if ($product['category_name']): ?>
-                                <span class="badge badge-approved"><?php echo htmlspecialchars($product['category_name']); ?></span>
-                            <?php else: ?>
-                                <span class="badge" style="background:var(--surface);color:var(--gray);">Uncategorized</span>
-                            <?php endif; ?>
-                        </td>
-                        <td><strong style="color:var(--rust);">₱<?php echo number_format($product['price'], 2); ?></strong></td>
-                        <td>
-                            <?php if ($product['stock'] == 0): ?>
-                                <span class="badge badge-rejected">Out of Stock</span>
-                            <?php elseif ($product['stock'] <= 5): ?>
-                                <span class="badge badge-pending"><?php echo $product['stock']; ?></span>
-                            <?php else: ?>
-                                <span class="badge badge-approved"><?php echo $product['stock']; ?></span>
-                            <?php endif; ?>
-                        </td>
-                        <td style="max-width:200px;color:var(--gray);font-size:0.82rem;">
-                            <?php echo htmlspecialchars(substr($product['description'], 0, 60)) . '...'; ?>
-                        </td>
-                        <td style="font-size:0.78rem;color:var(--gray);">
-                            <?php echo date('M d, Y', strtotime($product['created_at'])); ?>
-                        </td>
-                        <td>
-                            <?php if ($product['deleted_at']): ?>
-                            <form method="POST" style="display:inline;">
-                                <?php echo csrf_field(); ?>
-                                <input type="hidden" name="action" value="restore_product">
-                                <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">
-                                <button type="submit" class="btn btn-secondary btn-sm">Restore</button>
-                            </form>
-                            <?php else: ?>
-                            <a href="products.php?edit=<?php echo $product['id']; ?>" class="btn btn-info btn-sm">Edit</a>
-                            <form method="POST" style="display:inline;" onsubmit="event.preventDefault();uiConfirm('Archive this product?').then(ok=>{if(ok)this.submit()})">
-                                <?php echo csrf_field(); ?>
-                                <input type="hidden" name="action" value="delete_product">
-                                <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">
-                                <?php if (is_cashier()): ?>
-                                <input type="password" name="pin" maxlength="4" placeholder="PIN" required
-                                       style="width:58px;padding:0.25rem 0.4rem;border:1px solid var(--border2);border-radius:6px;font-size:0.8rem;letter-spacing:0.2em;text-align:center;vertical-align:middle;">
-                                <?php endif; ?>
-                                <button type="submit" class="btn btn-danger btn-sm">Archive</button>
-                            </form>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="9" style="text-align:center;color:var(--gray);padding:2rem;">
-                            No products found in this category.
-                        </td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
+    <div class="al-colhead al-prod" aria-hidden="true"><span></span><span>Product</span><span>Price</span><span>Stock</span><span>Added</span><span style="text-align:right">Actions</span></div>
+
+    <?php foreach ($_pl_groups as $gname => $rows): ?>
+    <section class="al-group" data-cat="<?php echo htmlspecialchars($gname === '' ? '__none' : $gname); ?>">
+        <div class="al-ghead"><h3><?php echo htmlspecialchars($gname === '' ? 'Uncategorized' : $gname); ?></h3><span class="al-gcount"><?php echo count($rows); ?></span></div>
+        <div class="al-list">
+        <?php foreach ($rows as $r): $product = $r['p']; $stk = $r['stock'];
+            $scls = $stk <= 0 ? 'out' : ($stk <= 10 ? 'low' : '');
+            $bar  = $stk <= 0 ? 0 : min(100, round($stk / 50 * 100));
+            $bcol = $stk <= 0 ? '#A3261B' : ($stk <= 10 ? '#C9963A' : '#198754'); ?>
+            <div class="al-row al-prod<?php echo $r['arch'] ? ' arch' : ''; ?>"
+                 data-flags="<?php echo implode(' ', $r['flags']); ?>"
+                 data-search="<?php echo htmlspecialchars(strtolower($product['name'] . ' ' . ($product['category_name'] ?? '') . ' ' . ($product['description'] ?? ''))); ?>">
+                <div class="al-ph">
+                    <?php if ($r['img']): ?><img src="../uploads/products/<?php echo htmlspecialchars($product['image']); ?>" alt="" loading="lazy" onerror="this.remove()"><?php else: ?>No img<?php endif; ?>
+                </div>
+                <div class="al-nm">
+                    <b><?php echo htmlspecialchars($product['name']); ?></b>
+                    <div class="al-sub"><?php echo htmlspecialchars($product['category_name'] ?: 'No category'); ?></div>
+                    <?php if (!empty($product['description'])): ?><div class="al-desc"><?php echo htmlspecialchars($product['description']); ?></div><?php endif; ?>
+                    <div class="al-tags">
+                        <?php if (!$r['arch'] && $stk <= 0): ?><span class="al-tag out">Out of stock</span><?php elseif (!$r['arch'] && $stk <= 10): ?><span class="al-tag low">Low stock</span><?php endif; ?>
+                        <?php if (!$r['img']): ?><span class="al-tag nophoto">No photo</span><?php endif; ?>
+                        <?php if (empty($product['category_id'])): ?><span class="al-tag nocat">Uncategorized</span><?php endif; ?>
+                        <?php if ($r['arch']): ?><span class="al-tag arch">Archived</span><?php endif; ?>
+                    </div>
+                </div>
+                <div class="al-prices"><span class="al-price">₱<?php echo number_format($product['price'], 2); ?></span></div>
+                <div class="al-rc al-stock <?php echo $scls; ?>"><b><?php echo $stk <= 0 ? 'Out of stock' : $stk . ' in stock'; ?></b><span class="bar"><i style="width:<?php echo $bar; ?>%;background:<?php echo $bcol; ?>"></i></span></div>
+                <div class="al-dt"><?php echo !empty($product['created_at']) ? 'Added ' . date('M d, Y', strtotime($product['created_at'])) : ''; ?></div>
+                <div class="al-acts">
+                    <?php if ($product['deleted_at']): ?>
+                    <form method="POST">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="restore_product">
+                        <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">
+                        <button type="submit" class="btn btn-secondary btn-sm">Restore</button>
+                    </form>
+                    <?php else: ?>
+                    <a href="products.php?edit=<?php echo $product['id']; ?>" class="btn btn-info btn-sm">Edit</a>
+                    <form method="POST" onsubmit="event.preventDefault();uiConfirm('Archive this product?').then(ok=>{if(ok)this.submit()})">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="delete_product">
+                        <input type="hidden" name="id" value="<?php echo intval($product['id']); ?>">
+                        <?php if (is_cashier()): ?>
+                        <input type="password" name="pin" maxlength="4" placeholder="PIN" required aria-label="PIN">
+                        <?php endif; ?>
+                        <button type="submit" class="btn btn-danger btn-sm">Archive</button>
+                    </form>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endforeach; ?>
+        </div>
+    </section>
+    <?php endforeach; ?>
+
+    <div class="al-empty" id="svcNoResults"<?php echo $_pl_rows ? ' hidden' : ''; ?>><b><?php echo $_pl_rows ? 'No products match' : 'No products yet'; ?></b><?php echo $_pl_rows ? 'Try another word, category or filter.' : 'Add your first product with “+ Add New Product”.'; ?></div>
 </div>
+
+<script>
+(function () {
+    var state = { f: 'all', q: '', cat: document.getElementById('alCat').value };
+    var groups = [].slice.call(document.querySelectorAll('.al-group'));
+    function apply() {
+        var q = state.q.trim().toLowerCase(), shown = 0;
+        groups.forEach(function (g) {
+            var inCat = !state.cat || g.dataset.cat === state.cat, n = 0;
+            g.querySelectorAll('.al-row').forEach(function (r) {
+                var ok = inCat && (' ' + r.dataset.flags + ' ').indexOf(' ' + state.f + ' ') >= 0 && (!q || r.dataset.search.indexOf(q) >= 0);
+                r.hidden = !ok; if (ok) n++;
+            });
+            g.hidden = n === 0;
+            g.querySelector('.al-gcount').textContent = n;
+            shown += n;
+        });
+        if (groups.length) document.getElementById('svcNoResults').hidden = shown > 0;
+        document.querySelectorAll('.al-tile, .al-chip').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.f === state.f); });
+        var sub = document.getElementById('alSub');
+        sub.textContent = sub.textContent.split(' · showing')[0] + ' · showing ' + shown;
+    }
+    document.querySelector('.al-page').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (!b) return; state.f = b.dataset.f; apply(); });
+    document.getElementById('serviceSearchInput').addEventListener('input', function () { state.q = this.value; apply(); });
+    document.getElementById('alCat').addEventListener('change', function () {
+        state.cat = this.value; apply();
+        var url = new URL(location.href);
+        if (this.value) url.searchParams.set('cat_name', this.value); else url.searchParams.delete('cat_name');
+        url.searchParams.delete('category');
+        history.replaceState(null, '', url);
+    });
+    apply();
+})();
+</script>
 
 <?php endif; ?>
 
