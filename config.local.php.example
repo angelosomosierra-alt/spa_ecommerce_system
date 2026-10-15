@@ -30,7 +30,12 @@ $_mail_user = 'your_gmail_address@gmail.com';
 $_mail_pass = 'xxxx xxxx xxxx xxxx';   // 16-char Gmail App Password
 
 // ── PayMongo (online payments — leave commented out until account is approved) ─
-// Uncomment and fill in ONLY when ONLINE_PAYMENT_ENABLED is set to true.
-// $_pm_secret  = 'sk_live_...';
-// $_pm_public  = 'pk_live_...';
-// $_pm_webhook = 'whsec_...';
+// Test first with sk_test_/pk_test_ keys, then swap to sk_live_/pk_live_.
+// The webhook secret comes from PayMongo Dashboard → Developers → Webhooks
+// (endpoint: https://YOUR-DOMAIN/user/paymongo_webhook.php,
+//  events: checkout_session.payment.paid).
+// $_pm_secret  = 'sk_test_...';
+// $_pm_public  = 'pk_test_...';
+// $_pm_webhook = 'whsk_...';
+// $_online_payment   = true;   // shows Pay Online at checkout (needs $_pm_secret)
+// $_show_gcash_maya  = false;  // direct GCash/Maya buttons on the walk-in desk

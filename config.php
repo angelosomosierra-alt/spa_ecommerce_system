@@ -144,14 +144,20 @@ if (PAYMONGO_SECRET_KEY === '') {
 // Master switch: set to true once PayMongo account is verified for live payments.
 // When false: all online payment options (GCash, Maya, Card, QR Ph) are hidden
 // from the UI and rejected server-side. Cash/Onsite remains available.
-// Flipping this to true restores full PayMongo functionality with no other changes.
-define('ONLINE_PAYMENT_ENABLED', false);
+// Turn it on from config.local.php ($_online_payment = true;) or .env
+// (ONLINE_PAYMENT_ENABLED=true) once the PayMongo keys are filled in.
+// It stays off when there is no secret key, so checkout can't break.
+$_online_payment = $_online_payment ?? filter_var(getenv('ONLINE_PAYMENT_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN);
+define('ONLINE_PAYMENT_ENABLED', (bool)$_online_payment && PAYMONGO_SECRET_KEY !== '');
+unset($_online_payment);
 
 // GCash/Maya direct integration requires separate PayMongo Business approvals
 // (not yet active). QR Ph already covers GCash/Maya/all bank apps via a single
 // universal QR code. Set to true once GCash/Maya Business accounts are approved
-// and linked.
-define('SHOW_GCASH_MAYA', false);
+// and linked. Override with $_show_gcash_maya = true; in config.local.php.
+$_show_gcash_maya = $_show_gcash_maya ?? filter_var(getenv('SHOW_GCASH_MAYA') ?: 'false', FILTER_VALIDATE_BOOLEAN);
+define('SHOW_GCASH_MAYA', (bool)$_show_gcash_maya);
+unset($_show_gcash_maya);
 
 // Automatic per-appointment stock deduction (service_supply_usage "recipes",
 // admin/appointments.php completion handler). Off because exact per-appointment
@@ -192,6 +198,56 @@ $conn->query("CREATE TABLE IF NOT EXISTS activity_logs (
     INDEX idx_actor   (actor_id),
     INDEX idx_action  (action_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+// ─── PAYMENT LOG (PayMongo trail, auto-create once if missing) ──────────────
+// One row per step of an online payment: checkout session created, customer
+// came back, PayMongo confirmed, webhook received/rejected. Viewed in
+// admin/payment_log.php. Never stores keys or card details.
+$conn->query("CREATE TABLE IF NOT EXISTS payment_logs (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    order_id    INT          NULL,
+    source      VARCHAR(30)  NOT NULL,
+    step        VARCHAR(40)  NOT NULL,
+    result      VARCHAR(10)  NOT NULL,
+    amount      DECIMAL(10,2) NULL,
+    method      VARCHAR(30)  NULL,
+    reference   VARCHAR(100) NULL,
+    session_id  VARCHAR(100) NULL,
+    detail      VARCHAR(500) NULL,
+    livemode    TINYINT(1)   NULL,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_order   (order_id),
+    INDEX idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+/**
+ * Record one PayMongo step. $result is 'ok', 'info' or 'error'.
+ * $extra keys: amount, method, reference, session_id, livemode.
+ * Call it after a rollback (not inside a transaction that may roll back),
+ * or the row is lost with it. Never throws.
+ */
+function paymongo_log($conn, $order_id, string $source, string $step, string $result,
+                      string $detail = '', array $extra = []): void {
+    try {
+        $oid    = $order_id ? (int)$order_id : null;
+        $amount = isset($extra['amount']) ? (float)$extra['amount'] : null;
+        $method = $extra['method']     ?? null;
+        $ref    = $extra['reference']  ?? null;
+        $sess   = $extra['session_id'] ?? null;
+        $live   = isset($extra['livemode']) ? (int)(bool)$extra['livemode']
+                : (str_starts_with(PAYMONGO_SECRET_KEY, 'sk_live_') ? 1 : 0);
+        $detail = mb_substr($detail, 0, 500);
+        $stmt = $conn->prepare("INSERT INTO payment_logs
+            (order_id, source, step, result, amount, method, reference, session_id, detail, livemode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("isssdssssi", $oid, $source, $step, $result, $amount,
+                          $method, $ref, $sess, $detail, $live);
+        $stmt->execute();
+        $stmt->close();
+    } catch (Throwable $e) {
+        error_log('[PAYMENT LOG] ' . $e->getMessage());
+    }
+}
 
 // ─── BASE URL ─────────────────────────────────────────────────────────────────
 $protocol      = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';

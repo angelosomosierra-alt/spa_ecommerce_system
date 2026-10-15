@@ -249,6 +249,21 @@ if ($order['payment_status'] === 'paid') {
         }
     }
 
+    // Payment log — what happened when the customer came back from PayMongo
+    $_pl_extra = ['amount' => $order['final_amount'] ?? $order['total_amount'] ?? null,
+                  'method' => $paymongo_method ?? null, 'reference' => $paymongo_reference ?: null,
+                  'session_id' => $link_id];
+    if ($paymongo_error) {
+        paymongo_log($conn, $order_id, 'customer', 'return', 'error', $paymongo_error, $_pl_extra);
+    } elseif (($pm_status ?? '') === 'paid') {
+        paymongo_log($conn, $order_id, 'customer', 'confirmed', 'ok',
+            !empty($rows_changed) ? 'Customer came back; PayMongo says paid. Order marked paid, receipt sent.'
+                                  : 'Customer came back; already marked paid (webhook got there first).', $_pl_extra);
+    } else {
+        paymongo_log($conn, $order_id, 'customer', 'return', 'info',
+            'Customer came back but PayMongo does not show it paid yet' . (!empty($pm_status) ? ' (status: ' . $pm_status . ')' : '') . '.', $_pl_extra);
+    }
+
 } elseif ($order['payment_status'] === 'unpaid') {
     // Branch C — cash order; show receipt, no PayMongo reference
     $payment_confirmed  = true;

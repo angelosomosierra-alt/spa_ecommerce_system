@@ -491,6 +491,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                         ];
                     }
 
+                    // PayMongo must charge exactly the order total. The per-item lines
+                    // above use base prices, so they miss people count, home-service
+                    // pricing and add-on services; when they don't add up, send one
+                    // line for the whole order instead.
+                    $_li_sum = 0;
+                    foreach ($line_items as $_li) $_li_sum += $_li['amount'] * $_li['quantity'];
+                    $_order_centavos = (int) round($final_amount * 100);
+                    if ($_li_sum !== $_order_centavos) {
+                        $line_items = [[
+                            'currency'    => 'PHP',
+                            'amount'      => max(2000, $_order_centavos),
+                            'description' => implode(', ', array_map(fn($i) => $i['name'] . (intval($i['quantity']) > 1 ? ' ×' . intval($i['quantity']) : ''), $checkout_items)),
+                            'name'        => 'Recovery Spa Order #' . $order_id,
+                            'quantity'    => 1,
+                        ]];
+                    }
+
                     // PayMongo billing.phone: strip to 10 digits (09XXXXXXXXX → 9XXXXXXXXX)
                     // PayMongo's checkout page already shows "+63" as a prefix in the UI,
                     // so sending +639XXXXXXXXX causes it to display as "+63 +639XXXXXXXXX" (doubled).
@@ -553,6 +570,9 @@ $payload = json_encode([
                     if ($response === false || !empty($curl_err)) {
                         error_log('[PAYMONGO] curl failed for order #' . $order_id . ': ' . $curl_err);
                         $conn->rollback();
+                        paymongo_log($conn, null, 'checkout', 'session_create', 'error',
+                            'Could not reach PayMongo (order #' . $order_id . ' rolled back): ' . $curl_err,
+                            ['amount' => $final_amount]);
                         $message = "Could not connect to payment gateway. Please try onsite payment or check your internet connection.";
                         $message_type = "danger";
                         goto end_order;
@@ -565,6 +585,9 @@ $payload = json_encode([
                         $api_errs = implode('; ', array_map(fn($e) => ($e['code'] ?? '') . ': ' . ($e['detail'] ?? ''), $result['errors']));
                         error_log('[PAYMONGO] API error for order #' . $order_id . ' (HTTP ' . $curl_info['http_code'] . '): ' . $api_errs);
                         $conn->rollback();
+                        paymongo_log($conn, null, 'checkout', 'session_create', 'error',
+                            'PayMongo refused (HTTP ' . $curl_info['http_code'] . ', order #' . $order_id . ' rolled back): ' . $api_errs,
+                            ['amount' => $final_amount]);
                         $message = "Payment setup failed: " . htmlspecialchars($result['errors'][0]['detail'] ?? 'Unknown error') . " Please try onsite payment.";
                         $message_type = "danger";
                         goto end_order;
@@ -577,12 +600,25 @@ $payload = json_encode([
                         $checkout_url = $result['data']['attributes']['checkout_url'] ?? '';
                         if ($checkout_url) {
                             $conn->commit();
+                            // What PayMongo will charge vs. what the order says (discounts
+                            // and the ₱20 minimum per line can make them differ).
+                            $_pm_charge = 0;
+                            foreach ($line_items as $_li) $_pm_charge += $_li['amount'] * $_li['quantity'];
+                            $_pm_charge /= 100;
+                            paymongo_log($conn, $order_id, 'checkout', 'session_created', 'ok',
+                                'Customer sent to PayMongo. Charge ₱' . number_format($_pm_charge, 2)
+                                . ' / order total ₱' . number_format($final_amount, 2)
+                                . (abs($_pm_charge - $final_amount) >= 0.01 ? ' — AMOUNTS DIFFER' : ''),
+                                ['amount' => $_pm_charge, 'session_id' => $paymongo_link_id,
+                                 'livemode' => $result['data']['attributes']['livemode'] ?? null]);
                             $_SESSION['paymongo_order_id'] = $order_id;
                             header("Location: " . $checkout_url); exit();
                         }
                     }
                     error_log('[PAYMONGO] No checkout_url in response for order #' . $order_id . ': ' . $response);
                     $conn->rollback();
+                    paymongo_log($conn, null, 'checkout', 'session_create', 'error',
+                        'No checkout link returned (order #' . $order_id . ' rolled back)', ['amount' => $final_amount]);
                     $message = "Payment setup failed. Please try onsite payment."; $message_type = "danger";
 
                 } else {
