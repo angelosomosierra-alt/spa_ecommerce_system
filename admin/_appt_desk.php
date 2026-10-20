@@ -475,6 +475,7 @@
                 '<p class="dk-hint">' + (diff >= 0 ? 'Adds ' + peso(diff) + ' to the bill' : 'Lowers the bill by ' + peso(-diff)) + (a.bill.paid && diff > 0 ? '; already paid, so the difference is collected at check-in or when completing' : '') + '. Reports will show only ' + esc(s.name) + '.</p>' +
                 '<div class="dk-bar"><button type="button" class="dk-btn primary" id="dkUpGo">Upgrade</button><button type="button" class="dk-btn" id="dkAddBack">Pick another</button><button type="button" class="dk-btn" id="dkAddCancel">Cancel</button></div></div>';
         }
+        var addPrice = (A.price !== undefined && A.price !== null && A.price !== '') ? A.price : d.p;
         h += '<div class="dk-svch"><span><b>' + esc(s.name) + '</b> <small>' + durLabel(d) + '</small></span><span class="dk-amt">' + peso(d.p) + '</span></div>' +
             (d.n > 1 ? '<p class="dk-hint">Adds ' + d.n + ' sessions; each one is marked done here as it happens.</p>' : '') +
             '<div class="dk-g2">' +
@@ -482,8 +483,10 @@
                    : '<div><label class="dk-lbl" for="dkAddTh">Therapist</label>' + therSelect(s.qual, A.th ? +A.th : null, 'id="dkAddTh"', false).replace('<option value="">Choose therapist…</option>', '<option value="">Assign later</option>') + '</div>') +
             (a.people > 1 ? '<div><label class="dk-lbl" for="dkAddPerson">For</label><select id="dkAddPerson">' +
                 Array.apply(null, Array(a.people)).map(function (_, i) { var v = 'Person ' + (i + 1); return '<option' + (A.person === v ? ' selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' : '') +
+            '<div><label class="dk-lbl" for="dkAddPrice">Price</label><input id="dkAddPrice" type="number" min="0" step="0.01" value="' + esc(addPrice) + '"></div>' +
             '</div>' +
-            '<p class="dk-hint">Charged with this booking (' + (a.rate_type === 'regular' ? 'regular rate' : esc(a.rate_type) + ' rate') + '); collected at check-in or when completing.</p>' +
+            (Number(addPrice) !== d.p ? '<p class="dk-hint">Overriding the usual ' + peso(d.p) + ' — e.g. set to ' + pesoS(0) + ' for a free/complimentary add-on.</p>'
+                                       : '<p class="dk-hint">Charged with this booking (' + (a.rate_type === 'regular' ? 'regular rate' : esc(a.rate_type) + ' rate') + '); collected at check-in or when completing. Change the price above for a free/complimentary add-on.</p>') +
             '<div class="dk-bar"><button type="button" class="dk-btn primary" id="dkAddGo">Add to booking</button><button type="button" class="dk-btn" id="dkAddBack">Pick another</button><button type="button" class="dk-btn" id="dkAddCancel">Cancel</button></div></div>';
         return h;
     }
@@ -504,16 +507,19 @@
             var p = b.dataset.addpick.split(','), s = CAT.filter(function (x) { return x.id === +p[0]; })[0];
             // Default to the booking's own therapist when qualified.
             var own = (a.slots[0] || {}).therapist_id;
-            S.add.svc = s; S.add.di = +p[1]; S.add.th = own && s.qual.indexOf(own) >= 0 ? String(own) : '';
+            S.add.svc = s; S.add.di = +p[1]; S.add.th = own && s.qual.indexOf(own) >= 0 ? String(own) : ''; S.add.price = null;
             renderDrawer();
         }; });
         var th = $('dkAddTh'); if (th) th.onchange = function () { S.add.th = th.value; };
         var pe = $('dkAddPerson'); if (pe) pe.onchange = function () { S.add.person = pe.value; };
+        var pr = $('dkAddPrice'); if (pr) pr.oninput = function () { S.add.price = pr.value; var el = $('dkAddPrice'); var pos = el ? el.selectionStart : null; renderDrawer(); var n = $('dkAddPrice'); if (n && pos !== null) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } };
         var back = $('dkAddBack'); if (back) back.onclick = function () { S.add.svc = null; renderDrawer(); };
         var cancel = $('dkAddCancel'); if (cancel) cancel.onclick = function () { S.add = null; renderDrawer(); };
         var go = $('dkAddGo'); if (go) go.onclick = function () {
             var s = S.add.svc, d = s.durs[S.add.di];
+            var priceOverride = (S.add.price !== undefined && S.add.price !== null && S.add.price !== '') ? S.add.price : d.p;
             var f = { extra_svc_id: s.id, extra_duration_id: d.id || '', extra_therapist: s.med ? '' : (S.add.th || ''), person_label: S.add.person || 'Person 1', extra_payment_method: 'cash',
+                      extra_price: priceOverride,
                       override: !s.med && S.add.th && s.qual.indexOf(+S.add.th) < 0 ? '1' : '' };
             S.add = null;
             post('add_extra_service', a.id, f, true, false, s.name + ' added');
