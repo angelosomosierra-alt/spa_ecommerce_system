@@ -94,9 +94,16 @@ if ($verified && !$already_paid) {
                 paymongo_method    = COALESCE(paymongo_method, ?),
                 paymongo_reference = COALESCE(paymongo_reference, ?)
             WHERE id = ?
+              AND payment_status = 'pending_payment'
         ");
         $upd->bind_param("ssi", $pm_method, $pm_ref, $order_id);
-        $upd->execute(); $upd->close();
+        $upd->execute();
+        $rows_changed = $upd->affected_rows;
+        $upd->close();
+
+        // The webhook may have marked it paid a moment earlier — then it also
+        // already approved and deducted stock, so stop here.
+        if ($rows_changed > 0) {
 
         // Approve linked appointments
         $conn->query("
@@ -113,12 +120,24 @@ if ($verified && !$already_paid) {
             SET p.stock = p.stock - oi.quantity
             WHERE oi.order_id = $order_id AND p.stock >= oi.quantity
         ");
+        }
 
         $conn->commit();
+        paymongo_log($conn, $order_id, 'walkin', 'confirmed', 'ok',
+            $rows_changed > 0 ? 'Desk popup came back; PayMongo says paid. Order paid and approved.'
+                              : 'Desk popup came back; already marked paid (webhook got there first).',
+            ['amount' => $order['final_amount'], 'method' => $pm_method, 'reference' => $pm_ref,
+             'session_id' => $link_row['paymongo_link_id'] ?? null]);
     } catch (Throwable $e) {
         $conn->rollback();
         error_log('[WALKIN_SUCCESS] Failed to mark order paid: ' . $e->getMessage());
+        paymongo_log($conn, $order_id, 'walkin', 'confirmed', 'error', 'Paid on PayMongo but saving failed: ' . $e->getMessage(),
+            ['amount' => $order['final_amount'], 'reference' => $pm_ref]);
     }
+} elseif (!$verified && !$already_paid) {
+    paymongo_log($conn, $order_id, 'walkin', 'return', 'info',
+        'Desk popup came back but PayMongo does not show it paid yet.',
+        ['amount' => $order['final_amount'], 'session_id' => $link_row['paymongo_link_id'] ?? null]);
 }
 
 $display_name   = htmlspecialchars($order['customer_name']);

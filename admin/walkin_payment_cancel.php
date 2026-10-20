@@ -9,11 +9,21 @@ redirect_if_not_admin();
 
 $order_id = intval($_GET['order_id'] ?? 0);
 
-// Clean up the pending order so stock/appointments don't stay reserved
+// Clean up the pending order so stock/appointments don't stay reserved.
+// Only while it is still unpaid — a paid order must never be deleted here.
+$_still_pending = false;
 if ($order_id) {
+    $_chk = $conn->prepare("SELECT final_amount FROM orders WHERE id = ? AND payment_status = 'pending_payment'");
+    $_chk->bind_param("i", $order_id);
+    $_chk->execute();
+    $_pending_row = $_chk->get_result()->fetch_assoc();
+    $_chk->close();
+    $_still_pending = (bool)$_pending_row;
+}
+if ($order_id && $_still_pending) {
     // Delete related appointment_therapists
     $conn->query("DELETE at FROM appointment_therapists at
-                  INNER JOIN appointments a ON at.appointment_id = a.order_item_id
+                  INNER JOIN appointments a ON at.appointment_id = a.id
                   INNER JOIN order_items oi ON a.order_item_id = oi.id
                   WHERE oi.order_id = $order_id");
     // Delete appointments
@@ -24,6 +34,9 @@ if ($order_id) {
     $conn->query("DELETE FROM order_items WHERE order_id = $order_id");
     // Delete order itself (only if still pending)
     $conn->query("DELETE FROM orders WHERE id = $order_id AND payment_status = 'pending_payment'");
+    paymongo_log($conn, $order_id, 'walkin', 'cancelled', 'info',
+        'Desk payment cancelled on the PayMongo page. Pending order removed, nothing charged.',
+        ['amount' => $_pending_row['final_amount'] ?? null]);
 }
 ?>
 <!DOCTYPE html>

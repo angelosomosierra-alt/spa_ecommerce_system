@@ -13,6 +13,9 @@ if ($order_id) {
     ");
     $stmt->bind_param("ii", $order_id, $user_id);
     $stmt->execute();
+    if ($stmt->affected_rows > 0) {
+        paymongo_log($conn, $order_id, 'customer', 'cancelled', 'info', 'Customer pressed back/cancel on the PayMongo page. Order cancelled, nothing charged.');
+    }
     $stmt->close();
 
     // Clean up session — cart is untouched so user can retry

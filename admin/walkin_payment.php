@@ -284,9 +284,12 @@ try {
     $line_items = [[
         'currency'    => 'PHP',
         'amount'      => $amount_centavos,
-        'description' => ($order_type === 'service' ? 'Service: ' : 'Product: ') . $item_name,
+        'description' => ($order_type === 'service' ? 'Service: ' : 'Product: ') . $item_name
+                         . (($order_type === 'product' && $quantity > 1) ? ' ×' . $quantity : ''),
         'name'        => $item_name,
-        'quantity'    => ($order_type === 'product') ? $quantity : 1,
+        // $final_amount is already the whole order (price × qty − discount),
+        // so this is one line; quantity > 1 here would multiply the charge again.
+        'quantity'    => 1,
     ]];
 
     // ── Phone sanitize for PayMongo ───────────────────────────────────────────
@@ -297,7 +300,7 @@ try {
     if (!preg_match('/^\+639\d{9}$/', $_pm_phone)) $_pm_phone = null;
 
     // ── PayMongo method types — show only the chosen method ──────────────────
-    $method_map = ['gcash' => 'gcash', 'paymaya' => 'paymaya', 'maya' => 'paymaya', 'card' => 'card'];
+    $method_map = ['gcash' => 'gcash', 'paymaya' => 'paymaya', 'maya' => 'paymaya', 'card' => 'card', 'qrph' => 'qrph'];
     $pm_method  = $method_map[$payment_method] ?? 'card';
 
     // For the popup success/cancel redirect back to walkin
@@ -348,6 +351,8 @@ try {
     if ($response === false || !empty($curl_err)) {
         $conn->rollback();
         error_log('[WALKIN_PAYMENT] curl failed: ' . $curl_err);
+        paymongo_log($conn, null, 'walkin', 'session_create', 'error',
+            'Could not reach PayMongo (order #' . $order_id . ' rolled back): ' . $curl_err, ['amount' => $final_amount]);
         echo json_encode(['success' => false, 'error' => 'Could not connect to payment gateway. Please try cash payment.']);
         exit;
     }
@@ -358,6 +363,8 @@ try {
         $conn->rollback();
         $detail = $result['errors'][0]['detail'] ?? 'Unknown error';
         error_log('[WALKIN_PAYMENT] PayMongo error for order #' . $order_id . ': ' . $detail);
+        paymongo_log($conn, null, 'walkin', 'session_create', 'error',
+            'PayMongo refused (order #' . $order_id . ' rolled back): ' . $detail, ['amount' => $final_amount]);
         echo json_encode(['success' => false, 'error' => 'Payment setup failed: ' . $detail]);
         exit;
     }
@@ -368,6 +375,8 @@ try {
     if (empty($checkout_url)) {
         $conn->rollback();
         error_log('[WALKIN_PAYMENT] No checkout_url in PayMongo response: ' . $response);
+        paymongo_log($conn, null, 'walkin', 'session_create', 'error',
+            'No checkout link returned (order #' . $order_id . ' rolled back)', ['amount' => $final_amount]);
         echo json_encode(['success' => false, 'error' => 'Payment setup failed. No checkout URL returned.']);
         exit;
     }
@@ -378,6 +387,11 @@ try {
     $upd->execute(); $upd->close();
 
     $conn->commit();
+    paymongo_log($conn, $order_id, 'walkin', 'session_created', 'ok',
+        'Desk opened PayMongo (' . $pm_method . ') for ₱' . number_format($amount_centavos / 100, 2)
+        . ($amount_centavos !== intval(round($final_amount * 100)) ? ' — order total ₱' . number_format($final_amount, 2) . ', AMOUNTS DIFFER' : ''),
+        ['amount' => $amount_centavos / 100, 'method' => $pm_method, 'session_id' => $paymongo_link_id,
+         'livemode' => $result['data']['attributes']['livemode'] ?? null]);
 
     echo json_encode([
         'success'      => true,
