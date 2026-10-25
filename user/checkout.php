@@ -199,6 +199,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         $message_type = "danger";
         $payment_method = 'onsite';
     }
+    // Online service bookings need a non-refundable down payment, paid now
+    // through PayMongo (the spa's rule). Pay at Spa is only offered while
+    // online payment is switched off.
+    if ($checkout_type === 'service' && ONLINE_PAYMENT_ENABLED) {
+        $payment_method = 'online';
+        if (empty($_POST['dp_agree'])) {
+            $message = "Please tick the box to confirm that the down payment is non-refundable.";
+            $message_type = "danger";
+        }
+    }
     $service_type           = $_POST['service_type']   ?? 'onsite';
     $home_address           = sanitize_input($_POST['home_address'] ?? '');
     $home_notes             = sanitize_input($_POST['home_notes']   ?? '');
@@ -386,6 +396,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         if (empty($message)) {
             $discount_amount_calc = 0.00;
             $final_amount = $total_amount;
+            $dp_amount = ($checkout_type === 'service' && $payment_method === 'online')
+                ? round($final_amount * ONLINE_DP_PERCENT / 100, 2) : null;
 
             // ── Lock and verify stock before writing (prevents race conditions) ──
             if ($checkout_type === 'product' || $checkout_type === 'cart') {
@@ -425,6 +437,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
 
             if ($stmt->execute()) {
                 $order_id = $stmt->insert_id; $stmt->close();
+                if ($dp_amount !== null) {
+                    ensure_online_dp_column($conn);
+                    $dpu = $conn->prepare("UPDATE orders SET dp_amount = ? WHERE id = ?");
+                    $dpu->bind_param("di", $dp_amount, $order_id); $dpu->execute(); $dpu->close();
+                }
 
                 foreach ($checkout_items as $item) {
                     if ($item['type'] === 'product') {
@@ -558,7 +575,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     $_li_sum = 0;
                     foreach ($line_items as $_li) $_li_sum += $_li['amount'] * $_li['quantity'];
                     $_order_centavos = (int) round($final_amount * 100);
-                    if ($_li_sum !== $_order_centavos) {
+                    if ($dp_amount !== null) {
+                        // Service booking: charge only the down payment.
+                        $line_items = [[
+                            'currency'    => 'PHP',
+                            'amount'      => max(2000, (int) round($dp_amount * 100)),
+                            'description' => rtrim(rtrim(number_format(ONLINE_DP_PERCENT, 2), '0'), '.') . '% non-refundable down payment for '
+                                           . implode(', ', array_map(fn($i) => $i['name'], $checkout_items))
+                                           . '. Balance ₱' . number_format($final_amount - $dp_amount, 2) . ' is paid at the spa.',
+                            'name'        => 'Down payment · Booking #' . $order_id,
+                            'quantity'    => 1,
+                        ]];
+                    } elseif ($_li_sum !== $_order_centavos) {
                         $line_items = [[
                             'currency'    => 'PHP',
                             'amount'      => max(2000, $_order_centavos),
@@ -604,7 +632,7 @@ $payload = json_encode([
             'payment_method_types' => ['card','gcash','paymaya','qrph'],
             'success_url'   => $success_url,
             'cancel_url'    => $cancel_url,
-            'description'   => 'Recovery Spa Order #' . $order_id,
+            'description'   => ($dp_amount !== null ? 'Down payment · Recovery Spa Booking #' : 'Recovery Spa Order #') . $order_id,
         ]
     ]
 ]);
@@ -665,10 +693,12 @@ $payload = json_encode([
                             $_pm_charge = 0;
                             foreach ($line_items as $_li) $_pm_charge += $_li['amount'] * $_li['quantity'];
                             $_pm_charge /= 100;
+                            $_pm_expect = $dp_amount ?? $final_amount;
                             paymongo_log($conn, $order_id, 'checkout', 'session_created', 'ok',
                                 'Customer sent to PayMongo. Charge ₱' . number_format($_pm_charge, 2)
+                                . ($dp_amount !== null ? ' down payment' : '')
                                 . ' / order total ₱' . number_format($final_amount, 2)
-                                . (abs($_pm_charge - $final_amount) >= 0.01 ? ' — AMOUNTS DIFFER' : ''),
+                                . (abs($_pm_charge - $_pm_expect) >= 0.01 ? ' — AMOUNTS DIFFER' : ''),
                                 ['amount' => $_pm_charge, 'session_id' => $paymongo_link_id,
                                  'livemode' => $result['data']['attributes']['livemode'] ?? null]);
                             $_SESSION['paymongo_order_id'] = $order_id;
@@ -1000,6 +1030,14 @@ require_once 'header.php';
     font-family: 'DM Sans', sans-serif;
     transition: all .2s;
 }
+
+/* ── Down payment (online service bookings) ── */
+.dp-box { border: 1px solid var(--cream2); border-radius: 12px; padding: 0.8rem 0.95rem; background: #FFFBF4; display: grid; gap: 0.35rem; margin-bottom: 0.9rem; font-family: 'DM Sans', sans-serif; }
+.dp-row { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.88rem; color: var(--brown); font-variant-numeric: tabular-nums; }
+.dp-row.dp-now { font-weight: 700; }
+.dp-row.dp-now b { color: var(--gold); font-size: 1.15rem; }
+.dp-agree { display: flex; gap: 0.6rem; align-items: flex-start; font-size: 0.84rem; line-height: 1.45; color: var(--brown); margin: 0 0 1rem; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+.dp-agree input { width: 17px; height: 17px; margin-top: 2px; flex: none; accent-color: var(--gold); }
 
 /* ── Order summary ── */
 .co-summary { position: sticky; top: 1.5rem; }
@@ -1484,7 +1522,7 @@ require_once 'header.php';
             </div>
             <form method="POST" id="checkoutForm">
             <?php echo csrf_field(); ?>
-            <input type="hidden" name="payment_method" id="payment_method" value="onsite">
+            <input type="hidden" name="payment_method" id="payment_method" value="<?php echo ($checkout_type === 'service' && ONLINE_PAYMENT_ENABLED) ? 'online' : 'onsite'; ?>">
             <input type="hidden" name="service_type"   id="service_type_hidden" value="onsite">
             <div class="co-card-body">
                 <div class="co-input-row">
@@ -1707,6 +1745,27 @@ require_once 'header.php';
                 <div class="co-card-head-title">Payment Method</div>
             </div>
             <div class="co-card-body">
+                <?php if ($checkout_type === 'service' && ONLINE_PAYMENT_ENABLED):
+                    $_dp_pct_label = rtrim(rtrim(number_format(ONLINE_DP_PERCENT, 2), '0'), '.') . '%';
+                    $_dp_now = round($total_amount * ONLINE_DP_PERCENT / 100, 2); ?>
+                <!-- Online service bookings: non-refundable down payment through PayMongo -->
+                <div class="dp-box">
+                    <div class="dp-row"><span>Total</span><b id="dpTotal">₱<?php echo number_format($total_amount, 2); ?></b></div>
+                    <div class="dp-row dp-now"><span><?php echo $_dp_pct_label; ?> down payment, pay now online</span><b id="dpNow">₱<?php echo number_format($_dp_now, 2); ?></b></div>
+                    <div class="dp-row"><span>Balance, pay at the spa</span><b id="dpBal">₱<?php echo number_format($total_amount - $_dp_now, 2); ?></b></div>
+                </div>
+                <div class="pay-note" style="border-left-color:#198754;background:#f0fdf4;">
+                    Online bookings need a <strong><?php echo $_dp_pct_label; ?> down payment</strong>. You'll pay it on PayMongo's secure page with
+                    <strong>GCash, Maya, card or QR Ph</strong>. The down payment is <strong>non-refundable</strong> and is deducted from your bill on the day of your appointment.
+                </div>
+                <label class="dp-agree">
+                    <input type="checkbox" name="dp_agree" value="1" id="dpAgree" required>
+                    <span>I understand the down payment is <strong>non-refundable</strong>, including if I cancel or do not show up.</span>
+                </label>
+                <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
+                    Pay <span id="dpBtnAmt">₱<?php echo number_format($_dp_now, 2); ?></span> down payment
+                </button>
+                <?php else: ?>
                 <div class="pay-group" id="paymentBtnsGroup">
                     <div class="pay-btn active" id="paybtn-onsite" onclick="selectPayment('onsite')">
                         <span class="pay-btn-label">Pay at Spa</span>
@@ -1733,6 +1792,7 @@ require_once 'header.php';
                 <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
                     Confirm Booking
                 </button>
+                <?php endif; ?>
                 <a href="<?php echo $checkout_type === 'service' ? 'index.php' : 'cart.php'; ?>"
                    class="co-back">← Go Back</a>
                 <div class="co-secure">
@@ -2057,8 +2117,27 @@ function selectServiceType(type) {
     updateDiscountPreview();
 }
 
+// ── Down payment figures follow the order total (people, length, add-ons) ─────
+(function () {
+    var grand = document.getElementById('grandTotal'), now = document.getElementById('dpNow');
+    if (!grand || !now) return;
+    var PCT = <?php echo json_encode((float)ONLINE_DP_PERCENT); ?>;
+    var fmt = function (n) { return '₱' + n.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}); };
+    function sync() {
+        var total = parseFloat(grand.textContent.replace(/[₱,+\s]/g, '')) || 0;
+        var dp = Math.round(total * PCT) / 100;
+        document.getElementById('dpTotal').textContent = fmt(total);
+        now.textContent = fmt(dp);
+        document.getElementById('dpBal').textContent = fmt(total - dp);
+        document.getElementById('dpBtnAmt').textContent = fmt(dp);
+    }
+    new MutationObserver(sync).observe(grand, {childList: true, characterData: true, subtree: true});
+    sync();
+}());
+
 // ── Payment method ────────────────────────────────────────────────────────────
 function selectPayment(method) {
+    if (!document.getElementById('paybtn-onsite')) return; // down-payment layout: always online
     ['onsite','online'].forEach(m => {
         document.getElementById('paybtn-' + m)?.classList.toggle('active', m === method);
     });

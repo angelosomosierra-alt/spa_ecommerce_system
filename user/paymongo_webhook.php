@@ -188,13 +188,41 @@ if ($type === 'checkout_session.payment.paid') {
         $paymongo_method = $pm_method_map[$raw_pm_method] ?? $raw_pm_method ?? null;
         $paymongo_ref    = $payments[0]['attributes']['reference_number'] ?? ($payments[0]['id'] ?? $cs_id);
 
-        $stmt = $conn->prepare("SELECT id, user_id, payment_method, total_amount, final_amount FROM orders WHERE paymongo_link_id = ?");
+        ensure_online_dp_column($conn);
+        $stmt = $conn->prepare("SELECT id, user_id, payment_method, total_amount, final_amount, dp_amount FROM orders WHERE paymongo_link_id = ?");
         $stmt->bind_param("s", $cs_id);
         $stmt->execute();
         $order = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        if ($order) {
+        if ($order && (float)($order['dp_amount'] ?? 0) > 0) {
+            // Down payment for a customer's service booking (see settle_online_down_payment).
+            $order_id = (int)$order['id'];
+            try {
+                $conn->begin_transaction();
+                $rows_changed = settle_online_down_payment($conn, $order_id, $paymongo_method, $paymongo_ref);
+                $conn->commit();
+                paymongo_log($conn, $order_id, 'webhook', 'paid', 'ok',
+                    $rows_changed > 0 ? 'PayMongo confirmed the down payment. Saved on the booking; balance due at the spa.'
+                                      : 'PayMongo confirmed the down payment; it was already saved.',
+                    ['amount' => $order['dp_amount'], 'method' => $paymongo_method, 'reference' => $paymongo_ref,
+                     'session_id' => $cs_id, 'livemode' => $_wh_live]);
+                if ($rows_changed > 0) {
+                    add_notification($conn, (int)$order['user_id'], 'appointment', 'Down Payment Received',
+                        'We received your ₱' . number_format($order['dp_amount'], 2) . ' down payment for booking #' . $order_id . '. Awaiting confirmation from the spa.',
+                        'appointments.php');
+                    add_notification($conn, null, 'appointment', 'Online Down Payment',
+                        'Booking #' . $order_id . ': ₱' . number_format($order['dp_amount'], 2) . ' down payment paid online. Ref: ' . $paymongo_ref,
+                        'appointments.php');
+                    send_order_receipt($conn, $order_id);
+                }
+            } catch (Throwable $e) {
+                $conn->rollback();
+                error_log('[WEBHOOK] Down payment save failed for order ' . $order_id . ': ' . $e->getMessage());
+                paymongo_log($conn, $order_id, 'webhook', 'paid', 'error', 'PayMongo says the down payment is paid but saving failed: ' . $e->getMessage(),
+                    ['reference' => $paymongo_ref, 'session_id' => $cs_id, 'livemode' => $_wh_live]);
+            }
+        } elseif ($order) {
             $order_id    = (int)$order['id'];
             $is_customer = ($order['payment_method'] === 'online');
             $rows_changed = 0;

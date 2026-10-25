@@ -159,6 +159,13 @@ $_show_gcash_maya = $_show_gcash_maya ?? filter_var(getenv('SHOW_GCASH_MAYA') ?:
 define('SHOW_GCASH_MAYA', (bool)$_show_gcash_maya);
 unset($_show_gcash_maya);
 
+// Online service bookings are paid as a non-refundable down payment of this
+// share of the total (the rest is paid at the spa). Override with
+// $_online_dp_percent in config.local.php or ONLINE_DP_PERCENT in .env.
+$_online_dp_percent = $_online_dp_percent ?? (getenv('ONLINE_DP_PERCENT') !== false ? (float)getenv('ONLINE_DP_PERCENT') : 50.0);
+define('ONLINE_DP_PERCENT', max(1.0, min(100.0, (float)$_online_dp_percent)));
+unset($_online_dp_percent);
+
 // Automatic per-appointment stock deduction (service_supply_usage "recipes",
 // admin/appointments.php completion handler). Off because exact per-appointment
 // usage formulas aren't known yet — inventory tracking relies on Deliveries
@@ -247,6 +254,65 @@ function paymongo_log($conn, $order_id, string $source, string $step, string $re
     } catch (Throwable $e) {
         error_log('[PAYMENT LOG] ' . $e->getMessage());
     }
+}
+
+// ─── ONLINE DOWN PAYMENT ─────────────────────────────────────────────────────
+// orders.dp_amount is set when a customer books a service online: PayMongo
+// then charges only that down payment, and the rest is paid at the spa.
+function ensure_online_dp_column($conn): void {
+    static $done = false;
+    if ($done) return;
+    $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS dp_amount DECIMAL(10,2) NULL DEFAULT NULL");
+    $done = true;
+}
+
+// Called once PayMongo says a down-payment order is paid (from the success
+// page or the webhook, whichever comes first). The order goes back to
+// 'unpaid' (the balance is still due) and the down payment is saved on its
+// appointments exactly like a down payment typed in by staff, so it shows in
+// that day's Daily Report and is taken off the bill at completion.
+// Returns 1 if this call settled it, 0 if it was already settled / not a DP order.
+function settle_online_down_payment($conn, int $order_id, ?string $method, ?string $reference): int {
+    ensure_online_dp_column($conn);
+    $q = $conn->prepare("SELECT dp_amount FROM orders WHERE id = ? AND payment_status = 'pending_payment' AND dp_amount > 0");
+    $q->bind_param("i", $order_id); $q->execute();
+    $row = $q->get_result()->fetch_assoc(); $q->close();
+    if (!$row) return 0;
+    $dp = round((float)$row['dp_amount'], 2);
+
+    $upd = $conn->prepare("
+        UPDATE orders
+        SET payment_status     = 'unpaid',
+            paymongo_method    = COALESCE(paymongo_method, ?),
+            paymongo_reference = COALESCE(paymongo_reference, ?)
+        WHERE id = ? AND payment_status = 'pending_payment'");
+    $upd->bind_param("ssi", $method, $reference, $order_id); $upd->execute();
+    $changed = $upd->affected_rows; $upd->close();
+    if ($changed < 1) return 0;
+
+    // Same method names the Daily Report's DP lines use.
+    $adv_method = in_array($method, ['gcash', 'maya', 'card', 'qrph'], true) ? $method : 'card';
+    $ap = $conn->prepare("
+        SELECT a.id, a.charged_price FROM appointments a
+        JOIN order_items oi ON oi.id = a.order_item_id
+        WHERE oi.order_id = ? ORDER BY a.id");
+    $ap->bind_param("i", $order_id); $ap->execute();
+    $appts = $ap->get_result()->fetch_all(MYSQLI_ASSOC); $ap->close();
+    if (!$appts) return 1;
+    // Split across the order's appointments by price; the last one takes
+    // the rounding remainder so the parts add up to the amount paid.
+    $sum = array_sum(array_map(fn($a) => (float)$a['charged_price'], $appts));
+    $left = $dp;
+    $set = $conn->prepare("UPDATE appointments SET advance_payment = ?, advance_payment_date = CURDATE(), advance_payment_method = ? WHERE id = ?");
+    foreach ($appts as $i => $a) {
+        $part = ($i === count($appts) - 1) ? $left
+              : round($sum > 0 ? $dp * (float)$a['charged_price'] / $sum : $dp / count($appts), 2);
+        $left = round($left - $part, 2);
+        $aid = (int)$a['id'];
+        $set->bind_param("dsi", $part, $adv_method, $aid); $set->execute();
+    }
+    $set->close();
+    return 1;
 }
 
 // ─── BASE URL ─────────────────────────────────────────────────────────────────
