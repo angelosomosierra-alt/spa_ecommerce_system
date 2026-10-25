@@ -881,7 +881,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
                 OR
                 -- Finding B fix: a package's revenue is recognized at booking
                 -- REGARDLESS of session-completion status, but only once it's
-                -- actually PAID — otherwise it's still sitting in $walkin_unpaids
+                -- actually PAID — otherwise it's still sitting in walkin_unpaids
                 -- (admin/_daily_report_data.php) and importing it here too would
                 -- double-touch the same order (once as recognized revenue, once
                 -- as unpaid). An unpaid package simply doesn't import yet; the
@@ -1808,7 +1808,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'ADVANCES RECEIVED',      'val' => $advances_received_total, 'color' => '#C96A2C',
                  'note' => 'Cash collected today for future/upcoming appointments'],
                 ['label' => 'SPREADSHEET NET SALES',  'val' => $spreadsheet_net_total,    'color' => '#198754',
-                 'note' => 'Non-refund rows from Spreadsheet tab — added to Gross & Net Cash'],
+                 'note' => 'Non-refund rows from Spreadsheet tab. Only hand-typed rows are added to Gross & Net Cash; rows from appointments are already in the POS reading'],
                 ['label' => 'SPREADSHEET REFUNDS',   'val' => $spreadsheet_refund_total, 'color' => 'var(--rust)',
                  'note' => 'Refund rows from Spreadsheet tab — deducted from Net Cash'],
                 ['label' => 'NET CASH',               'val' => $net_cash,             'color' => '#198754', 'bold' => true,
@@ -1894,7 +1894,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <td style="text-align:right;font-weight:700;color:var(--rust);">₱<?php echo number_format($e['amount'],2); ?></td>
                     <td style="font-size:0.78rem;color:var(--gray);">
                         <?php
-                        $by = $conn->query("SELECT full_name FROM users WHERE id={$e['added_by']}")->fetch_assoc();
+                        $by = $conn->query("SELECT full_name FROM users WHERE id=" . (int)($e['added_by'] ?? 0))->fetch_assoc();
                         echo htmlspecialchars($by['full_name'] ?? 'System');
                         ?>
                     </td>

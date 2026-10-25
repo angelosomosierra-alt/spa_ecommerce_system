@@ -633,11 +633,16 @@ $staff_cf             += $addon_cf;
 // ── Spreadsheet totals ────────────────────────────────────────────────────────
 $spreadsheet_net_total    = 0.0;
 $spreadsheet_refund_total = 0.0;
+// Rows copied in from a completed appointment are already inside the POS
+// reading (the sales report's POS = sum of every service row). Only rows
+// typed in by hand on the Spreadsheet tab are extra sales on top of POS.
+$spreadsheet_manual_net   = 0.0;
 foreach ($spreadsheet_rows as $_ssr) {
     if ($_ssr['is_refund']) {
         $spreadsheet_refund_total += (float)$_ssr['net_sales'];
     } else {
         $spreadsheet_net_total += (float)$_ssr['net_sales'];
+        if (empty($_ssr['source_appointment_id'])) $spreadsheet_manual_net += (float)$_ssr['net_sales'];
     }
 }
 
@@ -654,38 +659,39 @@ foreach ($influencer_rows as $_inf_r) {
 
 // POS Reading: manual from DB; computed = sum of all service+addon+influencer revenue + products
 $pos_reading          = floatval($rpt['pos_reading'] ?? 0);
+// Sales report: POS READING = services + products + marketing at cost + down
+// payments received today (=K53+V99+K71+T69).
 $pos_reading_computed = array_sum(array_column($service_rows, 'charged_price'))
+                      + $advances_received_total
                       + $addon_gross + $mktg_expense + $prod_sold_total;
 $pos_variance         = $pos_reading - $pos_reading_computed;
 
-// GROSS SALES = POS_READING + SOLD_GC − MARKETING_EXPENSE + SPREADSHEET_NET_SALES
-$gross_sales   = $pos_reading + $gc_sold_total - $mktg_expense + $spreadsheet_net_total;
+// Sales report: GROSS SALES = POS READING + SOLD GC − MARKETING EXPENSE − DOWN
+// PAYMENTS received today (=B34+B33-B45-T69); the down payments are in POS
+// but are not a sale of this day.
+$gross_sales   = $pos_reading + $gc_sold_total - $mktg_expense - $advances_received_total + $spreadsheet_manual_net;
 $net_sales     = $gross_sales - $staff_cf;
 // $maya_dp_total and per-method DP totals are computed above from advances_received
 
 // Payment method totals
-// Rows fully pre-paid via a PRIOR-day advance (e.g. Session 2 of a 2-session package,
-// paid in full at Session 1's check-in) carry a STALE order payment_method that was
-// never refreshed on their own completion day — attributing their charged_price to
-// today's payment-method bucket here would double-count money already deducted via
-// B46 on the day it was actually collected. Mirrors B48's own advance_payment_date
-// check above. A row is skipped only when its advance FULLY covers its charged_price
-// (a partial prior-day advance still has a genuine fresh remainder collected today).
+// Like the sales report's SWIPER / GCASH (SALES) cells, each bucket holds only
+// what was actually paid with that method today: price − discounts − any
+// advance already counted elsewhere (prior-day advance → ADVANCE PAYMENT,
+// today's advance → the DP lines). A ₱1,998 visit with a ₱749 GCash advance
+// and the rest by card puts ₱1,249 under card, not ₱1,998; a session paid in
+// full on an earlier day (e.g. Session 2 of a package) adds nothing today.
 $pm_totals = [];
 foreach ($service_rows as $row) {
-    $_row_adv      = (float)($row['advance_payment'] ?? 0);
-    $_row_adv_date = $row['advance_payment_date'] ?? '';
-    $_row_prepaid  = $_row_adv > 0
-                   && $_row_adv_date !== '' && $_row_adv_date !== $report_date
-                   && $_row_adv >= ((float)$row['charged_price']
-                                    - (float)($row['discount_amount'] ?? 0)
-                                    - (float)($row['completion_discount_amount'] ?? 0) - 0.005);
-    if ($_row_prepaid) continue;
+    $_row_due = (float)$row['charged_price']
+              - (float)($row['discount_amount'] ?? 0)
+              - (float)($row['completion_discount_amount'] ?? 0)
+              - (float)($row['advance_payment'] ?? 0);
+    if ($_row_due <= 0.005) continue;   // fully prepaid or free
 
     $pm = (!empty($row['paymongo_method']))
         ? $row['paymongo_method']
         : ($row['payment_method'] ?? 'cash');
-    $pm_totals[$pm] = ($pm_totals[$pm] ?? 0) + $row['charged_price'];
+    $pm_totals[$pm] = ($pm_totals[$pm] ?? 0) + $_row_due;
 }
 foreach ($addon_rows as $_ar) {
     $_pm = $_ar['payment_method'] ?? 'cash';
@@ -766,7 +772,7 @@ $net_cash = $pos_reading
           - $celeb_discount
           - $expenses_total
           - $mktg_expense
-          + $spreadsheet_net_total     // spreadsheet non-refund net sales
+          + $spreadsheet_manual_net    // hand-typed spreadsheet rows (appointment rows are already in POS)
           - $spreadsheet_refund_total; // spreadsheet refund rows reduce cash on hand
 
 // ── Cash received today (drawer / paid-date basis) ────────────────────────────
