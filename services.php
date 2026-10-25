@@ -195,12 +195,13 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
     }
     function card(s) {
         var lo = low(s), was = s.opts.length === 1 ? s.opts[0].was : 0;
-        var tags = (s.promo ? '<span class="sv-tag promo">Promo</span>' : '') + (s.home ? '<span class="sv-tag home">Home service</span>' : '') +
-            (s.pkgs.length ? '<span class="sv-tag pkg">Up to ' + s.pkgs[s.pkgs.length - 1].n + ' sessions</span>' : '');
+        var tags = (s.promo ? '<span class="sv-tag promo">Promo</span>' : '') + (s.home ? '<span class="sv-tag home">Home service</span>' : '');
+        // Multi-session packages are flagged on the photo, so they show at a glance.
+        var sess = s.pkgs.length ? '1–' + s.pkgs[s.pkgs.length - 1].n + ' sessions' : '';
         var lens = s.opts.map(function (o) { return mins(o.m); }).filter(Boolean).join(' / ');
         return '<button type="button" class="sv-card" id="svc-' + s.id + '" data-id="' + s.id + '"><span class="sv-ph">' +
             (s.img ? '<img src="' + esc(s.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="sv-nopic" aria-hidden="true">💆</span>') +
-            (s.top ? '<span class="sv-ribbon">Most booked</span>' : '') + '</span>' +
+            (s.top ? '<span class="sv-ribbon">Most booked</span>' : '') + (sess ? '<span class="sv-sess">' + sess + '</span>' : '') + '</span>' +
             '<span class="sv-bd"><span class="sv-name">' + esc(s.name) + '</span>' + (s.desc ? '<span class="sv-ds">' + esc(s.desc) + '</span>' : '') +
             (tags ? '<span class="sv-tags">' + tags + '</span>' : '') +
             '<span class="sv-row"><span><span class="sv-pr">' + (s.opts.length > 1 ? '<small>from </small>' : '') + peso(lo) + (was > lo ? '<s>' + peso(was) + '</s>' : '') + '</span>' +

@@ -84,10 +84,15 @@ if ($best_services) {
     while ($r = $res->fetch_assoc()) $info[(int)$r['id']] = $r;
 
     $durs = [];
+    $max_sessions = [];
     if ($has_durs_tbl) {
         $res = $conn->query("SELECT * FROM service_durations WHERE service_id IN ($ids) ORDER BY duration_minutes");
         while ($r = $res->fetch_assoc()) {
-            if ((int)($r['session_count'] ?? 1) > 1) continue; // multi-session packages aren't a "length"
+            $n = (int)($r['session_count'] ?? 1);
+            if ($n > 1) { // multi-session packages aren't a "length"; the card flags them
+                $max_sessions[(int)$r['service_id']] = max($max_sessions[(int)$r['service_id']] ?? 1, $n);
+                continue;
+            }
             $durs[(int)$r['service_id']][] = $r;
         }
     }
@@ -101,6 +106,7 @@ if ($best_services) {
             'desc' => trim((string)($row['description'] ?? '')),
             'home' => !empty($row['is_home_service']),
             'from' => false, 'was' => 0, 'promo' => false, 'lengths' => '',
+            'sessions' => $max_sessions[$id] ?? 1,
             // Only the real #1 by bookings gets the badge.
             'top' => $i === 0 && (int)($s['sold_count'] ?? 0) > 0,
         ];
@@ -354,6 +360,7 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
 .rx-nopic small { font-size: 0.85rem; font-weight: 700; }
 .rx-badge { position: absolute; top: 14px; left: 14px; z-index: 1; border-radius: 999px; padding: 5px 12px; font-size: 0.8rem; font-weight: 800; background: var(--rx-panel); color: var(--rx-ink); }
 .rx-badge.hot { background: var(--rx-rust); color: #fff; }
+.rx-badge.sess { top: auto; bottom: 14px; background: #24170E; color: #F0CF8A; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .rx-oos { position: absolute; inset: 0; z-index: 1; background: rgba(20,12,6,.55); color: #fff; display: grid; place-items: center; font-weight: 800; }
 .rx-bd { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .rx-cat { font-size: 0.75rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #8A6A22; }
@@ -593,6 +600,7 @@ if ($rib) { while (count($rib) < 8) $rib = array_merge($rib, $rib); }
                     <?php if ($c['image'] !== ''): ?><img src="<?php echo home_h($img_svc($c['image'])); ?>" alt="<?php echo home_h($c['name']); ?>" loading="lazy" onerror="this.remove()"><?php endif; ?>
                     <?php if ($c['image'] === ''): ?><div class="rx-nopic">💆<small>Photo coming soon</small></div><?php endif; ?>
                     <?php if ($c['promo']): ?><span class="rx-badge hot">Promo</span><?php elseif ($c['top']): ?><span class="rx-badge hot">Most booked</span><?php endif; ?>
+                    <?php if ($c['sessions'] > 1): ?><span class="rx-badge sess">1–<?php echo (int)$c['sessions']; ?> sessions</span><?php endif; ?>
                 </div>
                 <div class="rx-bd">
                     <?php if ($c['category'] !== ''): ?><span class="rx-cat"><?php echo home_h($c['category']); ?></span><?php endif; ?>
