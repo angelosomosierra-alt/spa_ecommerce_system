@@ -154,13 +154,14 @@ class AvailabilityEngine {
         string $rate_type    = 'regular',
         int    $exclude_appt_id = 0,
         int    $preferred_therapist_id = 0,
-        ?int   $close_hour = null
+        ?int   $close_hour = null,
+        int    $session_minutes = 0   // a picked length (service_durations); 0 = the service's own
     ): array {
         $svc = $this->getService($service_id);
         if (!$svc) return ['available' => false, 'reason' => 'Service not found'];
 
         $close_hour   = $close_hour ?? self::CLOSE_HOUR;
-        $session_time = intval($svc['session_time'] ?? 60);
+        $session_time = $session_minutes > 0 ? $session_minutes : intval($svc['session_time'] ?? 60);
         $now          = new DateTime('now', $this->tz);
         $slot_dt      = new DateTime($datetime, $this->tz);
         $today_str    = $now->format('Y-m-d');

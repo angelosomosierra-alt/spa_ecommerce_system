@@ -11,9 +11,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_service'])) {
         header('Location: ' . BASE_URL . 'user/auth.php');
         exit();
     }
-    $service_id = intval($_POST['service_id'] ?? 0);
+    $service_id  = intval($_POST['service_id'] ?? 0);
+    $duration_id = intval($_POST['duration_id'] ?? 0);
     if ($service_id > 0) {
-        $_SESSION['service_booking'] = ['service_id' => $service_id];
+        // The length or package picked on the sheet; checkout can still change it.
+        if ($duration_id > 0) {
+            $dchk = $conn->prepare("SELECT id FROM service_durations WHERE id = ? AND service_id = ?");
+            $dchk->bind_param("ii", $duration_id, $service_id); $dchk->execute();
+            if (!$dchk->get_result()->fetch_assoc()) $duration_id = 0;
+            $dchk->close();
+        }
+        $_SESSION['service_booking'] = ['service_id' => $service_id, 'duration_id' => $duration_id ?: null];
         header('Location: ' . BASE_URL . 'user/checkout.php');
         exit();
     }
@@ -25,14 +33,17 @@ $services = [];
 $res_svc = $conn->query("SELECT s.*, c.name AS category_name FROM services s LEFT JOIN categories c ON s.category_id = c.id WHERE s.deleted_at IS NULL ORDER BY c.name, s.name");
 while ($row = $res_svc->fetch_assoc()) $services[] = $row;
 
-// Duration options (one row per length) — same pricing Book Now uses.
+// Duration options (one row per length) and multi-session packages (paid in
+// full; Session 1 is booked at checkout, the rest are scheduled by staff) —
+// same pricing Book Now uses.
 $durs = [];
+$pkgs = [];
 $t = $conn->query("SHOW TABLES LIKE 'service_durations'");
 if ($t && $t->num_rows) {
-    $res = $conn->query("SELECT * FROM service_durations ORDER BY duration_minutes");
+    $res = $conn->query("SELECT * FROM service_durations ORDER BY session_count, duration_minutes");
     while ($r = $res->fetch_assoc()) {
-        if ((int)($r['session_count'] ?? 1) > 1) continue; // multi-session packages aren't a "length"
-        $durs[(int)$r['service_id']][] = $r;
+        if ((int)($r['session_count'] ?? 1) > 1) $pkgs[(int)$r['service_id']][] = $r;
+        else $durs[(int)$r['service_id']][] = $r;
     }
 }
 
@@ -59,7 +70,7 @@ foreach ($services as $s) {
     if (!empty($durs[$id])) {
         foreach ($durs[$id] as $d) {
             $p = get_active_duration_price($d);
-            $opts[] = ['m' => (int)$d['duration_minutes'], 'p' => (float)$p['price'],
+            $opts[] = ['id' => (int)$d['id'], 'm' => (int)$d['duration_minutes'], 'p' => (float)$p['price'],
                        'was' => $p['is_promo_active'] ? (float)$d['regular_price'] : 0];
             if ($p['is_promo_active']) $promo = true;
         }
@@ -70,8 +81,15 @@ foreach ($services as $s) {
                    'was' => $p['is_promo_active'] ? (float)$s['price'] : 0];
         $promo = $p['is_promo_active'];
     }
+    $pk = [];
+    foreach ($pkgs[$id] ?? [] as $d) {
+        $p = get_active_duration_price($d);
+        $pk[] = ['id' => (int)$d['id'], 'm' => (int)$d['duration_minutes'], 'n' => (int)$d['session_count'],
+                 'p' => (float)$p['price'], 'was' => $p['is_promo_active'] ? (float)$d['regular_price'] : 0];
+    }
     $home_price = !empty($s['is_home_service']) ? (float)($s['home_service_price'] ?? 0) : 0;
     $items[] = [
+        'pkgs' => $pk,
         'id' => $id, 'cat' => $cid, 'name' => $s['name'], 'desc' => trim((string)($s['description'] ?? '')),
         'img' => !empty($s['image']) ? BASE_URL . 'uploads/services/' . rawurlencode($s['image']) : '',
         'opts' => $opts, 'promo' => $promo, 'home' => !empty($s['is_home_service']), 'homePrice' => $home_price,
@@ -140,7 +158,7 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
 <!-- Booking form template: the sheet copies it and fills in the service. -->
 <template id="svBookTpl">
 <?php if (is_logged_in() && !is_admin()): ?>
-    <form method="POST" action="<?php echo BASE_URL; ?>services.php"><?php echo csrf_field(); ?><input type="hidden" name="service_id" value=""><button type="submit" name="book_service" class="sv-book">Book now</button></form>
+    <form method="POST" action="<?php echo BASE_URL; ?>services.php"><?php echo csrf_field(); ?><input type="hidden" name="service_id" value=""><input type="hidden" name="duration_id" value=""><button type="submit" name="book_service" class="sv-book">Book now</button></form>
 <?php else: ?>
     <a class="sv-book" href="<?php echo BASE_URL; ?>user/auth.php">Log in to book</a>
 <?php endif; ?>
@@ -177,7 +195,8 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
     }
     function card(s) {
         var lo = low(s), was = s.opts.length === 1 ? s.opts[0].was : 0;
-        var tags = (s.promo ? '<span class="sv-tag promo">Promo</span>' : '') + (s.home ? '<span class="sv-tag home">Home service</span>' : '');
+        var tags = (s.promo ? '<span class="sv-tag promo">Promo</span>' : '') + (s.home ? '<span class="sv-tag home">Home service</span>' : '') +
+            (s.pkgs.length ? '<span class="sv-tag pkg">Up to ' + s.pkgs[s.pkgs.length - 1].n + ' sessions</span>' : '');
         var lens = s.opts.map(function (o) { return mins(o.m); }).filter(Boolean).join(' / ');
         return '<button type="button" class="sv-card" id="svc-' + s.id + '" data-id="' + s.id + '"><span class="sv-ph">' +
             (s.img ? '<img src="' + esc(s.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="sv-nopic" aria-hidden="true">💆</span>') +
@@ -281,9 +300,21 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
     $('svScrim').addEventListener('click', closeSheet);
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('svSheet').hidden) closeSheet(); });
 
+    // The sheet's options are choices: the one picked goes to checkout.
+    function optBtn(o, label, sub) {
+        return '<button type="button" class="sv-opt sv-pick" data-dur="' + (o.id || '') + '" data-p="' + o.p + '" data-l="' + esc(label) + '" aria-pressed="false"><b>' + label + '</b><span>' +
+            peso(o.p) + (o.was > o.p ? ' <s>' + peso(o.was) + '</s>' : '') + '</span>' + (sub ? '<small>' + sub + '</small>' : '') + '</button>';
+    }
+    function choose(btn) {
+        $('svSheet').querySelectorAll('.sv-pick').forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); });
+        var tot = $('svSheet').querySelector('.sv-tot');
+        if (tot) tot.innerHTML = '<small>' + esc(btn.dataset.l) + '</small><b>' + peso(+btn.dataset.p) + '</b>';
+        var dur = $('svSheet').querySelector('input[name="duration_id"]'); if (dur) dur.value = btn.dataset.dur;
+    }
     function openSvc(s) {
-        var opts = s.opts.map(function (o) {
-            return '<div class="sv-opt"><b>' + (mins(o.m) || 'Price') + '</b><span>' + peso(o.p) + (o.was > o.p ? ' <s>' + peso(o.was) + '</s>' : '') + '</span></div>';
+        var opts = s.opts.map(function (o) { return optBtn(o, mins(o.m) || 'Price', ''); }).join('');
+        var pk = s.pkgs.map(function (o) {
+            return optBtn(o, o.n + ' sessions', (o.m ? mins(o.m) + ' each · ' : '') + peso(Math.round(o.p / o.n * 100) / 100) + ' per session');
         }).join('');
         var lo = low(s);
         openSheet('<div class="sv-hero">' + (s.img ? '<img src="' + esc(s.img) + '" alt="' + esc(s.name) + '" onerror="this.remove()">' : '') +
@@ -291,13 +322,17 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
             '<div class="sv-in"><span class="sv-cat">' + esc(catName[s.cat] || '') + '</span><h2 id="svShTitle">' + esc(s.name) + '</h2>' +
             (s.desc ? '<p>' + esc(s.desc) + '</p>' : '') +
             '<div><div class="sv-lbl">' + (s.opts.length > 1 ? 'Lengths and prices' : 'Price') + '</div><div class="sv-opts">' + opts + '</div></div>' +
+            (pk ? '<div><div class="sv-lbl">Packages</div><div class="sv-opts">' + pk + '</div>' +
+                '<span class="sv-note">Paid in full for all sessions. You book Session 1 on the next step; our staff schedules the rest with you at your visit.</span></div>' : '') +
             (s.home ? '<div><div class="sv-lbl">Home service</div><div class="sv-opts"><div class="sv-opt"><b>At the spa or at your home</b><span>' +
                 (s.homePrice > 0 ? 'Home service: ' + peso(s.homePrice) : 'Home service available') + '</span></div></div></div>' : '') +
-            '<span class="sv-note">You choose the date, time' + (s.home ? ', place' : '') + (s.opts.length > 1 ? ' and length' : '') + ' on the next step.</span></div>' +
+            '<span class="sv-note">You choose the date, time' + (s.home ? ', place' : '') + ' on the next step' + (s.opts.length + s.pkgs.length > 1 ? ', and can still change the length or package there' : '') + '.</span></div>' +
             '<div class="sv-foot"><div class="sv-tot"><small>' + (s.opts.length > 1 ? 'Starts at' : 'Price') + '</small><b>' + peso(lo) + '</b></div><span id="svBookSlot"></span></div>');
         var tpl = $('svBookTpl').content.cloneNode(true);
         var idInput = tpl.querySelector('input[name="service_id"]'); if (idInput) idInput.value = s.id;
         $('svBookSlot').appendChild(tpl);
+        var first = $('svSheet').querySelector('.sv-pick');
+        if (first) choose(first);
     }
     function openCats() {
         openSheet('<div class="sv-stitle"><h2 id="svShTitle">All categories</h2><button type="button" class="sv-x" aria-label="Close">✕</button></div><div class="sv-catgrid">' +
@@ -307,6 +342,7 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
     $('svSheet').addEventListener('click', function (e) {
         var b = e.target.closest('button'); if (!b) return;
         if (b.classList.contains('sv-x')) { closeSheet(); return; }
+        if (b.classList.contains('sv-pick')) { choose(b); return; }
         if (b.dataset.cat) { closeSheet(); if (filtered()) resetAll(); setTimeout(function () { jump(b.dataset.cat, true); }, 30); }
     });
 

@@ -26,6 +26,33 @@ if (isset($_SESSION['service_booking'])) {
     $service = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     if (!$service) { header("Location: index.php"); exit(); }
+
+    // Lengths and multi-session packages, priced the way Book Now prices them.
+    // A package is paid in full; Session 1 is booked here and staff schedule
+    // the rest from Appointments.
+    $duration_options = [];
+    if ($conn->query("SHOW TABLES LIKE 'service_durations'")->num_rows > 0) {
+        $_dq = $conn->prepare("SELECT * FROM service_durations WHERE service_id = ? ORDER BY session_count, duration_minutes");
+        $_dq->bind_param("i", $service_id); $_dq->execute();
+        foreach ($_dq->get_result()->fetch_all(MYSQLI_ASSOC) as $_d) {
+            $_ap = get_active_duration_price($_d);
+            $duration_options[(int)$_d['id']] = [
+                'id' => (int)$_d['id'], 'm' => (int)$_d['duration_minutes'], 'n' => max(1, (int)($_d['session_count'] ?? 1)),
+                'p' => (float)$_ap['price'], 'was' => $_ap['is_promo_active'] ? (float)$_d['regular_price'] : 0,
+            ];
+        }
+        $_dq->close();
+    }
+    // The option picked on the services page, or the first length.
+    $selected_duration_id = (int)($_POST['duration_id'] ?? ($_SESSION['service_booking']['duration_id'] ?? 0));
+    if (!isset($duration_options[$selected_duration_id])) $selected_duration_id = $duration_options ? (int)array_key_first($duration_options) : 0;
+    $selected_duration = $duration_options[$selected_duration_id] ?? null;
+    if ($selected_duration) {
+        $service['price']        = $selected_duration['p'];
+        $service['session_time'] = $selected_duration['m'];
+    }
+    $selected_sessions = $selected_duration['n'] ?? 1;
+
     $checkout_items[] = [
         'type'             => 'service',
         'id'               => $service['id'],
@@ -34,6 +61,8 @@ if (isset($_SESSION['service_booking'])) {
         'price'            => $service['price'],
         'quantity'         => 1,
         'session_time'     => $service['session_time'],
+        'duration_id'      => $selected_duration_id ?: null,
+        'sessions'         => $selected_sessions,
         'is_home_service'    => $service['is_home_service'],
         'home_service_fee'   => floatval($service['home_service_fee']   ?? 0),
         'home_service_price' => floatval($service['home_service_price'] ?? 0),
@@ -180,6 +209,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
 
     $payment_status  = $payment_method === 'online' ? 'pending_payment' : 'unpaid';
 
+    // A package's later sessions belong to one guest at the spa.
+    if ($checkout_type === 'service' && $selected_sessions > 1) {
+        if ($people_count > 1) {
+            $message = "A {$selected_sessions}-session package is for one person. Book one package per person, or choose a single session.";
+            $message_type = "danger";
+        } elseif ($service_type === 'home') {
+            $message = "Packages are done at the spa. Choose At the Spa, or a single session for home service.";
+            $message_type = "danger";
+        }
+    }
+
     $home_fee_applied = 0.00; // legacy, no longer added; home_service_price is the fixed total
     if ($checkout_type === 'service') {
         if ($service_type === 'home') {
@@ -278,11 +318,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     require_once __DIR__ . '/../admin/availability.php';
                     $engine     = new AvailabilityEngine($conn);
                     $appt_rate  = ($service_type === 'home') ? 'home' : 'regular';
+                    $sel_minutes = (int)($selected_duration['m'] ?? 0); // the picked length, not the service default
                     $slot_check = $engine->checkSlot(
                         (int)$service_id,
                         date('Y-m-d H:i:s', $chosen_time),
                         (int)$people_count,
-                        $appt_rate
+                        $appt_rate,
+                        0, 0, null, $sel_minutes
                     );
                     if (!$slot_check['available']) {
                         $reason = $slot_check['reason'] ?? 'No therapist is available at this time';
@@ -307,7 +349,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                             (int)$people_count,
                             $appt_rate,
                             0,
-                            $preferred_therapist_id
+                            $preferred_therapist_id,
+                            null,
+                            $sel_minutes
                         );
                         if (!$pref_check['available']) {
                             $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
@@ -402,22 +446,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                             INSERT INTO appointments
                                 (user_id, service_id, order_item_id, appointment_date, status,
                                  people_count, service_type, home_address, home_notes, customer_note,
-                                 charged_price, preferred_therapist_id)
-                            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+                                 charged_price, preferred_therapist_id, duration_minutes, service_duration_id)
+                            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ");
                         // FIXED: Bug 2 — store total for all people, not per-person
                         $appt_charged  = floatval($item['price']) * $people_count;
                         $pref_th_val   = $preferred_therapist_id > 0 ? $preferred_therapist_id : null;
+                        $appt_minutes  = (int)$item['session_time'];
+                        $appt_dur_id   = $item['duration_id'] ?: null;
                         $appt_stmt->bind_param(
-                            str_repeat('i',3) . 's' . 'i' . str_repeat('s',4) . 'di',
+                            str_repeat('i',3) . 's' . 'i' . str_repeat('s',4) . 'diii',
                             $user_id, $item['id'], $order_item_id,
                             $booking_date, $people_count,
                             $service_type, $home_address, $home_notes, $customer_note,
-                            $appt_charged, $pref_th_val
+                            $appt_charged, $pref_th_val, $appt_minutes, $appt_dur_id
                         );
                         $appt_stmt->execute();
                         $new_appt_id = $appt_stmt->insert_id;
                         $appt_stmt->close();
+
+                        // Multi-session package: Session 1 is this booking's date and time;
+                        // the other sessions wait for staff to schedule them in Appointments
+                        // (the same rows Book Now and Walk-in create).
+                        if ((int)$item['sessions'] > 1 && $new_appt_id > 0) {
+                            $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, session_date, therapist_id, duration_minutes, status) VALUES (?, 1, ?, ?, ?, 'scheduled')");
+                            $ss->bind_param("isii", $new_appt_id, $booking_date, $pref_th_val, $appt_minutes);
+                            $ss->execute(); $ss->close();
+                            for ($sn = 2; $sn <= (int)$item['sessions']; $sn++) {
+                                $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, duration_minutes, status) VALUES (?, ?, ?, 'not_scheduled')");
+                                $ss->bind_param("iii", $new_appt_id, $sn, $appt_minutes);
+                                $ss->execute(); $ss->close();
+                            }
+                        }
 
                         if ($preferred_therapist_id > 0 && $new_appt_id > 0) {
                             $af_notes = 'Customer preferred therapist';
@@ -855,6 +915,41 @@ require_once 'header.php';
 .svc-type-btn .svc-type-label { font-size: 0.82rem; font-weight: 700; display: block; }
 .svc-type-btn .svc-type-sub { font-size: 0.7rem; opacity: 0.7; display: block; margin-top: 0.1rem; }
 .svc-type-btn.active .svc-type-sub { opacity: 0.85; }
+
+/* ── Length or package choice ── */
+.dur-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.6rem;
+}
+.dur-btn {
+    padding: 0.7rem 0.8rem;
+    border: 2px solid var(--cream2);
+    border-radius: 12px;
+    background: var(--cream);
+    cursor: pointer;
+    text-align: left;
+    font-family: 'DM Sans', sans-serif;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+.dur-btn:hover { border-color: var(--gold); }
+.dur-btn.active { border-color: var(--gold); background: linear-gradient(135deg, #C96A2C, #a94f1d); color: #fff; }
+.dur-btn .dur-label { font-size: 0.85rem; font-weight: 700; }
+.dur-btn .dur-price { font-size: 0.82rem; }
+.dur-btn .dur-sub { font-size: 0.7rem; opacity: 0.8; }
+.dur-pkg-note {
+    margin-top: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 10px;
+    background: #FFF8EA;
+    border: 1px solid var(--gold);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+.dur-pkg-note[hidden] { display: none; }
 
 /* ── Payment method ── */
 .pay-group {
@@ -1426,6 +1521,35 @@ require_once 'header.php';
             </div>
             <div class="co-card-body">
 
+                <!-- Length or package (service_durations) -->
+                <input type="hidden" name="duration_id" id="duration_id_input" value="<?php echo (int)$selected_duration_id; ?>">
+                <?php if (count($duration_options) > 1): ?>
+                <div class="co-field">
+                    <label class="co-label">Length or package <span>*</span></label>
+                    <div class="dur-group" role="group" aria-label="Length or package">
+                        <?php foreach ($duration_options as $_o):
+                            $_lbl = $_o['n'] > 1 ? $_o['n'] . ' sessions' : ($_o['m'] >= 60 ? (intdiv($_o['m'], 60) . ' hr' . ($_o['m'] % 60 ? ' ' . ($_o['m'] % 60) . ' min' : '')) : $_o['m'] . ' min');
+                            $_sub = $_o['n'] > 1 ? $_o['m'] . ' min each · ₱' . number_format($_o['p'] / $_o['n'], 2) . ' per session' : '';
+                        ?>
+                        <button type="button" class="dur-btn<?php echo $_o['id'] === $selected_duration_id ? ' active' : ''; ?>"
+                                aria-pressed="<?php echo $_o['id'] === $selected_duration_id ? 'true' : 'false'; ?>"
+                                data-dur="<?php echo $_o['id']; ?>" data-p="<?php echo $_o['p']; ?>" data-m="<?php echo $_o['m']; ?>"
+                                data-n="<?php echo $_o['n']; ?>" data-l="<?php echo htmlspecialchars($_lbl); ?>"
+                                onclick="selectDuration(this)">
+                            <span class="dur-label"><?php echo htmlspecialchars($_lbl); ?></span>
+                            <span class="dur-price">₱<?php echo number_format($_o['p'], 2); ?></span>
+                            <?php if ($_sub): ?><span class="dur-sub"><?php echo $_sub; ?></span><?php endif; ?>
+                        </button>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="dur-pkg-note" id="durPkgNote"<?php echo $selected_sessions > 1 ? '' : ' hidden'; ?>>
+                        <strong>Package:</strong> paid in full for all sessions. The date and time you pick below is <strong>Session 1</strong>;
+                        our staff will schedule the remaining sessions with you at your visit.
+                        Packages are for one person at the spa.
+                    </div>
+                </div>
+                <?php endif; ?>
+
                 <!-- Service type -->
                 <div class="co-field">
                     <label class="co-label">Service Type <span>*</span></label>
@@ -1639,11 +1763,11 @@ require_once 'header.php';
                         <div style="flex:1;min-width:0;">
                             <div class="co-item-name"><?php echo htmlspecialchars($item['name']); ?></div>
                             <?php if (isset($item['session_time'])): ?>
-                            <div class="co-item-meta"><?php echo $item['session_time']; ?> mins</div>
+                            <div class="co-item-meta" id="itemLenMeta"><?php echo $item['session_time']; ?> mins<?php echo ($item['sessions'] ?? 1) > 1 ? ' · ' . (int)$item['sessions'] . '-session package' : ''; ?></div>
                             <?php endif; ?>
                             <div class="co-item-meta">Qty: <?php echo $item['quantity']; ?></div>
                         </div>
-                        <div class="co-item-price">
+                        <div class="co-item-price"<?php echo $item['type'] === 'service' ? ' id="itemPrice"' : ''; ?>>
                             ₱<?php echo number_format($item['price'] * $item['quantity'], 2); ?>
                         </div>
                     </div>
@@ -1872,7 +1996,38 @@ function checkCapacityWarning(count) {
 }
 
 // ── Service type ──────────────────────────────────────────────────────────────
-const BASE_PRICE    = <?php echo floatval($checkout_items[0]['price'] ?? 0); ?>;
+let   BASE_PRICE    = <?php echo floatval($checkout_items[0]['price'] ?? 0); ?>;
+
+// ── Length or package ─────────────────────────────────────────────────────────
+// The picked option sets the price and how long a slot must be, so a time
+// picked for another length is cleared.
+function selectDuration(btn) {
+    document.querySelectorAll('.dur-btn').forEach(b => {
+        b.classList.toggle('active', b === btn);
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+    });
+    document.getElementById('duration_id_input').value = btn.dataset.dur;
+    BASE_PRICE = parseFloat(btn.dataset.p) || 0;
+    const n = parseInt(btn.dataset.n) || 1;
+    const meta = document.getElementById('itemLenMeta');
+    if (meta) meta.textContent = btn.dataset.m + ' mins' + (n > 1 ? ' · ' + n + '-session package' : '');
+    const price = document.getElementById('itemPrice');
+    if (price) price.textContent = '₱' + BASE_PRICE.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    const note = document.getElementById('durPkgNote');
+    if (note) note.hidden = n <= 1;
+    if (n > 1) {
+        const ppl = document.getElementById('people_count');
+        if (ppl && parseInt(ppl.value) > 1) { ppl.value = 1; checkCapacityWarning(1); }
+        if (document.getElementById('svcbtn-home')?.classList.contains('active')) selectServiceType('onsite');
+    }
+    const dt = document.getElementById('booking_date_input');
+    if (dt && dt.value) {
+        dt.value = '';
+        const pick = document.getElementById('dtPickBtn');
+        if (pick) { pick.textContent = 'Pick Date & Time'; pick.classList.remove('has-value'); }
+    }
+    updateDiscountPreview();
+}
 const HOME_FEE      = <?php echo floatval($checkout_items[0]['home_service_fee'] ?? 0); ?>; // legacy
 const HOME_PRICE    = <?php echo floatval($checkout_items[0]['home_service_price'] ?? 0); ?>;
 
@@ -2128,7 +2283,7 @@ function bmLoadBusyWindows(dateStr) {
     document.getElementById('bmHourList').innerHTML   = '';
     document.getElementById('bmMinuteList').innerHTML = '<div class="bm-time-hint">← Select an hour</div>';
 
-    fetch(`../admin/busy_windows.php?service_id=${SERVICE_ID}&date=${dateStr}&people=${people}&rate_type=${rateType}&therapist_id=${thId}`)
+    fetch(`../admin/busy_windows.php?service_id=${SERVICE_ID}&date=${dateStr}&people=${people}&rate_type=${rateType}&therapist_id=${thId}&duration_id=${document.getElementById('duration_id_input')?.value || ''}`)
         .then(r => r.json())
         .then(data => {
             loading.style.display = 'none';
