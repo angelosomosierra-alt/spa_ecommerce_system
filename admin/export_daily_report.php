@@ -310,9 +310,14 @@ $cv('B36', '=B39+B38-B50-T74');
 $cv('B50', '=SUM(K65:K75)');
 // COH = the cash breakdown total, as in the sales report (=C29 there).
 $cv('B53', '=C33');
-$cv('B40', (float)$total_discounts);
+// CELEB. DISCOUNTS (B41) is the M column; DISCOUNTS holds every other
+// discount (staff 50%, PWD/Senior 20%, vouchers) so the celebration discount
+// is not taken off Net Cash twice.
+$cv('B40', (float)($total_discounts - $celeb_discount));
 $cv('B42', (float)$gc_redeem_total);
-$cv('B43', (float)($card_total + $qrph_total));   // SWIPER covers card and QR, as in the sales report
+// SWIPER = everything swiped that day, card and QR, sales and down payments
+// alike, as in the sales report (its down payments are then also in B48).
+$cv('B43', (float)($card_total + $qrph_total + $card_dp_total + $qrph_dp_total));
 $cv('B44', (float)$gcash_total);
 $cv('B45', (float)$maya_total);
 // Every down payment, whatever the method, is already in B48 via T74.
