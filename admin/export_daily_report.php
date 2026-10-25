@@ -174,11 +174,9 @@ $clr(['R','S','T','U','V','W'], 97, 103);
 // ════════════════════════════════════════════════════════════════════════════
 // 3. SALES DATA ROWS (rows 16–57, columns E–W)
 //    Template SUM row 58 covers K15:K57 (and likewise for L–S, U).
-//    Max 42 rows (16 to 57). Overflow rows are silently truncated.
+//    Up to 42 rows fit (16 to 57); more are handled in section 8.
 // ════════════════════════════════════════════════════════════════════════════
-$data_row = 16;
-foreach ($spreadsheet_rows as $sr) {
-    if ($data_row > 57) break;
+$write_sales_row = function (array $sr, int $data_row) use ($cv): void {
 
     $cv('E' . $data_row, $sr['time_in']      ?? '');
     $cv('F' . $data_row, $sr['time_out']     ?? '');
@@ -223,6 +221,15 @@ foreach ($spreadsheet_rows as $sr) {
     if ($adv > 0) $cv('V' . $data_row, $adv);
     $cv('X' . $data_row, $sr['remarks'] ?? '');
 
+};
+
+// More than 42 lines: the first 41 go in rows 16-56 now, the rest are
+// written after inserting rows inside the block (section 8), so every
+// total and formula below moves down with them.
+$sales_overflow = count($spreadsheet_rows) > 42 ? array_slice($spreadsheet_rows, 41) : [];
+$data_row = 16;
+foreach ($sales_overflow ? array_slice($spreadsheet_rows, 0, 41) : $spreadsheet_rows as $sr) {
+    $write_sales_row($sr, $data_row);
     $data_row++;
 }
 // K16:L59 originally held =VLOOKUP(I_,services,...) formulas (a "services"
@@ -450,6 +457,24 @@ foreach ($all_products as $p) {
 $filename = 'Recovery_Spa_Report_' . date('M_j_Y', strtotime($report_date)) . '.xlsx';
 
 if (ob_get_length()) ob_end_clean();
+// ════════════════════════════════════════════════════════════════════════════
+// 8. SALES OVERFLOW — more than 42 lines that day
+//    Insert the missing rows inside the sales block (before row 57) so the
+//    SUM(…15:…57) totals stretch over them and every row and formula below
+//    (totals row, summary, influencer, down payment, expenses…) moves down.
+// ════════════════════════════════════════════════════════════════════════════
+if ($sales_overflow) {
+    $ws->insertNewRowBefore(57, count($sales_overflow) - 1);
+    $row = 57;
+    foreach ($sales_overflow as $sr) {
+        foreach (['E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X'] as $col) {
+            $ws->getCell($col . $row)->setValue(null);
+        }
+        $write_sales_row($sr, $row);
+        $row++;
+    }
+}
+
 header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 header('Content-Disposition: attachment; filename="' . $filename . '"');
 header('Cache-Control: max-age=0');
