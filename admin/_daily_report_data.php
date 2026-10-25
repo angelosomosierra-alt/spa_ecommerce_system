@@ -642,7 +642,13 @@ foreach ($spreadsheet_rows as $_ssr) {
         $spreadsheet_refund_total += (float)$_ssr['net_sales'];
     } else {
         $spreadsheet_net_total += (float)$_ssr['net_sales'];
-        if (empty($_ssr['source_appointment_id'])) $spreadsheet_manual_net += (float)$_ssr['net_sales'];
+        if (empty($_ssr['source_appointment_id'])) {
+            $spreadsheet_manual_net += (float)$_ssr['net_sales'];
+            // A manual row has no order behind it, so its own discount
+            // cells are the only record of the discount it was given.
+            $total_discounts += (float)$_ssr['celeb_10'] + (float)$_ssr['disc_20_pwd'] + (float)$_ssr['disc_50_staff'];
+            $celeb_discount  += (float)$_ssr['celeb_10'];
+        }
     }
 }
 

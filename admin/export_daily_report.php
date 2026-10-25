@@ -325,7 +325,8 @@ $cv('B42', (float)$gc_redeem_total);
 // SWIPER = everything swiped that day, card and QR, sales and down payments
 // alike, as in the sales report (its down payments are then also in B48).
 $cv('B43', (float)($card_total + $qrph_total + $card_dp_total + $qrph_dp_total));
-$cv('B44', (float)$gcash_total);
+// GCASH (SALES) likewise holds GCash down payments, as in the sales report.
+$cv('B44', (float)($gcash_total + $gcash_dp_total));
 $cv('B45', (float)$maya_total);
 // Every down payment, whatever the method, is already in B48 via T74.
 $cv('B46', 0.0);
