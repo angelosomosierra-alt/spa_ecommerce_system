@@ -99,8 +99,8 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
 <table>
     <tr><th style="width:18%;">QTY</th><th>Denomination</th><th class="r">Total Collection</th></tr>
     <?php $i=0; foreach ($denom_list as $d):
-        $qty=intval($denoms_saved[$d]['quantity']??0);
-        $tot=floatval($denoms_saved[$d]['total']??0);
+        $qty=intval($denoms_saved[denom_key($d)]['quantity']??0);
+        $tot=floatval($denoms_saved[denom_key($d)]['total']??0);
         $rc=($i++%2===0)?'':'class="zebra"';
     ?>
     <tr <?php echo $rc; ?>>
@@ -143,6 +143,8 @@ tr.addon-row td{background:#faf6ef;font-size:7pt;}
         ['QRPH (DP)',             $qrph_dp_total,        '#c9280c',false],
         ['Product Sold',         $prod_sold_total,      '#198754',false],
         ['Expenses',             $expenses_total,       '#c9280c',false],
+        ['Expenses not from drawer', $expenses_off_drawer_total, '#c9280c',false],
+        ['Collected Unpaids (Cash)', $collected_by_method['cash'], '#198754',false],
         ['Net Cash',             $net_cash,             '#198754',true],
         ['COH (Cash on Hand)',   $cash_on_hand,         '#0070f3',true],
         ['(Short)/Over',         $short_over,           $short_over>=0?'#198754':'#c9280c',true],

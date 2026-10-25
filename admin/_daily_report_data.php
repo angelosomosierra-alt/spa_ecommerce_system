@@ -37,6 +37,25 @@ ensure_upgrade_voucher_columns($conn);
         $conn->query("ALTER TABLE daily_reports ADD COLUMN maya_dp DECIMAL(10,2) NOT NULL DEFAULT 0.00");
     if (!in_array('opening_coh', $rpt_cols))
         $conn->query("ALTER TABLE daily_reports ADD COLUMN opening_coh DECIMAL(10,2) NOT NULL DEFAULT 0.00");
+    // Card Terminal Check: total printed on the card machine's settlement slip
+    if (!in_array('card_slip_total', $rpt_cols))
+        $conn->query("ALTER TABLE daily_reports ADD COLUMN card_slip_total DECIMAL(10,2) NULL DEFAULT NULL");
+
+    // Expenses paid by GCash / bank instead of from the cash drawer
+    $conn->query("ALTER TABLE business_expenses ADD COLUMN IF NOT EXISTS off_drawer TINYINT(1) NOT NULL DEFAULT 0");
+
+    // Payments received for an unpaid (charged-to-account) entry of an earlier day
+    $conn->query("CREATE TABLE IF NOT EXISTS unpaid_collections (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        unpaid_id INT NOT NULL,
+        report_date DATE NOT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        payment_method VARCHAR(20) NOT NULL DEFAULT 'cash',
+        created_by INT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_uc_date (report_date),
+        INDEX idx_uc_unpaid (unpaid_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
     // Dashboard's Advance Payments & Vouchers widget — "Other Deposit" entries.
     // Self-healed here too (not just in the widget file) so this shared data
@@ -484,9 +503,14 @@ $upcoming_paid = $_up_paid->get_result()->fetch_all(MYSQLI_ASSOC);
 $_up_paid->close();
 
 // ── Denominations ─────────────────────────────────────────────────────────────
+// PHP truncates float array keys to int (0.25 → 0), which made every coin
+// share key 0. Denominations are keyed by their 2-decimal string instead.
+if (!function_exists('denom_key')) {
+    function denom_key($d): string { return number_format((float)$d, 2, '.', ''); }
+}
 $denoms_opening = [];
 $denoms_closing = [];
-$denom_list     = [1000, 500, 200, 100, 50, 20, 10, 5, 1, 0.5, 0.1, 0.05];
+$denom_list     = [1000, 500, 200, 100, 50, 20, 10, 5, 1, 0.5, 0.25, 0.1, 0.05];
 if ($rpt) {
     $_d = $conn->prepare("
         SELECT denomination, quantity, total, `type`
@@ -499,9 +523,9 @@ if ($rpt) {
     $_dr = $_d->get_result();
     while ($row = $_dr->fetch_assoc()) {
         if (($row['type'] ?? 'closing') === 'opening')
-            $denoms_opening[floatval($row['denomination'])] = $row;
+            $denoms_opening[denom_key($row['denomination'])] = $row;
         else
-            $denoms_closing[floatval($row['denomination'])] = $row;
+            $denoms_closing[denom_key($row['denomination'])] = $row;
     }
     $_d->close();
 }
@@ -520,6 +544,33 @@ $gc_redeemed = $_gc2->get_result()->fetch_all(MYSQLI_ASSOC); $_gc2->close();
 $_up = $conn->prepare("SELECT * FROM unpaids_corp WHERE report_date = ? ORDER BY id");
 $_up->bind_param("s", $report_date); $_up->execute();
 $unpaids = $_up->get_result()->fetch_all(MYSQLI_ASSOC); $_up->close();
+
+// ── Collected unpaids: earlier unpaids paid off on this date ─────────────────
+$_uc = $conn->prepare("
+    SELECT uc.*, u.client_name, u.report_date AS unpaid_date
+    FROM unpaid_collections uc
+    JOIN unpaids_corp u ON u.id = uc.unpaid_id
+    WHERE uc.report_date = ?
+    ORDER BY uc.id");
+$_uc->bind_param("s", $report_date); $_uc->execute();
+$unpaid_collections = $_uc->get_result()->fetch_all(MYSQLI_ASSOC); $_uc->close();
+$collected_by_method = ['cash' => 0.0, 'card' => 0.0, 'gcash' => 0.0];
+foreach ($unpaid_collections as $_c) {
+    $_m = $_c['payment_method'];
+    $collected_by_method[$_m] = ($collected_by_method[$_m] ?? 0) + (float)$_c['amount'];
+}
+$collected_unpaids_total = array_sum($collected_by_method);
+
+// Still-open unpaids up to this date (amount minus everything collected so far)
+$_uo = $conn->prepare("
+    SELECT u.id, u.report_date, u.client_name, u.series, u.amount,
+           u.amount - IFNULL((SELECT SUM(c.amount) FROM unpaid_collections c WHERE c.unpaid_id = u.id), 0) AS balance
+    FROM unpaids_corp u
+    WHERE u.report_date <= ?
+    HAVING balance > 0.004
+    ORDER BY u.report_date, u.id");
+$_uo->bind_param("s", $report_date); $_uo->execute();
+$unpaids_outstanding = $_uo->get_result()->fetch_all(MYSQLI_ASSOC); $_uo->close();
 
 // ── Walk-in Pay Later (booked today, not yet completed = payment not collected) ─
 $_wl = $conn->prepare("
@@ -571,6 +622,8 @@ $_spo->close();
 $_ex = $conn->prepare("SELECT * FROM business_expenses WHERE expense_date = ? ORDER BY created_at");
 $_ex->bind_param("s", $report_date); $_ex->execute();
 $expenses = $_ex->get_result()->fetch_all(MYSQLI_ASSOC); $_ex->close();
+$expenses_off_drawer_total = 0.0;
+foreach ($expenses as $_e) if (!empty($_e['off_drawer'])) $expenses_off_drawer_total += (float)$_e['amount'];
 
 // ── Spreadsheet rows ──────────────────────────────────────────────────────────
 $_ss = $conn->prepare("SELECT * FROM daily_report_spreadsheet_rows WHERE report_date = ? ORDER BY row_order ASC, id ASC");
@@ -624,6 +677,7 @@ $gc_sold_total         = array_sum(array_column($gc_sold,      'amount'));
 $gc_redeem_total       = array_sum(array_column($gc_redeemed,  'amount'));
 $unpaids_total         = array_sum(array_column($unpaids, 'amount')) + $walkin_unpaid_total;
 $expenses_total        = array_sum(array_column($expenses,     'amount'));
+$expenses_drawer_total = $expenses_total - $expenses_off_drawer_total;
 $prod_sold_total       = array_sum(array_column($product_sales,        'amount'))
                        + array_sum(array_column($system_product_sales, 'amount'));
 $addon_gross           = array_sum(array_column($addon_rows, 'charged_price'));
@@ -776,10 +830,19 @@ $net_cash = $pos_reading
           - $advance_payment_total
           - $total_discounts
           - $celeb_discount
-          - $expenses_total
+          - $expenses_drawer_total     // GCash / bank expenses never left the drawer
           - $mktg_expense
           + $spreadsheet_manual_net    // hand-typed spreadsheet rows (appointment rows are already in POS)
-          - $spreadsheet_refund_total; // spreadsheet refund rows reduce cash on hand
+          - $spreadsheet_refund_total  // spreadsheet refund rows reduce cash on hand
+          + $collected_by_method['cash']; // cash paid today for an earlier day's unpaid
+
+// ── Card Terminal Check ───────────────────────────────────────────────────────
+// Everything that went through the card machine today: card and QR sales,
+// card and QR down payments, and unpaids collected by card — the same SWIPER
+// figure as the sales report, plus collections.
+$card_machine_system = $card_total + $qrph_total + $card_dp_total + $qrph_dp_total + $collected_by_method['card'];
+$card_slip_total     = isset($rpt['card_slip_total']) && $rpt['card_slip_total'] !== null ? (float)$rpt['card_slip_total'] : null;
+$card_slip_diff      = $card_slip_total === null ? null : round($card_slip_total - $card_machine_system, 2);
 
 // ── Cash received today (drawer / paid-date basis) ────────────────────────────
 $_cash_q = $conn->prepare("

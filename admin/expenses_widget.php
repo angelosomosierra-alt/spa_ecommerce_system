@@ -11,6 +11,9 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+// Expenses paid by GCash / bank instead of from the cash drawer
+$conn->query("ALTER TABLE business_expenses ADD COLUMN IF NOT EXISTS off_drawer TINYINT(1) NOT NULL DEFAULT 0");
+
 // ── Handle ADD business expense ───────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])) {
     // Guard: block saves when called from a locked daily report
@@ -24,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])
     $label    = sanitize_input($_POST['we_label']    ?? '');
     $amount   = floatval($_POST['we_amount']         ?? 0);
     $notes    = sanitize_input($_POST['we_notes']    ?? '');
+    $off_drawer = !empty($_POST['we_off_drawer']) ? 1 : 0;
     $added_by = $_SESSION['user_id'] ?? null;
 
     // Identify who entered it (by PIN if cashier, by user_id if owner)
@@ -47,10 +51,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_add_expense'])
     if ($amount > 0 && !empty($label)) {
         $stmt = $conn->prepare("
             INSERT INTO business_expenses
-                (expense_date, category, label, amount, notes, added_by, verified_by_pin)
-            VALUES (CURDATE(), ?, ?, ?, ?, ?, ?)
+                (expense_date, category, label, amount, notes, added_by, verified_by_pin, off_drawer)
+            VALUES (CURDATE(), ?, ?, ?, ?, ?, ?, ?)
         ");
-        $stmt->bind_param("ssdssi", $category, $label, $amount, $notes, $added_by, $pin_used);
+        $stmt->bind_param("ssdsisi", $category, $label, $amount, $notes, $added_by, $pin_used, $off_drawer);
         $ok = $stmt->execute(); $stmt->close();
         $GLOBALS['widget_msg']      = $ok ? "Expense recorded." : "DB error.";
         $GLOBALS['widget_msg_type'] = $ok ? "success" : "danger";
@@ -74,12 +78,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['widget_edit_expense']
     $edit_label  = sanitize_input($_POST['we_label']  ?? '');
     $edit_amount = floatval($_POST['we_amount']       ?? 0);
     $edit_notes  = sanitize_input($_POST['we_notes']  ?? '');
+    $edit_off    = !empty($_POST['we_off_drawer']) ? 1 : 0;
 
     if ($edit_id > 0 && $edit_amount > 0 && !empty($edit_label)) {
         // Not restricted to today -- the Daily Report's Expenses tab lets an
         // owner correct an entry for whichever date is currently filtered.
-        $stmt = $conn->prepare("UPDATE business_expenses SET category=?, label=?, amount=?, notes=? WHERE id=?");
-        $stmt->bind_param("ssdsi", $edit_category, $edit_label, $edit_amount, $edit_notes, $edit_id);
+        $stmt = $conn->prepare("UPDATE business_expenses SET category=?, label=?, amount=?, notes=?, off_drawer=? WHERE id=?");
+        $stmt->bind_param("ssdsii", $edit_category, $edit_label, $edit_amount, $edit_notes, $edit_off, $edit_id);
         $ok = $stmt->execute(); $stmt->close();
         $GLOBALS['widget_msg']      = $ok ? "Expense updated." : "DB error.";
         $GLOBALS['widget_msg_type'] = $ok ? "success" : "danger";
@@ -178,6 +183,10 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
                         <input type="text" name="we_notes" placeholder="Optional"
                                style="width:100%;padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.82rem;box-sizing:border-box;">
                     </div>
+                    <label style="display:flex;gap:0.45rem;align-items:flex-start;font-size:0.78rem;color:var(--brown);margin:0 0 0.6rem;cursor:pointer;">
+                        <input type="checkbox" name="we_off_drawer" value="1" style="width:auto;margin:0.15rem 0 0;">
+                        <span><b>Not from the drawer</b> (paid by GCash / bank)<br><span style="color:var(--gray);font-size:0.7rem;">Still recorded, but not deducted from cash.</span></span>
+                    </label>
 
                     <?php if (isset($_SESSION['admin_role']) && $_SESSION['admin_role'] === 'cashier'): ?>
                     <!-- PIN confirmation for cashier accountability -->
@@ -237,7 +246,7 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
                         <?php if (is_owner()): ?>
                         <div style="display:flex;gap:0.3rem;flex-shrink:0;">
                             <button type="button" title="Edit this expense"
-                                    onclick='openEditExpenseModal(<?php echo (int)$e["id"]; ?>, <?php echo json_encode($e["category"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo json_encode($e["label"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo (float)$e["amount"]; ?>, <?php echo json_encode($e["notes"] ?? "", JSON_HEX_APOS|JSON_HEX_QUOT); ?>)'
+                                    onclick='openEditExpenseModal(<?php echo (int)$e["id"]; ?>, <?php echo json_encode($e["category"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo json_encode($e["label"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo (float)$e["amount"]; ?>, <?php echo json_encode($e["notes"] ?? "", JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo !empty($e["off_drawer"]) ? 1 : 0; ?>)'
                                     style="color:var(--brown);background:transparent;font-size:0.78rem;padding:0.2rem 0.45rem;border-radius:4px;border:1px solid var(--border2);cursor:pointer;">Edit</button>
                             <a href="?del_expense=<?php echo $e['id']; ?>" title="Delete this expense"
                                style="color:var(--red);font-size:0.78rem;text-decoration:none;padding:0.2rem 0.45rem;
@@ -293,6 +302,10 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
                 <input type="text" name="we_notes" id="editExpNotes"
                        style="width:100%;padding:0.5rem 0.6rem;border:1px solid var(--border2);border-radius:7px;background:var(--bg3);color:var(--brown);font-size:0.85rem;box-sizing:border-box;">
             </div>
+            <label style="display:flex;gap:0.45rem;align-items:center;font-size:0.8rem;color:var(--brown);margin:-0.4rem 0 1rem;cursor:pointer;">
+                <input type="checkbox" name="we_off_drawer" id="editExpOff" value="1" style="width:auto;margin:0;">
+                Not from the drawer (paid by GCash / bank)
+            </label>
             <div style="display:flex;gap:0.6rem;">
                 <button type="submit" class="btn btn-primary btn-sm" style="flex:1;">Save Changes</button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="closeEditExpenseModal()">Cancel</button>
@@ -301,7 +314,8 @@ $_compact = !empty($GLOBALS['expenses_widget_compact']);
     </div>
 </div>
 <script>
-function openEditExpenseModal(id, category, label, amount, notes) {
+function openEditExpenseModal(id, category, label, amount, notes, offDrawer) {
+    document.getElementById('editExpOff').checked = !!offDrawer;
     document.getElementById('editExpId').value = id;
     document.getElementById('editExpCategory').value = category || '';
     document.getElementById('editExpLabel').value = label || '';

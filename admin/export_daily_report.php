@@ -257,16 +257,24 @@ $cv('V58', '=SUM(V16:V57)');
 //    C17:C28 = =A*B formulas (already in template, preserved)
 //    C33     = =SUM(C17:C31) total (already in template, preserved)
 // ════════════════════════════════════════════════════════════════════════════
+// String keys: a float key like 0.5 would be truncated to 0 by PHP.
 $denom_row_map = [
-    1000 => 17, 500 => 18, 200 => 19, 100 => 20,
-      50 => 21,  20 => 22,  10 => 23,   5 => 24,
-       1 => 25, 0.5 => 26, 0.1 => 27, 0.05 => 28,
+    '1000.00' => 17, '500.00' => 18, '200.00' => 19, '100.00' => 20,
+      '50.00' => 21,  '20.00' => 22,  '10.00' => 23,   '5.00' => 24,
+       '1.00' => 25,   '0.50' => 26,   '0.10' => 27,   '0.05' => 28,
 ];
 foreach ($denom_row_map as $denom => $drow) {
-    $qty = (int)($denoms_saved[(float)$denom]['quantity'] ?? 0);
+    $qty = (int)($denoms_saved[$denom]['quantity'] ?? 0);
     if ($qty > 0) {
         $cv('A' . $drow, $qty);
     }
+}
+// ₱0.25 has no row in the template: use the first spare row (29, which
+// already has =A29*B29 and is inside C33's SUM).
+$qty_025 = (int)($denoms_saved['0.25']['quantity'] ?? 0);
+if ($qty_025 > 0) {
+    $cv('A29', $qty_025);
+    $cv('B29', 0.25);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -317,6 +325,14 @@ $cv('B36', '=B39+B38-B50-T74');
 $cv('B50', '=SUM(K65:K75)');
 // COH = the cash breakdown total, as in the sales report (=C29 there).
 $cv('B53', '=C33');
+// Two lines the template has no cell for, in its spare rows 54-55, both
+// added back in Net Cash: cash paid today for an earlier day's unpaid, and
+// expenses paid by GCash / bank (listed in EXPENSES but not from the drawer).
+$cv('A54', 'COLLECTED UNPAIDS (CASH)');
+$cv('B54', (float)$collected_by_method['cash']);
+$cv('A55', 'EXPENSES NOT FROM DRAWER');
+$cv('B55', (float)$expenses_off_drawer_total);
+$cv('B52', '=B39-B40-B41-B42-B43-B44-B45-B46-B47-B48-B49-B50-B51+B54+B55');
 // CELEB. DISCOUNTS (B41) is the M column; DISCOUNTS holds every other
 // discount (staff 50%, PWD/Senior 20%, vouchers) so the celebration discount
 // is not taken off Net Cash twice.
@@ -397,7 +413,7 @@ $exp_row = 80;
 foreach ($expenses as $e) {
     if ($exp_row > 94) break;
     $cv('F' . $exp_row, '•');
-    $cv('G' . $exp_row, $e['label']     ?? ($e['particular'] ?? ''));
+    $cv('G' . $exp_row, ($e['label'] ?? ($e['particular'] ?? '')) . (!empty($e['off_drawer']) ? ' (GCash/bank)' : ''));
     $cv('H' . $exp_row, (float)($e['amount'] ?? 0));
     $exp_row++;
 }
