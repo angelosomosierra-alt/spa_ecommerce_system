@@ -81,7 +81,9 @@ $wb->setActiveSheetIndex($wb->getIndex($ws));
 // silently invisible in the exported file despite being written correctly.
 // Un-merging first makes every row in the grid independently writable.
 foreach (array_keys($ws->getMergeCells()) as $range) {
-    [$c1, $r1, $c2, $r2] = Coordinate::rangeBoundaries($range);
+    // PhpSpreadsheet 2+ returns [[col, row], [col, row]]; older versions a flat list.
+    $_b = Coordinate::rangeBoundaries($range);
+    [$c1, $r1, $c2, $r2] = is_array($_b[0]) ? [$_b[0][0], $_b[0][1], $_b[1][0], $_b[1][1]] : $_b;
     if ($r1 >= 16 && $r2 <= 59 && $c1 >= Coordinate::columnIndexFromString('E')) {
         $ws->unmergeCells($range);
     }
@@ -96,7 +98,7 @@ $cv = function (string $cell, $value) use ($ws): void {
 $clr = function (array $cols, int $r_start, int $r_end) use ($ws): void {
     for ($r = $r_start; $r <= $r_end; $r++) {
         foreach ($cols as $col) {
-            $ws->getCell($col . $r)->setValue('');
+            $ws->getCell($col . $r)->setValue(null);   // '' would make =A*B show #VALUE!
         }
     }
 };
@@ -105,7 +107,10 @@ $clr = function (array $cols, int $r_start, int $r_end) use ($ws): void {
 // 1. HEADER — date, opening/closing cashier
 // ════════════════════════════════════════════════════════════════════════════
 // H5:K5 is merged — write to anchor H5 as an Excel serial date
-$ws->getCell('H5')->setValue(ExcelDate::PHPToExcel(strtotime($report_date)));
+// formattedPHPToExcel takes the calendar date as-is; PHPToExcel(timestamp)
+// shifted it by the UTC offset and showed the day before at 4:00 PM.
+[$_y, $_m, $_d] = array_map('intval', explode('-', $report_date));
+$ws->getCell('H5')->setValue(ExcelDate::formattedPHPToExcel($_y, $_m, $_d));
 $ws->getStyle('H5')->getNumberFormat()->setFormatCode('mmmm d, yyyy');
 
 if ($rpt) {
@@ -293,14 +298,25 @@ $cv('R58', '=SUM(R16:R57)');
 $cv('B37', '=O58+P58+Q58+R58+N76');
 // Advance Payment total — see the B48 note above: was still =U58 (now Mode
 // of Payment text) after the comm_25 insertion moved it to column V.
-$cv('B48', '=V58');
+// Sales report: ADVANCE PAYMENT = advance column + down payments received
+// today (=U53+T69), and the down payments are part of POS READING
+// (=K53+V99+K71+T69) but not of GROSS SALES (=B34+B33-B45-T69). The DP box's
+// Amount column is T after the comm_25 insertion (total in T74).
+$cv('B48', '=V58+T74');
+$cv('B39', '=K58+SUM(K65:K75)+W104+T74');
+$cv('B36', '=B39+B38-B50-T74');
+// MARKETING EXPENSE = influencer at-cost total (=K71 in the sales report);
+// the template's =O76 pointed at an empty cell.
+$cv('B50', '=SUM(K65:K75)');
+// COH = the cash breakdown total, as in the sales report (=C29 there).
+$cv('B53', '=C33');
 $cv('B40', (float)$total_discounts);
 $cv('B42', (float)$gc_redeem_total);
-$cv('B43', (float)$card_total);
+$cv('B43', (float)($card_total + $qrph_total));   // SWIPER covers card and QR, as in the sales report
 $cv('B44', (float)$gcash_total);
 $cv('B45', (float)$maya_total);
-$cv('B46', (float)$noncash_dp_total);  // total non-cash DP: GCash + Maya + Card/Swiper + QRPH
-$cv('B53', (float)$cash_on_hand);
+// Every down payment, whatever the method, is already in B48 via T74.
+$cv('B46', 0.0);
 
 // ════════════════════════════════════════════════════════════════════════════
 // 6. INFLUENCER / MARKETING (rows 65-75, columns E-N)
@@ -351,10 +367,12 @@ for ($r = $inf_row; $r <= 69; $r++) {
 $dp_row = 64;
 foreach ($advances_received as $dp) {
     if ($dp_row > 73) break;
-    $cv('R' . $dp_row, $dp['customer_name'] ?? '');
-    $cv('S' . $dp_row, (float)($dp['advance_payment'] ?? 0));
-    $cv('T' . $dp_row, ucfirst($dp['advance_payment_method'] ?? 'cash'));
-    $cv('U' . $dp_row, $dp['service_name'] ?? '');
+    // Name / Amount / MOP / Remarks sit in S-V after the comm_25 column
+    // insertion (the template's R-U), so the Amount lands under T74's SUM.
+    $cv('S' . $dp_row, $dp['customer_name'] ?? '');
+    $cv('T' . $dp_row, (float)($dp['advance_payment'] ?? 0));
+    $cv('U' . $dp_row, ucfirst($dp['advance_payment_method'] ?? 'cash'));
+    $cv('V' . $dp_row, $dp['service_name'] ?? '');
     $dp_row++;
 }
 
