@@ -346,7 +346,7 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
     </div>
     <?php if ($is_future_or_today): ?>
     <div class="appt-cal-day-booknow">
-        <button type="button" class="btn btn-primary btn-full" style="font-size:1.1rem;padding:1.1rem 1.5rem;" onclick="openQuickBook('<?php echo $date_str; ?>')">Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
+        <button type="button" class="btn btn-primary btn-full" style="font-size:1.1rem;padding:1.1rem 1.5rem;" onclick="openBookNow('<?php echo $date_str; ?>')">Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
     </div>
     <?php endif; ?>
     <?php
@@ -518,7 +518,7 @@ if (($_GET['ajax'] ?? '') === 'book_now_data') {
     redirect_if_not_admin();
     ob_clean();
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(book_now_data($conn));
+    echo json_encode(book_now_data($conn, isset($_GET['date']) ? (string)$_GET['date'] : null));
     exit;
 }
 require_once __DIR__ . '/_sell_product.php';
@@ -553,7 +553,9 @@ if (($_GET['ajax'] ?? '') === 'book_now_submit' && $_SERVER['REQUEST_METHOD'] ==
     header('Content-Type: application/json; charset=utf-8');
     verify_csrf_token();
     $bn_guests = json_decode($_POST['guests'] ?? '[]', true);
-    echo json_encode(book_now_save($conn, is_array($bn_guests) ? $bn_guests : []));
+    echo json_encode(book_now_save($conn, is_array($bn_guests) ? $bn_guests : [],
+        isset($_POST['date']) ? (string)$_POST['date'] : null,
+        ['amount' => (float)($_POST['dp_amount'] ?? 0), 'method' => (string)($_POST['dp_method'] ?? '')]));
     exit;
 }
 

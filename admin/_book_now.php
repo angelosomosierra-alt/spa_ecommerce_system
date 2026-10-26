@@ -30,6 +30,24 @@ if (!function_exists('book_now_ensure_schema')) {
 function book_now_ensure_schema(mysqli $conn): void {
     $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS booking_group VARCHAR(32) NULL DEFAULT NULL");
     $conn->query("ALTER TABLE orders ADD INDEX IF NOT EXISTS idx_orders_booking_group (booking_group)");
+    // Multi-session packages started before they were tracked in the system
+    // (e.g. the October sales-report import): what is left to book and pay.
+    $conn->query("CREATE TABLE IF NOT EXISTS package_followups (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_name VARCHAR(150) NOT NULL,
+        service_id INT NOT NULL,
+        sessions_total INT NOT NULL DEFAULT 2,
+        sessions_done INT NOT NULL DEFAULT 1,
+        package_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+        amount_paid DECIMAL(10,2) NOT NULL DEFAULT 0,
+        last_date DATE NULL,
+        last_therapist VARCHAR(120) NULL,
+        last_slip VARCHAR(50) NULL,
+        status ENUM('open','closed') NOT NULL DEFAULT 'open',
+        note VARCHAR(255) NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_pf_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 }
 }
 
@@ -52,7 +70,11 @@ function book_now_resource_type(?string $category_name): string {
 }
 
 if (!function_exists('book_now_data')) {
-function book_now_data(mysqli $conn): array {
+function book_now_data(mysqli $conn, ?string $date = null): array {
+    book_now_ensure_schema($conn);
+    $today    = date('Y-m-d');
+    $day      = ($date && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) && $date >= $today) ? $date : $today;
+    $is_today = ($day === $today);
     $services = $conn->query("
         SELECT s.id, s.name, s.price, s.session_time, s.category_id, c.name AS category_name
         FROM services s
@@ -100,9 +122,12 @@ function book_now_data(mysqli $conn): array {
         ];
     }
 
-    // Everyone, on-duty first in today's rotation order. Not timed in, or
-    // already timed out → off duty (shown, never picked).
-    $therapists = $conn->query("
+    // Today: everyone, on-duty first in today's rotation order. Not timed in,
+    // or already timed out → off duty (shown, never picked). Another day:
+    // nobody has timed in yet, so every therapist can be planned.
+    $therapists = !$is_today ? $conn->query("
+        SELECT t.id, t.full_name, 1 AS on_duty, 0 AS on_break FROM therapists t ORDER BY t.full_name
+    ")->fetch_all(MYSQLI_ASSOC) : $conn->query("
         SELECT t.id, t.full_name,
                ta.id IS NOT NULL AND (ta.time_out IS NULL OR ta.time_out = '') AS on_duty,
                IFNULL(ta.is_on_break, 0) AS on_break
@@ -117,10 +142,10 @@ function book_now_data(mysqli $conn): array {
         ORDER BY FIELD(type,'room','chair','head_spa'), sort_order, name
     ")->fetch_all(MYSQLI_ASSOC);
 
-    // Today's bookings that hold a therapist and/or a room. Times are minutes
-    // since midnight, the unit the planner works in.
+    // That day's bookings that hold a therapist and/or a room. Times are
+    // minutes since midnight, the unit the planner works in.
     $statuses = "'" . implode("','", RESOURCE_OCCUPYING_STATUSES) . "'";
-    $busy = $conn->query("
+    $busy_q = $conn->prepare("
         SELECT a.id, a.resource_id,
                HOUR(a.appointment_date) * 60 + MINUTE(a.appointment_date) AS start_min,
                COALESCE(a.duration_minutes, s.session_time, 60) AS dur,
@@ -132,12 +157,75 @@ function book_now_data(mysqli $conn): array {
         LEFT JOIN order_items oi ON oi.id = a.order_item_id
         LEFT JOIN orders o ON o.id = oi.order_id
         LEFT JOIN users u ON u.id = a.user_id
-        WHERE DATE(a.appointment_date) = CURDATE()
+        WHERE DATE(a.appointment_date) = ?
           AND a.status IN ($statuses)
-    ")->fetch_all(MYSQLI_ASSOC);
+    ");
+    $busy_q->bind_param("s", $day); $busy_q->execute();
+    $busy = $busy_q->get_result()->fetch_all(MYSQLI_ASSOC); $busy_q->close();
+    // Session 2+ of a package booked for that day: holds its therapist (the
+    // session has no room of its own).
+    $sb = $conn->prepare("
+        SELECT NULL AS resource_id, HOUR(x.session_date) * 60 + MINUTE(x.session_date) AS start_min,
+               COALESCE(x.duration_minutes, 60) AS dur, x.therapist_id AS therapist_ids,
+               COALESCE(o.customer_name, u.full_name) AS who
+        FROM appointment_sessions x
+        JOIN appointments a ON a.id = x.appointment_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders o ON o.id = oi.order_id
+        LEFT JOIN users u ON u.id = a.user_id
+        WHERE x.session_number > 1 AND x.status IN ('scheduled','checked_in')
+          AND x.therapist_id IS NOT NULL AND DATE(x.session_date) = ?
+    ");
+    $sb->bind_param("s", $day); $sb->execute();
+    $busy = array_merge($busy, $sb->get_result()->fetch_all(MYSQLI_ASSOC)); $sb->close();
+
+    // Packages with sessions left, for "Continue a package".
+    $followups = [];
+    // a) Packages booked in the system: their next session not scheduled yet.
+    foreach ($conn->query("
+        SELECT x.id AS session_id, x.session_number, a.service_id, x.duration_minutes,
+               sd.session_count, s.name AS service_name, COALESCE(o.customer_name, u.full_name) AS who,
+               (SELECT MAX(DATE(y.completed_at)) FROM appointment_sessions y WHERE y.appointment_id = a.id AND y.status = 'completed') AS last_date
+        FROM appointment_sessions x
+        JOIN appointments a ON a.id = x.appointment_id
+        JOIN services s ON s.id = a.service_id
+        LEFT JOIN service_durations sd ON sd.id = a.service_duration_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders o ON o.id = oi.order_id
+        LEFT JOIN users u ON u.id = a.user_id
+        WHERE x.status = 'not_scheduled' AND a.status NOT IN ('cancelled','declined')
+          AND x.session_number = (SELECT MIN(z.session_number) FROM appointment_sessions z WHERE z.appointment_id = a.id AND z.status = 'not_scheduled')
+        ORDER BY who
+    ")->fetch_all(MYSQLI_ASSOC) as $f) {
+        $followups[] = ['kind' => 'session', 'id' => (int)$f['session_id'], 'who' => $f['who'] ?: 'Customer',
+            'service_id' => (int)$f['service_id'], 'service' => $f['service_name'],
+            'next' => (int)$f['session_number'], 'total' => (int)($f['session_count'] ?: $f['session_number']),
+            'm' => (int)$f['duration_minutes'], 'due' => 0.0, 'paid_note' => 'Paid with the package',
+            'last' => $f['last_date'] ? date('M j', strtotime($f['last_date'])) : ''];
+    }
+    // b) Packages started before the system tracked them (package_followups).
+    foreach ($conn->query("
+        SELECT f.*, s.name AS service_name, s.session_time,
+               (SELECT d.duration_minutes FROM service_durations d WHERE d.service_id = f.service_id ORDER BY d.session_count, d.duration_minutes LIMIT 1) AS dmin
+        FROM package_followups f JOIN services s ON s.id = f.service_id AND s.deleted_at IS NULL
+        WHERE f.status = 'open' AND f.sessions_done < f.sessions_total
+        ORDER BY f.customer_name
+    ")->fetch_all(MYSQLI_ASSOC) as $f) {
+        $left = (int)$f['sessions_total'] - (int)$f['sessions_done'];
+        $due  = max(0, round(((float)$f['package_price'] - (float)$f['amount_paid']) / max(1, $left), 2));
+        $followups[] = ['kind' => 'followup', 'id' => (int)$f['id'], 'who' => $f['customer_name'],
+            'service_id' => (int)$f['service_id'], 'service' => $f['service_name'],
+            'next' => (int)$f['sessions_done'] + 1, 'total' => (int)$f['sessions_total'],
+            'm' => (int)($f['dmin'] ?: $f['session_time'] ?: 30), 'due' => $due,
+            'paid_note' => 'Paid ₱' . number_format((float)$f['amount_paid'], 2) . ' of ₱' . number_format((float)$f['package_price'], 2),
+            'last' => trim(($f['last_date'] ? date('M j', strtotime($f['last_date'])) : '') . ($f['last_therapist'] ? ' · ' . $f['last_therapist'] : ''))];
+    }
 
     return [
-        'now'       => (int)date('G') * 60 + (int)date('i'),
+        'date'      => $day,
+        'today'     => $is_today,
+        'now'       => $is_today ? (int)date('G') * 60 + (int)date('i') : 10 * 60,
+        'followups' => $followups,
         'services'  => $out_services,
         'therapists'=> array_map(fn($t) => [
             'id'    => (int)$t['id'],
@@ -185,15 +273,26 @@ function book_now_therapist_free(mysqli $conn, int $therapist_id, string $start,
 if (!function_exists('book_now_save')) {
 /**
  * $guests: [ ['name' => 'Carla', 'items' => [ ['service_id', 'duration_id',
- * 'therapist_id', 'resource_id', 'start' (minutes since midnight)], ... ]], ... ]
+ * 'therapist_id', 'resource_id', 'start' (minutes since midnight),
+ * 'kind' => 'session'|'followup' + 'ref_id' for "Continue a package"], ... ]], ... ]
  * Everything is re-checked here (price, duration, qualification, duty,
  * clashes) — the planner's choices are suggestions, never trusted as-is.
+ *
+ * $date: the booking day (today or later). Another day is a reservation: a
+ * down payment ($dp = ['amount', 'method']) is required, spread over the
+ * booking's orders as advance_payment, the same fields the old calendar
+ * Quick Book used, so the Daily Report counts it today and deducts it on
+ * the appointment day.
  */
-function book_now_save(mysqli $conn, array $guests): array {
+function book_now_save(mysqli $conn, array $guests, ?string $date = null, array $dp = []): array {
     if (count($guests) < 1 || count($guests) > 4) return ['ok' => false, 'message' => 'Add between 1 and 4 guests.'];
+    book_now_ensure_schema($conn);
 
     $now_min   = (int)date('G') * 60 + (int)date('i');
     $today     = date('Y-m-d');
+    $day       = $date ?: $today;
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $day) || $day < $today) return ['ok' => false, 'message' => 'Pick today or a later date.'];
+    $is_today  = ($day === $today);
     $lines     = [];   // validated, ready to insert
     $planned   = [];   // this batch's own holds, for clashes inside the booking
 
@@ -214,13 +313,39 @@ function book_now_save(mysqli $conn, array $guests): array {
             $override     = !empty($it['override']);
             $resource_id  = (int)($it['resource_id'] ?? 0);
             $start        = (int)($it['start'] ?? -1);
+            $kind         = in_array($it['kind'] ?? '', ['session', 'followup'], true) ? $it['kind'] : 'new';
+            $ref_id       = (int)($it['ref_id'] ?? 0);
+            $ref          = null;
 
             $st = $conn->prepare("SELECT s.id, s.name, s.price, s.session_time, c.name AS category_name FROM services s LEFT JOIN categories c ON c.id = s.category_id WHERE s.id = ? AND s.deleted_at IS NULL");
             $st->bind_param("i", $service_id); $st->execute();
             $svc = $st->get_result()->fetch_assoc(); $st->close();
             if (!$svc) return ['ok' => false, 'message' => 'A service in this booking is no longer available.'];
 
-            if ($duration_id) {
+            if ($kind === 'session') {
+                // Next session of a package already in the system: paid with
+                // the package, so this only schedules it.
+                $rq = $conn->prepare("SELECT x.id, x.session_number, x.duration_minutes, x.appointment_id FROM appointment_sessions x JOIN appointments a ON a.id = x.appointment_id WHERE x.id = ? AND a.service_id = ? AND x.status = 'not_scheduled'");
+                $rq->bind_param("ii", $ref_id, $service_id); $rq->execute();
+                $ref = $rq->get_result()->fetch_assoc(); $rq->close();
+                if (!$ref) return ['ok' => false, 'message' => "$gname's {$svc['name']} session is already scheduled. Reopen Book Now."];
+                $sessions = 1; $duration_id = null;
+                $minutes  = max(1, (int)$ref['duration_minutes']);
+                $price    = 0.0;
+            } elseif ($kind === 'followup') {
+                // Package started before the system tracked it: this session
+                // costs what is left of the package, split over the sessions left.
+                $rq = $conn->prepare("SELECT * FROM package_followups WHERE id = ? AND service_id = ? AND status = 'open' AND sessions_done < sessions_total");
+                $rq->bind_param("ii", $ref_id, $service_id); $rq->execute();
+                $ref = $rq->get_result()->fetch_assoc(); $rq->close();
+                if (!$ref) return ['ok' => false, 'message' => "$gname's {$svc['name']} package was already booked. Reopen Book Now."];
+                $left     = (int)$ref['sessions_total'] - (int)$ref['sessions_done'];
+                $sessions = 1; $duration_id = null;
+                $dm = $conn->prepare("SELECT duration_minutes FROM service_durations WHERE service_id = ? ORDER BY session_count, duration_minutes LIMIT 1");
+                $dm->bind_param("i", $service_id); $dm->execute();
+                $minutes  = max(1, (int)($dm->get_result()->fetch_assoc()['duration_minutes'] ?? $svc['session_time'] ?: 30)); $dm->close();
+                $price    = max(0.0, round(((float)$ref['package_price'] - (float)$ref['amount_paid']) / max(1, $left), 2));
+            } elseif ($duration_id) {
                 $sd = $conn->prepare("SELECT * FROM service_durations WHERE id = ? AND service_id = ?");
                 $sd->bind_param("ii", $duration_id, $service_id); $sd->execute();
                 $dur_row = $sd->get_result()->fetch_assoc(); $sd->close();
@@ -234,10 +359,10 @@ function book_now_save(mysqli $conn, array $guests): array {
                 $price   = (float)$svc['price'];
             }
 
-            if ($start < $now_min - 10 || $start + $minutes > 24 * 60) {
+            if ($start < ($is_today ? $now_min - 10 : 0) || $start + $minutes > 24 * 60) {
                 return ['ok' => false, 'message' => "{$svc['name']} for $gname: that start time has passed or runs past closing. Reopen Book Now to re-plan."];
             }
-            $start_dt = $today . ' ' . sprintf('%02d:%02d:00', intdiv($start, 60), $start % 60);
+            $start_dt = $day . ' ' . sprintf('%02d:%02d:00', intdiv($start, 60), $start % 60);
 
             // Doctor / Nurse service: no therapist at all (see service_is_medical()).
             $is_med = service_is_medical($conn, $service_id);
@@ -248,7 +373,10 @@ function book_now_save(mysqli $conn, array $guests): array {
                 if (!$override && !in_array($therapist_id, get_booking_qualified_therapist_ids($conn, $service_id), true)) {
                     return ['ok' => false, 'message' => "The therapist picked for $gname's {$svc['name']} isn't trained for it."];
                 }
-                $td = $conn->prepare("SELECT t.full_name FROM therapists t JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE() WHERE t.id = ? AND (ta.time_out IS NULL OR ta.time_out = '')");
+                // Today: must be timed in. Another day: nobody has timed in yet.
+                $td = $conn->prepare($is_today
+                    ? "SELECT t.full_name FROM therapists t JOIN therapist_attendance ta ON ta.therapist_id = t.id AND ta.duty_date = CURDATE() WHERE t.id = ? AND (ta.time_out IS NULL OR ta.time_out = '')"
+                    : "SELECT t.full_name FROM therapists t WHERE t.id = ?");
                 $td->bind_param("i", $therapist_id); $td->execute();
                 $th = $td->get_result()->fetch_assoc(); $td->close();
                 if (!$th) return ['ok' => false, 'message' => "The therapist picked for $gname's {$svc['name']} is not on duty."];
@@ -280,31 +408,75 @@ function book_now_save(mysqli $conn, array $guests): array {
                 'therapist_id' => $therapist_id, 'resource_id' => $resource_id,
                 'start_dt' => $start_dt, 'minutes' => $minutes, 'price' => $price,
                 'sessions' => $sessions,
+                'kind' => $kind, 'ref' => $ref,
             ];
         }
     }
 
-    book_now_ensure_schema($conn);
+    // Down payment (another day only), spread over the paid lines in
+    // proportion to their price; the last line takes the rounding.
+    $dp_amount = 0.0; $dp_method = 'cash';
+    $billable  = array_sum(array_map(fn($L) => $L['kind'] === 'session' ? 0.0 : $L['price'], $lines));
+    if (!$is_today && $billable > 0) {
+        $dp_amount = min($billable, max(0.0, round((float)($dp['amount'] ?? 0), 2)));
+        $dp_method = in_array($dp['method'] ?? '', ['cash', 'gcash', 'maya', 'qrph', 'card', 'swiper'], true) ? $dp['method'] : 'cash';
+        if ($dp_amount <= 0) return ['ok' => false, 'message' => 'A down payment is required to book another day.'];
+        $left = $dp_amount; $paid_lines = array_keys(array_filter($lines, fn($L) => $L['kind'] !== 'session' && $L['price'] > 0));
+        foreach ($paid_lines as $n => $k) {
+            $share = ($n === count($paid_lines) - 1) ? $left : round($dp_amount * $lines[$k]['price'] / $billable, 2);
+            $share = min($share, $left, $lines[$k]['price']);
+            $lines[$k]['adv'] = $share; $left = round($left - $share, 2);
+        }
+    }
+
     $group = 'BN' . date('ymdHis') . bin2hex(random_bytes(2));
     $walkin_user_id = get_walkin_customer_id();
+    $adv_date = $dp_amount > 0 ? $today : null;
 
     $conn->begin_transaction();
     try {
         foreach ($lines as $L) {
+            if ($L['kind'] === 'session') {
+                // Same update as assign_session in appointments.php.
+                $tid = $L['therapist_id'] > 0 ? $L['therapist_id'] : null;
+                $stmt = $conn->prepare("UPDATE appointment_sessions SET session_date = ?, therapist_id = ?, status = 'scheduled' WHERE id = ? AND status = 'not_scheduled'");
+                $stmt->bind_param("sii", $L['start_dt'], $tid, $L['ref']['id']);
+                $stmt->execute(); $stmt->close();
+                continue;
+            }
             // Unpaid, method 'onsite' — the same shape Walk-in's pay-later
             // bookings use. Payment and discount happen in appointments.php.
-            $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group) VALUES (?, ?, '', ?, ?, 'onsite', 'unpaid', 'approved', 'none', 0, ?, ?, ?)");
+            // Another day: the down payment's method, and paid if it covers it.
+            $adv   = (float)($L['adv'] ?? 0);
+            $final = max(0.0, $L['price'] - $adv);
+            $pm    = $adv > 0 ? $dp_method : 'onsite';
+            $pstat = ($adv > 0 && $final <= 0) ? 'paid' : 'unpaid';
+            $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group) VALUES (?, ?, '', ?, ?, ?, ?, 'approved', 'none', 0, ?, ?, ?)");
             $_slip = $L['slip'] !== '' ? $L['slip'] : null;
-            $stmt->bind_param("issddss", $walkin_user_id, $L['guest'], $L['start_dt'], $L['price'], $L['price'], $_slip, $group);
+            $stmt->bind_param("issdssdss", $walkin_user_id, $L['guest'], $L['start_dt'], $L['price'], $pm, $pstat, $final, $_slip, $group);
             $stmt->execute(); $order_id = $stmt->insert_id; $stmt->close();
 
             $stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, 1, ?, ?)");
             $stmt->bind_param("iidd", $order_id, $L['service_id'], $L['price'], $L['price']);
             $stmt->execute(); $order_item_id = $stmt->insert_id; $stmt->close();
 
-            $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method, resource_id, duration_minutes, service_duration_id) VALUES (?, ?, ?, ?, 'assigned', 1, 'onsite', 'regular', NULL, ?, '', 0, NULL, 'cash', ?, ?, ?)");
-            $stmt->bind_param("iiisdiii", $walkin_user_id, $L['service_id'], $order_item_id, $L['start_dt'], $L['price'], $L['resource_id'], $L['minutes'], $L['duration_id']);
+            $note   = $L['kind'] === 'followup'
+                ? 'Session ' . ((int)$L['ref']['sessions_done'] + 1) . ' of ' . (int)$L['ref']['sessions_total'] . ' (package from ' . ($L['ref']['last_date'] ? date('M j', strtotime($L['ref']['last_date'])) : 'before') . ')'
+                : '';
+            $adv_pm = $adv > 0 ? $dp_method : 'cash';
+            $_advd  = $adv > 0 ? $adv_date : null;
+            $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method, resource_id, duration_minutes, service_duration_id) VALUES (?, ?, ?, ?, 'assigned', 1, 'onsite', 'regular', NULL, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("iiisdsdssiii", $walkin_user_id, $L['service_id'], $order_item_id, $L['start_dt'], $L['price'], $note, $adv, $_advd, $adv_pm, $L['resource_id'], $L['minutes'], $L['duration_id']);
             $stmt->execute(); $appointment_id = $stmt->insert_id; $stmt->close();
+
+            // amount_paid counts what each session is billed, so the next
+            // session's share stays right; the payment itself is this order.
+            if ($L['kind'] === 'followup') {
+                $stmt = $conn->prepare("UPDATE package_followups SET sessions_done = sessions_done + 1, amount_paid = amount_paid + ?, last_date = ?, status = IF(sessions_done >= sessions_total, 'closed', 'open') WHERE id = ?");
+                $_d = substr($L['start_dt'], 0, 10);
+                $stmt->bind_param("dsi", $L['price'], $_d, $L['ref']['id']);
+                $stmt->execute(); $stmt->close();
+            }
 
             // Multi-session package: Session 1 is scheduled now with this
             // booking's time and therapist; the other sessions wait to be
@@ -328,6 +500,15 @@ function book_now_save(mysqli $conn, array $guests): array {
             $commission = 0.00;
             if ($L['sessions'] > 1) {
                 // nothing yet
+            } elseif ($L['kind'] === 'followup') {
+                // One session's share of the package price, like complete_session.
+                $cm = $conn->prepare("SELECT commission_percent FROM therapist_commission WHERE therapist_id = ? AND service_id = ? LIMIT 1");
+                $cm->bind_param("ii", $L['therapist_id'], $L['service_id']); $cm->execute();
+                $cm_row = $cm->get_result()->fetch_assoc(); $cm->close();
+                if ($cm_row) {
+                    $base = (float)$L['ref']['package_price'] / max(1, (int)$L['ref']['sessions_total']);
+                    $commission = round($base * (float)$cm_row['commission_percent'] / 100, 2);
+                }
             } elseif (!empty(get_package_components($conn, $L['service_id']))) {
                 $commission = compute_package_commission($conn, $L['service_id'], $L['therapist_id'])['total'];
             } else {
@@ -354,10 +535,12 @@ function book_now_save(mysqli $conn, array $guests): array {
 
     require_once __DIR__ . '/../notify.php';
     if (function_exists('log_activity')) {
-        log_activity($conn, 'book_now', 'Book Now: ' . count($guests) . ' guest(s), ' . count($lines) . ' service(s), group ' . $group, 'order', null, null);
+        log_activity($conn, 'book_now', 'Book Now: ' . count($guests) . ' guest(s), ' . count($lines) . ' service(s), ' . date('M j', strtotime($day)) . ($dp_amount > 0 ? ', down payment ' . number_format($dp_amount, 2) . ' ' . $dp_method : '') . ', group ' . $group, 'order', null, null);
     }
     return ['ok' => true, 'group' => $group, 'count' => count($lines),
-            'message' => 'Booked ' . count($guests) . ' guest' . (count($guests) > 1 ? 's' : '') . ' · ' . count($lines) . ' service' . (count($lines) > 1 ? 's' : '') . '. Collect payment in Appointments at check-in or when done.'];
+            'message' => 'Booked ' . count($guests) . ' guest' . (count($guests) > 1 ? 's' : '') . ' · ' . count($lines) . ' service' . (count($lines) > 1 ? 's' : '')
+                . ($is_today ? '' : ' for ' . date('M j', strtotime($day)))
+                . ($dp_amount > 0 ? '. Down payment ₱' . number_format($dp_amount, 2) . ' received; the balance is collected at check-in.' : '. Collect payment in Appointments at check-in or when done.')];
 }
 }
 
