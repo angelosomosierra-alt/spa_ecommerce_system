@@ -246,6 +246,15 @@
         return m;
     }
     function isPkg(a) { return a.sessions && a.sessions.length > 1; }
+    // The same guest's other services from one Book Now booking (each is its
+    // own appointment): same group, same name, same day, still to do.
+    function sibs(a) {
+        if (!a.group) return [];
+        return D.appointments.filter(function (x) {
+            return x.id !== a.id && x.group === a.group && x.name === a.name && x.date === a.date && x.status !== 'completed';
+        }).sort(function (x, y) { return x.when < y.when ? -1 : x.when > y.when ? 1 : 0; });
+    }
+    function sibsOwe(a) { return sibs(a).filter(function (x) { return x.rate_type !== 'influencer' && x.bill.due > 0; }); }
     // A package stays "approved" in the database between sessions; on the
     // board it waits in Booked until one of its sessions is checked in.
     function laneOf(a) {
@@ -385,7 +394,8 @@
                     (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + main.id + '">' + na.l + '</button>' : '') +
                     '</div>';
             }).join('') + '</div>' +
-            (due > 0 ? '<div class="dk-meta">Group still to collect: <b>' + peso(due) + '</b> · use <b>Pay for group</b> in any guest\'s panel</div>' : '') +
+            (due > 0 ? '<div class="dk-meta">' + (list[0].group_size > 1 ? 'Group still to collect: <b>' + peso(due) + '</b> · use <b>Pay for group</b> in any guest\'s panel'
+                : 'Still to collect: <b>' + peso(due) + '</b> · all services are paid together at check-in') + '</div>' : '') +
             '</article>';
     }
     // ── Completed (last N days, newest first, by day; open a row for Undo) ──
@@ -642,14 +652,27 @@
                 '</div>';
         }).join('');
 
+        // The guest's other services from the same booking (Book Now books one
+        // appointment per service): listed here, opened on their own.
+        var others = sibs(a);
+        var sibHtml = others.length ? '<div class="dk-svc"><div class="dk-svch"><span><b>Also booked for ' + esc(a.name) + '</b></span></div><div class="dk-sess">' + others.map(function (x) {
+            var st = x.status === 'approved' ? 'In session' : 'Waiting its turn';
+            var who = therNames(x) || (x.service.med ? 'Doctor / Nurse' : 'No therapist yet');
+            return '<div class="dk-srow" data-sib="' + x.id + '" tabindex="0" style="cursor:pointer;"><span class="dk-dot' + (x.status === 'approved' ? ' in' : '') + '">' + (x.status === 'approved' ? '●' : '') + '</span>' +
+                '<span>' + esc(x.service.name) + ' · ' + x.service.mins + 'm — ' + peso(x.service.price) + '<small>' + tm(x.when) + ' · ' + esc(who) + (x.resource_id && RES[x.resource_id] ? ' · ' + esc(RES[x.resource_id].name) : '') + ' · ' + st + '</small></span>' +
+                '<span class="dk-hint">' + (x.bill.paid && x.bill.due <= 0 ? 'Paid' : 'Open') + ' ›</span></div>';
+        }).join('') + '</div></div>' : '';
+
         // Bill
+        var owe = sibsOwe(a);
         var billHtml = '<div class="dk-bill"><div><span>' + (Math.abs(b.order_total - a.service.price) > 0.01 ? 'Order total' : esc(a.service.name)) + '</span><span>' + peso(b.order_total) + '</span></div>' +
             (b.addons - b.addons_unpaid > 0.005 ? '<div><span>Added services · paid</span><span>' + peso(b.addons - b.addons_unpaid) + '</span></div>' : '') +
             (b.addons_unpaid > 0.005 ? '<div><span>Added services · to pay</span><span>' + peso(b.addons_unpaid) + '</span></div>' : '') +
             (b.discount ? '<div><span>Discount (' + esc(b.discount_type === 'voucher' && b.voucher_label ? 'voucher: ' + b.voucher_label : b.discount_type) + ')</span><span>−' + peso(b.discount) + '</span></div>' : '') +
             (b.advance ? '<div><span>Down payment' + (b.advance_method ? ' (' + esc(b.advance_method) + ')' : '') + '</span><span>−' + peso(b.advance) + '</span></div>' : '') +
             (b.paid ? '<div><span>Paid' + (b.method ? ' · ' + esc(b.method) : '') + '</span><span>' + peso(b.paid_amount) + '</span></div>' : '') +
-            '<div class="big"><span>To collect</span><span>' + peso(b.due) + '</span></div></div>';
+            owe.map(function (x) { return '<div><span>' + esc(x.service.name) + (x.bill.advance > 0 ? ' (less down payment)' : '') + '</span><span>' + peso(x.bill.due) + '</span></div>'; }).join('') +
+            '<div class="big"><span>To collect' + (owe.length ? ' · all services' : '') + '</span><span>' + peso(b.due + owe.reduce(function (t, x) { return t + x.bill.due; }, 0)) + '</span></div></div>';
         var payForm = '';
         if (S.panel === 'checkin' && (!b.paid || b.due > 0)) {
             // Already paid but services were added since: only those are due now.
@@ -681,7 +704,7 @@
             '<div class="dk-steps">' + steps + '</div></div>' +
             '<div class="dk-db">' +
             (a.legacy_two_session ? '<p class="dk-hint">This is an old 2-session package booking. Manage it in the <a href="appointments.php?view=classic">classic view</a>.</p>' : '') +
-            '<div class="dk-sec"><h4>Services</h4>' + mainHtml + addHtml +
+            '<div class="dk-sec"><h4>Services</h4>' + mainHtml + addHtml + sibHtml +
                 addServiceHtml(a) +
                 (!locked ? '<a class="dk-hint" href="appointments.php?view=classic&appt_date=' + a.date + '">Edit other details in the classic view</a>' : '') + '</div>' +
             '<div class="dk-sec"><h4>Products</h4>' + productsHtml(a) + '</div>' +
@@ -729,11 +752,23 @@
         if (S.disc === 'celebration') extra = '<div class="dk-bar" style="margin-top:0.35rem;"><input type="number" id="dkDv" min="0" max="100" step="1" placeholder="Celebration %" value="' + esc(S.dv) + '" style="max-width:150px;"><span class="dk-hint">% off</span></div>';
         return '<div><label class="dk-lbl">Discount</label><div class="dk-bar">' + DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (S.disc === d[0] ? ' sel' : '') + '" data-disc="' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div>' + extra + '</div>';
     }
-    // What will actually be collected with the discount chosen in the panel.
+    // What will actually be collected with the discount chosen in the panel,
+    // for this service and the guest's other unpaid services (paid together
+    // through pay_group: discount on the full price, then the advances off).
     function dueWithDisc(a) {
-        var b = a.bill; if (b.paid) return b.due;
-        var base = b.order_total + b.addons - b.discount;
-        return Math.max(0, base - discAmt(base, S) - b.advance);
+        var list = [a].concat(sibsOwe(a)), base = 0, adv = 0, paidDue = 0;
+        list.forEach(function (x) {
+            var b = x.bill;
+            if (b.paid) paidDue += b.due;
+            else { base += b.order_total + b.addons - b.discount; adv += b.advance; }
+        });
+        return paidDue + Math.max(0, base - discAmt(base, S) - adv);
+    }
+    // Pay this guest's services in one go (book_now_pay_group), then run the
+    // step (check in / complete) on this service, which is then already paid.
+    function payGuestThen(a, step) {
+        var map = {}; map[a.name] = { type: S.disc, value: parseFloat(S.dv) || 0, vtype: S.vt === 'percent' ? 'percent' : 'fixed', label: S.disc === 'voucher' ? (S.vl || '') : '' };
+        return post('pay_group', a.id, { booking_group: a.group, guest_discounts: JSON.stringify(map), pay_method: S.method }).then(step);
     }
     function methodChips(allowAccount) {
         var list = PAYS.concat(allowAccount ? [['unpaid', 'Charge to account']] : []);
@@ -789,12 +824,16 @@
                 if (S.panel !== 'checkin') { S.panel = 'checkin'; S.grp = false; return renderDrawer(); }
                 if (S.payNow && !S.method) return err('Choose a payment method, or pick Pay later.');
                 if (S.payNow && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
+                if (S.payNow && sibsOwe(a).length) return payGuestThen(a, function () { return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true); });
                 return post('checkin_appointment', a.id, { pay_choice: S.payNow ? 'now' : 'later', pay_method: S.method || 'cash', discount_type: S.payNow && !b.paid ? S.disc : 'none', voucher_type: S.vt === 'percent' ? 'percent' : 'fixed', voucher_value: S.payNow ? (parseFloat(S.dv) || 0) : 0, voucher_label: S.disc === 'voucher' ? (S.vl || '') : '' }, false, true);
             }
             if (na.k === 'complete') {
                 if (b.due > 0 && S.panel !== 'complete') { S.panel = 'complete'; S.grp = false; return renderDrawer(); }
                 if (b.due > 0 && !S.method) return err('Choose how the customer paid.');
                 if (b.due > 0 && !b.paid && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
+                if (S.method !== 'unpaid' && sibsOwe(a).length) return payGuestThen(a, function () {
+                    return post('complete', a.id, { complete_pay_method: S.method || 'cash', complete_unpaid_billto: '', complete_disc_type: 'none', complete_voucher_type: 'cash', complete_voucher_value: 0, voucher_label: '', celebration_discount: 0, advance_payment: 0 }, false, true);
+                });
                 return post('complete', a.id, {
                     complete_pay_method: S.method || 'cash', complete_unpaid_billto: ($('dkBill') || {}).value || '',
                     complete_disc_type: b.paid ? 'none' : S.disc, complete_voucher_type: S.vt === 'percent' ? 'percent' : 'cash', complete_voucher_value: b.paid ? 0 : (parseFloat(S.dv) || 0), voucher_label: !b.paid && S.disc === 'voucher' ? (S.vl || '') : '',
@@ -827,6 +866,10 @@
             if (D.cashier && !/^\d{4}$/.test($('dkPin').value)) return err('Enter your 4-digit PIN.');
             post('set_rate_type', a.id, { rate_type: 'regular' });
         };
+        $('dkDrawer').querySelectorAll('[data-sib]').forEach(function (r) {
+            r.onclick = function () { openDrawer(+r.dataset.sib); };
+            r.onkeydown = function (e) { if (e.key === 'Enter') openDrawer(+r.dataset.sib); };
+        });
         var gpo = $('dkGrpOpen'); if (gpo) gpo.onclick = function () { S.grp = !S.grp; if (S.grp) S.panel = null; renderDrawer(); };
     }
 
