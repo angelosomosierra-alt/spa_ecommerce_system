@@ -294,8 +294,8 @@ if (!function_exists('book_now_save')) {
  * Everything is re-checked here (price, duration, qualification, duty,
  * clashes) — the planner's choices are suggestions, never trusted as-is.
  *
- * $date: the booking day (today or later). Another day is a reservation: a
- * down payment ($dp = ['amount', 'method']) is required, spread over the
+ * $date: the booking day (today or later). Another day is a reservation: an
+ * optional advance payment ($dp = ['amount', 'method']) is spread over the
  * booking's orders as advance_payment, the same fields the old calendar
  * Quick Book used, so the Daily Report counts it today and deducts it on
  * the appointment day.
@@ -438,7 +438,6 @@ function book_now_save(mysqli $conn, array $guests, ?string $date = null, array 
     if (!$is_today && $billable > 0) {
         $dp_amount = min($billable, max(0.0, round((float)($dp['amount'] ?? 0), 2)));
         $dp_method = in_array($dp['method'] ?? '', ['cash', 'gcash', 'maya', 'qrph', 'card', 'swiper'], true) ? $dp['method'] : 'cash';
-        if ($dp_amount <= 0) return ['ok' => false, 'message' => 'A down payment is required to book another day.'];
         $left = $dp_amount; $paid_lines = array_keys(array_filter($lines, $dp_lines));
         foreach ($paid_lines as $n => $k) {
             $share = ($n === count($paid_lines) - 1) ? $left : round($dp_amount * $lines[$k]['price'] / $billable, 2);
@@ -560,12 +559,12 @@ function book_now_save(mysqli $conn, array $guests, ?string $date = null, array 
 
     require_once __DIR__ . '/../notify.php';
     if (function_exists('log_activity')) {
-        log_activity($conn, 'book_now', 'Book Now: ' . count($guests) . ' guest(s), ' . count($lines) . ' service(s), ' . date('M j', strtotime($day)) . ($dp_amount > 0 ? ', down payment ' . number_format($dp_amount, 2) . ' ' . $dp_method : '') . ', group ' . $group, 'order', null, null);
+        log_activity($conn, 'book_now', 'Book Now: ' . count($guests) . ' guest(s), ' . count($lines) . ' service(s), ' . date('M j', strtotime($day)) . ($dp_amount > 0 ? ', advance payment ' . number_format($dp_amount, 2) . ' ' . $dp_method : '') . ', group ' . $group, 'order', null, null);
     }
     return ['ok' => true, 'group' => $group, 'count' => count($lines),
             'message' => 'Booked ' . count($guests) . ' guest' . (count($guests) > 1 ? 's' : '') . ' · ' . count($lines) . ' service' . (count($lines) > 1 ? 's' : '')
                 . ($is_today ? '' : ' for ' . date('M j', strtotime($day)))
-                . ($dp_amount > 0 ? '. Down payment ₱' . number_format($dp_amount, 2) . ' received; the balance is collected at check-in.' : '. Collect payment in Appointments at check-in or when done.')];
+                . ($dp_amount > 0 ? '. Advance payment ₱' . number_format($dp_amount, 2) . ' received; the balance is collected at check-in.' : '. Collect payment in Appointments at check-in or when done.')];
 }
 }
 
@@ -577,7 +576,7 @@ if (!function_exists('book_now_group_bill')) {
 function book_now_group_bill(mysqli $conn, string $group): array {
     $stmt = $conn->prepare("
         SELECT o.id AS order_id, o.customer_name, o.total_amount, (o.payment_status = 'paid') AS order_paid,
-               a.id AS appt_id, a.appointment_date, s.name AS service_name,
+               a.id AS appt_id, a.appointment_date, s.name AS service_name, IFNULL(a.advance_payment, 0) AS adv,
                (SELECT COALESCE(SUM(aes.charged_price), 0) FROM appointment_extra_services aes
                 WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras
         FROM orders o
@@ -595,8 +594,11 @@ function book_now_group_bill(mysqli $conn, string $group): array {
     $guests = [];
     foreach ($rows as $r) {
         $name = $r['customer_name'] ?: 'Guest';
-        if (!isset($guests[$name])) $guests[$name] = ['name' => $name, 'services' => [], 'subtotal' => 0.0];
+        if (!isset($guests[$name])) $guests[$name] = ['name' => $name, 'services' => [], 'subtotal' => 0.0, 'advance' => 0.0];
         $amt = ($r['order_paid'] ? 0.0 : (float)$r['total_amount']) + (float)$r['extras'];
+        // An advance paid at booking (calendar) is already collected: the
+        // discount is on the full price, then the advance comes off.
+        if (!$r['order_paid']) $guests[$name]['advance'] += (float)$r['adv'];
         $label = $r['order_paid'] ? $r['service_name'] . ' — added services' : $r['service_name'] . ((float)$r['extras'] > 0 ? ' + added services' : '');
         $guests[$name]['services'][] = ['name' => $label, 'amount' => $amt];
         $guests[$name]['subtotal'] += $amt;
@@ -620,6 +622,7 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
 
     $stmt = $conn->prepare("
         SELECT o.id AS order_id, o.customer_name, o.total_amount, (o.payment_status = 'paid') AS order_paid, a.id AS appt_id,
+               IFNULL(a.advance_payment, 0) AS adv,
                (SELECT COALESCE(SUM(aes.charged_price), 0) FROM appointment_extra_services aes
                 WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras
         FROM orders o
@@ -680,7 +683,9 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
                 $ue->bind_param("si", $method, $r['appt_id']);
                 $ue->execute(); $ue->close();
             }
-            $paid_total += $final; $paid_guests[$name] = true;
+            // Same as check-in: final_amount is the sale after discount; the
+            // advance paid at booking is already in, so less is collected now.
+            $paid_total += max(0.0, round($final - (float)$r['adv'], 2)); $paid_guests[$name] = true;
         }
         $conn->commit();
     } catch (Throwable $e) {

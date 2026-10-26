@@ -5596,12 +5596,13 @@ function gpRender() {
     if (!_gpGuests.length) { box.innerHTML = '<div style="color:var(--gray);font-size:0.82rem;">Everyone in this group has already paid.</div>'; gpTotal(); return; }
     box.innerHTML = _gpGuests.map(function (g, i) {
         var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2];
-        var due = Math.round(g.subtotal * (100 - pct)) / 100;
+        var due = Math.max(0, Math.round(g.subtotal * (100 - pct)) / 100 - (g.advance || 0));
         return '<div style="border:1px solid var(--border2);border-radius:10px;padding:0.6rem 0.75rem;' + (g.on ? '' : 'opacity:0.55;') + '">' +
             '<label style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;font-weight:700;color:var(--brown);cursor:pointer;">' +
             '<span><input type="checkbox" ' + (g.on ? 'checked' : '') + ' onchange="_gpGuests[' + i + '].on=this.checked;gpRender()"> ' + _gpEsc(g.name) + '</span>' +
             '<span>₱' + due.toFixed(2) + '</span></label>' +
             g.services.map(function (s) { return '<div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--gray);padding-left:1.4rem;"><span>' + _gpEsc(s.name) + '</span><span>₱' + s.amount.toFixed(2) + '</span></div>'; }).join('') +
+            (g.advance > 0 ? '<div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#C96A2C;padding-left:1.4rem;"><span>Advance paid at booking</span><span>−₱' + g.advance.toFixed(2) + '</span></div>' : '') +
             '<div style="display:flex;flex-wrap:wrap;gap:0.3rem;padding-left:1.4rem;margin-top:0.4rem;">' +
             GP_DISC.map(function (d) { var sel = g.disc === d[0]; return '<button type="button" onclick="_gpGuests[' + i + '].disc=\'' + d[0] + '\';gpRender()" style="border:1px solid ' + (sel ? '#C96A2C' : 'var(--border2)') + ';background:' + (sel ? '#C96A2C' : '#fff') + ';color:' + (sel ? '#fff' : 'var(--brown)') + ';border-radius:20px;padding:0.15rem 0.55rem;font-size:0.7rem;font-weight:700;cursor:pointer;">' + d[1] + '</button>'; }).join('') +
             '</div></div>';
@@ -5610,7 +5611,7 @@ function gpRender() {
 }
 function gpTotal() {
     var t = 0, any = false;
-    _gpGuests.forEach(function (g) { if (!g.on) return; any = true; var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2]; t += Math.round(g.subtotal * (100 - pct)) / 100; });
+    _gpGuests.forEach(function (g) { if (!g.on) return; any = true; var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2]; t += Math.max(0, Math.round(g.subtotal * (100 - pct)) / 100 - (g.advance || 0)); });
     document.getElementById('gp-total').textContent = '₱' + t.toFixed(2);
     document.getElementById('gp-submit').disabled = !any;
 }

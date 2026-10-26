@@ -4,7 +4,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Book Now modal: several guests, several services each, for today (Dashboard
  * button) or another day (a day on the calendar → openBookNow('YYYY-MM-DD')).
- * Another day needs a down payment, taken here. "Continue a package" books
+ * Another day can take an optional advance payment here. "Continue a package" books
  * the next session of a customer's multi-session package. The receptionist adds services per guest; the planner below assigns
  * every service a start time, therapist (today's rotation, qualified, free)
  * and room (right type, free), runs a guest's services back-to-back and
@@ -256,7 +256,7 @@
     function subtitle() {
         var d = new Date(DAY + 'T00:00:00');
         $('bnSub').textContent = D.today ? '· today, starting ' + fmt(FIRST)
-            : '· ' + d.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' }) + ', starting ' + fmt(FIRST) + ' · down payment needed';
+            : '· ' + d.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' }) + ', starting ' + fmt(FIRST);
         $('bnPrevDay').textContent = D.today ? 'today' : d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
     }
     window.closeBookNow = function () { $('bookNowModal').classList.remove('active'); };
@@ -574,16 +574,20 @@
             '<div class="big"><span>Total before discounts</span><span>' + peso(total) + '</span></div>' +
             (n ? '<div><span>Everyone done by</span><span>' + fmt(PLAN.end) + '</span></div>' : '');
 
-        // Another day: a down payment holds the slot (suggested 50%).
+        // Another day (calendar booking): optional advance payment. Saved on
+        // the appointment; Appointments deducts it from the bill at check-in.
         var fut = !D.today, sugg = Math.round(total / 2);
-        $('bnDp').hidden = !fut || total <= 0;
-        if (fut && total > 0) {
+        $('bnDp').hidden = !fut;
+        if (fut) {
             var methods = [['cash', 'Cash'], ['gcash', 'GCash'], ['maya', 'Maya'], ['qrph', 'QR Ph'], ['card', 'Card']];
-            $('bnDp').innerHTML = '<p class="bn-ct">Down payment</p>' +
-                '<p class="bn-hint">Booked ahead, so a down payment holds the slot. Suggested 50%: <b>' + peso(sugg) + '</b>.</p>' +
-                '<input type="number" id="bnDpAmt" min="1" step="0.01" max="' + total + '" value="' + (S.dp === '' ? sugg : esc(S.dp)) + '" aria-label="Down payment amount">' +
-                '<div class="bn-chips">' + methods.map(function (m) { return '<button type="button" class="bn-chip' + (S.dpm === m[0] ? ' sel' : '') + '" data-m="' + m[0] + '">' + m[1] + '</button>'; }).join('') + '</div>';
+            $('bnDp').innerHTML = '<p class="bn-ct">Advance payment <span style="text-transform:none;font-weight:600;">(optional)</span></p>' +
+                '<p class="bn-hint">' + (total > 0 ? 'If the customer pays ahead, enter it here. It is deducted from their bill at check-in.' : 'Add a service first.') + '</p>' +
+                '<div style="display:flex;gap:0.4rem;"><input type="number" id="bnDpAmt" min="0" step="0.01" max="' + total + '" placeholder="₱0.00" value="' + esc(S.dp) + '"' + (total > 0 ? '' : ' disabled') + ' aria-label="Advance payment amount">' +
+                (total > 0 ? '<button type="button" class="bn-chip" id="bnDp50" title="Half of the total">50% · ' + pesoShort(sugg) + '</button>' : '') + '</div>' +
+                '<div class="bn-chips">' + methods.map(function (m) { return '<button type="button" class="bn-chip' + (S.dpm === m[0] ? ' sel' : '') + '" data-m="' + m[0] + '">' + m[1] + '</button>'; }).join('') + '</div>' +
+                '<p class="bn-miss" id="bnDpErr"></p>';
             $('bnDpAmt').oninput = function () { S.dp = this.value; renderMiss(); };
+            if ($('bnDp50')) $('bnDp50').onclick = function () { S.dp = String(sugg); $('bnDpAmt').value = sugg; renderMiss(); };
             $('bnDp').querySelectorAll('[data-m]').forEach(function (b) { b.onclick = function () { S.dpm = b.dataset.m; renderBill(); }; });
         }
         $('bnPayHint').innerHTML = fut
@@ -599,7 +603,10 @@
         var miss = [];
         S.guests.forEach(function (g, gi) { if (!g.items.length) miss.push(gname(g, gi) + ' has no service'); });
         if (PLAN.lines.some(function (ls) { return ls.some(function (L) { return !L.t || !L.r; }); })) miss.push('a service has no free therapist or room that day');
-        if (!D.today && total > 0 && dpAmount() <= 0) miss.push('the down payment');
+        // The advance is optional, but never more than the bill.
+        var over = !D.today && dpAmount() > total + 0.001;
+        if ($('bnDpErr')) $('bnDpErr').textContent = over ? 'More than the total (' + peso(total) + ').' : '';
+        if (over) miss.push('a smaller advance payment');
         $('bnMiss').textContent = miss.length ? 'Still needed: ' + miss.join(', ') : '';
         $('bnBookBtn').disabled = miss.length > 0 || S.saving;
         $('bnBookBtn').textContent = S.saving ? 'Booking…' : 'Book ' + S.guests.length + ' guest' + (S.guests.length > 1 ? 's' : '') + ' · ' + n + ' service' + (n !== 1 ? 's' : '');

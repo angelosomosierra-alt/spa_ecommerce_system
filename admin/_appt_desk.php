@@ -838,11 +838,11 @@
                 var box = $('dkGrp'); if (!box) return;
                 var G = (data.guests || []).map(function (g) { g.on = true; g.disc = 'none'; g.dv = ''; g.vt = 'fixed'; g.vl = ''; return g; });
                 var method = null;
-                function total() { return G.reduce(function (t, g) { return g.on ? t + Math.max(0, g.subtotal - discAmt(g.subtotal, g)) : t; }, 0); }
+                function total() { return G.reduce(function (t, g) { return g.on ? t + Math.max(0, g.subtotal - discAmt(g.subtotal, g) - (g.advance || 0)) : t; }, 0); }
                 function draw() {
                     if (!G.length) { box.innerHTML = '<p class="dk-hint">Everyone in this group has already paid.</p>'; return; }
                     box.innerHTML = G.map(function (g, i) {
-                        return '<div><label class="dk-lbl"><input type="checkbox" data-gi="' + i + '"' + (g.on ? ' checked' : '') + '> ' + esc(g.name) + ' · ' + peso(g.subtotal) + '</label><div class="dk-bar">' +
+                        return '<div><label class="dk-lbl"><input type="checkbox" data-gi="' + i + '"' + (g.on ? ' checked' : '') + '> ' + esc(g.name) + ' · ' + peso(g.subtotal) + (g.advance > 0 ? ' · advance −' + peso(g.advance) : '') + '</label><div class="dk-bar">' +
                             DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (g.disc === d[0] ? ' sel' : '') + '" data-gd="' + i + ',' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div>' +
                             (g.disc === 'voucher' || g.disc === 'celebration' ? '<div class="dk-bar" style="margin-top:0.3rem;"><input type="number" min="0" data-gv="' + i + '" value="' + esc(g.dv) + '" placeholder="' + (g.disc === 'celebration' ? 'Celebration %' : (g.vt === 'percent' ? 'Voucher %' : 'Voucher ₱')) + '" style="max-width:130px;">' +
                                 (g.disc === 'voucher' ? '<button type="button" class="dk-chip sm' + (g.vt !== 'percent' ? ' sel' : '') + '" data-gvt="' + i + ',fixed">₱ off</button><button type="button" class="dk-chip sm' + (g.vt === 'percent' ? ' sel' : '') + '" data-gvt="' + i + ',percent">% off</button>' +
