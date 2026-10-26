@@ -259,11 +259,10 @@ function paymongo_log($conn, $order_id, string $source, string $step, string $re
 // ─── AESTHETIC SLIP ──────────────────────────────────────────────────────────
 // The spa writes aesthetic treatments on their own paper slip series (the
 // aesthetics menu: Diode, Exilis RF, HIFU, Pico, Carbon Glow, boosters / Botox
-// / fillers and the aesthetic combos). Drips and facials use the spa slip.
+// / fillers, drips and the aesthetic combos). Facials use the spa slip.
 function service_uses_aesthetic_slip(?string $category_name, ?string $service_name = ''): bool {
     $cat = strtolower((string)$category_name);
-    if (strpos($cat, 'drip') !== false) return false;
-    if (preg_match('/diode|exilis|hifu|pico|carbon/', $cat)) return true;
+    if (preg_match('/diode|exilis|hifu|pico|carbon|drip/', $cat)) return true;
     if (in_array(trim($cat), ['aesthetics', 'aesthetic combos'], true)) return true;
     return (bool)preg_match('/full face tightening|exilis/i', (string)$service_name);
 }
