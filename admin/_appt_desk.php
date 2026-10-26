@@ -58,6 +58,9 @@
 
 .dk-board { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:0.85rem; align-items:start; }
 @media (max-width:1100px) { .dk-board { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+.dk-slipk { display:inline-block; margin-top:0.35rem; border-radius:999px; padding:0.2rem 0.65rem; font-size:0.74rem; font-weight:700; }
+.dk-slipk.spa { background:#DDF0EA; color:#1F6F5C; }
+.dk-slipk.aes { background:#F7E3F0; color:#9B3D7A; }
 .dk-day { font-size:0.68rem; font-weight:800; text-transform:uppercase; letter-spacing:0.08em; color:var(--brown-md); margin:0.35rem 0.25rem 0; }
 .dk-day.over { color:var(--red); }
 .dk-done { margin-top:1.4rem; background:#fff; border:1px solid var(--border2); border-radius:14px; padding:0.85rem 1rem; }
@@ -620,7 +623,8 @@
                 (a.upgraded_from ? '<br><small class="dk-hint">Upgraded from ' + esc(a.upgraded_from) + '</small>' : '') + '</span><span class="dk-amt">' + peso(a.service.price) + '</span></div>' +
             (canAdd(a) && !isPkg(a) && !S.add ? '<button type="button" class="dk-btn" id="dkUpOpen" style="align-self:flex-start;">Upgrade service</button>' : '') +
             '<div class="dk-g2">' + slotsHtml + '<div><label class="dk-lbl" for="dkRoom">Room</label>' + (locked ? '<div class="dk-hint">' + esc(RES[a.resource_id] ? RES[a.resource_id].name : '—') + '</div>' : roomSelect(a)) + '</div></div>' +
-            ('<div class="dk-g2"><div><label class="dk-lbl" for="dkSlip">Slip #</label>' + (locked ? '<div class="dk-hint">' + esc(a.slip || '—') + '</div>' : '<input id="dkSlip" type="text" maxlength="50" placeholder="Service slip number" value="' + esc(a.slip || '') + '">') + '</div></div>') +
+            ('<div class="dk-g2"><div><label class="dk-lbl" for="dkSlip">' + (a.slip_aes ? 'Aesthetic slip #' : 'Slip #') + '</label>' + (locked ? '<div class="dk-hint">' + esc(a.slip || '—') + '</div>' : '<input id="dkSlip" type="text" maxlength="50" placeholder="' + (a.slip_aes ? 'Aesthetic slip number' : 'Service slip number') + '" value="' + esc(a.slip || '') + '">') + '</div>' +
+             '<div><label class="dk-lbl">Slip type</label><span class="dk-slipk ' + (a.slip_aes ? 'aes' : 'spa') + '">' + (a.slip_aes ? 'Aesthetic slip' : 'Spa slip') + '</span></div></div>') +
             sessHtml + '</div>';
 
         // Add-ons (a multi-session add-on lists its sessions)

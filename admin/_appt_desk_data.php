@@ -185,6 +185,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
             'rate_type' => $r['rate_type'] ?: 'regular',
             'upgraded_from' => $r['upgraded_from'] ?? null,
             'slip' => $r['slip_number'] ?? '',
+            'slip_aes' => service_uses_aesthetic_slip($r['category_name'] ?? '', $r['service_name'] ?? ''),
             'service' => [
                 'id' => (int)$r['service_id'], 'name' => $r['service_name'],
                 'mins' => (int)($r['duration_minutes'] ?: $r['session_time'] ?: 60),

@@ -461,7 +461,7 @@ require_once __DIR__ . '/admin_header.php';
             <span class="help-topic-arrow">▸</span>
         </div>
         <div class="help-topic-body"><div class="help-body-inner">
-            <p>Use the <strong>Walk-in</strong> page for customers who walk in without an online booking, or for recording phone bookings directly into the system.</p>
+            <p><strong>The Walk-in page has been retired.</strong> Book walk-ins with <strong>Book Now</strong> on the Dashboard (add one guest per person with <strong>+ Add guest</strong>, and type each guest's <strong>Slip #</strong>; aesthetic treatments get an <strong>Aesthetic slip #</strong>). Book a later day by clicking that day on the Dashboard calendar. Payment and discounts are taken in <strong>Appointments</strong>. The notes below describe the old page and are kept for reference.</p>
 
             <div class="help-sub">Customer Information</div>
             <p>Enter the customer's <strong>name and phone number</strong>. These fields are important — they appear on the appointment card and help identify the customer. Do not leave them as "Walk-in Customer."</p>

@@ -408,6 +408,7 @@ function render_quick_book_services_html(mysqli $conn): string {
                      data-price="<?php echo $d_price; ?>"
                      data-minutes="<?php echo $d_min; ?>"
                      data-home-price="<?php echo (float)($svc['home_service_price'] ?? 0); ?>"
+                     data-aes="<?php echo service_uses_aesthetic_slip($svc['category_name'], $svc['name']) ? 1 : 0; ?>"
                      onclick="qbSelectService(this)" ondblclick="qbSelectService(this); qbNext();">
                     <span class="qb-svc-row-name"><?php echo htmlspecialchars($svc['name']); ?></span>
                     <span class="qb-svc-row-meta"><?php echo htmlspecialchars($d_label); ?></span>
@@ -931,7 +932,7 @@ require_once 'admin_header.php';
                         <input type="tel" id="qbCustomerPhone" placeholder="09XXXXXXXXX">
                     </div>
                     <div class="qb-field">
-                        <label for="qbSlipNumber">Slip Number <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                        <label for="qbSlipNumber"><span id="qbSlipLabel">Slip Number</span> <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
                         <input type="text" id="qbSlipNumber" maxlength="50" placeholder="e.g. 11082-2026">
                     </div>
                 </div>
@@ -1199,6 +1200,10 @@ function qbSelectService(el) {
     el.classList.add('selected');
     qbState.service_id   = el.getAttribute('data-service-id');
     qbState.service_name = el.getAttribute('data-service-name');
+    // Aesthetic treatments go on their own paper slip series.
+    var aes = el.getAttribute('data-aes') === '1';
+    document.getElementById('qbSlipLabel').textContent = aes ? 'Aesthetic slip #' : 'Slip Number';
+    document.getElementById('qbSlipNumber').placeholder = aes ? 'Aesthetic slip, e.g. 0130-2026' : 'e.g. 11082-2026';
     qbState.price         = parseFloat(el.getAttribute('data-price'));
     qbState.home_price    = parseFloat(el.getAttribute('data-home-price'));
     qbState.minutes        = parseInt(el.getAttribute('data-minutes'), 10);

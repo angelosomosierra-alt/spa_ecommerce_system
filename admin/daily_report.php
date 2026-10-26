@@ -2549,7 +2549,28 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
         <span style="font-size:0.75rem;color:#198754;">Editing as <?php echo htmlspecialchars($ss_editor); ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
         <?php endif; ?>
         <span id="ss-row-count" style="font-size:0.75rem;color:var(--gray);"><?php echo count($spreadsheet_rows); ?> rows &nbsp;|&nbsp; Net Sales: ₱<span id="ss-net-total"><?php echo number_format($spreadsheet_net_total,2); ?></span></span>
+        <?php
+        // Which services go on the aesthetic slip series (see service_uses_aesthetic_slip).
+        $ss_aes_ids = [];
+        foreach ($conn->query("SELECT s.id, s.name, c.name AS category_name FROM services s LEFT JOIN categories c ON c.id = s.category_id")->fetch_all(MYSQLI_ASSOC) as $_sv) {
+            if (service_uses_aesthetic_slip($_sv['category_name'], $_sv['name'])) $ss_aes_ids[(int)$_sv['id']] = true;
+        }
+        $ss_slip_kind = function (array $r) use ($ss_aes_ids): string {
+            $sid = (int)($r['service_id'] ?? 0);
+            if ($sid) return isset($ss_aes_ids[$sid]) ? 'aes' : 'spa';
+            return preg_match('/diode|exilis|hifu|pico|carbon|drip|tightening|botox|filler|lemon bottle|tirzepatide|peptide|jawtox|gluta/i', (string)($r['service_name'] ?? '')) ? 'aes' : 'spa';
+        };
+        ?>
+        <span class="ss-slipf" role="group" aria-label="Show slips" style="margin-left:auto;display:inline-flex;border:1px solid var(--border2);border-radius:8px;overflow:hidden;">
+            <button type="button" data-slipf="all" class="on">All</button><button type="button" data-slipf="spa">Spa slips</button><button type="button" data-slipf="aes">Aesthetic slips</button>
+        </span>
     </div>
+    <style>
+    .ss-slipf button { border:0; background:#fff; padding:0.3rem 0.7rem; font-size:0.75rem; font-weight:600; cursor:pointer; color:var(--brown); }
+    .ss-slipf button.on { background:#3B2A1A; color:#fff; }
+    .ss-slipk { font-size:0.6rem; font-weight:800; border-radius:8px; padding:1px 5px; margin-left:4px; font-family:sans-serif; }
+    .ss-slipk.spa { background:#DDF0EA; color:#1F6F5C; } .ss-slipk.aes { background:#F7E3F0; color:#9B3D7A; }
+    </style>
     <div style="overflow-x:auto;">
         <table style="font-size:0.75rem;border-collapse:collapse;min-width:1640px;" id="ss-table">
             <thead>
@@ -2590,6 +2611,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
                 data-time-in="<?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?>"
                 data-time-out="<?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?>"
                 data-slip-no="<?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?>"
+                data-slip-kind="<?php echo $ss_slip_kind($_ssr); ?>"
                 data-client-name="<?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>"
                 data-service-id="<?php echo (int)($_ssr['service_id'] ?? 0); ?>"
                 data-service-name="<?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?>"
@@ -2622,7 +2644,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
                 <?php endif; ?>
                 <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?></td>
-                <td style="padding:0.3rem 0.5rem;font-family:monospace;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;font-family:monospace;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?><?php $_sk = $ss_slip_kind($_ssr); ?><span class="ss-slipk <?php echo $_sk; ?>"><?php echo $_sk === 'aes' ? 'AES' : 'SPA'; ?></span></td>
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>
                     <?php if ($_is_imported): ?><span style="font-size:0.62rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;" title="Auto-imported from appointment #<?php echo (int)$_ssr['source_appointment_id']; ?>">appt</span><?php endif; ?>
                 </td>
@@ -2976,6 +2998,29 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
     function fmtNum(n) { return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
     function gv(id) { var el=document.getElementById(id); return el ? el.value.trim() : ''; }
     function eH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ── Spa vs aesthetic slip series ─────────────────────────────────────────
+    var SS_AES_IDS = <?php echo json_encode(array_map('intval', array_keys($ss_aes_ids ?? []))); ?>;
+    function ssSlipKind(d) {
+        var sid = parseInt(d.service_id, 10) || 0;
+        if (sid) return SS_AES_IDS.indexOf(sid) >= 0 ? 'aes' : 'spa';
+        return /diode|exilis|hifu|pico|carbon|drip|tightening|botox|filler|lemon bottle|tirzepatide|peptide|jawtox|gluta/i.test(d.service_name || '') ? 'aes' : 'spa';
+    }
+    var ssSlipFilter = 'all';
+    function ssApplySlipFilter() {
+        document.querySelectorAll('#ss-table tr.ss-row').forEach(function (tr) {
+            tr.style.display = (ssSlipFilter === 'all' || tr.dataset.slipKind === ssSlipFilter) ? '' : 'none';
+        });
+    }
+    document.querySelectorAll('[data-slipf]').forEach(function (b) {
+        b.addEventListener('click', function () {
+            ssSlipFilter = b.dataset.slipf;
+            document.querySelectorAll('[data-slipf]').forEach(function (x) { x.classList.toggle('on', x === b); });
+            ssApplySlipFilter();
+        });
+    });
+    var _ssBody = document.querySelector('#ss-table tbody');
+    if (_ssBody) new MutationObserver(function () { if (ssSlipFilter !== 'all') ssApplySlipFilter(); }).observe(_ssBody, { childList: true });
     function peso(v) { var n=parseFloat(v)||0; return n ? '₱'+fmtNum(n) : ''; }
 
     // ── Recalculate totals row + header count ────────────────────────────────
@@ -3026,6 +3071,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
         tr.dataset.timeIn       = d.time_in       || '';
         tr.dataset.timeOut      = d.time_out      || '';
         tr.dataset.slipNo       = d.slip_no       || '';
+        tr.dataset.slipKind     = ssSlipKind(d);
         tr.dataset.clientName   = d.client_name   || '';
         tr.dataset.serviceId    = d.service_id    || '0';
         tr.dataset.serviceName  = d.service_name  || '';
@@ -3050,7 +3096,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
         tr.innerHTML = delCell +
             '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_in)         + '</td>' +
             '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_out)        + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;font-family:monospace;">'+ eH(d.slip_no)         + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;font-family:monospace;white-space:nowrap;">'+ eH(d.slip_no) + '<span class="ss-slipk ' + tr.dataset.slipKind + '">' + (tr.dataset.slipKind === 'aes' ? 'AES' : 'SPA') + '</span></td>' +
             '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.client_name)     + '</td>' +
             '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.service_name)    + '</td>' +
             '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.stylist)         + '</td>' +
