@@ -1157,6 +1157,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
 }
 
 // ── SET / CHANGE RESOURCE (Room / Chair / Head Spa) — AJAX ─────────────────────
+// ── Slip number (the paper service slip) on the booking's order ──────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_slip') {
+    verify_csrf_token();
+    header('Content-Type: application/json');
+    $ss_appt_id = intval($_POST['appt_id'] ?? 0);
+    $ss_slip    = mb_substr(trim(sanitize_input($_POST['slip_number'] ?? '')), 0, 50);
+    $ss_slip    = $ss_slip !== '' ? $ss_slip : null;
+    $ss_q = $conn->prepare("SELECT oi.order_id FROM appointments a JOIN order_items oi ON oi.id = a.order_item_id WHERE a.id = ?");
+    $ss_q->bind_param("i", $ss_appt_id); $ss_q->execute();
+    $ss_order = (int)($ss_q->get_result()->fetch_assoc()['order_id'] ?? 0); $ss_q->close();
+    if (!$ss_order) { echo json_encode(['success' => false, 'message' => 'Booking not found.']); exit(); }
+    $ss_u = $conn->prepare("UPDATE orders SET slip_number = ? WHERE id = ?");
+    $ss_u->bind_param("si", $ss_slip, $ss_order); $ss_u->execute(); $ss_u->close();
+    // Rows already copied to the Daily Report spreadsheet follow the new number.
+    $ss_r = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET slip_no = ? WHERE order_id = ?");
+    if ($ss_r) { $ss_r->bind_param("si", $ss_slip, $ss_order); $ss_r->execute(); $ss_r->close(); }
+    echo json_encode(['success' => true]);
+    exit();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_resource') {
     verify_csrf_token();
     header('Content-Type: application/json');

@@ -619,7 +619,9 @@
         var mainHtml = '<div class="dk-svc"><div class="dk-svch"><span><b>' + esc(a.service.name) + '</b> <small>' + a.service.mins + ' min' + (isPkg(a) ? ' · ' + a.sessions.length + '-session package' : '') + '</small>' +
                 (a.upgraded_from ? '<br><small class="dk-hint">Upgraded from ' + esc(a.upgraded_from) + '</small>' : '') + '</span><span class="dk-amt">' + peso(a.service.price) + '</span></div>' +
             (canAdd(a) && !isPkg(a) && !S.add ? '<button type="button" class="dk-btn" id="dkUpOpen" style="align-self:flex-start;">Upgrade service</button>' : '') +
-            '<div class="dk-g2">' + slotsHtml + '<div><label class="dk-lbl" for="dkRoom">Room</label>' + (locked ? '<div class="dk-hint">' + esc(RES[a.resource_id] ? RES[a.resource_id].name : '—') + '</div>' : roomSelect(a)) + '</div></div>' + sessHtml + '</div>';
+            '<div class="dk-g2">' + slotsHtml + '<div><label class="dk-lbl" for="dkRoom">Room</label>' + (locked ? '<div class="dk-hint">' + esc(RES[a.resource_id] ? RES[a.resource_id].name : '—') + '</div>' : roomSelect(a)) + '</div></div>' +
+            ('<div class="dk-g2"><div><label class="dk-lbl" for="dkSlip">Slip #</label>' + (locked ? '<div class="dk-hint">' + esc(a.slip || '—') + '</div>' : '<input id="dkSlip" type="text" maxlength="50" placeholder="Service slip number" value="' + esc(a.slip || '') + '">') + '</div></div>') +
+            sessHtml + '</div>';
 
         // Add-ons (a multi-session add-on lists its sessions)
         var addHtml = a.addons.map(function (x, xi) {
@@ -747,6 +749,7 @@
             rows.forEach(function (r) { chain = chain.then(function () { return post('assign_extra_therapist', a.id, { aes_id: r.id, therapist_id: s.value }, true); }); });
         }; });
         var room = $('dkRoom'); if (room) room.onchange = function () { if (room.value) post('set_resource', a.id, { resource_id: room.value }); };
+        var slip = $('dkSlip'); if (slip) slip.onchange = function () { post('set_slip', a.id, { slip_number: slip.value.trim() }); };
         W.querySelectorAll('[data-xrm]').forEach(function (bt) { bt.onclick = function () {
             var rows = a.addons[+bt.dataset.xrm].rows, chain = Promise.resolve();
             rows.forEach(function (r) { chain = chain.then(function () { return post('remove_extra_service', a.id, { extra_id: r.id }, true); }); });

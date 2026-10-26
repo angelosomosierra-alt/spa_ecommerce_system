@@ -573,6 +573,8 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $customer_name  = sanitize_input($_POST['customer_name'] ?? '');
     $phone          = sanitize_input($_POST['phone'] ?? '');
     $customer_note  = sanitize_input($_POST['customer_note'] ?? '');
+    $slip_number    = mb_substr(trim(sanitize_input($_POST['slip_number'] ?? '')), 0, 50);
+    $slip_number    = $slip_number !== '' ? $slip_number : null;
     $discount_type  = $_POST['discount_type'] ?? 'none';
     $voucher_type_i = $_POST['voucher_type'] ?? 'cash';
     $voucher_value  = max(0.0, floatval($_POST['voucher_value'] ?? 0));
@@ -678,8 +680,8 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
 
     $conn->begin_transaction();
     try {
-        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, NULL)");
-        $stmt->bind_param("isssdsssdd", $walkin_user_id, $customer_name, $phone, $appointment_date, $charged_price, $payment_method, $order_payment_status, $discount_type, $discount_amount_calc, $final_amount);
+        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)");
+        $stmt->bind_param("isssdsssdds", $walkin_user_id, $customer_name, $phone, $appointment_date, $charged_price, $payment_method, $order_payment_status, $discount_type, $discount_amount_calc, $final_amount, $slip_number);
         $stmt->execute();
         $order_id = $stmt->insert_id;
         $stmt->close();
@@ -928,6 +930,10 @@ require_once 'admin_header.php';
                         <label for="qbCustomerPhone">Phone Number <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
                         <input type="tel" id="qbCustomerPhone" placeholder="09XXXXXXXXX">
                     </div>
+                    <div class="qb-field">
+                        <label for="qbSlipNumber">Slip Number <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                        <input type="text" id="qbSlipNumber" maxlength="50" placeholder="e.g. 11082-2026">
+                    </div>
                 </div>
                 <div class="qb-field" style="margin-top:1.25rem;">
                     <label for="qbCustomerNote">Notes <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
@@ -1059,7 +1065,7 @@ function openQuickBook(prefillDate) {
         service_id: 0, service_name: '', price: 0, home_price: 0, minutes: 0,
         therapist_id: 0, therapist_name: '', resource_id: 0, resource_name: '',
         rate_type: 'regular', partner_id: 0, partner_name: '', partner_rate: null,
-        customer_name: '', phone: '', customer_note: '',
+        customer_name: '', phone: '', customer_note: '', slip_number: '',
         discount_type: 'none', voucher_type: 'cash', voucher_value: 0,
         payment_method: '', advance_payment: 0, advance_payment_method: ''
     };
@@ -1068,6 +1074,7 @@ function openQuickBook(prefillDate) {
     document.getElementById('qbCustomerName').value  = '';
     document.getElementById('qbCustomerPhone').value = '';
     document.getElementById('qbCustomerNote').value  = '';
+    document.getElementById('qbSlipNumber').value    = '';
     document.getElementById('qbVoucherAmount').value = 0;
     document.getElementById('qbCelebPct').value      = 0;
     document.getElementById('qbAdvancePayment').value = 0;
@@ -1181,6 +1188,7 @@ function qbNext() {
         qbState.customer_name  = name;
         qbState.phone          = document.getElementById('qbCustomerPhone').value.trim();
         qbState.customer_note  = document.getElementById('qbCustomerNote').value.trim();
+        qbState.slip_number    = document.getElementById('qbSlipNumber').value.trim();
         qbRecalc();
         qbGotoStep(4);
     }
@@ -1343,6 +1351,7 @@ function qbSubmit() {
         therapist_id: qbState.therapist_id, resource_id: qbState.resource_id,
         rate_type: qbState.rate_type, partner_id: qbState.partner_id,
         customer_name: qbState.customer_name, phone: qbState.phone, customer_note: qbState.customer_note,
+        slip_number: qbState.slip_number,
         discount_type: qbState.discount_type,
         voucher_type: document.getElementById('qbVoucherType').value,
         voucher_value: qbState.discount_type === 'celebration'

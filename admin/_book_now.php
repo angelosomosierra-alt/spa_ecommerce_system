@@ -199,6 +199,7 @@ function book_now_save(mysqli $conn, array $guests): array {
     foreach ($guests as $gi => $g) {
         $gname = trim(sanitize_input((string)($g['name'] ?? '')));
         if ($gname === '') $gname = 'Guest ' . ($gi + 1);
+        $gslip = mb_substr(trim(sanitize_input((string)($g['slip'] ?? ''))), 0, 50);
         $items = $g['items'] ?? [];
         if (!is_array($items) || !$items) return ['ok' => false, 'message' => "$gname has no service."];
 
@@ -271,7 +272,7 @@ function book_now_save(mysqli $conn, array $guests): array {
             $planned[] = ['start' => $start, 'end' => $start + $minutes, 'therapist_id' => $therapist_id, 'resource_id' => $resource_id];
 
             $lines[] = [
-                'guest' => $gname, 'service_id' => $service_id, 'duration_id' => $duration_id,
+                'guest' => $gname, 'slip' => $gslip, 'service_id' => $service_id, 'duration_id' => $duration_id,
                 'therapist_id' => $therapist_id, 'resource_id' => $resource_id,
                 'start_dt' => $start_dt, 'minutes' => $minutes, 'price' => $price,
                 'sessions' => $sessions,
@@ -288,8 +289,9 @@ function book_now_save(mysqli $conn, array $guests): array {
         foreach ($lines as $L) {
             // Unpaid, method 'onsite' — the same shape Walk-in's pay-later
             // bookings use. Payment and discount happen in appointments.php.
-            $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group) VALUES (?, ?, '', ?, ?, 'onsite', 'unpaid', 'approved', 'none', 0, ?, NULL, ?)");
-            $stmt->bind_param("issdds", $walkin_user_id, $L['guest'], $L['start_dt'], $L['price'], $L['price'], $group);
+            $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group) VALUES (?, ?, '', ?, ?, 'onsite', 'unpaid', 'approved', 'none', 0, ?, ?, ?)");
+            $_slip = $L['slip'] !== '' ? $L['slip'] : null;
+            $stmt->bind_param("issddss", $walkin_user_id, $L['guest'], $L['start_dt'], $L['price'], $L['price'], $_slip, $group);
             $stmt->execute(); $order_id = $stmt->insert_id; $stmt->close();
 
             $stmt = $conn->prepare("INSERT INTO order_items (order_id, service_id, quantity, price, subtotal) VALUES (?, ?, 1, ?, ?)");

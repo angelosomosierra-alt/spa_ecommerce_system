@@ -36,7 +36,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                u.full_name AS user_name, u.phone AS user_phone,
                o.id AS order_id, o.customer_name, o.phone AS order_phone, o.total_amount,
                o.discount_type, o.discount_amount, o.final_amount, o.payment_status,
-               o.payment_method, o.paymongo_method, o.booking_group,
+               o.payment_method, o.paymongo_method, o.booking_group, o.slip_number,
                o.completion_discount_type, o.completion_discount_amount, o.voucher_label,
                (SELECT COUNT(DISTINCT o2.customer_name) FROM orders o2
                 WHERE o.booking_group IS NOT NULL AND o2.booking_group = o.booking_group) AS group_size
@@ -184,6 +184,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
             'people' => max(1, (int)$r['people_count']),
             'rate_type' => $r['rate_type'] ?: 'regular',
             'upgraded_from' => $r['upgraded_from'] ?? null,
+            'slip' => $r['slip_number'] ?? '',
             'service' => [
                 'id' => (int)$r['service_id'], 'name' => $r['service_name'],
                 'mins' => (int)($r['duration_minutes'] ?: $r['session_time'] ?: 60),
