@@ -30,6 +30,7 @@ if (!function_exists('book_now_ensure_schema')) {
 function book_now_ensure_schema(mysqli $conn): void {
     $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS booking_group VARCHAR(32) NULL DEFAULT NULL");
     $conn->query("ALTER TABLE orders ADD INDEX IF NOT EXISTS idx_orders_booking_group (booking_group)");
+    $conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS package_followup_id INT NULL DEFAULT NULL");
     // Multi-session packages started before they were tracked in the system
     // (e.g. the October sales-report import): what is left to book and pay.
     $conn->query("CREATE TABLE IF NOT EXISTS package_followups (
@@ -66,6 +67,22 @@ function book_now_resource_type(?string $category_name): string {
     if (str_contains($cat, 'nail') || str_contains($cat, 'lash')
         || str_contains($cat, 'brow') || str_contains($cat, 'foot')) return 'chair';
     return 'room';
+}
+}
+
+if (!function_exists('book_now_followup_split')) {
+/**
+ * Next session of a package_followups row, priced like the sales report and
+ * like system packages (pkg_session_share): each session is a sale of its
+ * share of the package; what the customer already paid beyond the sessions
+ * done is an advance payment applied to it. Returns [share, prepaid, due].
+ */
+function book_now_followup_split(array $f): array {
+    $total = max(1, (int)$f['sessions_total']); $done = (int)$f['sessions_done'];
+    $share = pkg_session_share((float)$f['package_price'], $total, $done + 1);
+    $used  = round((float)$f['package_price'] / $total, 2) * $done;
+    $pre   = round(min($share, max(0.0, (float)$f['amount_paid'] - $used)), 2);
+    return [$share, $pre, round($share - $pre, 2)];
 }
 }
 
@@ -211,8 +228,7 @@ function book_now_data(mysqli $conn, ?string $date = null): array {
         WHERE f.status = 'open' AND f.sessions_done < f.sessions_total
         ORDER BY f.customer_name
     ")->fetch_all(MYSQLI_ASSOC) as $f) {
-        $left = (int)$f['sessions_total'] - (int)$f['sessions_done'];
-        $due  = max(0, round(((float)$f['package_price'] - (float)$f['amount_paid']) / max(1, $left), 2));
+        [, , $due] = book_now_followup_split($f);
         $followups[] = ['kind' => 'followup', 'id' => (int)$f['id'], 'who' => $f['customer_name'],
             'service_id' => (int)$f['service_id'], 'service' => $f['service_name'],
             'next' => (int)$f['sessions_done'] + 1, 'total' => (int)$f['sessions_total'],
@@ -339,12 +355,11 @@ function book_now_save(mysqli $conn, array $guests, ?string $date = null, array 
                 $rq->bind_param("ii", $ref_id, $service_id); $rq->execute();
                 $ref = $rq->get_result()->fetch_assoc(); $rq->close();
                 if (!$ref) return ['ok' => false, 'message' => "$gname's {$svc['name']} package was already booked. Reopen Book Now."];
-                $left     = (int)$ref['sessions_total'] - (int)$ref['sessions_done'];
                 $sessions = 1; $duration_id = null;
                 $dm = $conn->prepare("SELECT duration_minutes FROM service_durations WHERE service_id = ? ORDER BY session_count, duration_minutes LIMIT 1");
                 $dm->bind_param("i", $service_id); $dm->execute();
                 $minutes  = max(1, (int)($dm->get_result()->fetch_assoc()['duration_minutes'] ?? $svc['session_time'] ?: 30)); $dm->close();
-                $price    = max(0.0, round(((float)$ref['package_price'] - (float)$ref['amount_paid']) / max(1, $left), 2));
+                [$price, $pre] = book_now_followup_split($ref);
             } elseif ($duration_id) {
                 $sd = $conn->prepare("SELECT * FROM service_durations WHERE id = ? AND service_id = ?");
                 $sd->bind_param("ii", $duration_id, $service_id); $sd->execute();
@@ -408,20 +423,23 @@ function book_now_save(mysqli $conn, array $guests, ?string $date = null, array 
                 'therapist_id' => $therapist_id, 'resource_id' => $resource_id,
                 'start_dt' => $start_dt, 'minutes' => $minutes, 'price' => $price,
                 'sessions' => $sessions,
-                'kind' => $kind, 'ref' => $ref,
+                'kind' => $kind, 'ref' => $ref, 'pre' => $kind === 'followup' ? $pre : 0.0,
             ];
         }
     }
 
-    // Down payment (another day only), spread over the paid lines in
-    // proportion to their price; the last line takes the rounding.
+    // Down payment (another day only), spread over the lines with something
+    // to pay in proportion to their price; the last line takes the rounding.
+    // A package session already paid in part keeps that earlier payment as
+    // its advance and takes no share of today's.
     $dp_amount = 0.0; $dp_method = 'cash';
-    $billable  = array_sum(array_map(fn($L) => $L['kind'] === 'session' ? 0.0 : $L['price'], $lines));
+    $dp_lines  = fn($L) => $L['kind'] !== 'session' && $L['pre'] <= 0 && $L['price'] > 0;
+    $billable  = array_sum(array_map(fn($L) => $dp_lines($L) ? $L['price'] : 0.0, $lines));
     if (!$is_today && $billable > 0) {
         $dp_amount = min($billable, max(0.0, round((float)($dp['amount'] ?? 0), 2)));
         $dp_method = in_array($dp['method'] ?? '', ['cash', 'gcash', 'maya', 'qrph', 'card', 'swiper'], true) ? $dp['method'] : 'cash';
         if ($dp_amount <= 0) return ['ok' => false, 'message' => 'A down payment is required to book another day.'];
-        $left = $dp_amount; $paid_lines = array_keys(array_filter($lines, fn($L) => $L['kind'] !== 'session' && $L['price'] > 0));
+        $left = $dp_amount; $paid_lines = array_keys(array_filter($lines, $dp_lines));
         foreach ($paid_lines as $n => $k) {
             $share = ($n === count($paid_lines) - 1) ? $left : round($dp_amount * $lines[$k]['price'] / $billable, 2);
             $share = min($share, $left, $lines[$k]['price']);
@@ -447,9 +465,14 @@ function book_now_save(mysqli $conn, array $guests, ?string $date = null, array 
             // Unpaid, method 'onsite' — the same shape Walk-in's pay-later
             // bookings use. Payment and discount happen in appointments.php.
             // Another day: the down payment's method, and paid if it covers it.
+            // A package session paid on an earlier visit: that payment is its
+            // advance, dated the day it was collected (Daily Report deducts it
+            // as ADVANCE PAYMENT on this session's day).
             $adv   = (float)($L['adv'] ?? 0);
-            $final = max(0.0, $L['price'] - $adv);
-            $pm    = $adv > 0 ? $dp_method : 'onsite';
+            $adv_m = $dp_method; $adv_d = $adv_date;
+            if ($L['pre'] > 0) { $adv = $L['pre']; $adv_m = 'cash'; $adv_d = $L['ref']['last_date'] ?: $today; }
+            $final = max(0.0, round($L['price'] - $adv, 2));
+            $pm    = $adv > 0 ? $adv_m : 'onsite';
             $pstat = ($adv > 0 && $final <= 0) ? 'paid' : 'unpaid';
             $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group) VALUES (?, ?, '', ?, ?, ?, ?, 'approved', 'none', 0, ?, ?, ?)");
             $_slip = $L['slip'] !== '' ? $L['slip'] : null;
@@ -463,18 +486,20 @@ function book_now_save(mysqli $conn, array $guests, ?string $date = null, array 
             $note   = $L['kind'] === 'followup'
                 ? 'Session ' . ((int)$L['ref']['sessions_done'] + 1) . ' of ' . (int)$L['ref']['sessions_total'] . ' (package from ' . ($L['ref']['last_date'] ? date('M j', strtotime($L['ref']['last_date'])) : 'before') . ')'
                 : '';
-            $adv_pm = $adv > 0 ? $dp_method : 'cash';
-            $_advd  = $adv > 0 ? $adv_date : null;
+            $adv_pm = $adv > 0 ? $adv_m : 'cash';
+            $_advd  = $adv > 0 ? $adv_d : null;
             $stmt = $conn->prepare("INSERT INTO appointments (user_id, service_id, order_item_id, appointment_date, status, people_count, service_type, rate_type, partner_id, charged_price, customer_note, advance_payment, advance_payment_date, advance_payment_method, resource_id, duration_minutes, service_duration_id) VALUES (?, ?, ?, ?, 'assigned', 1, 'onsite', 'regular', NULL, ?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt->bind_param("iiisdsdssiii", $walkin_user_id, $L['service_id'], $order_item_id, $L['start_dt'], $L['price'], $note, $adv, $_advd, $adv_pm, $L['resource_id'], $L['minutes'], $L['duration_id']);
             $stmt->execute(); $appointment_id = $stmt->insert_id; $stmt->close();
 
-            // amount_paid counts what each session is billed, so the next
-            // session's share stays right; the payment itself is this order.
+            // amount_paid adds what this session still costs (collected with
+            // this order), so the next session's prepaid part stays right.
             if ($L['kind'] === 'followup') {
+                $stmt = $conn->prepare("UPDATE appointments SET package_followup_id = ? WHERE id = ?");
+                $stmt->bind_param("ii", $L['ref']['id'], $appointment_id); $stmt->execute(); $stmt->close();
                 $stmt = $conn->prepare("UPDATE package_followups SET sessions_done = sessions_done + 1, amount_paid = amount_paid + ?, last_date = ?, status = IF(sessions_done >= sessions_total, 'closed', 'open') WHERE id = ?");
-                $_d = substr($L['start_dt'], 0, 10);
-                $stmt->bind_param("dsi", $L['price'], $_d, $L['ref']['id']);
+                $_d = substr($L['start_dt'], 0, 10); $_due = round($L['price'] - $L['pre'], 2);
+                $stmt->bind_param("dsi", $_due, $_d, $L['ref']['id']);
                 $stmt->execute(); $stmt->close();
             }
 

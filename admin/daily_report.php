@@ -904,10 +904,14 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
     // sessions have completed so far, so they import based on their booking
     // date (created_at) instead, independent of the appointment's current
     // status (which may still be 'assigned'/'approved' with sessions left).
+    // Book Now "Continue a package" links the session's appointment to its
+    // package_followups row (see admin/_book_now.php).
+    $conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS package_followup_id INT NULL DEFAULT NULL");
     $aq = $conn->prepare("
         SELECT
             a.id                      AS appt_id,
             a.appointment_date,
+            a.advance_payment, a.advance_payment_date, a.package_followup_id,
             a.duration_minutes,
             a.charged_price,
             -- appointments.therapist_id is a dead legacy column no other part of
@@ -983,8 +987,8 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
              regular_price, promo_price, celeb_10,
              disc_20_pwd, comm_30, comm_20, comm_15, comm_25, disc_50_staff,
              net_sales, mode_of_payment, remarks, is_refund, created_by_name,
-             source_appointment_id, order_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             source_appointment_id, order_id, advance_payment)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
 
     foreach ($imp_appts as $ap) {
@@ -1007,6 +1011,14 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         // is defined, same as before for services without one.
         $sd_promo    = (float)($ap['sd_promo_price'] ?? 0);
         $promo_price = $sd_promo > 0 ? $sd_promo : $regular_price;
+        // One session of a package started before the system tracked it:
+        // its price is that session's share, as in the sales report.
+        if (!empty($ap['package_followup_id'])) $regular_price = $promo_price = $charged_amount;
+        // A down payment received on an earlier day is deducted today as
+        // ADVANCE PAYMENT (the advance column); one received today is in
+        // the day's down payments instead.
+        $adv_col = (($ap['advance_payment_date'] ?? '') !== '' && $ap['advance_payment_date'] !== $report_date)
+            ? (float)$ap['advance_payment'] : 0.0;
         // Celebration discount can come from booking-time OR completion-time
         // discount fields -- appointments.celebration_discount is never populated.
         $celeb_10 = 0.0;
@@ -1054,13 +1066,13 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $created_by  = 'import';
         $row_order_insert = $row_order ?? 0; // placeholder; anchored to own id below if this starts a new cluster
 
-        $ins->bind_param("sisssssisiddddddddddssisii",
+        $ins->bind_param("sisssssisiddddddddddssisiid",
             $report_date, $row_order_insert, $time_in, $time_out, $slip_no, $client_name,
             $svc_name, $service_id, $stylist, $therapist_id,
             $regular_price, $promo_price, $celeb_10,
             $disc_20_pwd, $comm_30, $comm_20, $comm_15, $comm_25, $disc_50_staff,
             $net_sales, $mode_of_pay, $remarks, $is_refund, $created_by,
-            $appt_id, $order_id);
+            $appt_id, $order_id, $adv_col);
         $ins->execute();
         if ($row_order === null) {
             $new_id = $conn->insert_id;
