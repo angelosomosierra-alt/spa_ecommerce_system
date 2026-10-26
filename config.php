@@ -329,7 +329,10 @@ function settle_online_down_payment($conn, int $order_id, ?string $method, ?stri
 // ─── BASE URL ─────────────────────────────────────────────────────────────────
 $protocol      = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
 $host          = $_SERVER['HTTP_HOST'] ?? 'localhost';
-$_is_hostinger = strpos($host, 'hostingersite.com') !== false;
+// Hostinger: the temporary *.hostingersite.com address, or any domain pointed at
+// this hosting account (e.g. recoveryiloilo.com) -- the app then lives in the
+// account's home folder and is served from the site root.
+$_is_hostinger = strpos($host, 'hostingersite.com') !== false || strpos(__DIR__, '/home/u655952816/') === 0;
 $folder        = $_is_hostinger ? '/' : (getenv('APP_SUBFOLDER') ?: '/spa_ecommerce_system/');
 define('BASE_URL', $protocol . '://' . $host . $folder);
 
