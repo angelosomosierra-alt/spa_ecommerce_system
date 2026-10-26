@@ -84,6 +84,7 @@
 .bn-gtab input { border:0; background:none; font-weight:700; width:9.5em; padding:2px 0; color:var(--brown); font:inherit; font-size:0.85rem; }
 .bn-gtab input:focus { outline:none; }
 .bn-gtab input.gs { width:5.5em; font-weight:500; border-left:1px solid var(--border2); padding-left:0.45rem; }
+.bn-gtab input.gs.aes { width:8.5em; }
 .bn-gtab .cnt { font-size:0.7rem; color:var(--gray); white-space:nowrap; }
 .bn-gtab .rm { border:0; background:none; color:var(--gray); cursor:pointer; padding:0 2px; }
 .bn-addg { border:1px dashed var(--gold); background:none; border-radius:10px; padding:0.45rem 0.8rem; font-weight:700; cursor:pointer; color:var(--brown-md); font-size:0.82rem; }
@@ -182,7 +183,7 @@
     function pesoShort(n) { return peso(n).replace(/\.00$/, ''); }
     function ov(a, ad, b, bd) { return a < b + bd && b < a + ad; }
     function gname(g, i) { return g.name.trim() || 'Guest ' + (i + 1); }
-    function newGuest() { return { id: uid++, name: '', slip: '', items: [] }; }
+    function newGuest() { return { id: uid++, name: '', slip: '', slipAes: '', items: [] }; }
 
     // ── Open / close ──────────────────────────────────────────────────────
     window.openBookNow = function () {
@@ -310,7 +311,9 @@
             var sub = g.items.reduce(function (a, it) { return a + it.dur.p; }, 0);
             return '<div class="bn-gtab' + (i === S.active ? ' on' : '') + '" data-i="' + i + '" style="--gc:' + GC[i % 4] + '">' +
                 '<span class="sw"></span><input type="text" class="gn" value="' + esc(g.name) + '" placeholder="Guest ' + (i + 1) + ' name" data-i="' + i + '" aria-label="Guest ' + (i + 1) + ' name">' +
-                '<input type="text" class="gs" value="' + esc(g.slip) + '" placeholder="Slip #" maxlength="50" data-i="' + i + '" aria-label="Guest ' + (i + 1) + ' slip number">' +
+                // Aesthetic treatments are written on their own slip series.
+                ((!g.items.length || g.items.some(function (it) { return !it.svc.aes; })) ? '<input type="text" class="gs" value="' + esc(g.slip) + '" placeholder="Slip #" maxlength="50" data-i="' + i + '" aria-label="Guest ' + (i + 1) + ' slip number">' : '') +
+                (g.items.some(function (it) { return it.svc.aes; }) ? '<input type="text" class="gs aes" value="' + esc(g.slipAes) + '" placeholder="Aesthetic slip #" maxlength="50" data-i="' + i + '" aria-label="Guest ' + (i + 1) + ' aesthetic slip number">' : '') +
                 '<span class="cnt">' + g.items.length + ' svc · ' + pesoShort(sub) + '</span>' +
                 (S.guests.length > 1 ? '<button class="rm" type="button" data-rm="' + i + '" title="Remove guest">✕</button>' : '') + '</div>';
         }).join('');
@@ -331,6 +334,7 @@
         });
         $('bnGuests').querySelectorAll('input').forEach(function (inp) {
             inp.addEventListener('input', function () {
+                if (inp.classList.contains('aes')) { S.guests[+inp.dataset.i].slipAes = inp.value; return; }
                 if (inp.classList.contains('gs')) { S.guests[+inp.dataset.i].slip = inp.value; return; }
                 S.guests[+inp.dataset.i].name = inp.value;
                 $('bnAddTo').textContent = gname(S.guests[S.active], S.active);
@@ -527,6 +531,7 @@
             return {
                 name: g.name.trim(),
                 slip: (g.slip || '').trim(),
+                slip_aes: (g.slipAes || '').trim(),
                 items: (PLAN.lines[gi] || []).map(function (L) {
                     return { service_id: L.item.svc.id, duration_id: L.item.dur.id, therapist_id: L.t > 0 ? L.t : 0, resource_id: L.r, start: L.s,
                              override: L.t > 0 && L.item.svc.qual.indexOf(L.t) < 0 };

@@ -96,6 +96,7 @@ function book_now_data(mysqli $conn): array {
             'durs' => $durs,
             'qual' => get_booking_qualified_therapist_ids($conn, $sid),
             'med'  => service_is_medical($conn, $sid),
+            'aes'  => service_uses_aesthetic_slip($s['category_name'], $s['name']),
         ];
     }
 
@@ -199,7 +200,8 @@ function book_now_save(mysqli $conn, array $guests): array {
     foreach ($guests as $gi => $g) {
         $gname = trim(sanitize_input((string)($g['name'] ?? '')));
         if ($gname === '') $gname = 'Guest ' . ($gi + 1);
-        $gslip = mb_substr(trim(sanitize_input((string)($g['slip'] ?? ''))), 0, 50);
+        $gslip     = mb_substr(trim(sanitize_input((string)($g['slip'] ?? ''))), 0, 50);
+        $gslip_aes = mb_substr(trim(sanitize_input((string)($g['slip_aes'] ?? ''))), 0, 50);
         $items = $g['items'] ?? [];
         if (!is_array($items) || !$items) return ['ok' => false, 'message' => "$gname has no service."];
 
@@ -213,7 +215,7 @@ function book_now_save(mysqli $conn, array $guests): array {
             $resource_id  = (int)($it['resource_id'] ?? 0);
             $start        = (int)($it['start'] ?? -1);
 
-            $st = $conn->prepare("SELECT id, name, price, session_time FROM services WHERE id = ? AND deleted_at IS NULL");
+            $st = $conn->prepare("SELECT s.id, s.name, s.price, s.session_time, c.name AS category_name FROM services s LEFT JOIN categories c ON c.id = s.category_id WHERE s.id = ? AND s.deleted_at IS NULL");
             $st->bind_param("i", $service_id); $st->execute();
             $svc = $st->get_result()->fetch_assoc(); $st->close();
             if (!$svc) return ['ok' => false, 'message' => 'A service in this booking is no longer available.'];
@@ -272,7 +274,9 @@ function book_now_save(mysqli $conn, array $guests): array {
             $planned[] = ['start' => $start, 'end' => $start + $minutes, 'therapist_id' => $therapist_id, 'resource_id' => $resource_id];
 
             $lines[] = [
-                'guest' => $gname, 'slip' => $gslip, 'service_id' => $service_id, 'duration_id' => $duration_id,
+                'guest' => $gname,
+                'slip' => service_uses_aesthetic_slip($svc['category_name'], $svc['name']) ? $gslip_aes : $gslip,
+                'service_id' => $service_id, 'duration_id' => $duration_id,
                 'therapist_id' => $therapist_id, 'resource_id' => $resource_id,
                 'start_dt' => $start_dt, 'minutes' => $minutes, 'price' => $price,
                 'sessions' => $sessions,
