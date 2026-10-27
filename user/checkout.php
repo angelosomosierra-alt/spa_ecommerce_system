@@ -209,6 +209,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             $message_type = "danger";
         }
     }
+    if (empty($message) && empty($_POST['terms_agree'])) {
+        $message = "Please tick the box to agree to the Terms and Conditions.";
+        $message_type = "danger";
+    }
     $service_type           = $_POST['service_type']   ?? 'onsite';
     $home_address           = sanitize_input($_POST['home_address'] ?? '');
     $home_notes             = sanitize_input($_POST['home_notes']   ?? '');
@@ -1762,6 +1766,10 @@ require_once 'header.php';
                     <input type="checkbox" name="dp_agree" value="1" id="dpAgree" required>
                     <span>I understand the down payment is <strong>non-refundable</strong>, including if I cancel or do not show up.</span>
                 </label>
+                <label class="dp-agree">
+                    <input type="checkbox" name="terms_agree" value="1" required>
+                    <span>I agree to the <a href="<?php echo BASE_URL; ?>terms.php" target="_blank" rel="noopener" style="color:#C96A2C;font-weight:700;">Terms and Conditions</a>.</span>
+                </label>
                 <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
                     Pay <span id="dpBtnAmt">₱<?php echo number_format($_dp_now, 2); ?></span> down payment
                 </button>
@@ -1789,6 +1797,10 @@ require_once 'header.php';
                     <strong>Pending</strong> — pay when you arrive and staff will confirm.
                 </div>
 
+                <label class="dp-agree">
+                    <input type="checkbox" name="terms_agree" value="1" required>
+                    <span>I agree to the <a href="<?php echo BASE_URL; ?>terms.php" target="_blank" rel="noopener" style="color:#C96A2C;font-weight:700;">Terms and Conditions</a>.</span>
+                </label>
                 <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
                     Confirm Booking
                 </button>

@@ -345,6 +345,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['step1_register'])) {
         $register_error = "Passwords do not match.";
     } elseif (!preg_match('/^09[0-9]{9}$/', $phone)) {
     $register_error = "Phone number must be 11 digits and start with 09.";
+    } elseif (empty($_POST['terms_agree'])) {
+        $register_error = "Please tick the box to agree to the Terms and Conditions.";
     } else {
         // Only block if an ACTIVE (non-deleted) account uses this username or email
         $stmt = $conn->prepare("SELECT id FROM users WHERE (username = ? OR email = ?) AND deleted_at IS NULL");
@@ -415,6 +417,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_register']))
                 );
                 $ok = $stmt->execute(); $stmt->close();
                 if ($ok) {
+                    $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at DATETIME NULL");
+                    $ta = $conn->prepare("UPDATE users SET terms_accepted_at = NOW() WHERE id = ?");
+                    $ta->bind_param("i", $deleted_row['id']); $ta->execute(); $ta->close();
                     unset($_SESSION['pending_reg'], $_SESSION['otp_verified'],
                           $_SESSION['otp_verified_email'], $_SESSION['otp_sent_at'], $_SESSION['otp_email']);
                     $_SESSION['reg_success'] = "Welcome back! Your account has been restored. You can now log in.";
@@ -428,6 +433,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_register']))
                 $stmt = $conn->prepare("INSERT INTO users (username, password, email, full_name, phone, address, role) VALUES (?, ?, ?, ?, ?, ?, 'user')");
                 $stmt->bind_param("ssssss", $pending['username'], $pending['password'], $pending['email'], $pending['full_name'], $pending['phone'], $pending['address']);
                 if ($stmt->execute()) {
+                    // When the customer agreed to the Terms and Conditions (Register form).
+                    $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at DATETIME NULL");
+                    $ta = $conn->prepare("UPDATE users SET terms_accepted_at = NOW() WHERE id = ?");
+                    $_new_uid = $stmt->insert_id; $ta->bind_param("i", $_new_uid); $ta->execute(); $ta->close();
                     unset($_SESSION['pending_reg'], $_SESSION['otp_verified'], $_SESSION['otp_verified_email'], $_SESSION['otp_sent_at'], $_SESSION['otp_email']);
                     $_SESSION['reg_success'] = "Registration successful! You can now log in.";
                     header('Location: auth.php');
@@ -759,6 +768,10 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
             <label>Address</label>
             <textarea name="address" placeholder="Enter your address"><?php echo htmlspecialchars($_POST['address'] ?? ''); ?></textarea>
         </div>
+        <label style="display:flex;gap:0.6rem;align-items:flex-start;font-size:0.85rem;color:#555;margin:0.25rem 0 0.9rem;cursor:pointer;">
+            <input type="checkbox" name="terms_agree" value="1" required style="margin-top:0.2rem;width:16px;height:16px;flex:none;"<?php echo !empty($_POST['terms_agree']) ? ' checked' : ''; ?>>
+            <span>I have read and agree to the <a href="<?php echo BASE_URL; ?>terms.php" target="_blank" rel="noopener" style="color:#C96A2C;font-weight:bold;">Terms and Conditions</a>, including how my data is used (section 10).</span>
+        </label>
         <button type="submit" name="step1_register" class="btn-primary">Continue to Email Verification →</button>
     </form>
     <div class="divider">— or —</div>
