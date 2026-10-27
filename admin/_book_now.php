@@ -688,10 +688,14 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
             $disc = min($disc, $base);
             $final = max(0.0, $base - $disc);
 
+            // A service the discount doesn't reach (e.g. a nails voucher on a
+            // massage) is recorded without it, so the report shows the voucher
+            // only where it was used.
+            $dk = $disc > 0 ? $dkey : 'none';
             $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
-            $u->bind_param("ssddi", $method, $dkey, $disc, $final, $r['order_id']);
+            $u->bind_param("ssddi", $method, $dk, $disc, $final, $r['order_id']);
             $u->execute(); $u->close();
-            if ($dkey === 'voucher') save_voucher_label($conn, (int)$r['order_id'], $vlabel[$name] ?? '');
+            if ($dk === 'voucher') save_voucher_label($conn, (int)$r['order_id'], $vlabel[$name] ?? '');
 
             if ((float)$r['extras'] > 0) {
                 $ue = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");

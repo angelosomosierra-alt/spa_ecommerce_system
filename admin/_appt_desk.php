@@ -17,9 +17,15 @@
  * remove_extra_service, revert_complete, pay_group), then reloads the board
  * from appointments.php?ajax=desk_data. Those actions answer with a
  * redirect + flash message, which desk_data hands back for the toast.
+ *
+ * $DESK_MODAL = true before including it (the Dashboard): the board stays
+ * hidden and the panel opens as a centered window, from
+ * window.openApptPanel(appointment id) (the Live Resource Grid's blocks).
  * ─────────────────────────────────────────────────────────────────────────────
  */
+$DESK_MODAL = !empty($DESK_MODAL);
 ?>
+<?php if ($DESK_MODAL): ?><div hidden><?php endif; ?>
 <div class="dk-top">
     <div class="dk-bar">
         <input type="text" id="dkQ" class="dk-search" placeholder="Search name, service, therapist" aria-label="Search appointments">
@@ -37,9 +43,10 @@
     <div id="dkDoneList"></div>
     <button type="button" class="dk-btn" id="dkDoneMore" style="margin-top:0.6rem;">Show 7 more days</button>
 </section>
+<?php if ($DESK_MODAL): ?></div><?php endif; ?>
 
 <div class="dk-scrim" id="dkScrim" hidden></div>
-<aside class="dk-drawer" id="dkDrawer" hidden aria-label="Appointment details"></aside>
+<aside class="dk-drawer<?php echo $DESK_MODAL ? ' dk-modal' : ''; ?>" id="dkDrawer" hidden aria-label="Appointment details"<?php echo $DESK_MODAL ? ' role="dialog" aria-modal="true"' : ''; ?>></aside>
 <div class="dk-toast" id="dkToast" hidden></div>
 
 <style>
@@ -135,6 +142,8 @@
 .dk-toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:var(--brown); color:#fff; padding:0.65rem 1rem; border-radius:10px; font-weight:700; font-size:0.84rem; max-width:calc(100% - 32px); z-index:1100; }
 .dk-toast.bad { background:var(--red); }
 .dk-drawer[hidden], .dk-scrim[hidden], .dk-toast[hidden] { display:none !important; }
+/* Dashboard: the same panel, centered */
+.dk-drawer.dk-modal { top:50%; left:50%; right:auto; bottom:auto; transform:translate(-50%, -50%); width:min(640px, calc(100% - 32px)); max-height:calc(100% - 48px); border-radius:16px; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,0.35); }
 /* Group card: guests booked together share one card per lane */
 .dk-gcard .dk-grows { display:flex; flex-direction:column; gap:0.45rem; }
 .dk-grow { border:1px solid var(--border2); border-radius:9px; padding:0.5rem 0.6rem; display:flex; flex-direction:column; gap:0.3rem; cursor:pointer; background:#fff; }
@@ -156,6 +165,7 @@
 <script>
 (function () {
     var CSRF = <?php echo json_encode(generate_csrf_token()); ?>;
+    var MODAL = <?php echo $DESK_MODAL ? 'true' : 'false'; ?>;
     var PAYS = [['cash','Cash'],['gcash','GCash'],['maya','Maya'],['qrph','QR Ph'],['card','Card'],['swiper','Swiper']];
     // Fixed-rate discounts carry their %; Voucher (₱ or %) and Celebration (%)
     // take a value typed in by the receptionist.
@@ -227,6 +237,7 @@
     // redirect + flash message; desk_data returns that message on reload.
     function post(action, appt, fields, json, closeOnOk, okMsg) {
         if (S.busy) return Promise.resolve();
+        S.changed = true;
         var fd = new FormData();
         fd.append('csrf_token', CSRF); fd.append('action', action); fd.append('appt_id', appt);
         if (json) fd.append('ajax', '1');
@@ -470,7 +481,11 @@
         S.method = null; S.dp = 1; S.vs = 'all'; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.vl = ''; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false; S.add = null; S.addProduct = null;
         renderBoard(); renderDrawer(); $('dkDrawer').hidden = false; $('dkScrim').hidden = false;
     }
-    function closeDrawer() { S.open = null; S.pin = ''; $('dkDrawer').hidden = true; $('dkScrim').hidden = true; if (D) renderBoard(); }
+    function closeDrawer() {
+        S.open = null; S.pin = ''; $('dkDrawer').hidden = true; $('dkScrim').hidden = true; if (D) renderBoard();
+        // Dashboard: show what changed on the Live Resource Grid.
+        if (MODAL && S.changed) { S.changed = false; if (window.refreshResourceGrid) window.refreshResourceGrid(); }
+    }
     $('dkScrim').onclick = closeDrawer;
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.open) closeDrawer(); });
 
@@ -988,8 +1003,22 @@
             });
     }
 
-    <?php if (!empty($message)): ?>toast(<?php echo json_encode($message); ?>, <?php echo json_encode(($message_type ?? '') === 'danger'); ?>);<?php endif; ?>
-    load();
-    setInterval(function () { if (!S.open && !document.hidden) load(); }, 60000);
+    // Dashboard: open a booking from the Live Resource Grid. A customer with
+    // several services from one booking opens on the service that's on now
+    // (or next), with the others listed in the same panel.
+    window.openApptPanel = function (id) {
+        function go() {
+            var a = byId(id); if (!a) return toast('That booking is no longer open. Refresh the page.', true);
+            var v = visitOf(a).filter(function (x) { return x.status !== 'completed'; });
+            var cur = v.filter(function (x) { return x.status === 'approved'; })[0] || v[0] || a;
+            openDrawer(cur.id);
+        }
+        return load().then(go);
+    };
+    <?php if (!$DESK_MODAL && !empty($message)): ?>toast(<?php echo json_encode($message); ?>, <?php echo json_encode(($message_type ?? '') === 'danger'); ?>);<?php endif; ?>
+    if (!MODAL) {
+        load();
+        setInterval(function () { if (!S.open && !document.hidden) load(); }, 60000);
+    }
 })();
 </script>

@@ -26,7 +26,9 @@
     function refresh() {
         if (inFlight || document.hidden) return;
         inFlight = true;
-        fetch("resource_grid_ajax.php", { credentials: "same-origin" })
+        var el = document.getElementById("resourceTimelineScroll");
+        var interactive = el && el.dataset.interactive === "1";
+        fetch("resource_grid_ajax.php" + (interactive ? "?interactive=1" : ""), { credentials: "same-origin" })
             .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
             .then(function (html) { container.innerHTML = html; scrollToNow(); })
             .catch(function () { /* silently skip on network error */ })
@@ -40,6 +42,22 @@
     document.addEventListener("visibilitychange", function () {
         if (document.hidden) { pause(); } else { refresh(); resume(); }
     });
+
+    // Dashboard (interactive grid): a block opens its booking's panel; a
+    // customer's other services light up with it.
+    window.refreshResourceGrid = function () { inFlight = false; refresh(); };
+    container.addEventListener("click", function (e) {
+        var b = e.target.closest(".rg-blk");
+        if (b && window.openApptPanel) window.openApptPanel(+b.dataset.appt);
+    });
+    function light(e, on) {
+        var b = e.target.closest(".rg-blk[data-visit]"); if (!b) return;
+        container.querySelectorAll(".rg-blk").forEach(function (o) {
+            if (o.dataset.visit === b.dataset.visit) o.style.boxShadow = on ? "0 0 0 2px #7A3FC4" : "";
+        });
+    }
+    container.addEventListener("mouseover", function (e) { light(e, true); });
+    container.addEventListener("mouseout", function (e) { light(e, false); });
 
     scrollToNow();
     schedule();

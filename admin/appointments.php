@@ -1540,6 +1540,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                                 $ci_disc_type = 'none';
                             }
                         }
+                        if ($ci_disc_amt <= 0) $ci_disc_type = 'none'; // the discount doesn't reach these services
                         $ci_final = max(0.00, $ci_base - $ci_disc_amt);
 
                         $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
@@ -1740,6 +1741,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         : person_discount_amount($cd_type, $sv_gross, $cd_elig, $cd_vvalue, $cd_vtype === 'percent' ? 'percent' : 'fixed');
                     // Clamp: completion discount cannot make combined discount exceed gross
                     $cd_amount = max(0.0, min($cd_amount, max(0.0, $sv_gross - $sv_bdisc)));
+                    if ($cd_amount <= 0) $cd_type = 'none'; // the discount doesn't reach these services
                     $new_final = max(0.0, $sv_orig + $sv_extras - $sv_bdisc - $cd_amount);
 
                     if ($cp_pay_method === 'unpaid') {

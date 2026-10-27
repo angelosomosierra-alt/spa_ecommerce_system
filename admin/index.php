@@ -834,8 +834,14 @@ require_once 'admin_header.php';
     </div>
 </div>
 
-<div id="resourceGridContainer" style="margin-bottom:1.5rem;"><?php require_once __DIR__ . '/_resource_grid.php'; echo render_resource_grid_html($conn); ?></div>
+<div id="resourceGridContainer" style="margin-bottom:1.5rem;"><?php require_once __DIR__ . '/_resource_grid.php'; echo render_resource_grid_html($conn, true); ?></div>
 <?php include __DIR__ . '/_resource_grid_js.php'; ?>
+<?php
+// A click on a booking in the grid opens the Appointments panel, centered
+// (same panel and actions as appointments.php; see _appt_desk.php).
+$DESK_MODAL = true;
+require __DIR__ . '/_appt_desk.php';
+?>
 
 <?php require_once __DIR__ . '/_advance_payments_widget.php'; ?>
 
