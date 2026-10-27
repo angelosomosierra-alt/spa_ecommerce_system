@@ -248,24 +248,38 @@
     function isPkg(a) { return a.sessions && a.sessions.length > 1; }
     // The same guest's other services from one Book Now booking (each is its
     // own appointment): same group, same name, same day, still to do.
-    function sibs(a) {
-        if (!a.group) return [];
+    function visitOf(a) {
+        if (!a.group) return [a];
         return D.appointments.filter(function (x) {
-            return x.id !== a.id && x.group === a.group && x.name === a.name && x.date === a.date && x.status !== 'completed';
-        }).sort(function (x, y) { return x.when < y.when ? -1 : x.when > y.when ? 1 : 0; });
+            return x.group === a.group && x.name === a.name && x.date === a.date && x.status !== 'cancelled' && x.status !== 'declined';
+        }).sort(function (x, y) { return x.when < y.when ? -1 : x.when > y.when ? 1 : x.id - y.id; });
     }
-    function sibsOwe(a) { return sibs(a).filter(function (x) { return x.rate_type !== 'influencer' && x.bill.due > 0; }); }
+    function sibs(a) { return visitOf(a).filter(function (x) { return x.id !== a.id && x.status !== 'completed'; }); }
+    function sibsDone(a) { return visitOf(a).filter(function (x) { return x.id !== a.id && x.status === 'completed'; }); }
+    // Still owing: the guest's other services, done or not (a service done
+    // before the last one is paid together with the last one).
+    function sibsOwe(a) { return visitOf(a).filter(function (x) { return x.id !== a.id && x.rate_type !== 'influencer' && x.bill.due > 0; }); }
+    // The customer is checked in once any of their services is: the whole
+    // card moves to In service, and the services run one after another at
+    // their booked times, each marked complete on its own.
+    function guestIn(a) { return visitOf(a).some(function (x) { return x.status === 'approved' || x.status === 'completed'; }); }
+    // The service after this one in the guest's visit, if any is left.
+    function nextOf(a) { var v = visitOf(a), i = v.indexOf(a); return v.slice(i + 1).filter(function (x) { return x.status === 'assigned'; })[0] || null; }
+    function isLastOpen(a) { return sibs(a).length === 0; }
     // A package stays "approved" in the database between sessions; on the
     // board it waits in Booked until one of its sessions is checked in.
     function laneOf(a) {
         if (isPkg(a) && a.status === 'approved' && !a.sessions.some(function (x) { return x.status === 'checked_in'; })) return 'assigned';
+        if (a.status === 'assigned' && a.group && guestIn(a)) return 'approved';   // waits its turn in the checked-in visit
         return a.status;
     }
     function nextAction(a) {
         if (a.legacy_two_session) return null;
         if (a.status === 'pending')  return { k: 'approve',  l: 'Confirm booking', cls: 'primary' };
-        if (a.status === 'assigned') return { k: 'checkin',  l: 'Check in', cls: 'primary' };
-        if (a.status === 'approved' && !isPkg(a)) return { k: 'complete', l: a.bill.due > 0 ? 'Complete & pay ' + pesoS(a.bill.due) : 'Complete', cls: 'ok' };
+        if (a.status === 'assigned' && a.group && guestIn(a)) return { k: 'start', l: 'Start ' + a.service.name, cls: 'primary' };
+        if (a.status === 'assigned') return { k: 'checkin', l: sibs(a).length ? 'Check in · ' + (sibs(a).length + 1) + ' services' : 'Check in', cls: 'primary' };
+        if (a.status === 'approved' && !isPkg(a) && !isLastOpen(a)) return { k: 'complete', l: 'Mark ' + a.service.name + ' complete', cls: 'ok' };
+        if (a.status === 'approved' && !isPkg(a)) { var owe = a.bill.due + sibsOwe(a).reduce(function (t, x) { return t + x.bill.due; }, 0); return { k: 'complete', l: owe > 0 ? 'Complete & pay ' + pesoS(owe) : 'Complete', cls: 'ok' }; }
         return null;
     }
     function therNames(a) {
@@ -315,7 +329,7 @@
             items.forEach(function (it) {
                 var d = String(it.when).slice(0, 10);
                 if (d !== lastDay) { html += '<div class="dk-day' + (d < D.today ? ' over' : '') + '">' + (d < D.today ? 'Overdue · ' : '') + dayLabel(it.when) + '</div>'; lastDay = d; }
-                html += it.group ? (it.list.length > 1 ? groupCard(it.list, L.c) : card(it.list[0], L.c)) : card(it.a, L.c);
+                html += it.group ? (it.list.length > 1 || sibsDone(it.list[0]).length ? groupCard(it.list, L.c) : card(it.list[0], L.c)) : card(it.a, L.c);
             });
             return '<section class="dk-lane"><h2><span>' + L.l + '<small>' + L.s + '</small></span><span class="dk-count">' + list.length + '</span></h2>' +
                 (list.length ? html : '<div class="dk-empty">Nothing here.</div>') + '</section>';
@@ -356,7 +370,10 @@
     function isCheckedInOrDone(a) { return a.status === 'approved' || a.status === 'completed'; }
     function groupCard(list, stripe) {
         var names = list.map(function (a) { return a.name; }).filter(function (n, i, arr) { return arr.indexOf(n) === i; });
-        var due = list.reduce(function (s, a) { return s + (a.rate_type === 'influencer' ? 0 : a.bill.due); }, 0);
+        // Owed by everyone on the card, including a guest's services already
+        // done but paid together with their last one.
+        var seen = {}, due = 0;
+        list.concat.apply(list, list.map(sibsDone)).forEach(function (a) { if (seen[a.id]) return; seen[a.id] = true; due += a.rate_type === 'influencer' ? 0 : a.bill.due; });
         var times = list.map(function (a) { return tm(a.when); }).filter(function (t, i, arr) { return arr.indexOf(t) === i; });
         // One guest, several services booked together (Scenario 1): bucket
         // by name, earliest service in a bucket is "main" and drives that
@@ -373,29 +390,32 @@
             '<div class="dk-name">' + esc(names.join(' & ')) + (list[0].group_size > 1 ? ' <span class="dk-meta">· group of ' + list[0].group_size + '</span>' : '') + '</div>' +
             '<div class="dk-grows">' + buckets.map(function (bk) {
                 bk.items.sort(function (x, y) { return x.when < y.when ? -1 : x.when > y.when ? 1 : 0; });
-                var main = bk.items[0], waiting = bk.items.slice(1);
-                var na = nextAction(main), th = therNames(main);
+                var main = bk.items[0], waiting = bk.items.slice(1), done = sibsDone(main);
+                var na = nextAction(main), th = therNames(main), inVisit = guestIn(main);
                 var pkg = isPkg(main) ? ' <span class="dk-pill p-pkg">' + main.sessions.filter(function (s) { return s.status === 'completed'; }).length + '/' + main.sessions.length + '</span>' : '';
                 return '<div class="dk-grow' + (S.open === main.id ? ' sel' : '') + '" data-id="' + main.id + '" tabindex="0">' +
-                    '<div class="dk-grow-top"><b>' + esc(main.name) + '</b>' + (times.length > 1 ? '<span class="dk-meta">' + tm(main.when) + '</span>' : '') + '</div>' +
-                    '<div class="dk-svcs"><span>' + esc(main.service.name) + ' · ' + main.service.mins + 'm' + pkg + (waiting.length ? ' <small>· main service</small>' : '') + '</span>' +
+                    '<div class="dk-grow-top"><b>' + esc(main.name) + '</b>' + (inVisit ? '<span class="dk-pill p-paid">Customer checked in</span>' : (times.length > 1 ? '<span class="dk-meta">' + tm(main.when) + '</span>' : '')) + '</div>' +
+                    (done.length ? '<div class="dk-sess">' + done.map(function (w) {
+                        return '<div class="dk-srow" data-id="' + w.id + '" tabindex="0"><span class="dk-dot done">✓</span><span>' + esc(w.service.name) + ' — ' + peso(w.service.price) + '<small>Done · ' + tm(w.when) + '</small></span></div>';
+                    }).join('') + '</div>' : '') +
+                    '<div class="dk-svcs"><span>' + esc(main.service.name) + ' · ' + main.service.mins + 'm' + pkg + (main.status === 'approved' && (waiting.length || done.length) ? ' <small>· in session · ' + tm(main.when) + '</small>' : (waiting.length ? ' <small>· main service</small>' : '')) + '</span>' +
                         main.addons.map(function (x) { return '<span>+ ' + (x.topup ? 'upgrade difference' : esc(x.name)) + '</span>'; }).join('') + '</div>' +
                     '<div class="dk-meta">' + (th ? esc(th) : (main.service.med ? 'Doctor / Nurse' : '<span class="dk-pill p-need">No therapist yet</span>')) + (main.resource_id && RES[main.resource_id] ? ' · ' + esc(RES[main.resource_id].name) : '') + '</div>' +
                     '<div class="dk-pills">' + payPill(main) + '</div>' +
                     (waiting.length ? '<div class="dk-sess">' + waiting.map(function (w) {
-                        var done = w.status === 'completed', inSession = isCheckedInOrDone(w) && !done;
-                        var label = done ? 'Done' : inSession ? 'In session' : 'Waiting its turn';
-                        var dot = done ? 'done' : inSession ? 'in' : '';
-                        return '<div class="dk-srow" data-id="' + w.id + '" tabindex="0"><span class="dk-dot ' + dot + '">' + (done ? '✓' : inSession ? '●' : '') + '</span>' +
+                        var wdone = w.status === 'completed', inSession = isCheckedInOrDone(w) && !wdone;
+                        var label = wdone ? 'Done' : inSession ? 'In session' : (inVisit ? 'Next · ' + tm(w.when) + ' · starts after ' + esc(main.service.name) : 'Waiting its turn · ' + tm(w.when));
+                        var dot = wdone ? 'done' : inSession ? 'in' : '';
+                        return '<div class="dk-srow" data-id="' + w.id + '" tabindex="0"><span class="dk-dot ' + dot + '">' + (wdone ? '✓' : inSession ? '●' : '') + '</span>' +
                             '<span>' + esc(w.service.name) + ' — ' + peso(w.service.price) + '<small>' + label + '</small></span>' +
-                            (!isCheckedInOrDone(w) ? '<button type="button" class="dk-btn danger" data-rmwait="' + w.id + '">✕</button>' : '') +
+                            (!isCheckedInOrDone(w) && !inVisit ? '<button type="button" class="dk-btn danger" data-rmwait="' + w.id + '">✕</button>' : '') +
                             '</div>';
                     }).join('') + '</div>' : '') +
                     (na ? '<button type="button" class="dk-btn ' + na.cls + '" data-go="' + na.k + '" data-id="' + main.id + '">' + na.l + '</button>' : '') +
                     '</div>';
             }).join('') + '</div>' +
             (due > 0 ? '<div class="dk-meta">' + (list[0].group_size > 1 ? 'Group still to collect: <b>' + peso(due) + '</b> · use <b>Pay for group</b> in any guest\'s panel'
-                : 'Still to collect: <b>' + peso(due) + '</b> · all services are paid together at check-in') + '</div>' : '') +
+                : 'Still to collect: <b>' + peso(due) + '</b> · all services are paid together') + '</div>' : '') +
             '</article>';
     }
     // ── Completed (last N days, newest first, by day; open a row for Undo) ──
@@ -654,11 +674,11 @@
 
         // The guest's other services from the same booking (Book Now books one
         // appointment per service): listed here, opened on their own.
-        var others = sibs(a);
+        var others = visitOf(a).filter(function (x) { return x.id !== a.id; });
         var sibHtml = others.length ? '<div class="dk-svc"><div class="dk-svch"><span><b>Also booked for ' + esc(a.name) + '</b></span></div><div class="dk-sess">' + others.map(function (x) {
-            var st = x.status === 'approved' ? 'In session' : 'Waiting its turn';
+            var st = x.status === 'completed' ? 'Done' : x.status === 'approved' ? 'In session' : (guestIn(a) ? 'Next' : 'Waiting its turn');
             var who = therNames(x) || (x.service.med ? 'Doctor / Nurse' : 'No therapist yet');
-            return '<div class="dk-srow" data-sib="' + x.id + '" tabindex="0" style="cursor:pointer;"><span class="dk-dot' + (x.status === 'approved' ? ' in' : '') + '">' + (x.status === 'approved' ? '●' : '') + '</span>' +
+            return '<div class="dk-srow" data-sib="' + x.id + '" tabindex="0" style="cursor:pointer;"><span class="dk-dot' + (x.status === 'completed' ? ' done' : x.status === 'approved' ? ' in' : '') + '">' + (x.status === 'completed' ? '✓' : x.status === 'approved' ? '●' : '') + '</span>' +
                 '<span>' + esc(x.service.name) + ' · ' + x.service.mins + 'm — ' + peso(x.service.price) + '<small>' + tm(x.when) + ' · ' + esc(who) + (x.resource_id && RES[x.resource_id] ? ' · ' + esc(RES[x.resource_id].name) : '') + ' · ' + st + '</small></span>' +
                 '<span class="dk-hint">' + (x.bill.paid && x.bill.due <= 0 ? 'Paid' : 'Open') + ' ›</span></div>';
         }).join('') + '</div></div>' : '';
@@ -671,7 +691,7 @@
             (b.discount ? '<div><span>Discount (' + esc(b.discount_type === 'voucher' && b.voucher_label ? 'voucher: ' + b.voucher_label : b.discount_type) + ')</span><span>−' + peso(b.discount) + '</span></div>' : '') +
             (b.advance ? '<div><span>Down payment' + (b.advance_method ? ' (' + esc(b.advance_method) + ')' : '') + '</span><span>−' + peso(b.advance) + '</span></div>' : '') +
             (b.paid ? '<div><span>Paid' + (b.method ? ' · ' + esc(b.method) : '') + '</span><span>' + peso(b.paid_amount) + '</span></div>' : '') +
-            owe.map(function (x) { return '<div><span>' + esc(x.service.name) + (x.bill.advance > 0 ? ' (less down payment)' : '') + '</span><span>' + peso(x.bill.due) + '</span></div>'; }).join('') +
+            owe.map(function (x) { return '<div><span>' + esc(x.service.name) + (x.bill.paid ? ' · added services' : (x.bill.advance > 0 ? ' (less down payment)' : '')) + '</span><span>' + peso(x.bill.due) + '</span></div>'; }).join('') +
             '<div class="big"><span>To collect' + (owe.length ? ' · all services' : '') + '</span><span>' + peso(b.due + owe.reduce(function (t, x) { return t + x.bill.due; }, 0)) + '</span></div></div>';
         var payForm = '';
         if (S.panel === 'checkin' && (!b.paid || b.due > 0)) {
@@ -679,7 +699,11 @@
             payForm = '<div class="dk-inline">' + (b.paid ? '<p class="dk-hint">Already paid; the services added since come to ' + peso(b.due) + '.</p>' : '') +
                 '<div class="dk-bar"><button type="button" class="dk-chip' + (S.payNow ? ' sel' : '') + '" data-pn="1">Pay now</button><button type="button" class="dk-chip' + (!S.payNow ? ' sel' : '') + '" data-pn="0">Pay later</button></div>' +
                 (S.payNow ? (b.paid ? '' : discChips()) + methodChips(false) : '<p class="dk-hint">Payment will be collected when the session is done.</p>') + '</div>';
-        } else if (S.panel === 'complete' && b.due > 0) {
+        } else if (S.panel === 'complete' && !isLastOpen(a)) {
+            var nx = nextOf(a);
+            payForm = '<div class="dk-inline"><p class="dk-hint">' + esc(a.service.name) + ' is done.' + (nx ? ' <b>' + esc(nx.service.name) + '</b> starts next (booked ' + tm(nx.when) + ').' : '') +
+                (owe.length || b.due > 0 ? ' Payment for all services is taken when the last service is completed.' : '') + '</p></div>';
+        } else if (S.panel === 'complete' && (b.due > 0 || owe.length)) {
             payForm = '<div class="dk-inline">' + (b.paid ? '' : discChips()) + methodChips(true) +
                 (S.method === 'unpaid' ? '<div><label class="dk-lbl" for="dkBill">Charge to (company / hotel)</label><input id="dkBill" type="text" placeholder="' + esc(a.name) + '"></div>' : '') + '</div>';
         }
@@ -742,6 +766,8 @@
     function goLabel(a) {
         var na = nextAction(a), b = a.bill; if (!na) return '';
         if (na.k === 'checkin' && S.panel === 'checkin') return b.paid && b.due <= 0 ? 'Check in' : (S.payNow ? 'Check in & take ' + peso(dueWithDisc(a)) : 'Check in · pay later');
+        if (na.k === 'complete' && !isLastOpen(a)) return na.l;
+        if (na.k === 'complete' && dueWithDisc(a) <= 0) return 'Complete';
         if (na.k === 'complete' && S.panel === 'complete') return S.method === 'unpaid' ? 'Complete · charge to account' : 'Complete & take ' + peso(dueWithDisc(a));
         return na.l;
     }
@@ -825,11 +851,26 @@
                 if (S.payNow && !S.method) return err('Choose a payment method, or pick Pay later.');
                 if (S.payNow && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
                 if (S.payNow && sibsOwe(a).length) return payGuestThen(a, function () { return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true); });
+                if (!S.payNow && sibs(a).length) return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
                 return post('checkin_appointment', a.id, { pay_choice: S.payNow ? 'now' : 'later', pay_method: S.method || 'cash', discount_type: S.payNow && !b.paid ? S.disc : 'none', voucher_type: S.vt === 'percent' ? 'percent' : 'fixed', voucher_value: S.payNow ? (parseFloat(S.dv) || 0) : 0, voucher_label: S.disc === 'voucher' ? (S.vl || '') : '' }, false, true);
             }
+            if (na.k === 'start') {
+                var m3 = missing(a, true); if (m3.length) return err('Choose a ' + m3.join(', ') + ' first.');
+                return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
+            }
+            if (na.k === 'complete' && !isLastOpen(a)) {
+                // Not the guest's last service: complete it without payment
+                // (unless already paid) and start the next one at its time.
+                if (S.panel !== 'complete') { S.panel = 'complete'; S.grp = false; return renderDrawer(); }
+                var nx2 = nextOf(a);
+                // Back to the board after; the next service shows In session on the card.
+                return post('complete', a.id, { complete_pay_method: b.due > 0 ? 'later' : 'cash', complete_unpaid_billto: '', complete_disc_type: 'none', complete_voucher_type: 'cash', complete_voucher_value: 0, voucher_label: '', celebration_discount: 0, advance_payment: 0 }, false, true)
+                    .then(function () { if (nx2 && !missing(nx2, true).length) return post('checkin_appointment', nx2.id, { pay_choice: 'later' }, false, true); });
+            }
             if (na.k === 'complete') {
-                if (b.due > 0 && S.panel !== 'complete') { S.panel = 'complete'; S.grp = false; return renderDrawer(); }
-                if (b.due > 0 && !S.method) return err('Choose how the customer paid.');
+                var oweAll = b.due + sibsOwe(a).reduce(function (t, x) { return t + x.bill.due; }, 0);
+                if (oweAll > 0 && S.panel !== 'complete') { S.panel = 'complete'; S.grp = false; return renderDrawer(); }
+                if (oweAll > 0 && !S.method) return err('Choose how the customer paid.');
                 if (b.due > 0 && !b.paid && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
                 if (S.method !== 'unpaid' && sibsOwe(a).length) return payGuestThen(a, function () {
                     return post('complete', a.id, { complete_pay_method: S.method || 'cash', complete_unpaid_billto: '', complete_disc_type: 'none', complete_voucher_type: 'cash', complete_voucher_value: 0, voucher_label: '', celebration_discount: 0, advance_payment: 0 }, false, true);

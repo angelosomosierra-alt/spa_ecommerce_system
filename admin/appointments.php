@@ -1670,7 +1670,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 ? $pr['full_name']
                 : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
             $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
-            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','unpaid'])) $cp_pay_method = 'cash';
+            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','unpaid','later'])) $cp_pay_method = 'cash';
+            // 'later': one of a guest's several services from one booking, done
+            // before the last one. It stays unpaid and is paid together with the
+            // last service (Pay for this guest). Only for such a visit.
+            $cp_later = false;
+            if ($cp_pay_method === 'later') {
+                $cl_q = $conn->prepare("
+                    SELECT COUNT(*) AS c FROM appointments a2
+                    JOIN order_items oi2 ON oi2.id = a2.order_item_id JOIN orders o2 ON o2.id = oi2.order_id
+                    JOIN order_items oi1 ON oi1.id = ? JOIN orders o1 ON o1.id = oi1.order_id
+                    WHERE o1.booking_group IS NOT NULL AND o2.booking_group = o1.booking_group
+                      AND o2.customer_name = o1.customer_name AND a2.id != ?
+                      AND a2.status NOT IN ('completed','cancelled','declined')");
+                $cl_oi = (int)($appt['order_item_id'] ?? 0);
+                $cl_q->bind_param("ii", $cl_oi, $appt_id); $cl_q->execute();
+                $cp_later = (int)$cl_q->get_result()->fetch_assoc()['c'] > 0; $cl_q->close();
+                if (!$cp_later) {
+                    $message = "This is the customer's last service: choose how they paid.";
+                    $message_type = "danger";
+                    goto end_action;
+                }
+            }
             $cp_unpaid_billto = trim(sanitize_input($_POST['complete_unpaid_billto'] ?? ''));
 
             // ── Completion discount — server-side recompute (never trust client totals) ──
@@ -1690,7 +1711,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $order_already_paid = ($oi_r2 && $oi_r2['payment_status'] === 'paid');
             }
 
-            if (!$order_already_paid) {
+            if (!$order_already_paid && !$cp_later) {
                 if ($cd_type === 'voucher' && $cd_vvalue <= 0) {
                     $message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
                     $message_type = "danger";
@@ -1774,7 +1795,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             // account, since those extras haven't actually been paid either.
             // Runs unconditionally otherwise so extras added after check-in are
             // settled even when the main order was already paid.
-            if ($cp_pay_method !== 'unpaid') {
+            if ($cp_pay_method !== 'unpaid' && !$cp_later) {
                 $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
                 $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
             }
