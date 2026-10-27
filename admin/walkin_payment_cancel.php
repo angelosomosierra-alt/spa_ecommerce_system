@@ -44,6 +44,7 @@ if ($order_id && $_still_pending) {
 <head>
 <meta charset="UTF-8">
 <title>Payment Cancelled</title>
+    <?php include __DIR__ . '/../_favicon.php'; ?>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body {

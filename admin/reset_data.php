@@ -82,6 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
 <meta charset="UTF-8">
 <title>Reset Appointment Data</title>
+    <?php include __DIR__ . '/../_favicon.php'; ?>
 <style>
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:#FAF3E8; color:#3B2A1A; padding:2rem; max-width:560px; margin:2rem auto; }
     .box { background:#fff; border:1px solid #EAD8C0; border-radius:12px; padding:1.5rem; box-shadow:0 2px 12px rgba(0,0,0,0.06); }

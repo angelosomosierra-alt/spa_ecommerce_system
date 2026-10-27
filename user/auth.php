@@ -476,6 +476,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
         else echo 'Login';
         ?> — Recovery Spa
     </title>
+    <?php include __DIR__ . '/../_favicon.php'; ?>
     <link rel="stylesheet" href="../assets/style.css">
     <script src="../assets/ui-modal.js"></script>
     <style>

@@ -38,6 +38,7 @@ if (is_cashier() && empty($_SESSION['report_pin_ok'])) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Daily Report — PIN Required</title>
+    <?php include __DIR__ . '/../_favicon.php'; ?>
 <style>
 body{font-family:'Segoe UI',sans-serif;background:#f5f0eb;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
 .gate-box{background:#fff;border-radius:16px;padding:2.5rem 2rem;max-width:380px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.12);text-align:center;}

@@ -42,6 +42,7 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($page_title ?? 'Admin'); ?> — Spa Admin</title>
+    <?php include __DIR__ . '/../_favicon.php'; ?>
     <link rel="stylesheet" href="admin.css?v=<?php echo filemtime('admin.css'); ?>">
     <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/responsive.css?v=<?php echo filemtime(__DIR__ . '/../assets/responsive.css'); ?>">
     <style>

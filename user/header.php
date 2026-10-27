@@ -23,6 +23,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo isset($page_title) ? htmlspecialchars($page_title) . ' - Spa Ecommerce' : 'Spa Ecommerce'; ?></title>
+    <?php include __DIR__ . '/../_favicon.php'; ?>
 <link rel="stylesheet" href="../assets/style.css?v=<?php echo filemtime('../assets/style.css'); ?>">
 <link rel="stylesheet" href="../assets/responsive.css?v=<?php echo filemtime('../assets/responsive.css'); ?>">
 <script src="../assets/ui-modal.js"></script>

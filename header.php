@@ -47,8 +47,7 @@ if (isset($_SESSION['user_id'])) {
     <title><?php echo htmlspecialchars($page_title); ?></title>
     <meta name="description" content="<?php echo htmlspecialchars($page_description); ?>">
     <link rel="canonical" href="<?php echo htmlspecialchars($_canon_url); ?>">
-    <link rel="icon" type="image/png" href="<?php echo SITE_URL; ?>/img/logo.png">
-    <link rel="apple-touch-icon" href="<?php echo SITE_URL; ?>/img/logo.png">
+    <?php include __DIR__ . '/_favicon.php'; ?>
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Recovery Iloilo">
     <meta property="og:title" content="<?php echo htmlspecialchars($page_title); ?>">
