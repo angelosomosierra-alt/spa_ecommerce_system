@@ -409,6 +409,9 @@ $host          = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $_is_hostinger = strpos($host, 'hostingersite.com') !== false || strpos(__DIR__, '/home/u655952816/') === 0;
 $folder        = $_is_hostinger ? '/' : (getenv('APP_SUBFOLDER') ?: '/spa_ecommerce_system/');
 define('BASE_URL', $protocol . '://' . $host . $folder);
+// The site's public address (search engines, links people share). The
+// temporary *.hostingersite.com address sends visitors here (header.php).
+if (!defined('SITE_URL')) define('SITE_URL', rtrim(getenv('SITE_URL') ?: 'https://recoveryiloilo.com', '/'));
 
 // ─── UPLOAD DIRECTORIES ───────────────────────────────────────────────────────
 define('UPLOAD_DIR_SERVICES', __DIR__ . '/uploads/services/');

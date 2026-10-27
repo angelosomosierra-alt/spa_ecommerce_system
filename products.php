@@ -90,6 +90,7 @@ $requested_category = intval($_GET['category'] ?? 0);
 $requested_item     = (string)($_GET['item'] ?? '');
 
 $page_title  = 'Products — Recovery Iloilo';
+$page_description = 'Skincare, bath and body products and gift vouchers from Recovery Iloilo, Molo, Iloilo City.';
 $active_page = 'products';
 require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR__ . '/header.php';
 ?>

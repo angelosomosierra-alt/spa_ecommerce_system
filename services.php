@@ -107,6 +107,7 @@ $requested_category = intval($_GET['category'] ?? 0);
 $requested_item     = (string)($_GET['item'] ?? '');
 
 $page_title  = 'Services — Recovery Iloilo';
+$page_description = 'Services and prices at Recovery Iloilo, Molo, Iloilo City: massage, Japanese head spa, nails, lashes, brows, facials, laser and aesthetics.';
 $active_page = 'services';
 require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR__ . '/header.php';
 ?>

@@ -16,6 +16,18 @@ if (!isset($conn)) { require_once __DIR__ . '/config.php'; }
 
 $page_title  = $page_title  ?? 'Recovery Iloilo';
 $active_page = $active_page ?? '';
+$page_description = $page_description ?? 'Recovery Iloilo — massage, Japanese head spa, nails, lashes, facials and aesthetics in Molo, Iloilo City. Walk in, book online, or get a home service.';
+
+// One public address for search engines: the temporary Hostinger address
+// sends visitors (and Google) to recoveryiloilo.com.
+if (stripos($_SERVER['HTTP_HOST'] ?? '', 'hostingersite.com') !== false && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    header('Location: ' . SITE_URL . ($_SERVER['REQUEST_URI'] ?? '/'), true, 301);
+    exit;
+}
+// This page's address on recoveryiloilo.com (only the category is kept).
+$_canon_path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+if (preg_match('#/index\.php$#', $_canon_path)) $_canon_path = preg_replace('#index\.php$#', '', $_canon_path);
+$_canon_url = SITE_URL . $_canon_path . (!empty($_GET['category']) ? '?category=' . (int)$_GET['category'] : '');
 
 $cart_count = 0;
 if (isset($_SESSION['user_id'])) {
@@ -33,6 +45,43 @@ if (isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($page_title); ?></title>
+    <meta name="description" content="<?php echo htmlspecialchars($page_description); ?>">
+    <link rel="canonical" href="<?php echo htmlspecialchars($_canon_url); ?>">
+    <link rel="icon" type="image/png" href="<?php echo SITE_URL; ?>/img/logo.png">
+    <link rel="apple-touch-icon" href="<?php echo SITE_URL; ?>/img/logo.png">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Recovery Iloilo">
+    <meta property="og:title" content="<?php echo htmlspecialchars($page_title); ?>">
+    <meta property="og:description" content="<?php echo htmlspecialchars($page_description); ?>">
+    <meta property="og:url" content="<?php echo htmlspecialchars($_canon_url); ?>">
+    <meta property="og:image" content="<?php echo SITE_URL; ?>/img/logo.png">
+    <!-- The spa as a local business, so search engines can show its name,
+         address, hours and phone (same details as the Contact section). -->
+    <script type="application/ld+json"><?php echo json_encode([
+        '@context' => 'https://schema.org',
+        '@type' => 'DaySpa',
+        'name' => 'Recovery Iloilo',
+        'alternateName' => ['Recovery Spa Iloilo', 'recoveryiloilo'],
+        'url' => SITE_URL . '/',
+        'logo' => SITE_URL . '/img/logo.png',
+        'image' => SITE_URL . '/img/logo.png',
+        'telephone' => '+639853359998',
+        'email' => 'recoveryiloiloph@gmail.com',
+        'priceRange' => '₱₱',
+        'address' => [
+            '@type' => 'PostalAddress',
+            'streetAddress' => 'G&R Building, M.H. Del Pilar Street, Molo',
+            'addressLocality' => 'Iloilo City',
+            'addressRegion' => 'Iloilo',
+            'postalCode' => '5000',
+            'addressCountry' => 'PH',
+        ],
+        'openingHoursSpecification' => [
+            ['@type' => 'OpeningHoursSpecification', 'dayOfWeek' => ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], 'opens' => '09:00', 'closes' => '22:00'],
+            ['@type' => 'OpeningHoursSpecification', 'dayOfWeek' => ['Saturday', 'Sunday'], 'opens' => '09:00', 'closes' => '23:59'],
+        ],
+        'sameAs' => ['https://www.facebook.com/RecoveryIloilo', 'https://www.instagram.com/recoveryiloilo/'],
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG); ?></script>
     <!-- Makes every relative link/asset on this page resolve against the site
          root, regardless of the actual request URL — needed so this same
          header/page content renders correctly whether loaded at index.php

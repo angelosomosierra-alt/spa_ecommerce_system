@@ -235,7 +235,7 @@ foreach ($home_hours as $hh) {
 $home_open   = $home_today && $home_hour >= $home_today[3] && $home_hour < $home_today[4];
 $home_status = ($home_open ? 'Open now' : 'Closed now') . ($home_today ? ' · Today ' . $home_today[5] : '');
 
-$page_title  = 'Recovery Iloilo — Home';
+$page_title  = 'Recovery Iloilo | Spa, Massage & Head Spa in Molo, Iloilo City';
 $active_page = 'home';
 // user/index.php (logged-in customers) keeps the account header with
 // Appointments, chat and notifications; the public home uses header.php.
