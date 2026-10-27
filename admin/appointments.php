@@ -2629,6 +2629,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pay_g
     }
 }
 
+// ── GCASH QR PAYMENT CHECK (online bookings while PayMongo is off) ──────────
+// verify_manual_payment: the receptionist found the reference number in the
+// spa's GCash; the amount received is recorded as the booking's GCash advance
+// payment (Daily Report: GCASH (DP) today, deducted on the visit day).
+// reject_manual_payment: not found / wrong amount; the customer sees why.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['verify_manual_payment', 'reject_manual_payment'], true)) {
+    verify_csrf_token();
+    $mp_by = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+    $mp_ok = true;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pin_row = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pin_row) { $mp_ok = false; $message = "Incorrect PIN. Nothing was changed."; $message_type = "danger"; }
+        else $mp_by = $pin_row['full_name'];
+    }
+    ensure_manual_payments_table($conn);
+    $mp_id = (int)($_POST['mp_id'] ?? 0);
+    $q = $conn->prepare("SELECT mp.*, o.customer_name, o.final_amount FROM manual_payments mp JOIN orders o ON o.id = mp.order_id WHERE mp.id = ? AND mp.status = 'pending'");
+    $q->bind_param("i", $mp_id); $q->execute();
+    $mp = $q->get_result()->fetch_assoc(); $q->close();
+    if ($mp_ok && !$mp) { $mp_ok = false; $message = "This payment was already checked."; $message_type = "danger"; }
+    if ($mp_ok) {
+        require_once __DIR__ . '/../notify.php';
+        if ($_POST['action'] === 'verify_manual_payment') {
+            $got = round(max(0.0, (float)($_POST['amount_received'] ?? $mp['amount'])), 2);
+            $got = min($got, (float)$mp['final_amount']);
+            if ($got <= 0) { $message = "Enter the amount received."; $message_type = "danger"; }
+            else {
+                $conn->begin_transaction();
+                record_order_advance($conn, (int)$mp['order_id'], $got, 'gcash');
+                $u = $conn->prepare("UPDATE manual_payments SET status = 'verified', amount_received = ?, checked_by_name = ?, checked_at = NOW() WHERE id = ? AND status = 'pending'");
+                $u->bind_param("dsi", $got, $mp_by, $mp_id); $u->execute(); $u->close();
+                $conn->commit();
+                if ($mp['user_id']) add_notification($conn, (int)$mp['user_id'], 'appointment', 'GCash payment verified',
+                    'We received your ₱' . number_format($got, 2) . ' GCash payment for booking #' . $mp['order_id'] . '.' . ($got < (float)$mp['final_amount'] ? ' The balance of ₱' . number_format((float)$mp['final_amount'] - $got, 2) . ' is paid at the spa.' : ' Nothing more to pay at the spa.'), 'appointments.php');
+                log_activity($conn, 'gcash_verified', 'GCash payment ₱' . number_format($got, 2) . ' (ref ' . $mp['reference_no'] . ') verified for booking #' . $mp['order_id'], 'order', (int)$mp['order_id'], null);
+                $message = 'GCash payment of ₱' . number_format($got, 2) . ' verified for ' . ($mp['customer_name'] ?: 'the customer') . '.'; $message_type = 'success';
+            }
+        } else {
+            $why = trim(mb_substr(sanitize_input($_POST['reject_reason'] ?? ''), 0, 250));
+            if ($why === '') { $message = "Write the reason the customer will see."; $message_type = "danger"; }
+            else {
+                $u = $conn->prepare("UPDATE manual_payments SET status = 'rejected', reject_reason = ?, checked_by_name = ?, checked_at = NOW() WHERE id = ? AND status = 'pending'");
+                $u->bind_param("ssi", $why, $mp_by, $mp_id); $u->execute(); $u->close();
+                if ($mp['user_id']) add_notification($conn, (int)$mp['user_id'], 'appointment', 'GCash payment not accepted',
+                    'We could not accept the GCash payment for booking #' . $mp['order_id'] . ': ' . rtrim($why, '.') . '. Please contact the spa.', 'appointments.php');
+                log_activity($conn, 'gcash_rejected', 'GCash payment (ref ' . $mp['reference_no'] . ') rejected for booking #' . $mp['order_id'] . ': ' . $why, 'order', (int)$mp['order_id'], null);
+                $message = 'Payment rejected. ' . ($mp['customer_name'] ?: 'The customer') . ' was notified.'; $message_type = 'success';
+            }
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // SESSION-COUNT PACKAGES — per-session actions on appointment_sessions rows.
 // Independent of the big dispatch above; the UI only exposes these for

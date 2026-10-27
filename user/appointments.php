@@ -181,6 +181,13 @@ foreach ($appointments as &$appt) {
         ");
         $pm->bind_param("i", $appt['order_item_id']); $pm->execute();
         $appt['order'] = $pm->get_result()->fetch_assoc() ?: null; $pm->close();
+        if ($appt['order']) {
+            // GCash QR payment sent at checkout (latest), see ac_pay().
+            ensure_manual_payments_table($conn);
+            $gq = $conn->prepare("SELECT amount, kind, status, amount_received, reject_reason FROM manual_payments WHERE order_id = ? ORDER BY id DESC LIMIT 1");
+            $gq->bind_param("i", $appt['order']['id']); $gq->execute();
+            $appt['order']['gcash'] = $gq->get_result()->fetch_assoc() ?: null; $gq->close();
+        }
     }
 
     $appt['sessions'] = null;
@@ -293,6 +300,13 @@ function ac_pay($o) {
     if ($ps === 'paid')     return ['ok', 'Paid · ' . ac_method($o)];
     if ($ps === 'refunded') return ['grey', 'Refunded'];
     if ($ps === 'rejected') return ['bad', 'Payment rejected'];
+    $g = $o['gcash'] ?? null;
+    if ($g && $g['status'] === 'pending')  return ['warn', 'GCash ' . ac_peso($g['amount']) . ' · being checked'];
+    if ($g && $g['status'] === 'rejected') return ['bad', 'GCash not accepted' . ($g['reject_reason'] ? ': ' . $g['reject_reason'] : '')];
+    if ($g && $g['status'] === 'verified') {
+        $got = (float)$g['amount_received'];
+        return ['ok', $got >= (float)$o['final_amount'] - 0.005 ? 'Paid in full · GCash' : 'Down payment ' . ac_peso($got) . ' received · balance at the spa'];
+    }
     return ['grey', 'Pay at the spa'];
 }
 function ac_total($a) {

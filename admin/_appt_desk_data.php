@@ -62,6 +62,19 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
 
     $ids = array_map(fn($r) => (int)$r['id'], $rows);
     $slots = $extras = $sessions = [];
+    // GCash QR payment sent with an online booking (latest per order).
+    $manual_pay = [];
+    $order_ids = array_values(array_unique(array_filter(array_map(fn($r) => (int)($r['order_id'] ?? 0), $rows))));
+    if ($order_ids) {
+        ensure_manual_payments_table($conn);
+        foreach ($conn->query("SELECT * FROM manual_payments WHERE order_id IN (" . implode(',', $order_ids) . ") ORDER BY id")->fetch_all(MYSQLI_ASSOC) as $m) {
+            $manual_pay[(int)$m['order_id']] = [
+                'id' => (int)$m['id'], 'amount' => (float)$m['amount'], 'kind' => $m['kind'], 'ref' => $m['reference_no'],
+                'status' => $m['status'], 'received' => $m['amount_received'] !== null ? (float)$m['amount_received'] : null,
+                'reason' => $m['reject_reason'] ?? '', 'by' => $m['checked_by_name'] ?? '', 'sent' => $m['created_at'],
+            ];
+        }
+    }
     if ($ids) {
         $in = implode(',', $ids); // ints only
         foreach ($conn->query("SELECT appointment_id, person_slot, therapist_id FROM appointment_therapists WHERE appointment_id IN ($in) ORDER BY person_slot")->fetch_all(MYSQLI_ASSOC) as $r) {
@@ -219,6 +232,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                 'paid' => $paid, 'paid_amount' => $paid ? (float)$r['final_amount'] : 0.0,
                 'method' => $r['paymongo_method'] ?: $r['payment_method'],
                 'due' => round($due, 2),
+                'gcash' => $manual_pay[(int)($r['order_id'] ?? 0)] ?? null, // GCash QR payment sent online
                 // What Senior / PWD / Staff / Voucher can apply to (all people).
                 'velig' => array_map(fn($v) => round($v, 2), $velig), // each voucher kind
                 'eligible' => round((service_discount_excluded($r['category_name'] ?? '', $r['service_name'] ?? '') ? 0.0 : $order_total) + $extras_elig, 2),

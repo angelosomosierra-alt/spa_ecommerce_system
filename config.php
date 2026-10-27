@@ -400,6 +400,98 @@ function settle_online_down_payment($conn, int $order_id, ?string $method, ?stri
     return 1;
 }
 
+// ─── GCASH QR PAYMENTS (manual) ──────────────────────────────────────────────
+// While PayMongo is off, an online service booking can be paid to the spa's
+// GCash QR: the customer sends the 50% down payment or the full amount, types
+// the GCash reference number and uploads the receipt; the receptionist checks
+// it in Appointments and verifies it (recorded as a GCash advance payment,
+// like a Calendar down payment) or rejects it with a reason.
+// Settings (Admin → Payment Log): gcash_qr_enabled, gcash_name, gcash_number,
+// gcash_qr_file — stored in system_settings.
+function gcash_settings($conn): array {
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    $conn->query("CREATE TABLE IF NOT EXISTS system_settings (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, setting_key VARCHAR(100) NOT NULL UNIQUE,
+        setting_value VARCHAR(255) NOT NULL, updated_by INT NULL, updated_at DATETIME NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $cache = ['gcash_qr_enabled' => '0', 'gcash_name' => '', 'gcash_number' => '', 'gcash_qr_file' => ''];
+    $r = $conn->query("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('gcash_qr_enabled','gcash_name','gcash_number','gcash_qr_file')");
+    if ($r) foreach ($r->fetch_all(MYSQLI_ASSOC) as $row) $cache[$row['setting_key']] = $row['setting_value'];
+    return $cache;
+}
+// On, and set up enough for a customer to pay (number and QR image).
+function gcash_qr_ready($conn): bool {
+    $g = gcash_settings($conn);
+    return $g['gcash_qr_enabled'] === '1' && $g['gcash_number'] !== '' && $g['gcash_qr_file'] !== '';
+}
+function save_gcash_setting($conn, string $key, string $value, int $by): void {
+    gcash_settings($conn);
+    $s = $conn->prepare("INSERT INTO system_settings (setting_key, setting_value, updated_by, updated_at) VALUES (?, ?, ?, NOW())
+                         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = NOW()");
+    $s->bind_param("ssi", $key, $value, $by); $s->execute(); $s->close();
+}
+function ensure_manual_payments_table($conn): void {
+    static $done = false;
+    if ($done) return;
+    $conn->query("CREATE TABLE IF NOT EXISTS manual_payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        user_id INT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        kind ENUM('dp','full') NOT NULL DEFAULT 'dp',
+        reference_no VARCHAR(40) NOT NULL,
+        receipt_file VARCHAR(120) NOT NULL,
+        status ENUM('pending','verified','rejected') NOT NULL DEFAULT 'pending',
+        amount_received DECIMAL(10,2) NULL,
+        reject_reason VARCHAR(255) NULL,
+        checked_by_name VARCHAR(100) NULL,
+        checked_at DATETIME NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_mp_order (order_id), INDEX idx_mp_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $done = true;
+}
+// Receipts and the QR live outside the deploy path on Hostinger (a deploy
+// would delete them) and are only served through admin/payment_file.php.
+function manual_payment_dir(): string {
+    $dir = PERSISTENT_UPLOADS_ENABLED ? '/home/u655952816/persistent_uploads/payments/' : __DIR__ . '/uploads/payments/';
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    if (!PERSISTENT_UPLOADS_ENABLED && !is_file($dir . '.htaccess')) @file_put_contents($dir . '.htaccess', "Require all denied\nDeny from all\n");
+    return $dir;
+}
+// Saves an uploaded image (JPG/PNG/WEBP, up to 8 MB). Returns the stored file
+// name, or an error message starting with '!'.
+function store_payment_image(array $file, string $prefix): string {
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) return '!Please add the screenshot of your receipt.';
+    if ($file['size'] > 8 * 1024 * 1024) return '!The image is too big (8 MB at most).';
+    $info = @getimagesize($file['tmp_name']);
+    $ext = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_WEBP => 'webp'][$info[2] ?? 0] ?? null;
+    if (!$ext) return '!The receipt must be a JPG, PNG or WEBP image.';
+    $name = $prefix . '_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+    if (!@move_uploaded_file($file['tmp_name'], manual_payment_dir() . $name)) return '!Could not save the image. Please try again.';
+    return $name;
+}
+// Splits an amount paid in advance over an order's appointments by price
+// (the last one takes the rounding), as each appointment's advance payment.
+function record_order_advance($conn, int $order_id, float $amount, string $method): void {
+    $ap = $conn->prepare("SELECT a.id, a.charged_price FROM appointments a JOIN order_items oi ON oi.id = a.order_item_id WHERE oi.order_id = ? ORDER BY a.id");
+    $ap->bind_param("i", $order_id); $ap->execute();
+    $appts = $ap->get_result()->fetch_all(MYSQLI_ASSOC); $ap->close();
+    if (!$appts) return;
+    $sum = array_sum(array_map(fn($a) => (float)$a['charged_price'], $appts));
+    $left = round($amount, 2);
+    $set = $conn->prepare("UPDATE appointments SET advance_payment = ?, advance_payment_date = CURDATE(), advance_payment_method = ? WHERE id = ?");
+    foreach ($appts as $i => $a) {
+        $part = ($i === count($appts) - 1) ? $left
+              : round($sum > 0 ? $amount * (float)$a['charged_price'] / $sum : $amount / count($appts), 2);
+        $left = round($left - $part, 2);
+        $aid = (int)$a['id'];
+        $set->bind_param("dsi", $part, $method, $aid); $set->execute();
+    }
+    $set->close();
+}
+
 // ─── BASE URL ─────────────────────────────────────────────────────────────────
 $protocol      = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
 $host          = $_SERVER['HTTP_HOST'] ?? 'localhost';

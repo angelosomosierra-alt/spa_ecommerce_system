@@ -220,9 +220,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             $message = "❌ We open at 10:00 AM.";
             $message_type = "danger";
         }
-        $cutoff_time = strtotime('+2 hours');
+        $cutoff_time = strtotime('+30 minutes');
         if ($chosen_time < $cutoff_time && empty($message)) {
-            $message = "❌ Appointments must be booked at least 2 hours in advance. Earliest: " . date('h:i A', $cutoff_time);
+            $message = "❌ Appointments must be booked at least 30 minutes in advance. Earliest: " . date('h:i A', $cutoff_time);
             $message_type = "danger";
         }
     }
@@ -241,11 +241,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             } else {
                 date_default_timezone_set('Asia/Manila');
                 $chosen_time = strtotime($booking_date);
-                $cutoff_time = strtotime('+2 hours');
+                $cutoff_time = strtotime('+30 minutes');
                 if ($chosen_time < time()) {
                     $message = "You cannot book an appointment in the past."; $message_type = "danger";
                 } elseif ($chosen_time < $cutoff_time) {
-                    $message = "Appointments must be booked at least 2 hours in advance."; $message_type = "danger";
+                    $message = "Appointments must be booked at least 30 minutes in advance."; $message_type = "danger";
                 } else {
                     // ── Capacity soft warning ─────────────────────────────────
                     $is_today_booking = (date('Y-m-d', $chosen_time) === date('Y-m-d'));
@@ -2098,7 +2098,7 @@ function bmMinuteAvailable(h, m, d) {
     const endMin   = startMin + d.session_time; // buffer already baked into busy windows
     if (h < d.open_hour || h > d.close_hour) return false;
     if (h === d.close_hour && m > 0) return false;
-    // Grey out past times + 2-hour advance minimum (min_start_minutes = now+120 when is_today, else 0)
+    // Grey out past times + 30-minute advance minimum (min_start_minutes = now+30 when is_today, else 0)
     if (d.min_start_minutes > 0 && startMin < d.min_start_minutes) return false;
     // any-available mode: valid_starts gives exact ranges where at least one therapist
     // is free for the full duration — check membership directly (no overlap approximation)

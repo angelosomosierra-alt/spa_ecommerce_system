@@ -209,6 +209,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             $message_type = "danger";
         }
     }
+    // While PayMongo is off: pay the spa's GCash QR (down payment or in full),
+    // with the GCash reference number and a screenshot of the receipt. The
+    // receptionist verifies it in Appointments (see gcash_settings()).
+    $gcash_mode = $checkout_type === 'service' && !ONLINE_PAYMENT_ENABLED && gcash_qr_ready($conn);
+    $gcash_kind = ($_POST['pay_amount'] ?? 'dp') === 'full' ? 'full' : 'dp';
+    $gcash_ref  = preg_replace('/\D/', '', (string)($_POST['gcash_ref'] ?? ''));
+    $gcash_file = null;
+    if ($gcash_mode) {
+        $payment_method = 'gcash';
+        if (empty($message) && empty($_POST['dp_agree'])) {
+            $message = "Please tick the box to confirm that the payment is non-refundable.";
+            $message_type = "danger";
+        } elseif (empty($message) && (strlen($gcash_ref) < 10 || strlen($gcash_ref) > 20)) {
+            $message = "Please enter the GCash reference number from your receipt (10 to 20 digits).";
+            $message_type = "danger";
+        }
+    }
     if (empty($message) && empty($_POST['terms_agree'])) {
         $message = "Please tick the box to agree to the Terms and Conditions.";
         $message_type = "danger";
@@ -274,9 +291,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             $message = "We open at 10:00 AM.";
             $message_type = "danger";
         }
-        $cutoff_time = strtotime('+2 hours');
+        $cutoff_time = strtotime('+30 minutes');
         if ($chosen_time < $cutoff_time && empty($message)) {
-            $message = "Appointments must be booked at least 2 hours in advance. Earliest: " . date('h:i A', $cutoff_time);
+            $message = "Appointments must be booked at least 30 minutes in advance. Earliest: " . date('h:i A', $cutoff_time);
             $message_type = "danger";
         }
     }
@@ -295,11 +312,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             } else {
                 date_default_timezone_set('Asia/Manila');
                 $chosen_time = strtotime($booking_date);
-                $cutoff_time = strtotime('+2 hours');
+                $cutoff_time = strtotime('+30 minutes');
                 if ($chosen_time < time()) {
                     $message = "You cannot book an appointment in the past."; $message_type = "danger";
                 } elseif ($chosen_time < $cutoff_time) {
-                    $message = "Appointments must be booked at least 2 hours in advance."; $message_type = "danger";
+                    $message = "Appointments must be booked at least 30 minutes in advance."; $message_type = "danger";
                 } else {
                     // ── Capacity soft warning ─────────────────────────────────
                     $is_today_booking = (date('Y-m-d', $chosen_time) === date('Y-m-d'));
@@ -395,6 +412,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                 }
             }
             if (!empty($stock_errors)) { $message = implode('<br>', $stock_errors); $message_type = "danger"; }
+        }
+
+        if (empty($message) && $gcash_mode) {
+            $gcash_file = store_payment_image($_FILES['gcash_receipt'] ?? [], 'rcpt');
+            if ($gcash_file[0] === '!') { $message = substr($gcash_file, 1); $message_type = "danger"; $gcash_file = null; }
         }
 
         if (empty($message)) {
@@ -744,7 +766,16 @@ $payload = json_encode([
                     $_SESSION['last_order_id'] = $order_id;
 
                     require_once __DIR__ . '/../notify.php';
-                    if ($checkout_type === 'service') {
+                    if ($checkout_type === 'service' && $gcash_mode && $gcash_file) {
+                        // The GCash payment waits for the receptionist's check.
+                        ensure_manual_payments_table($conn);
+                        $gcash_amt = $gcash_kind === 'full' ? $final_amount : round($final_amount * ONLINE_DP_PERCENT / 100, 2);
+                        $mp = $conn->prepare("INSERT INTO manual_payments (order_id, user_id, amount, kind, reference_no, receipt_file) VALUES (?, ?, ?, ?, ?, ?)");
+                        $mp->bind_param("iidsss", $order_id, $user_id, $gcash_amt, $gcash_kind, $gcash_ref, $gcash_file);
+                        $mp->execute(); $mp->close();
+                        add_notification($conn, $user_id, 'appointment', 'Appointment Booked', 'Your booking #' . $order_id . ' is pending. The spa is checking your GCash payment of ₱' . number_format($gcash_amt, 2) . '.', 'appointments.php');
+                        add_notification($conn, null, 'appointment', 'New online booking · check the GCash payment', 'Booking #' . $order_id . ': ₱' . number_format($gcash_amt, 2) . ' GCash' . ($gcash_kind === 'full' ? ' (paid in full)' : ' (down payment)') . ', ref ' . $gcash_ref . '.', 'appointments.php');
+                    } elseif ($checkout_type === 'service') {
                         add_notification($conn, $user_id, 'appointment', 'Appointment Booked', 'Your booking #' . $order_id . ' is pending approval.', 'appointments.php');
                         add_notification($conn, null, 'appointment', 'New Service Booking', 'New appointment booking #' . $order_id . ' by a customer.', 'appointments.php');
                     } else {
@@ -844,12 +875,12 @@ require_once 'header.php';
 /* ── Layout ── */
 .co-grid {
     display: grid;
-    grid-template-columns: 1fr 420px;
+    grid-template-columns: minmax(0, 1fr) 420px;
     gap: 2rem;
     align-items: start;
 }
 @media (max-width: 860px) {
-    .co-grid { grid-template-columns: 1fr; }
+    .co-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ── Cards ── */
@@ -1524,7 +1555,7 @@ require_once 'header.php';
             <div class="co-card-head">
                 <div class="co-card-head-title">Contact Information</div>
             </div>
-            <form method="POST" id="checkoutForm">
+            <form method="POST" id="checkoutForm" enctype="multipart/form-data">
             <?php echo csrf_field(); ?>
             <input type="hidden" name="payment_method" id="payment_method" value="<?php echo ($checkout_type === 'service' && ONLINE_PAYMENT_ENABLED) ? 'online' : 'onsite'; ?>">
             <input type="hidden" name="service_type"   id="service_type_hidden" value="onsite">
@@ -1772,6 +1803,62 @@ require_once 'header.php';
                 </label>
                 <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
                     Pay <span id="dpBtnAmt">₱<?php echo number_format($_dp_now, 2); ?></span> down payment
+                </button>
+                <?php elseif ($checkout_type === 'service' && gcash_qr_ready($conn)):
+                    $_gc = gcash_settings($conn);
+                    $_dp_pct_label = rtrim(rtrim(number_format(ONLINE_DP_PERCENT, 2), '0'), '.') . '%';
+                    $_gc_dp = round($total_amount * ONLINE_DP_PERCENT / 100, 2);
+                    $_gc_full = (($_POST['pay_amount'] ?? '') === 'full'); ?>
+                <!-- While PayMongo is off: pay the spa's GCash QR, then send the reference number and receipt -->
+                <input type="hidden" name="pay_amount" id="gcKind" value="<?php echo $_gc_full ? 'full' : 'dp'; ?>">
+                <div class="pay-group">
+                    <div class="pay-btn<?php echo $_gc_full ? '' : ' active'; ?>" data-gc="dp" onclick="gcPick('dp')">
+                        <span class="pay-btn-label"><?php echo $_dp_pct_label; ?> down payment</span>
+                        <span class="pay-btn-sub" id="gcDpAmt">₱<?php echo number_format($_gc_dp, 2); ?> now, the rest at the spa</span>
+                    </div>
+                    <div class="pay-btn<?php echo $_gc_full ? ' active' : ''; ?>" data-gc="full" onclick="gcPick('full')">
+                        <span class="pay-btn-label">Pay in full</span>
+                        <span class="pay-btn-sub" id="gcFullAmt">₱<?php echo number_format($total_amount, 2); ?> now, nothing at the spa</span>
+                    </div>
+                </div>
+                <div class="dp-box">
+                    <div class="dp-row"><span>Total</span><b id="gcTotal">₱<?php echo number_format($total_amount, 2); ?></b></div>
+                    <div class="dp-row dp-now"><span>Send now by GCash</span><b id="gcNow">₱<?php echo number_format($_gc_full ? $total_amount : $_gc_dp, 2); ?></b></div>
+                    <div class="dp-row"><span>Balance, pay at the spa</span><b id="gcBal">₱<?php echo number_format($_gc_full ? 0 : $total_amount - $_gc_dp, 2); ?></b></div>
+                </div>
+                <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;border:1px dashed var(--cream2);border-radius:12px;padding:0.85rem;margin-bottom:0.9rem;font-family:'DM Sans',sans-serif;">
+                    <img src="<?php echo BASE_URL; ?>payment_qr.php" alt="Recovery Iloilo GCash QR code" style="width:160px;height:160px;object-fit:contain;border-radius:10px;background:#fff;border:1px solid var(--cream2);">
+                    <div style="display:grid;gap:0.3rem;font-size:0.88rem;color:var(--brown);min-width:0;">
+                        <span style="color:var(--gray);font-size:0.8rem;">Scan with GCash or any bank app (InstaPay), or send to:</span>
+                        <strong><?php echo htmlspecialchars($_gc['gcash_name']); ?></strong>
+                        <span><strong id="gcNum" style="letter-spacing:0.03em;"><?php echo htmlspecialchars($_gc['gcash_number']); ?></strong>
+                            <button type="button" onclick="gcCopy()" style="border:1px solid var(--cream2);background:#fff;border-radius:8px;padding:2px 8px;font-size:0.75rem;cursor:pointer;margin-left:4px;">Copy</button></span>
+                        <span style="color:var(--gray);font-size:0.8rem;">Amount to send: <strong id="gcSend" style="color:var(--gold);">₱<?php echo number_format($_gc_full ? $total_amount : $_gc_dp, 2); ?></strong></span>
+                    </div>
+                </div>
+                <div class="co-field" style="margin-bottom:0.8rem;">
+                    <label class="co-label">GCash reference number <span>*</span></label>
+                    <input type="text" name="gcash_ref" class="co-input" inputmode="numeric" autocomplete="off" required
+                           placeholder="From your GCash receipt, e.g. 1009 876 543210" value="<?php echo htmlspecialchars($_POST['gcash_ref'] ?? ''); ?>">
+                </div>
+                <div class="co-field" style="margin-bottom:0.9rem;">
+                    <label class="co-label">Screenshot of your receipt <span>*</span></label>
+                    <input type="file" name="gcash_receipt" accept="image/jpeg,image/png,image/webp" required class="co-input" style="padding:0.5rem;">
+                </div>
+                <div class="pay-note" style="border-left-color:#198754;background:#f0fdf4;">
+                    Your booking is <strong>pending</strong> until the spa checks your GCash payment; you'll get a notification once it's verified.
+                    The amount you send is <strong>non-refundable</strong> and is deducted from your bill on the day of your appointment.
+                </div>
+                <label class="dp-agree">
+                    <input type="checkbox" name="dp_agree" value="1" id="dpAgree" required>
+                    <span>I understand the payment is <strong>non-refundable</strong>, including if I cancel or do not show up.</span>
+                </label>
+                <label class="dp-agree">
+                    <input type="checkbox" name="terms_agree" value="1" required>
+                    <span>I agree to the <a href="<?php echo BASE_URL; ?>terms.php" target="_blank" rel="noopener" style="color:#C96A2C;font-weight:700;">Terms and Conditions</a>.</span>
+                </label>
+                <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
+                    Confirm booking · <span id="gcBtnAmt">₱<?php echo number_format($_gc_full ? $total_amount : $_gc_dp, 2); ?></span> sent by GCash
                 </button>
                 <?php else: ?>
                 <div class="pay-group" id="paymentBtnsGroup">
@@ -2147,6 +2234,39 @@ function selectServiceType(type) {
     sync();
 }());
 
+// ── GCash QR: down payment or full, figures follow the order total ──────────
+function gcPick(kind) {
+    var k = document.getElementById('gcKind'); if (!k) return;
+    k.value = kind;
+    document.querySelectorAll('[data-gc]').forEach(function (b) { b.classList.toggle('active', b.dataset.gc === kind); });
+    gcSync();
+}
+function gcSync() {
+    var grand = document.getElementById('grandTotal'), k = document.getElementById('gcKind');
+    if (!grand || !k) return;
+    var PCT = <?php echo json_encode((float)ONLINE_DP_PERCENT); ?>;
+    var fmt = function (n) { return '₱' + n.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}); };
+    var total = parseFloat(grand.textContent.replace(/[₱,+\s]/g, '')) || 0;
+    var dp = Math.round(total * PCT) / 100, now = k.value === 'full' ? total : dp;
+    document.getElementById('gcTotal').textContent = fmt(total);
+    document.getElementById('gcNow').textContent = fmt(now);
+    document.getElementById('gcBal').textContent = fmt(total - now);
+    document.getElementById('gcSend').textContent = fmt(now);
+    document.getElementById('gcBtnAmt').textContent = fmt(now);
+    document.getElementById('gcDpAmt').textContent = fmt(dp) + ' now, the rest at the spa';
+    document.getElementById('gcFullAmt').textContent = fmt(total) + ' now, nothing at the spa';
+}
+function gcCopy() {
+    var t = (document.getElementById('gcNum') || {}).textContent || '';
+    if (navigator.clipboard) navigator.clipboard.writeText(t.replace(/\s/g, '')).catch(function () {});
+}
+(function () {
+    var grand = document.getElementById('grandTotal');
+    if (!grand || !document.getElementById('gcKind')) return;
+    new MutationObserver(gcSync).observe(grand, {childList: true, characterData: true, subtree: true});
+    gcSync();
+}());
+
 // ── Payment method ────────────────────────────────────────────────────────────
 function selectPayment(method) {
     if (!document.getElementById('paybtn-onsite')) return; // down-payment layout: always online
@@ -2335,7 +2455,7 @@ function bmMinuteAvailable(h, m, d) {
     const endMin   = startMin + d.session_time; // buffer already baked into busy windows
     if (h < d.open_hour || h > d.close_hour) return false;
     if (h === d.close_hour && m > 0) return false;
-    // Grey out past times + 2-hour advance minimum (min_start_minutes = now+120 when is_today, else 0)
+    // Grey out past times + 30-minute advance minimum (min_start_minutes = now+30 when is_today, else 0)
     if (d.min_start_minutes > 0 && startMin < d.min_start_minutes) return false;
     // any-available mode: valid_starts gives exact ranges where at least one therapist
     // is free for the full duration — check membership directly (no overlap approximation)

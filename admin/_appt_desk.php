@@ -373,6 +373,11 @@ $DESK_MODAL = !empty($DESK_MODAL);
     function payPill(a) {
         var b = a.bill;
         if (a.rate_type === 'influencer') return '<span class="dk-pill p-pkg">Influencer · ₱0</span>' + (b.due > 0 ? '<span class="dk-pill p-unpaid">Add-ons ' + pesoS(b.due) + '</span>' : '');
+        if (b.gcash && b.gcash.status === 'pending') return '<span class="dk-pill p-need">Check payment · ' + pesoS(b.gcash.amount) + ' GCash</span>';
+        if (b.gcash && b.gcash.status === 'rejected' && !b.paid && !b.advance) return '<span class="dk-pill p-need">GCash rejected · unpaid ' + pesoS(b.due) + '</span>';
+        if (b.gcash && b.gcash.status === 'verified' && !b.paid && b.advance >= b.order_total - b.discount - 0.005) {
+            return '<span class="dk-pill p-paid">Paid in full · GCash</span>' + (b.due > 0 ? '<span class="dk-pill p-unpaid">Add-ons ' + pesoS(b.due) + '</span>' : '');
+        }
         if (b.paid && b.due <= 0) return '<span class="dk-pill p-paid">Paid' + (b.method ? ' · ' + esc(b.method) : '') + '</span>';
         if (b.advance > 0 && !b.paid) return '<span class="dk-pill p-down">Down ' + pesoS(b.advance) + ' · bal ' + pesoS(b.due) + '</span>';
         return '<span class="dk-pill p-unpaid">' + (b.paid ? 'Add-ons unpaid ' : 'Unpaid ') + pesoS(b.due) + '</span>';
@@ -722,6 +727,25 @@ $DESK_MODAL = !empty($DESK_MODAL);
             (b.paid ? '<div><span>Paid' + (b.method ? ' · ' + esc(b.method) : '') + '</span><span>' + peso(b.paid_amount) + '</span></div>' : '') +
             owe.map(function (x) { return '<div><span>' + esc(x.service.name) + (x.bill.paid ? ' · added services' : (x.bill.advance > 0 ? ' (less down payment)' : '')) + '</span><span>' + peso(x.bill.due) + '</span></div>'; }).join('') +
             '<div class="big"><span>To collect' + (owe.length ? ' · all services' : '') + '</span><span>' + peso(b.due + owe.reduce(function (t, x) { return t + x.bill.due; }, 0)) + '</span></div></div>';
+        // GCash QR payment the customer sent with an online booking.
+        var g = b.gcash, gcHtml = '';
+        if (g) {
+            var gk = g.kind === 'full' ? 'paid in full' : 'down payment';
+            gcHtml = '<div class="dk-inline"><div class="dk-svch"><span><b>GCash ' + gk + '</b> <small>ref ' + esc(g.ref) + ' · sent ' + dayLabel(g.sent) + ', ' + tm(g.sent) + '</small></span><span class="dk-amt">' + peso(g.amount) + '</span></div>' +
+                '<a class="dk-hint" href="payment_file.php?id=' + g.id + '" target="_blank" rel="noopener">View receipt screenshot ›</a>';
+            if (g.status === 'pending' && !locked) {
+                gcHtml += '<p class="dk-hint">Open the spa GCash and find this reference number. Check the amount, then verify.</p>' +
+                    '<div class="dk-bar"><input type="number" id="dkGcAmt" min="0" step="0.01" value="' + g.amount + '" style="max-width:150px;" aria-label="Amount received"><span class="dk-hint">amount received</span></div>' +
+                    (S.gcRej ? '<div><label class="dk-lbl" for="dkGcWhy">Why reject?</label><input id="dkGcWhy" type="text" placeholder="e.g. reference number not found"></div>' +
+                        '<div class="dk-bar"><button type="button" class="dk-btn danger" id="dkGcRejSave">Reject payment</button><button type="button" class="dk-btn" id="dkGcRejX">Back</button></div>'
+                      : '<div class="dk-bar"><button type="button" class="dk-btn ok" id="dkGcOk">Verify payment</button><button type="button" class="dk-btn danger" id="dkGcRej">Reject</button></div>');
+            } else if (g.status === 'verified') {
+                gcHtml += '<p class="dk-hint">Verified' + (g.by ? ' by ' + esc(g.by) : '') + ' · ' + peso(g.received) + ' received.</p>';
+            } else if (g.status === 'rejected') {
+                gcHtml += '<p class="dk-hint">Rejected' + (g.by ? ' by ' + esc(g.by) : '') + (g.reason ? ': ' + esc(g.reason) : '') + '. Collect payment at the spa.</p>';
+            }
+            gcHtml += '</div>';
+        }
         var payForm = '';
         if (S.panel === 'checkin' && (!b.paid || b.due > 0)) {
             // Already paid but services were added since: only those are due now.
@@ -761,7 +785,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
                 addServiceHtml(a) +
                 (!locked ? '<a class="dk-hint" href="appointments.php?view=classic&appt_date=' + a.date + '">Edit other details in the classic view</a>' : '') + '</div>' +
             '<div class="dk-sec"><h4>Products</h4>' + productsHtml(a) + '</div>' +
-            '<div class="dk-sec"><h4><span>Payment</span>' + (a.group && a.group_size > 1 && groupOwes(a) && !locked ? '<button type="button" class="dk-btn" id="dkGrpOpen">' + (S.grp ? 'Back to this guest' : 'Pay for group') + '</button>' : '') + '</h4>' + billHtml + inflHtml(a) + payForm + groupHtml + '</div>' +
+            '<div class="dk-sec"><h4><span>Payment</span>' + (a.group && a.group_size > 1 && groupOwes(a) && !locked ? '<button type="button" class="dk-btn" id="dkGrpOpen">' + (S.grp ? 'Back to this guest' : 'Pay for group') + '</button>' : '') + '</h4>' + gcHtml + billHtml + inflHtml(a) + payForm + groupHtml + '</div>' +
             (extra ? '<div class="dk-sec">' + extra + '</div>' : '') +
             '<p class="dk-err" id="dkErr"></p></div>' +
             '<div class="dk-df">' +
@@ -783,7 +807,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
         if (a.rate_type === 'influencer') {
             return '<div class="dk-bar"><span class="dk-pill p-pkg">Influencer / PR · free</span><button type="button" class="dk-btn" id="dkInflOff">Back to regular price</button></div>';
         }
-        if (b.paid || b.advance > 0 || isPkg(a)) return '';
+        if (b.paid || b.advance > 0 || isPkg(a) || (b.gcash && b.gcash.status !== 'rejected')) return '';
         if (!S.infl) return '<button type="button" class="dk-btn" id="dkInflOpen" style="align-self:flex-start;">Influencer / PR (free)</button>';
         return '<div class="dk-inline"><p class="dk-hint"><b>Make this a free Influencer / PR booking?</b> The price becomes ₱0, it is counted as a Marketing Expense in the Daily Report, and the therapist gets the influencer rate when it is completed. Add-ons are still charged.</p>' +
             '<div class="dk-bar"><button type="button" class="dk-btn primary" id="dkInflSave">Yes, make it free</button><button type="button" class="dk-btn" id="dkInflX">Keep the price</button></div></div>';
@@ -955,6 +979,20 @@ $DESK_MODAL = !empty($DESK_MODAL);
             r.onclick = function () { openDrawer(+r.dataset.sib); };
             r.onkeydown = function (e) { if (e.key === 'Enter') openDrawer(+r.dataset.sib); };
         });
+        var gok = $('dkGcOk'); if (gok) gok.onclick = function () {
+            if (D.cashier && !/^\d{4}$/.test($('dkPin').value)) return err('Enter your 4-digit PIN.');
+            var amt = parseFloat($('dkGcAmt').value) || 0;
+            if (amt <= 0) return err('Enter the amount received.');
+            post('verify_manual_payment', a.id, { mp_id: a.bill.gcash.id, amount_received: amt });
+        };
+        var grj = $('dkGcRej'); if (grj) grj.onclick = function () { S.gcRej = true; renderDrawer(); };
+        var grx = $('dkGcRejX'); if (grx) grx.onclick = function () { S.gcRej = false; renderDrawer(); };
+        var grs = $('dkGcRejSave'); if (grs) grs.onclick = function () {
+            if (D.cashier && !/^\d{4}$/.test($('dkPin').value)) return err('Enter your 4-digit PIN.');
+            var why = ($('dkGcWhy').value || '').trim();
+            if (!why) return err('Say why the payment is rejected.');
+            S.gcRej = false; post('reject_manual_payment', a.id, { mp_id: a.bill.gcash.id, reject_reason: why });
+        };
         var gpo = $('dkGrpOpen'); if (gpo) gpo.onclick = function () { S.grp = !S.grp; if (S.grp) S.panel = null; renderDrawer(); };
     }
 
