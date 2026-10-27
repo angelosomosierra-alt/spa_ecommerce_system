@@ -267,6 +267,80 @@ function service_uses_aesthetic_slip(?string $category_name, ?string $service_na
     return (bool)preg_match('/full face tightening|exilis/i', (string)$service_name);
 }
 
+// ─── PERSON DISCOUNTS ────────────────────────────────────────────────────────
+// Senior 20%, PWD 20%, Staff and Voucher are for one person: in a booking for
+// several people only the ones who qualify get it. Senior, PWD and Staff are
+// never on the services below (spa rule): every Daytime promo, nail services
+// (Nail Care, Nail Care - Promo, Design) and lash services. A voucher is for
+// the services of its kind (VOUCHER_SCOPES); a Gift card / GC is for all.
+// Celebration stays on the whole bill.
+const PERSON_DISCOUNT_TYPES = ['senior', 'pwd', 'employee', 'voucher'];
+const VOUCHER_SCOPES = [
+    'all'     => 'Gift card / GC',
+    'nails'   => 'Nails voucher',
+    'lash'    => 'Lash voucher',
+    'headspa' => 'Head spa voucher',
+    'massage' => 'Body massage voucher',
+];
+function service_discount_excluded(?string $category_name, ?string $service_name = ''): bool {
+    $cat = strtolower(trim((string)$category_name));
+    if (stripos((string)$service_name, 'daytime') !== false) return true;
+    return str_contains($cat, 'nail') || str_contains($cat, 'lash') || $cat === 'design';
+}
+function service_in_voucher_scope(?string $category_name, ?string $service_name, string $scope): bool {
+    $cat = strtolower(trim((string)$category_name)); $name = strtolower((string)$service_name);
+    switch ($scope) {
+        case 'nails':   return str_contains($cat, 'nail') || $cat === 'design';
+        case 'lash':    return str_contains($cat, 'lash');
+        case 'headspa': return str_contains($cat, 'head spa') || (bool)preg_match('/head ?spa/', $name);
+        case 'massage': return $cat === 'massage services' || (bool)preg_match('/body massage|daytime massage/', $name);
+    }
+    return true; // 'all': gift card / GC
+}
+// Can this discount apply to this service? $scope is the voucher's kind.
+function service_takes_discount(?string $category_name, ?string $service_name, string $type, string $scope = 'all'): bool {
+    if ($type === 'voucher') return service_in_voucher_scope($category_name, $service_name, $scope);
+    if (in_array($type, ['senior', 'pwd', 'employee'], true)) return !service_discount_excluded($category_name, $service_name);
+    return true;
+}
+// What a discount can apply to on one appointment: its order total plus its
+// add-ons (unpaid ones only, or all), leaving out services it isn't for; for
+// a booking of several people, only $people of them (0 = all of them).
+function appt_discount_eligible(mysqli $conn, int $appt_id, float $order_total, bool $unpaid_extras_only = true, int $people = 0, string $type = 'senior', string $scope = 'all'): float {
+    $q = $conn->prepare("SELECT a.people_count, s.name, c.name AS cat FROM appointments a JOIN services s ON s.id = a.service_id LEFT JOIN categories c ON c.id = s.category_id WHERE a.id = ?");
+    $q->bind_param("i", $appt_id); $q->execute();
+    $a = $q->get_result()->fetch_assoc(); $q->close();
+    if (!$a) return $order_total;
+    if (!in_array($type, PERSON_DISCOUNT_TYPES, true)) return $order_total; // whole bill
+    $elig = service_takes_discount($a['cat'], $a['name'], $type, $scope) ? $order_total : 0.0;
+    $q = $conn->prepare("SELECT aes.charged_price, aes.payment_status, s.name, c.name AS cat FROM appointment_extra_services aes JOIN services s ON s.id = aes.service_id LEFT JOIN categories c ON c.id = s.category_id WHERE aes.appointment_id = ?");
+    $q->bind_param("i", $appt_id); $q->execute();
+    foreach ($q->get_result()->fetch_all(MYSQLI_ASSOC) as $e) {
+        if ($unpaid_extras_only && $e['payment_status'] === 'paid') continue;
+        if (service_takes_discount($e['cat'], $e['name'], $type, $scope)) $elig += (float)$e['charged_price'];
+    }
+    $q->close();
+    $n = max(1, (int)$a['people_count']);
+    if ($people > 0 && $people < $n) $elig = $elig * $people / $n;
+    return round($elig, 2);
+}
+function voucher_scope_from_post(string $key = 'voucher_scope'): string {
+    $s = (string)($_POST[$key] ?? 'all');
+    return array_key_exists($s, VOUCHER_SCOPES) ? $s : 'all';
+}
+// The amount of a discount on a bill: person discounts on the eligible part,
+// Celebration on the whole bill.
+function person_discount_amount(string $type, float $base, float $eligible, float $value = 0, string $vtype = 'percent'): float {
+    $eligible = min($eligible, $base);
+    switch ($type) {
+        case 'senior': case 'pwd': return round($eligible * 0.20, 2);
+        case 'employee':           return round($eligible * STAFF_DISCOUNT_PCT / 100, 2);
+        case 'voucher':            return $value <= 0 ? 0.0 : ($vtype === 'percent' ? round($eligible * min($value, 100) / 100, 2) : round(min($value, $eligible), 2));
+        case 'celebration':        return $value <= 0 ? 0.0 : round($base * min($value, 100) / 100, 2);
+    }
+    return 0.0;
+}
+
 // ─── ONLINE DOWN PAYMENT ─────────────────────────────────────────────────────
 // orders.dp_amount is set when a customer books a service online: PayMongo
 // then charges only that down payment, and the rest is paid at the spa.

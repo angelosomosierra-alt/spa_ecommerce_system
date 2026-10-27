@@ -161,12 +161,26 @@
     // take a value typed in by the receptionist.
     var DISC = [['none','None',0],['senior','Senior 20%',20],['pwd','PWD 20%',20],['employee','Staff <?php echo STAFF_DISCOUNT_PCT; ?>%',<?php echo STAFF_DISCOUNT_PCT; ?>],['voucher','Voucher',null],['celebration','Celebration',null]];
     // Discount amount on a base, for a {disc, dv (value), vt ('fixed'|'percent')} choice.
-    function discAmt(base, d) {
+    // elig: the part Senior / PWD / Staff / Voucher apply to (they leave out
+    // Daytime promos, nails and lash, and in a booking for several people
+    // count only the people who qualify); Celebration is on the whole base.
+    function discAmt(base, d, elig) {
         var row = DISC.filter(function (x) { return x[0] === d.disc; })[0] || DISC[0], v = parseFloat(d.dv) || 0;
-        if (row[2] !== null) return Math.round(base * row[2]) / 100;
+        var e = elig === undefined ? base : Math.min(elig, base);
+        if (row[2] !== null) return Math.round(e * row[2]) / 100;
         if (d.disc === 'celebration') return Math.round(base * Math.min(v, 100)) / 100;
-        if (d.disc === 'voucher') return d.vt === 'percent' ? Math.round(base * Math.min(v, 100)) / 100 : Math.min(v, base);
+        if (d.disc === 'voucher') return d.vt === 'percent' ? Math.round(e * Math.min(v, 100)) / 100 : Math.min(v, e);
         return 0;
+    }
+    function voucherLabel(vs, no) { return VSCOPES[vs || 'all'] + (no && no.trim() ? ' · ' + no.trim() : ''); }
+    function isPersonDisc(t) { return t === 'senior' || t === 'pwd' || t === 'employee' || t === 'voucher'; }
+    // Voucher kinds (VOUCHER_SCOPES in config.php): each is for its own services.
+    var VSCOPES = <?php echo json_encode(VOUCHER_SCOPES); ?>;
+    // Eligible part of one booking for the discount and people chosen in the panel.
+    function eligOf(x, isMain) {
+        var e = S.disc === 'voucher' ? ((x.bill.velig || {})[S.vs || 'all'] ?? x.bill.order_total + x.bill.addons) : x.bill.eligible;
+        if (isMain && x.people > 1 && isPersonDisc(S.disc)) e = e * Math.min(S.dp || 1, x.people) / x.people;
+        return e;
     }
     function discNeedsValue(d) { return (d.disc === 'voucher' || d.disc === 'celebration') && !(parseFloat(d.dv) > 0); }
 
@@ -453,7 +467,7 @@
     // ── Drawer ────────────────────────────────────────────────────────────
     function openDrawer(id, panel) {
         S.open = id; S.panel = panel === 'checkin' || panel === 'complete' ? panel : null;
-        S.method = null; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.vl = ''; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false; S.add = null; S.addProduct = null;
+        S.method = null; S.dp = 1; S.vs = 'all'; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.vl = ''; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false; S.add = null; S.addProduct = null;
         renderBoard(); renderDrawer(); $('dkDrawer').hidden = false; $('dkScrim').hidden = false;
     }
     function closeDrawer() { S.open = null; S.pin = ''; $('dkDrawer').hidden = true; $('dkScrim').hidden = true; if (D) renderBoard(); }
@@ -773,27 +787,40 @@
     }
     function discChips() {
         var extra = '';
-        if (S.disc === 'voucher') extra = '<div class="dk-bar" style="margin-top:0.35rem;">' + '<input type="text" id="dkVl" maxlength="100" placeholder="Voucher type (e.g. Gift Card, Nails Voucher)" value="' + esc(S.vl || '') + '" style="flex:1 1 200px;min-width:0;" aria-label="Voucher type">' + '</div><div class="dk-bar" style="margin-top:0.35rem;"><input type="number" id="dkDv" min="0" step="1" placeholder="' + (S.vt === 'percent' ? 'Voucher %' : 'Voucher amount ₱') + '" value="' + esc(S.dv) + '" style="max-width:150px;">' +
+        if (S.disc === 'voucher') extra = '<div class="dk-bar" style="margin-top:0.35rem;">' + Object.keys(VSCOPES).map(function (k) { return '<button type="button" class="dk-chip sm' + ((S.vs || 'all') === k ? ' sel' : '') + '" data-vs="' + k + '">' + esc(VSCOPES[k]) + '</button>'; }).join('') + '</div>' +
+            '<div class="dk-bar" style="margin-top:0.35rem;"><input type="text" id="dkVl" maxlength="60" placeholder="Voucher no. (optional)" value="' + esc(S.vl || '') + '" style="flex:1 1 200px;min-width:0;" aria-label="Voucher number">' + '</div><div class="dk-bar" style="margin-top:0.35rem;"><input type="number" id="dkDv" min="0" step="1" placeholder="' + (S.vt === 'percent' ? 'Voucher %' : 'Voucher amount ₱') + '" value="' + esc(S.dv) + '" style="max-width:150px;">' +
             '<button type="button" class="dk-chip sm' + (S.vt !== 'percent' ? ' sel' : '') + '" data-vt="fixed">₱ off</button><button type="button" class="dk-chip sm' + (S.vt === 'percent' ? ' sel' : '') + '" data-vt="percent">% off</button></div>';
         if (S.disc === 'celebration') extra = '<div class="dk-bar" style="margin-top:0.35rem;"><input type="number" id="dkDv" min="0" max="100" step="1" placeholder="Celebration %" value="' + esc(S.dv) + '" style="max-width:150px;"><span class="dk-hint">% off</span></div>';
-        return '<div><label class="dk-lbl">Discount</label><div class="dk-bar">' + DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (S.disc === d[0] ? ' sel' : '') + '" data-disc="' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div>' + extra + '</div>';
+        var a = byId(S.open), info = '';
+        if (a && isPersonDisc(S.disc)) {
+            var visit = [a].concat(sibsOwe(a)).filter(function (x) { return !x.bill.paid; });
+            var off = [];
+            visit.forEach(function (x) { if (x.service.nodisc) off.push(x.service.name); x.addons.forEach(function (y) { if (y.nodisc) off.push(y.name); }); });
+            if (a.people > 1) info += '<div class="dk-bar" style="margin-top:0.35rem;align-items:center;"><span class="dk-hint">How many of the ' + a.people + ' people?</span>' +
+                '<button type="button" class="dk-chip sm" data-dp="-1" aria-label="Fewer">−</button><b>' + Math.min(S.dp || 1, a.people) + '</b><button type="button" class="dk-chip sm" data-dp="1" aria-label="More">+</button></div>';
+            if (S.disc === 'voucher') {
+                var ve = visit.reduce(function (t, x) { return t + eligOf(x, x === a); }, 0);
+                info += '<p class="dk-hint" style="margin-top:0.35rem;">' + esc(VSCOPES[S.vs || 'all']) + ': for ' + peso(ve) + ' of this bill' + (S.vs && S.vs !== 'all' ? ' (only its own services)' : ' (all services)') + '.</p>';
+            } else if (off.length) info += '<p class="dk-hint" style="margin-top:0.35rem;">No ' + (DISC.filter(function (d) { return d[0] === S.disc; })[0] || ['', 'this discount'])[1].replace(/ \d+%$/, '') + ' discount on: ' + off.map(esc).join(', ') + ' (Daytime promos, nails and lash).</p>';
+        }
+        return '<div><label class="dk-lbl">Discount</label><div class="dk-bar">' + DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (S.disc === d[0] ? ' sel' : '') + '" data-disc="' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div>' + extra + info + '</div>';
     }
     // What will actually be collected with the discount chosen in the panel,
     // for this service and the guest's other unpaid services (paid together
     // through pay_group: discount on the full price, then the advances off).
     function dueWithDisc(a) {
-        var list = [a].concat(sibsOwe(a)), base = 0, adv = 0, paidDue = 0;
+        var list = [a].concat(sibsOwe(a)), base = 0, elig = 0, adv = 0, paidDue = 0;
         list.forEach(function (x) {
             var b = x.bill;
             if (b.paid) paidDue += b.due;
-            else { base += b.order_total + b.addons - b.discount; adv += b.advance; }
+            else { base += b.order_total + b.addons - b.discount; elig += eligOf(x, x === a); adv += b.advance; }
         });
-        return paidDue + Math.max(0, base - discAmt(base, S) - adv);
+        return paidDue + Math.max(0, base - discAmt(base, S, elig) - adv);
     }
     // Pay this guest's services in one go (book_now_pay_group), then run the
     // step (check in / complete) on this service, which is then already paid.
     function payGuestThen(a, step) {
-        var map = {}; map[a.name] = { type: S.disc, value: parseFloat(S.dv) || 0, vtype: S.vt === 'percent' ? 'percent' : 'fixed', label: S.disc === 'voucher' ? (S.vl || '') : '' };
+        var map = {}; map[a.name] = { type: S.disc, value: parseFloat(S.dv) || 0, vtype: S.vt === 'percent' ? 'percent' : 'fixed', label: S.disc === 'voucher' ? voucherLabel(S.vs, S.vl) : '', scope: S.vs || 'all' };
         return post('pay_group', a.id, { booking_group: a.group, guest_discounts: JSON.stringify(map), pay_method: S.method }).then(step);
     }
     function methodChips(allowAccount) {
@@ -831,8 +858,10 @@
         W.querySelectorAll('[data-sdone]').forEach(function (bt) { bt.onclick = function () { post('complete_session', a.id, { session_id: bt.dataset.sdone }); }; });
         W.querySelectorAll('[data-pn]').forEach(function (bt) { bt.onclick = function () { S.payNow = bt.dataset.pn === '1'; renderDrawer(); }; });
         W.querySelectorAll('[data-disc]').forEach(function (bt) { bt.onclick = function () { S.disc = bt.dataset.disc; S.dv = ''; renderDrawer(); }; });
+        W.querySelectorAll('[data-dp]').forEach(function (bt) { bt.onclick = function () { S.dp = Math.max(1, Math.min(a.people, (S.dp || 1) + +bt.dataset.dp)); renderDrawer(); }; });
         W.querySelectorAll('[data-vt]').forEach(function (bt) { bt.onclick = function () { S.vt = bt.dataset.vt; renderDrawer(); }; });
         var vlEl = $('dkVl'); if (vlEl) vlEl.oninput = function () { S.vl = vlEl.value; };
+        W.querySelectorAll('[data-vs]').forEach(function (bt) { bt.onclick = function () { S.vs = bt.dataset.vs; renderDrawer(); }; });
         var dvEl = $('dkDv'); if (dvEl) dvEl.oninput = function () { S.dv = dvEl.value; var g = $('dkGo'), a2 = byId(S.open); if (g && a2) g.textContent = goLabel(a2); };
         W.querySelectorAll('[data-pm]').forEach(function (bt) { bt.onclick = function () { S.method = bt.dataset.pm; renderDrawer(); }; });
 
@@ -852,7 +881,7 @@
                 if (S.payNow && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
                 if (S.payNow && sibsOwe(a).length) return payGuestThen(a, function () { return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true); });
                 if (!S.payNow && sibs(a).length) return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
-                return post('checkin_appointment', a.id, { pay_choice: S.payNow ? 'now' : 'later', pay_method: S.method || 'cash', discount_type: S.payNow && !b.paid ? S.disc : 'none', voucher_type: S.vt === 'percent' ? 'percent' : 'fixed', voucher_value: S.payNow ? (parseFloat(S.dv) || 0) : 0, voucher_label: S.disc === 'voucher' ? (S.vl || '') : '' }, false, true);
+                return post('checkin_appointment', a.id, { pay_choice: S.payNow ? 'now' : 'later', pay_method: S.method || 'cash', discount_type: S.payNow && !b.paid ? S.disc : 'none', voucher_type: S.vt === 'percent' ? 'percent' : 'fixed', voucher_value: S.payNow ? (parseFloat(S.dv) || 0) : 0, voucher_label: S.disc === 'voucher' ? voucherLabel(S.vs, S.vl) : '', voucher_scope: S.vs || 'all', discount_people: a.people > 1 ? Math.min(S.dp || 1, a.people) : 0 }, false, true);
             }
             if (na.k === 'start') {
                 var m3 = missing(a, true); if (m3.length) return err('Choose a ' + m3.join(', ') + ' first.');
@@ -877,7 +906,7 @@
                 });
                 return post('complete', a.id, {
                     complete_pay_method: S.method || 'cash', complete_unpaid_billto: ($('dkBill') || {}).value || '',
-                    complete_disc_type: b.paid ? 'none' : S.disc, complete_voucher_type: S.vt === 'percent' ? 'percent' : 'cash', complete_voucher_value: b.paid ? 0 : (parseFloat(S.dv) || 0), voucher_label: !b.paid && S.disc === 'voucher' ? (S.vl || '') : '',
+                    complete_disc_type: b.paid ? 'none' : S.disc, discount_people: a.people > 1 ? Math.min(S.dp || 1, a.people) : 0, complete_voucher_type: S.vt === 'percent' ? 'percent' : 'cash', complete_voucher_value: b.paid ? 0 : (parseFloat(S.dv) || 0), voucher_label: !b.paid && S.disc === 'voucher' ? voucherLabel(S.vs, S.vl) : '', voucher_scope: S.vs || 'all',
                     celebration_discount: 0, advance_payment: 0
                 }, false, true);
             }
@@ -922,15 +951,17 @@
                 var box = $('dkGrp'); if (!box) return;
                 var G = (data.guests || []).map(function (g) { g.on = true; g.disc = 'none'; g.dv = ''; g.vt = 'fixed'; g.vl = ''; return g; });
                 var method = null;
-                function total() { return G.reduce(function (t, g) { return g.on ? t + Math.max(0, g.subtotal - discAmt(g.subtotal, g) - (g.advance || 0)) : t; }, 0); }
+                function gElig(g) { return g.disc === 'voucher' ? (g.elig || {})[g.vs || 'all'] : g.eligible; }
+                function total() { return G.reduce(function (t, g) { return g.on ? t + Math.max(0, g.subtotal - discAmt(g.subtotal, g, gElig(g)) - (g.advance || 0)) : t; }, 0); }
                 function draw() {
                     if (!G.length) { box.innerHTML = '<p class="dk-hint">Everyone in this group has already paid.</p>'; return; }
                     box.innerHTML = G.map(function (g, i) {
-                        return '<div><label class="dk-lbl"><input type="checkbox" data-gi="' + i + '"' + (g.on ? ' checked' : '') + '> ' + esc(g.name) + ' · ' + peso(g.subtotal) + (g.advance > 0 ? ' · advance −' + peso(g.advance) : '') + '</label><div class="dk-bar">' +
+                        return '<div><label class="dk-lbl"><input type="checkbox" data-gi="' + i + '"' + (g.on ? ' checked' : '') + '> ' + esc(g.name) + ' · ' + peso(g.subtotal) + (g.advance > 0 ? ' · advance −' + peso(g.advance) : '') + (g.disc !== 'none' && g.disc !== 'celebration' && gElig(g) < g.subtotal - 0.005 ? ' · discount on ' + peso(gElig(g)) + (g.disc === 'voucher' ? ' (' + esc(VSCOPES[g.vs || 'all']) + ')' : ' (no Daytime, nails, lash)') : '') + '</label><div class="dk-bar">' +
                             DISC.map(function (d) { return '<button type="button" class="dk-chip sm' + (g.disc === d[0] ? ' sel' : '') + '" data-gd="' + i + ',' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</div>' +
                             (g.disc === 'voucher' || g.disc === 'celebration' ? '<div class="dk-bar" style="margin-top:0.3rem;"><input type="number" min="0" data-gv="' + i + '" value="' + esc(g.dv) + '" placeholder="' + (g.disc === 'celebration' ? 'Celebration %' : (g.vt === 'percent' ? 'Voucher %' : 'Voucher ₱')) + '" style="max-width:130px;">' +
                                 (g.disc === 'voucher' ? '<button type="button" class="dk-chip sm' + (g.vt !== 'percent' ? ' sel' : '') + '" data-gvt="' + i + ',fixed">₱ off</button><button type="button" class="dk-chip sm' + (g.vt === 'percent' ? ' sel' : '') + '" data-gvt="' + i + ',percent">% off</button>' +
-                                    '<input type="text" maxlength="100" data-gvl="' + i + '" value="' + esc(g.vl) + '" placeholder="Voucher type (e.g. Gift Card)" style="flex:1 1 160px;min-width:0;" aria-label="Voucher type">' : '') + '</div>' : '') +
+                                    '<input type="text" maxlength="60" data-gvl="' + i + '" value="' + esc(g.vl) + '" placeholder="Voucher no. (optional)" style="flex:1 1 160px;min-width:0;" aria-label="Voucher number">' : '') + '</div>' +
+                                (g.disc === 'voucher' ? '<div class="dk-bar" style="margin-top:0.3rem;">' + Object.keys(VSCOPES).map(function (k) { return '<button type="button" class="dk-chip sm' + ((g.vs || 'all') === k ? ' sel' : '') + '" data-gvs="' + i + ',' + k + '">' + esc(VSCOPES[k]) + '</button>'; }).join('') + '</div>' : '') : '') +
                             '</div>';
                     }).join('') +
                     '<div class="dk-bar">' + PAYS.map(function (p) { return '<button type="button" class="dk-chip sm' + (method === p[0] ? ' sel' : '') + '" data-gm="' + p[0] + '">' + p[1] + '</button>'; }).join('') + '</div>' +
@@ -941,9 +972,10 @@
                     box.querySelectorAll('[data-gv]').forEach(function (c) { c.oninput = function () { G[+c.dataset.gv].dv = c.value; $('dkGrpPay').textContent = 'Record ' + peso(total()) + ' for the group'; }; });
                     box.querySelectorAll('[data-gm]').forEach(function (c) { c.onclick = function () { method = c.dataset.gm; draw(); }; });
                     box.querySelectorAll('[data-gvl]').forEach(function (c) { c.oninput = function () { G[+c.dataset.gvl].vl = c.value; }; });
+                    box.querySelectorAll('[data-gvs]').forEach(function (c) { c.onclick = function () { var p = c.dataset.gvs.split(','); G[+p[0]].vs = p[1]; draw(); }; });
                     $('dkGrpPay').onclick = function () {
                         var map = {}, need = null;
-                        G.forEach(function (g) { if (!g.on) return; if (discNeedsValue(g)) need = g.name; map[g.name] = { type: g.disc, value: parseFloat(g.dv) || 0, vtype: g.vt, label: g.disc === 'voucher' ? g.vl : '' }; });
+                        G.forEach(function (g) { if (!g.on) return; if (discNeedsValue(g)) need = g.name; map[g.name] = { type: g.disc, value: parseFloat(g.dv) || 0, vtype: g.vt, label: g.disc === 'voucher' ? voucherLabel(g.vs, g.vl) : '', scope: g.vs || 'all' }; });
                         if (need) return ($('dkErr').textContent = 'Type the discount amount for ' + need + '.');
                         if (!Object.keys(map).length) return ($('dkErr').textContent = 'Tick at least one guest.');
                         if (!method) return ($('dkErr').textContent = 'Choose a payment method.');

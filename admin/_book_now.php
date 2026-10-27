@@ -594,7 +594,13 @@ function book_now_group_bill(mysqli $conn, string $group): array {
     $guests = [];
     foreach ($rows as $r) {
         $name = $r['customer_name'] ?: 'Guest';
-        if (!isset($guests[$name])) $guests[$name] = ['name' => $name, 'services' => [], 'subtotal' => 0.0, 'advance' => 0.0];
+        if (!isset($guests[$name])) $guests[$name] = ['name' => $name, 'services' => [], 'subtotal' => 0.0, 'advance' => 0.0, 'eligible' => 0.0,
+                                                      'elig' => array_fill_keys(array_keys(VOUCHER_SCOPES), 0.0)];
+        // What each discount can apply to: Senior/PWD/Staff, and each voucher kind.
+        if (!$r['order_paid']) {
+            $guests[$name]['eligible'] += appt_discount_eligible($conn, (int)$r['appt_id'], (float)$r['total_amount'], true, 0, 'senior');
+            foreach (array_keys(VOUCHER_SCOPES) as $vs) $guests[$name]['elig'][$vs] += appt_discount_eligible($conn, (int)$r['appt_id'], (float)$r['total_amount'], true, 0, 'voucher', $vs);
+        }
         $amt = ($r['order_paid'] ? 0.0 : (float)$r['total_amount']) + (float)$r['extras'];
         // An advance paid at booking (calendar) is already collected: the
         // discount is on the full price, then the advance comes off.
@@ -636,21 +642,29 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
     // Normalise each guest's discount to [type, percent, fixed ₱].
-    $spec = []; $vlabel = [];
+    $spec = []; $vlabel = []; $vscope = [];
     foreach ($discounts as $name => $d) {
         $type = is_array($d) ? (string)($d['type'] ?? 'none') : (string)$d;
+        $vscope[$name] = is_array($d) && array_key_exists((string)($d['scope'] ?? ''), VOUCHER_SCOPES) ? (string)$d['scope'] : 'all';
         $val  = is_array($d) ? max(0.0, (float)($d['value'] ?? 0)) : 0.0;
         $vt   = is_array($d) && ($d['vtype'] ?? '') === 'percent' ? 'percent' : 'fixed';
-        $vlabel[$name] = is_array($d) && $type === 'voucher' ? (string)($d['label'] ?? '') : '';
+        $vlabel[$name] = is_array($d) && $type === 'voucher' ? (trim((string)($d['label'] ?? '')) ?: VOUCHER_SCOPES[$vscope[$name]]) : '';
         if (array_key_exists($type, BOOK_NOW_DISCOUNTS))      $spec[$name] = [$type, BOOK_NOW_DISCOUNTS[$type], 0.0];
         elseif ($type === 'celebration' && $val > 0)          $spec[$name] = ['celebration', min(100.0, $val), 0.0];
         elseif ($type === 'voucher' && $val > 0)              $spec[$name] = $vt === 'percent' ? ['voucher', min(100.0, $val), 0.0] : ['voucher', 0.0, $val];
         else                                                  $spec[$name] = ['none', 0, 0.0];
     }
-    $guest_base = [];
+    $guest_base = []; $elig = [];
     // An order already paid only owes its unpaid add-ons; its own payment
     // and discount stay as recorded (no new discount on those add-ons).
-    foreach ($rows as $r) { if ($r['order_paid']) continue; $n = $r['customer_name'] ?: 'Guest'; $guest_base[$n] = ($guest_base[$n] ?? 0) + (float)$r['total_amount'] + (float)$r['extras']; }
+    // Senior / PWD / Staff leave out excluded services, a voucher counts only
+    // the services of its kind (config.php).
+    foreach ($rows as $r) {
+        if ($r['order_paid']) continue;
+        $n = $r['customer_name'] ?: 'Guest';
+        $elig[$r['appt_id']] = appt_discount_eligible($conn, (int)$r['appt_id'], (float)$r['total_amount'], true, 0, $spec[$n][0] ?? 'none', $vscope[$n] ?? 'all');
+        $guest_base[$n] = ($guest_base[$n] ?? 0) + $elig[$r['appt_id']];
+    }
 
     $paid_total = 0.0; $paid_guests = [];
     $conn->begin_transaction();
@@ -667,9 +681,10 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
                 continue;
             }
             $base = (float)$r['total_amount'] + (float)$r['extras'];
+            $eb   = $dkey === 'celebration' ? $base : min($base, $elig[$r['appt_id']] ?? $base);
             $disc = $fixed > 0
-                ? round(min($fixed, $guest_base[$name]) * ($guest_base[$name] > 0 ? $base / $guest_base[$name] : 0), 2)
-                : round($base * $pct / 100, 2);
+                ? round(min($fixed, $guest_base[$name]) * ($guest_base[$name] > 0 ? $eb / $guest_base[$name] : 0), 2)
+                : round($eb * $pct / 100, 2);
             $disc = min($disc, $base);
             $final = max(0.0, $base - $disc);
 

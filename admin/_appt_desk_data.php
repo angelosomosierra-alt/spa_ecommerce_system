@@ -126,9 +126,14 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
 
         // Add-ons: a multi-session add-on is one row per session sharing an
         // extra_group_id. Shown as one add-on with its sessions.
-        $addons = []; $extras_unpaid = 0.0; $extras_all = 0.0;
+        $addons = []; $extras_unpaid = 0.0; $extras_all = 0.0; $extras_elig = 0.0;
+        $velig = [];
+        foreach (array_keys(VOUCHER_SCOPES) as $vs) $velig[$vs] = service_in_voucher_scope($r['category_name'] ?? '', $r['service_name'] ?? '', $vs) ? (float)$r['total_amount'] : 0.0;
         foreach ($extras[$id] ?? [] as $e) {
             $extras_all += (float)$e['charged_price'];
+            $e_nodisc = service_discount_excluded($e['category_name'], $e['name']);
+            if (!$e_nodisc) $extras_elig += (float)$e['charged_price'];
+            foreach (array_keys(VOUCHER_SCOPES) as $vs) if (service_in_voucher_scope($e['category_name'], $e['name'], $vs)) $velig[$vs] += (float)$e['charged_price'];
             if ($e['payment_status'] !== 'paid') $extras_unpaid += (float)$e['charged_price'];
             $key = ((int)$e['total_sessions'] > 1 && $e['extra_group_id']) ? 'g' . $e['extra_group_id'] : 'e' . $e['id'];
             if (!isset($addons[$key])) {
@@ -138,6 +143,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                     'person' => $e['person_label'], 'rows' => [],
                     'med' => service_is_medical($conn, (int)$e['service_id']),
                     'topup' => !empty($e['is_upgrade_topup']),
+                    'nodisc' => $e_nodisc,
                 ];
             }
             $addons[$key]['price'] += (float)$e['charged_price'];
@@ -193,6 +199,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                 'res' => book_now_resource_type($r['category_name']),
                 'qual' => $qual((int)$r['service_id']),
                 'med' => service_is_medical($conn, (int)$r['service_id']),
+                'nodisc' => service_discount_excluded($r['category_name'] ?? '', $r['service_name'] ?? ''),
             ],
             'slots' => $slots[$id] ?? [],
             'resource_id' => $r['resource_id'] !== null ? (int)$r['resource_id'] : null,
@@ -212,6 +219,9 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                 'paid' => $paid, 'paid_amount' => $paid ? (float)$r['final_amount'] : 0.0,
                 'method' => $r['paymongo_method'] ?: $r['payment_method'],
                 'due' => round($due, 2),
+                // What Senior / PWD / Staff / Voucher can apply to (all people).
+                'velig' => array_map(fn($v) => round($v, 2), $velig), // each voucher kind
+                'eligible' => round((service_discount_excluded($r['category_name'] ?? '', $r['service_name'] ?? '') ? 0.0 : $order_total) + $extras_elig, 2),
             ],
         ];
     }

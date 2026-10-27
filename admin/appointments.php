@@ -1338,17 +1338,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
 
                     if ($o_row) {
                         $orig = floatval($o_row['total_amount']);
-                        if ($disc_type === 'senior' || $disc_type === 'pwd') {
-                            $disc_amt = round($orig * 0.20, 2);
-                        } elseif ($disc_type === 'employee') {
-                            $disc_amt = round($orig * STAFF_DISCOUNT_PCT / 100, 2);
-                        } elseif ($disc_type === 'voucher' && $disc_value > 0) {
-                            $disc_amt = $disc_voucher_type === 'percent'
-                                ? round($orig * ($disc_value / 100), 2)
-                                : min($disc_value, $orig);
-                        } else {
-                            $disc_amt = 0.00;
-                        }
+                        // Not on excluded services (see config.php).
+                        $disc_elig = appt_discount_eligible($conn, $appt_id, $orig, true, 0, $disc_type, voucher_scope_from_post());
+                        $disc_amt = in_array($disc_type, PERSON_DISCOUNT_TYPES, true)
+                            ? person_discount_amount($disc_type, $orig, min($disc_elig, $orig), (float)$disc_value, $disc_voucher_type === 'percent' ? 'percent' : 'fixed')
+                            : 0.00;
                         $final_amt = max(0.00, $orig - $disc_amt);
                         $u = $conn->prepare("UPDATE orders SET discount_type=?, discount_amount=?, final_amount=? WHERE id=?");
                         $u->bind_param("sddi", $disc_type, $disc_amt, $final_amt, $o_row['id']); $u->execute(); $u->close();
@@ -1518,21 +1512,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $ci_extras_total = floatval($ci_es_q->get_result()->fetch_assoc()['t'] ?? 0); $ci_es_q->close();
 
                         $ci_base = floatval($po_row['total_amount']) + $ci_extras_total;
+                        // Senior / PWD / Staff / Voucher: only for the people who
+                        // qualify, and not on excluded services (see config.php).
+                        $ci_people = max(0, (int)($_POST['discount_people'] ?? 0));
+                        $ci_scope = voucher_scope_from_post();
+                        $ci_elig = appt_discount_eligible($conn, $appt_id, floatval($po_row['total_amount']), true, $ci_people, $ci_disc_type, $ci_scope);
                         $ci_disc_amt = 0.00;
-                        if ($ci_disc_type === 'pwd' || $ci_disc_type === 'senior') {
-                            $ci_disc_amt = round($ci_base * 0.20, 2);
-                        } elseif ($ci_disc_type === 'employee') {
-                            $ci_disc_amt = round($ci_base * STAFF_DISCOUNT_PCT / 100, 2);
+                        if ($ci_disc_type === 'pwd' || $ci_disc_type === 'senior' || $ci_disc_type === 'employee') {
+                            $ci_disc_amt = person_discount_amount($ci_disc_type, $ci_base, $ci_elig);
                         } elseif ($ci_disc_type === 'voucher') {
                             $ci_vchr_type  = sanitize_input($_POST['voucher_type']  ?? 'percent');
                             if (!in_array($ci_vchr_type, ['percent', 'fixed'])) $ci_vchr_type = 'percent';
                             $ci_vchr_value = floatval($_POST['voucher_value'] ?? 0);
                             if ($ci_vchr_value > 0) {
-                                if ($ci_vchr_type === 'percent') {
-                                    $ci_disc_amt = round($ci_base * (min($ci_vchr_value, 100) / 100), 2);
-                                } else {
-                                    $ci_disc_amt = round(min($ci_vchr_value, $ci_base), 2);
-                                }
+                                $ci_disc_amt = person_discount_amount('voucher', $ci_base, $ci_elig, $ci_vchr_value, $ci_vchr_type);
                             } else {
                                 $message .= ($message ? ' ' : '') . 'Voucher amount not entered — no discount applied.';
                                 $ci_disc_type = 'none';
@@ -1552,7 +1545,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
                         $u->bind_param("ssddi", $ci_pm, $ci_disc_type, $ci_disc_amt, $ci_final, $po_row['id']);
                         $u->execute(); $u->close();
-                        if ($ci_disc_type === 'voucher') save_voucher_label($conn, (int)$po_row['id'], (string)($_POST['voucher_label'] ?? ''));
+                        if ($ci_disc_type === 'voucher') save_voucher_label($conn, (int)$po_row['id'], trim((string)($_POST['voucher_label'] ?? '')) ?: VOUCHER_SCOPES[$ci_scope]);
 
                         if ($ci_extras_total > 0) {
                             $ci_es_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");
@@ -1737,19 +1730,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     $sv_bdisc = floatval($oi_r2['discount_amount']);
                     $sv_gross = $sv_orig + $sv_extras;
 
-                    // Compute completion discount server-side
-                    $cd_amount = 0.0;
-                    if ($cd_type === 'senior' || $cd_type === 'pwd') {
-                        $cd_amount = round($sv_gross * 0.20, 2);
-                    } elseif ($cd_type === 'employee') {
-                        $cd_amount = round($sv_gross * STAFF_DISCOUNT_PCT / 100, 2);
-                    } elseif ($cd_type === 'celebration' && $cd_vvalue > 0) {
-                        $cd_amount = round($sv_gross * min(100.0, $cd_vvalue) / 100.0, 2);
-                    } elseif ($cd_type === 'voucher' && $cd_vvalue > 0) {
-                        $cd_amount = ($cd_vtype === 'percent')
-                            ? round($sv_gross * min(100.0, $cd_vvalue) / 100.0, 2)
-                            : min($cd_vvalue, $sv_gross);
-                    }
+                    // Compute completion discount server-side. Senior / PWD / Staff /
+                    // Voucher only for the people who qualify and not on excluded
+                    // services (see config.php); Celebration on the whole bill.
+                    $cd_people = max(0, (int)($_POST['discount_people'] ?? 0));
+                    $cd_scope  = voucher_scope_from_post();
+                    $cd_elig   = appt_discount_eligible($conn, $appt_id, $sv_orig, true, $cd_people, $cd_type, $cd_scope);
+                    $cd_amount = $cd_type === 'none' ? 0.0
+                        : person_discount_amount($cd_type, $sv_gross, $cd_elig, $cd_vvalue, $cd_vtype === 'percent' ? 'percent' : 'fixed');
                     // Clamp: completion discount cannot make combined discount exceed gross
                     $cd_amount = max(0.0, min($cd_amount, max(0.0, $sv_gross - $sv_bdisc)));
                     $new_final = max(0.0, $sv_orig + $sv_extras - $sv_bdisc - $cd_amount);
@@ -1762,7 +1750,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $upd_ord = $conn->prepare("UPDATE orders SET payment_status='unpaid', final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
                         $upd_ord->bind_param("dsdsdi", $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
                         $upd_ord->execute(); $upd_ord->close();
-                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], (string)($_POST['voucher_label'] ?? ''));
+                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], trim((string)($_POST['voucher_label'] ?? '')) ?: VOUCHER_SCOPES[$cd_scope]);
 
                         $unpaid_amount = max(0.0, $new_final - floatval($appt['advance_payment'] ?? 0));
                         if ($unpaid_amount > 0) {
@@ -1785,7 +1773,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
                         $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
                         $upd_ord->execute(); $upd_ord->close();
-                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], (string)($_POST['voucher_label'] ?? ''));
+                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], trim((string)($_POST['voucher_label'] ?? '')) ?: VOUCHER_SCOPES[$cd_scope]);
                     }
                 }
 
@@ -5617,7 +5605,7 @@ function gpRender() {
     if (!_gpGuests.length) { box.innerHTML = '<div style="color:var(--gray);font-size:0.82rem;">Everyone in this group has already paid.</div>'; gpTotal(); return; }
     box.innerHTML = _gpGuests.map(function (g, i) {
         var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2];
-        var due = Math.max(0, Math.round(g.subtotal * (100 - pct)) / 100 - (g.advance || 0));
+        var due = Math.max(0, g.subtotal - Math.round((g.eligible !== undefined ? Math.min(g.eligible, g.subtotal) : g.subtotal) * pct) / 100 - (g.advance || 0));
         return '<div style="border:1px solid var(--border2);border-radius:10px;padding:0.6rem 0.75rem;' + (g.on ? '' : 'opacity:0.55;') + '">' +
             '<label style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;font-weight:700;color:var(--brown);cursor:pointer;">' +
             '<span><input type="checkbox" ' + (g.on ? 'checked' : '') + ' onchange="_gpGuests[' + i + '].on=this.checked;gpRender()"> ' + _gpEsc(g.name) + '</span>' +
@@ -5632,7 +5620,7 @@ function gpRender() {
 }
 function gpTotal() {
     var t = 0, any = false;
-    _gpGuests.forEach(function (g) { if (!g.on) return; any = true; var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2]; t += Math.max(0, Math.round(g.subtotal * (100 - pct)) / 100 - (g.advance || 0)); });
+    _gpGuests.forEach(function (g) { if (!g.on) return; any = true; var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2]; t += Math.max(0, g.subtotal - Math.round((g.eligible !== undefined ? Math.min(g.eligible, g.subtotal) : g.subtotal) * pct) / 100 - (g.advance || 0)); });
     document.getElementById('gp-total').textContent = '₱' + t.toFixed(2);
     document.getElementById('gp-submit').disabled = !any;
 }
