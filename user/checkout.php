@@ -2691,7 +2691,9 @@ const BASE_TOTAL_AMOUNT = <?php echo $total_amount; ?>;
 function updateDiscountPreview() {
     const grandEl = document.getElementById('grandTotal');
     if (!grandEl) return;
-    const people = parseInt(document.getElementById('people_count')?.value || 1) || 1;
+    // Products: the server total (price × quantity of every item) stands.
+    <?php if ($checkout_type !== 'service'): ?>return;<?php endif; ?>
+    const people =parseInt(document.getElementById('people_count')?.value || 1) || 1;
     const homeFeeRow = document.getElementById('homeFeeRow');
     const isHome = homeFeeRow && homeFeeRow.style.display !== 'none';
     const basePerPerson = isHome ? HOME_PRICE : BASE_PRICE;
