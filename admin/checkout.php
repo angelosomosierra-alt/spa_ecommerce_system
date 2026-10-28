@@ -10,6 +10,59 @@ $stmt->execute();
 $user = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
+// ─── POST-REDIRECT-GET: show the success box without the form that made it ──
+// Refreshing (or Back) after a successful order used to resend the same form
+// data and create a duplicate order, since the success box was rendered
+// directly on the POST response. The order-creation code below now redirects
+// here with ?order_success=1 instead, so a refresh just re-GETs this page.
+if (isset($_GET['order_success']) && !empty($_SESSION['checkout_success_flash'])) {
+    $flash = $_SESSION['checkout_success_flash'];
+    unset($_SESSION['checkout_success_flash']);
+    $page_title = 'Checkout';
+    require_once 'header.php';
+    ?>
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@400;500&display=swap');
+    .co-wrap { max-width: 560px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+    .co-success-box { background: #fff; border-radius: 20px; padding: 2.5rem 2rem; text-align: center;
+        box-shadow: 0 8px 40px rgba(59,42,26,0.10); border: 1px solid #EAD8C0; font-family: 'DM Sans', sans-serif; }
+    .co-success-icon { width: 72px; height: 72px; border-radius: 50%; background: linear-gradient(135deg, #d1fae5, #a7f3d0);
+        display: flex; align-items: center; justify-content: center; margin: 0 auto 1.25rem; color: #198754; }
+    </style>
+    <div class="co-wrap">
+        <div class="co-success-box">
+            <div class="co-success-icon"><?php echo spa_icon('check-circle'); ?></div>
+            <h2 style="font-family:'Cormorant Garamond',serif;color:#3B2A1A;margin:0 0 0.5rem;font-size:1.6rem;">Booking Submitted!</h2>
+            <?php if (($flash['checkout_type'] ?? '') === 'service'): ?>
+            <div style="background:#fff8f2;border:2px solid #C96A2C;border-radius:12px;padding:1rem;margin-bottom:1.25rem;text-align:left;">
+                <div style="font-weight:700;color:#C96A2C;font-size:0.92rem;margin-bottom:0.5rem;">Your booking is PENDING approval</div>
+                <ul style="margin:0;padding-left:1.2rem;color:#3B2A1A;font-size:0.85rem;line-height:1.8;">
+                    <li><strong>Do NOT go to the spa yet</strong> until you receive a confirmation</li>
+                    <li>We will review your booking and assign a therapist</li>
+                    <li>You will receive an <strong>email + app notification</strong> once approved</li>
+                    <li>Only proceed to the spa after receiving the approval</li>
+                </ul>
+            </div>
+            <p style="color:#666;font-size:0.85rem;margin-bottom:1.5rem;line-height:1.6;">
+                Booking reference: <strong>#<?php echo (int)($flash['order_id'] ?? 0); ?></strong><br>
+                Check your appointments page for real-time status updates.
+            </p>
+            <?php else: ?>
+            <p style="color:#666;font-size:0.9rem;margin-bottom:1.5rem;line-height:1.6;">
+                Your order #<?php echo (int)($flash['order_id'] ?? 0); ?> has been placed successfully!
+            </p>
+            <?php endif; ?>
+            <a href="appointments.php" style="display:block;padding:0.85rem;background:linear-gradient(135deg,#C96A2C,#a94f1d);
+               color:#fff;border-radius:12px;text-decoration:none;font-weight:700;font-size:0.9rem;margin-bottom:0.6rem;">Track My Appointment</a>
+            <a href="index.php" style="display:block;padding:0.7rem;border:1.5px solid #EAD8C0;color:#888;
+               border-radius:12px;text-decoration:none;font-size:0.85rem;">Back to Home</a>
+        </div>
+    </div>
+    </body></html>
+    <?php
+    exit;
+}
+
 // ─── INITIALIZE CHECKOUT ──────────────────────────────────────────────────────
 $checkout_items = [];
 $checkout_type  = null;
@@ -657,6 +710,13 @@ $payload = json_encode([
                         add_notification($conn, $user_id, 'order', 'Order Placed!', 'Your order #' . $order_id . ' (₱' . number_format($total_amount,2) . ') has been placed.', 'appointments.php#orders');
                         add_notification($conn, null, 'order', 'New Product Order', 'New product order #' . $order_id . ' (₱' . number_format($total_amount,2) . ').', 'orders.php');
                     }
+
+                    // PRG: redirect instead of rendering the success box on this
+                    // same POST response, so refreshing (or Back) can't resubmit
+                    // the form and create a duplicate order.
+                    $_SESSION['checkout_success_flash'] = ['order_id' => $order_id, 'checkout_type' => $checkout_type];
+                    header('Location: ' . BASE_URL . 'admin/checkout.php?order_success=1');
+                    exit;
                 }
             } else {
                 $conn->rollback();

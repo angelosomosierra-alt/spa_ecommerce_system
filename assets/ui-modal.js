@@ -67,3 +67,36 @@
         });
     };
 })();
+
+/* ── Site-wide double-submit guard ──────────────────────────────────────────
+ * A POST form (checkout, book now, pay, approve...) submitted twice —
+ * double-click, double-tap, or the Enter key held — can create a duplicate
+ * order/appointment/payment. This disables the button that was clicked the
+ * instant its form submits, so a second click before the page navigates away
+ * does nothing. A page that opts out (an AJAX form managing its own button
+ * state, a form meant to post more than once) adds data-allow-resubmit to
+ * the <form>. A 10s safety net re-enables the button regardless, so a form
+ * handled by custom JS without a real navigation is never stuck disabled. */
+(function () {
+    'use strict';
+    document.addEventListener('submit', function (e) {
+        var form = e.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        if ((form.method || 'get').toLowerCase() !== 'post') return;
+        if (form.hasAttribute('data-allow-resubmit')) return;
+        if (form.dataset.uimBusy === '1') { e.preventDefault(); e.stopImmediatePropagation(); return; }
+        form.dataset.uimBusy = '1';
+
+        var btn = (e.submitter && form.contains(e.submitter)) ? e.submitter : null;
+        if (!btn) btn = form.querySelector('button[type="submit"]:not([disabled]), input[type="submit"]:not([disabled])');
+        if (btn) {
+            btn.disabled = true;
+            btn.classList.add('_uim_busy');
+        }
+
+        setTimeout(function () {
+            form.dataset.uimBusy = '0';
+            if (btn) btn.disabled = false;
+        }, 10000);
+    }, true);
+})();
