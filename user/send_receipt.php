@@ -123,7 +123,7 @@ function send_order_receipt($conn, $order_id) {
                 <td style='padding:8px 16px;color:#3B2A1A;border-bottom:1px solid #EAD8C0;font-size:13px;'>
                     {$name}
                     <div style='font-size:11px;color:#888;margin-top:2px;'>
-                        📅 {$appt_dt} &nbsp;·&nbsp; {$svc_type} &nbsp;·&nbsp; {$people} pax
+                        {$appt_dt} &nbsp;·&nbsp; {$svc_type} &nbsp;·&nbsp; {$people} pax
                         " . ($duration ? "&nbsp;·&nbsp; {$duration}" : "") . "
                     </div>
                 </td>
@@ -171,7 +171,7 @@ function send_order_receipt($conn, $order_id) {
                     <div style='color:#555;font-size:11px;margin-top:2px;'>" . date('h:i A', strtotime($order['created_at'])) . "</div>
                     <div style='margin-top:6px;'>
                         <span style='background:#" . ($order['payment_status']==='paid' ? 'd4edda;color:#155724' : 'fff3cd;color:#856404') . ";font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;'>
-                            " . ($order['payment_status']==='paid' ? '✅ PAID' : '🏪 PAY AT SPA') . "
+                            " . ($order['payment_status']==='paid' ? 'PAID' : 'PAY AT SPA') . "
                         </span>
                     </div>
                 </td>
@@ -249,14 +249,14 @@ function send_order_receipt($conn, $order_id) {
     <!-- ── REFERENCE ── -->
     " . (!empty($order['paymongo_reference']) ? "
     <div style='margin:0 24px 16px;padding:8px 14px;background:#EAF4FF;border:1px solid #bae6fd;border-radius:8px;font-size:11px;color:#0369a1;'>
-        💳 Payment Reference: <strong style='font-family:monospace;'>{$reference_display}</strong>
+        Payment Reference: <strong style='font-family:monospace;'>{$reference_display}</strong>
     </div>" : "") . "
 
     <!-- ── NEXT STEPS ── -->
     <div style='padding:14px 24px;font-size:12px;color:#888;border-top:1px solid #EAD8C0;'>
         " . ($is_service
-            ? "<p style='margin:0;line-height:1.7;'>📅 Your appointment is <strong>awaiting confirmation</strong>. Please arrive 10 minutes early. Keep this receipt for your records.</p>"
-            : "<p style='margin:0;line-height:1.7;'>🛍️ Your order is pending confirmation. You will be notified when it is ready for pick-up.</p>") . "
+            ? "<p style='margin:0;line-height:1.7;'>Your appointment is <strong>awaiting confirmation</strong>. Please arrive 10 minutes early. Keep this receipt for your records.</p>"
+            : "<p style='margin:0;line-height:1.7;'>Your order is pending confirmation. You will be notified when it is ready for pick-up.</p>") . "
     </div>
 
     <!-- ── FOOTER ── -->

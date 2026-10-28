@@ -598,7 +598,7 @@ if ($rib) { while (count($rib) < 8) $rib = array_merge($rib, $rib); }
             <article class="rx-card">
                 <div class="rx-ph">
                     <?php if ($c['image'] !== ''): ?><img src="<?php echo home_h($img_svc($c['image'])); ?>" alt="<?php echo home_h($c['name']); ?>" loading="lazy" onerror="this.remove()"><?php endif; ?>
-                    <?php if ($c['image'] === ''): ?><div class="rx-nopic">💆<small>Photo coming soon</small></div><?php endif; ?>
+                    <?php if ($c['image'] === ''): ?><div class="rx-nopic"><?php echo spa_icon('leaf'); ?><small>Photo coming soon</small></div><?php endif; ?>
                     <?php if ($c['promo']): ?><span class="rx-badge hot">Promo</span><?php elseif ($c['top']): ?><span class="rx-badge hot">Most booked</span><?php endif; ?>
                     <?php if ($c['sessions'] > 1): ?><span class="rx-badge sess">1–<?php echo (int)$c['sessions']; ?> sessions</span><?php endif; ?>
                 </div>
@@ -631,7 +631,7 @@ if ($rib) { while (count($rib) < 8) $rib = array_merge($rib, $rib); }
             <?php foreach ($best_products as $k => $prd): $oos = (int)$prd['stock'] <= 0; ?>
             <article class="rx-card">
                 <div class="rx-ph">
-                    <?php if (!empty($prd['image'])): ?><img src="<?php echo home_h($img_prd($prd['image'])); ?>" alt="<?php echo home_h($prd['name']); ?>" loading="lazy" onerror="this.remove()"><?php else: ?><div class="rx-nopic">🧴<small>Photo coming soon</small></div><?php endif; ?>
+                    <?php if (!empty($prd['image'])): ?><img src="<?php echo home_h($img_prd($prd['image'])); ?>" alt="<?php echo home_h($prd['name']); ?>" loading="lazy" onerror="this.remove()"><?php else: ?><div class="rx-nopic"><?php echo spa_icon('bottle'); ?><small>Photo coming soon</small></div><?php endif; ?>
                     <?php if ($k === 0 && (int)($prd['sold_count'] ?? 0) > 0): ?><span class="rx-badge hot">Bestseller</span><?php endif; ?>
                     <?php if ($oos): ?><div class="rx-oos">Out of stock</div><?php endif; ?>
                 </div>
@@ -724,10 +724,10 @@ if ($rib) { while (count($rib) < 8) $rib = array_merge($rib, $rib); }
             <h3 class="section-title-spa" style="margin-bottom:0;">Our <em>Values</em></h3>
         </div>
         <div class="values-grid">
-            <div class="value-card"><span class="vi">🌿</span><h3>Natural Wellness</h3><p>We use all-natural, skin-safe ingredients in every treatment and product we offer.</p></div>
-            <div class="value-card"><span class="vi">🤝</span><h3>Genuine Care</h3><p>Our team treats every client like family — with warmth, patience, and personal attention.</p></div>
-            <div class="value-card"><span class="vi">✨</span><h3>Excellence</h3><p>From the ambiance to the techniques we use, we hold ourselves to the highest standards.</p></div>
-            <div class="value-card"><span class="vi">🔒</span><h3>Trust &amp; Safety</h3><p>Your comfort and safety are always our top priority — in every session, every visit.</p></div>
+            <div class="value-card"><span class="vi"><?php echo spa_icon('leaf'); ?></span><h3>Natural Wellness</h3><p>We use all-natural, skin-safe ingredients in every treatment and product we offer.</p></div>
+            <div class="value-card"><span class="vi"><?php echo spa_icon('handshake'); ?></span><h3>Genuine Care</h3><p>Our team treats every client like family — with warmth, patience, and personal attention.</p></div>
+            <div class="value-card"><span class="vi"><?php echo spa_icon('sparkle'); ?></span><h3>Excellence</h3><p>From the ambiance to the techniques we use, we hold ourselves to the highest standards.</p></div>
+            <div class="value-card"><span class="vi"><?php echo spa_icon('lock'); ?></span><h3>Trust &amp; Safety</h3><p>Your comfort and safety are always our top priority — in every session, every visit.</p></div>
         </div>
     </div></div>
 </section>
@@ -746,10 +746,10 @@ if ($rib) { while (count($rib) < 8) $rib = array_merge($rib, $rib); }
                 <div class="contact-info-block">
                     <h3 class="section-title-spa" style="font-size:1.6rem;margin-bottom:0.5rem;">Visit Us or<br><em>Send a Message</em></h3>
                     <p style="color:var(--brown-md);font-size:1rem;line-height:1.7;margin-bottom:0.5rem;">We're located in the heart of Iloilo City. Walk in anytime, or send us a message and we'll get back to you.</p>
-                    <div class="contact-detail"><div class="contact-icon">📍</div><div><h4>Our Location</h4><p>G&amp;R Building, M.H. Del Pilar Street, Molo, Iloilo City</p></div></div>
-                    <div class="contact-detail"><div class="contact-icon">📞</div><div><h4>Phone / Viber</h4><a href="tel:+639853359998">+639853359998</a></div></div>
-                    <div class="contact-detail"><div class="contact-icon">✉️</div><div><h4>Email</h4><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></div></div>
-                    <div class="contact-detail"><div class="contact-icon">📱</div><div><h4>Social Media</h4><p><a class="social-link" href="https://www.facebook.com/RecoveryIloilo" target="_blank" rel="noopener noreferrer">Facebook: Recovery Spa Iloilo</a><br><a class="social-link" href="https://www.instagram.com/recoveryiloilo/" target="_blank" rel="noopener noreferrer">Instagram: @recoveryiloilo</a></p></div></div>
+                    <div class="contact-detail"><div class="contact-icon"><?php echo spa_icon('pin'); ?></div><div><h4>Our Location</h4><p>G&amp;R Building, M.H. Del Pilar Street, Molo, Iloilo City</p></div></div>
+                    <div class="contact-detail"><div class="contact-icon"><?php echo spa_icon('phone'); ?></div><div><h4>Phone / Viber</h4><a href="tel:+639853359998">+639853359998</a></div></div>
+                    <div class="contact-detail"><div class="contact-icon">✉</div><div><h4>Email</h4><a href="mailto:recoveryiloiloph@gmail.com">recoveryiloiloph@gmail.com</a></div></div>
+                    <div class="contact-detail"><div class="contact-icon"><?php echo spa_icon('mobile'); ?></div><div><h4>Social Media</h4><p><a class="social-link" href="https://www.facebook.com/RecoveryIloilo" target="_blank" rel="noopener noreferrer">Facebook: Recovery Spa Iloilo</a><br><a class="social-link" href="https://www.instagram.com/recoveryiloilo/" target="_blank" rel="noopener noreferrer">Instagram: @recoveryiloilo</a></p></div></div>
                 </div>
                 <div class="hours-box">
                     <h4>Operating Hours</h4>
@@ -761,21 +761,21 @@ if ($rib) { while (count($rib) < 8) $rib = array_merge($rib, $rib); }
             <div class="contact-form-card">
                 <?php if ($contact_sent): ?>
                 <div class="contact-success">
-                    <span>✅</span>
+                    <span><?php echo spa_icon('check-circle'); ?></span>
                     <h3>Message Sent!</h3>
                     <p>Thank you for reaching out. We'll get back to you shortly.</p>
                 </div>
                 <?php else: ?>
                 <h3>Send Us a Message</h3>
                 <p>Have questions? We'd love to hear from you.</p>
-                <?php if ($contact_error): ?><div class="alert-form-error">⚠️ <?php echo htmlspecialchars($contact_error); ?></div><?php endif; ?>
+                <?php if ($contact_error): ?><div class="alert-form-error">⚠ <?php echo htmlspecialchars($contact_error); ?></div><?php endif; ?>
                 <form method="POST">
                     <div class="cf-row">
                         <div class="cf-group"><label>Your Name *</label><input type="text" name="cf_name" required placeholder="Juan dela Cruz"></div>
                         <div class="cf-group"><label>Email *</label><input type="email" name="cf_email" required placeholder="you@email.com"></div>
                     </div>
                     <div class="cf-group"><label>Message *</label><textarea name="cf_message" required placeholder="Write your message here..."></textarea></div>
-                    <button type="submit" name="send_message" class="btn-send">✉️ Send Message</button>
+                    <button type="submit" name="send_message" class="btn-send">✉ Send Message</button>
                 </form>
                 <?php endif; ?>
             </div>

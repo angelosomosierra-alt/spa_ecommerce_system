@@ -248,7 +248,7 @@ require_once 'header.php';
                     border-radius:10px;border:1px solid #EAD8C0;">
             <div style="font-size:0.72rem;font-weight:700;color:#888;
                         text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">
-                💆 Service Rating
+                Service Rating
             </div>
             <div style="display:flex;gap:3px;margin-bottom:0.4rem;">
                 <?php for ($i = 1; $i <= 5; $i++): ?>
@@ -272,7 +272,7 @@ require_once 'header.php';
         <div style="margin-bottom:1.25rem;">
             <div style="font-size:0.72rem;font-weight:700;color:#888;
                         text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">
-                👤 Therapist Ratings
+                Therapist Ratings
             </div>
             <?php foreach ($assigned_therapists as $th):
                 $tr = $existing_therapist_ratings[$th['therapist_id']] ?? null;
@@ -336,7 +336,7 @@ require_once 'header.php';
                         border-radius:12px;border:1px solid #EAD8C0;">
                 <div style="font-size:0.72rem;font-weight:700;color:#888;
                             text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.65rem;">
-                    💆 <?php echo $type === 'appointment' ? 'Service Rating' : 'Product Rating'; ?>
+                    <?php echo $type === 'appointment' ? 'Service Rating' : 'Product Rating'; ?>
                     <span style="color:red;">*</span>
                 </div>
                 <div id="star-row" style="display:flex;gap:6px;margin-bottom:4px;">
@@ -371,7 +371,7 @@ require_once 'header.php';
             <div style="margin-bottom:1.5rem;">
                 <div style="font-size:0.72rem;font-weight:700;color:#888;
                             text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">
-                    👤 Rate Your Therapist<?php echo count($assigned_therapists)>1?'s':''; ?>
+                    Rate Your Therapist<?php echo count($assigned_therapists)>1?'s':''; ?>
                 </div>
                 <?php foreach ($assigned_therapists as $idx => $th): ?>
                 <div style="padding:1rem;background:#FAF3E8;border-radius:12px;

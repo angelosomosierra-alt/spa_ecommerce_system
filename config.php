@@ -1460,3 +1460,45 @@ function get_customer_categories_with_counts($conn, string $type): array {
     $stmt->close();
     return $rows;
 }
+
+// ─── MONOCHROME ICONS ─────────────────────────────────────────────────────────
+// Inline-SVG replacements for emoji that had no accompanying text label (so the
+// icon itself was the only thing identifying what a control/indicator meant).
+// All inherit color/size from their surrounding text via currentColor + 1em.
+function spa_icon(string $name, string $class = ''): string {
+    $paths = [
+        'calendar'  => '<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>',
+        'user'      => '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5c0-4.2 3.4-6.8 7.5-6.8s7.5 2.6 7.5 6.8"/>',
+        'building'  => '<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7.5h2M14 7.5h2M8 12h2M14 12h2M8 16.5h2M14 16.5h2"/>',
+        'home'      => '<path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v10h12V10"/><path d="M10 20v-6h4v6"/>',
+        'chat'      => '<path d="M4 5h16v11H9l-4 4v-4H4z"/>',
+        'card'      => '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10.5h18"/>',
+        'store'     => '<path d="M4 9.5 5.5 4h13L20 9.5"/><path d="M4 9.5v10.5h16V9.5"/><path d="M4 9.5c0 1.8 1.6 3.2 3.4 3.2s3.4-1.4 3.4-3.2M10.8 9.5c0 1.8 1.6 3.2 3.4 3.2s3.4-1.4 3.4-3.2"/><path d="M9.5 20v-5h5v5"/>',
+        'bag'       => '<path d="M6 8h12l1 12.5H5z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>',
+        'cart'      => '<path d="M3 4h2.5l1.2 2M5.7 6h14.3l-1.8 8H8z"/><circle cx="9" cy="19.5" r="1.3"/><circle cx="17" cy="19.5" r="1.3"/>',
+        'leaf'      => '<path d="M19 4C9 4 5 10 5 16c0 2 1 3 3 3 6 0 12-4 12-14 0-.4 0-.7-.2-1z"/><path d="M8 19c2-4 5-8 10-12.5"/>',
+        'handshake' => '<path d="M2.5 11.5 7 8l3.2 2.6 2-1.6a2 2 0 0 1 2.6.1l4.2 3.9"/><path d="M8.5 13.3 11 15.6a1.7 1.7 0 0 0 2.4-.1 1.7 1.7 0 0 0 0-2.4M12.2 16.9a1.7 1.7 0 0 0 2.4 0l.7-.7a1.7 1.7 0 0 0 0-2.4"/><path d="M19.5 14.3 21.5 12M2.5 11.5 4.3 13.6"/>',
+        'sparkle'   => '<path d="M12 3v4M12 17v4M4.5 12h4M15.5 12h4M6.5 6.5l2.3 2.3M15.2 15.2l2.3 2.3M17.5 6.5l-2.3 2.3M8.8 15.2l-2.3 2.3"/><circle cx="12" cy="12" r="2"/>',
+        'lock'      => '<rect x="5" y="11" width="14" height="10" rx="1.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/>',
+        'pin'       => '<path d="M12 21s7-6.6 7-11.5A7 7 0 0 0 5 9.5C5 14.4 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+        'phone'     => '<path d="M5 4.5h3.5l1.5 4-2 1.6a12 12 0 0 0 6 6l1.6-2 4 1.5V19c0 1-.9 1.8-1.9 1.6C10.5 19.4 4.6 13.5 3.4 6.4 3.2 5.4 4 4.5 5 4.5z"/>',
+        'mobile'    => '<rect x="6.5" y="2.5" width="11" height="19" rx="2"/><path d="M10.5 18.5h3"/>',
+        'mail'      => '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5l8.5 7 8.5-7"/>',
+        'bell'      => '<path d="M6 10a6 6 0 1 1 12 0c0 3.2 1 5 2 6.5H4c1-1.5 2-3.3 2-6.5z"/><path d="M10 19.5a2 2 0 0 0 4 0"/>',
+        'hourglass' => '<path d="M6 3h12M6 21h12"/><path d="M7 3c0 4 3 5 5 6-2 1-5 2-5 6M17 3c0 4-3 5-5 6 2 1 5 2 5 6"/>',
+        'receipt'   => '<path d="M6 2.5h12v19l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5-2 1.5z"/><path d="M8.5 7h7M8.5 10.5h7M8.5 14h4.5"/>',
+        'key'       => '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16.5 6.5l2.5 2.5M13.5 9.5l2 2"/>',
+        'eye'       => '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+        'eye-off'   => '<path d="M3.5 3.5l17 17"/><path d="M10.6 5.7c.45-.1.92-.2 1.4-.2 6 0 9.5 6.5 9.5 6.5s-1.1 2-3.1 3.7M6.8 7.1C4.6 8.7 2.5 12 2.5 12s3.5 6.5 9.5 6.5c1.3 0 2.5-.3 3.6-.8M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+        'x-circle'  => '<circle cx="12" cy="12" r="9.5"/><path d="M9 9l6 6M15 9l-6 6"/>',
+        'check-circle' => '<circle cx="12" cy="12" r="9.5"/><path d="M8 12.5l2.8 2.8L16.5 9"/>',
+        'door'      => '<rect x="5" y="2.5" width="14" height="19" rx="1"/><circle cx="14.5" cy="12" r="1"/>',
+        'paperclip' => '<path d="M17 7.5 8.8 15.7a3.2 3.2 0 0 0 4.5 4.5l7-7a5 5 0 0 0-7-7l-7.3 7.3a6.8 6.8 0 0 0 9.6 9.6"/>',
+        'bottle'    => '<path d="M10 2.5h4v3.2l1.8 2.3v12.5a1.5 1.5 0 0 1-1.5 1.5h-4.6A1.5 1.5 0 0 1 8.2 20.5V8l1.8-2.3z"/><path d="M8.2 11.5h7.6"/>',
+    ];
+    $inner = $paths[$name] ?? $paths['sparkle'];
+    $cls = $class !== '' ? ' ' . htmlspecialchars($class, ENT_QUOTES) : '';
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em" '
+         . 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" '
+         . 'style="vertical-align:-0.15em" aria-hidden="true" class="spa-icon' . $cls . '">' . $inner . '</svg>';
+}

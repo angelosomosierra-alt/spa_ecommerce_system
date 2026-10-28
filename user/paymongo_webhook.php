@@ -313,12 +313,12 @@ if ($type === 'checkout_session.payment.paid') {
                     $svc->close();
 
                     add_notification($conn, (int)$order['user_id'], $is_svc ? 'appointment' : 'order',
-                        '💳 Payment Confirmed!',
+                        'Payment Confirmed!',
                         'Your online payment for order #' . $order_id . ' was successful. Awaiting admin approval.',
                         $is_svc ? 'appointments.php' : 'appointments.php#orders'
                     );
                     add_notification($conn, null, $is_svc ? 'appointment' : 'order',
-                        '💳 New Online Payment',
+                        'New Online Payment',
                         'Order #' . $order_id . ' (₱' . number_format($order['total_amount'], 2) . ') paid online. Ref: ' . $paymongo_ref,
                         $is_svc ? 'appointments.php' : 'orders.php'
                     );

@@ -201,7 +201,7 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
     function card(p) {
         var oos = p.stock <= 0;
         return '<button type="button" class="sv-card" id="prd-' + p.id + '" data-id="' + p.id + '"><span class="sv-ph">' +
-            (p.img ? '<img src="' + esc(p.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="sv-nopic" aria-hidden="true">🧴</span>') +
+            (p.img ? '<img src="' + esc(p.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="sv-nopic" aria-hidden="true"><?php echo spa_icon('bottle'); ?></span>') +
             (oos ? '<span class="sv-oos">Out of stock</span>' : p.top ? '<span class="sv-ribbon">Best seller</span>' : '') + '</span>' +
             '<span class="sv-bd"><span class="sv-name">' + esc(p.name) + '</span>' +
             '<span class="sv-stock' + (!oos && p.stock <= 5 ? ' low' : '') + '">' + stockText(p) + '</span>' +

@@ -201,7 +201,7 @@ require_once defined('HOME_ACCOUNT_AREA') ? __DIR__ . '/user/header.php' : __DIR
         var sess = s.pkgs.length ? '1–' + s.pkgs[s.pkgs.length - 1].n + ' sessions' : '';
         var lens = s.opts.map(function (o) { return mins(o.m); }).filter(Boolean).join(' / ');
         return '<button type="button" class="sv-card" id="svc-' + s.id + '" data-id="' + s.id + '"><span class="sv-ph">' +
-            (s.img ? '<img src="' + esc(s.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="sv-nopic" aria-hidden="true">💆</span>') +
+            (s.img ? '<img src="' + esc(s.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="sv-nopic" aria-hidden="true"><?php echo spa_icon('leaf'); ?></span>') +
             (s.top ? '<span class="sv-ribbon">Most booked</span>' : '') + (sess ? '<span class="sv-sess">' + sess + '</span>' : '') + '</span>' +
             '<span class="sv-bd"><span class="sv-name">' + esc(s.name) + '</span>' + (s.desc ? '<span class="sv-ds">' + esc(s.desc) + '</span>' : '') +
             (tags ? '<span class="sv-tags">' + tags + '</span>' : '') +

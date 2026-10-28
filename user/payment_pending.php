@@ -34,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 
     // Already paid — just confirm
     if ($order['payment_status'] === 'paid') {
-        echo json_encode(['status' => 'paid', 'message' => '✅ Payment already confirmed!']);
+        echo json_encode(['status' => 'paid', 'message' => 'Payment already confirmed!']);
         exit;
     }
 
@@ -122,12 +122,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $is_service    = ($checkout_type === 'service');
 
         add_notification($conn, $user_id, $is_service ? 'appointment' : 'order',
-            '💳 Payment Confirmed!',
+            'Payment Confirmed!',
             'Your online payment for order #' . $order_id . ' was successful. Awaiting admin approval.',
             $is_service ? 'appointments.php' : 'appointments.php#orders'
         );
         add_notification($conn, null, $is_service ? 'appointment' : 'order',
-            '💳 New Online Payment',
+            'New Online Payment',
             'Order #' . $order_id . ' (₱' . number_format($order['total_amount'], 2) . ') has been paid online and is awaiting your approval.',
             $is_service ? 'appointments.php' : 'orders.php'
         );
@@ -144,7 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             $_SESSION['paymongo_checkout_ids']
         );
 
-        echo json_encode(['status' => 'paid', 'message' => '✅ Payment confirmed! Your order is now pending admin approval.']);
+        echo json_encode(['status' => 'paid', 'message' => 'Payment confirmed! Your order is now pending admin approval.']);
         exit;
 
     } else {
@@ -316,7 +316,7 @@ require_once 'header.php';
 <div class="pending-wrap">
 <div class="pending-card">
 
-    <span class="pending-icon">💳</span>
+    <span class="pending-icon"><?php echo spa_icon('card'); ?></span>
     <h2>Complete Your Payment</h2>
     <p class="order-ref">
         Order <strong>#<?php echo $order_id; ?></strong>
@@ -342,18 +342,18 @@ require_once 'header.php';
     <?php if ($pay_url): ?>
     <a href="<?php echo htmlspecialchars($pay_url); ?>" target="_blank"
        class="btn-pay" id="payNowBtn">
-        💳 Pay Now — Open PayMongo
+        Pay Now — Open PayMongo
         <span style="font-size:0.75rem;opacity:0.8;">(opens new tab)</span>
     </a>
     <?php else: ?>
     <div style="background:#f8d7da;color:#842029;padding:0.75rem 1rem;border-radius:10px;
                 margin-bottom:0.75rem;font-size:0.88rem;text-align:left;border-left:4px solid #dc3545;">
-        ⚠️ Payment link not available. <a href="cart.php" style="color:#842029;font-weight:700;">Go back to cart</a> and try again.
+        ⚠ Payment link not available. <a href="cart.php" style="color:#842029;font-weight:700;">Go back to cart</a> and try again.
     </div>
     <?php endif; ?>
 
     <button type="button" class="btn-confirm" id="confirmBtn" onclick="checkPayment()">
-        ✅ I Already Paid — Confirm My Payment
+        I Already Paid — Confirm My Payment
     </button>
 
     <div class="check-msg" id="checkMsg"></div>
@@ -380,7 +380,7 @@ function checkPayment() {
     const msg = document.getElementById('checkMsg');
 
     btn.disabled    = true;
-    btn.textContent = '⏳ Checking with PayMongo…';
+    btn.textContent = 'Checking with PayMongo…';
     btn.classList.remove('pulse');
     msg.style.display = 'none';
 
@@ -395,10 +395,10 @@ function checkPayment() {
         msg.style.display = 'block';
 
         if (data.status === 'paid') {
-            // ✅ Payment confirmed
+            // Payment confirmed
             msg.className   = 'check-msg success';
             msg.textContent = data.message;
-            btn.textContent = '✅ Payment Confirmed!';
+            btn.textContent = 'Payment Confirmed!';
             btn.style.background    = '#d1e7dd';
             btn.style.borderColor   = '#198754';
             btn.style.color         = '#0a3622';
@@ -409,27 +409,27 @@ function checkPayment() {
             }, 1500);
 
         } else if (data.status === 'pending') {
-            // ⏳ Not paid yet
+            // Not paid yet
             msg.className   = 'check-msg pending';
-            msg.textContent = '⏳ ' + data.message;
+            msg.textContent = data.message;
             btn.disabled    = false;
-            btn.textContent = '✅ I Already Paid — Try Again';
+            btn.textContent = 'I Already Paid — Try Again';
             btn.classList.add('pulse');
 
         } else {
-            // ❌ Error
+            // Error
             msg.className   = 'check-msg error';
-            msg.textContent = '❌ ' + (data.message || 'Something went wrong. Please try again.');
+            msg.textContent = (data.message || 'Something went wrong. Please try again.');
             btn.disabled    = false;
-            btn.textContent = '✅ I Already Paid — Confirm My Payment';
+            btn.textContent = 'I Already Paid — Confirm My Payment';
         }
     })
     .catch(() => {
         msg.className     = 'check-msg error';
-        msg.textContent   = '❌ Could not connect. Please check your internet and try again.';
+        msg.textContent   = 'Could not connect. Please check your internet and try again.';
         msg.style.display = 'block';
         btn.disabled      = false;
-        btn.textContent   = '✅ I Already Paid — Confirm My Payment';
+        btn.textContent   = 'I Already Paid — Confirm My Payment';
     });
 }
 </script>

@@ -391,12 +391,12 @@ require_once 'admin_header.php';
 
 <!-- ── EXPORT BAR ─────────────────────────────────────────────────────────── 
 <div class="export-bar" style="margin-bottom:1.5rem;">
-    <span class="export-bar-label">📥 Export:</span>
-    <a class="btn-export green"  href="export_sales.php?type=all"        >📊 Full Report</a>
-    <a class="btn-export blue"   href="export_sales.php?type=orders_only">📦 Orders</a>
-    <a class="btn-export orange" href="export_sales.php?type=monthly"    >📅 Monthly</a>
-    <a class="btn-export gold"   href="export_sales.php?type=products"   >🛍️ Products</a>
-    <a class="btn-export purple" href="export_sales.php?type=services"   >💆 Services</a>
+    <span class="export-bar-label">Export:</span>
+    <a class="btn-export green"  href="export_sales.php?type=all"        >Full Report</a>
+    <a class="btn-export blue"   href="export_sales.php?type=orders_only">Orders</a>
+    <a class="btn-export orange" href="export_sales.php?type=monthly"    >Monthly</a>
+    <a class="btn-export gold"   href="export_sales.php?type=products"   >Products</a>
+    <a class="btn-export purple" href="export_sales.php?type=services"   >Services</a>
 </div>-->
 
 <div class="chart-card" style="margin-bottom: 1.5rem; padding: 1rem;">

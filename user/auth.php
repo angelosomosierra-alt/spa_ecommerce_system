@@ -201,7 +201,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
         $mail->Body = "
             <div style='font-family:Arial,sans-serif;max-width:500px;margin:0 auto;'>
                 <div style='background:linear-gradient(135deg,#3B2A1A,#6B4C30);padding:25px;text-align:center;border-radius:12px 12px 0 0;'>
-                    <span style='font-size:2.5rem;'>🔑</span>
+                    <span style='font-size:2.5rem;'><?php echo spa_icon('key'); ?></span>
                     <h2 style='color:#FAF3E8;margin:8px 0 4px;letter-spacing:1px;'>RECOVERY</h2>
                     <p style='color:#C8A46B;font-size:0.85rem;margin:0;'>Password Reset</p>
                 </div>
@@ -279,7 +279,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
         // Clean up
         unset($_SESSION['fp_otp_verified'], $_SESSION['fp_otp_email'],
               $_SESSION['fp_otp_sent_at'], $_SESSION['fp_otp']);
-        $_SESSION['reg_success'] = "✅ Password changed successfully! You can now log in.";
+        $_SESSION['reg_success'] = "Password changed successfully! You can now log in.";
         header('Location: auth.php');
         exit();
     }
@@ -580,7 +580,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
     <?php if ($register_error): ?><div class="alert alert-danger"><?php echo $register_error; ?></div><?php endif; ?>
     <?php $pending = $_SESSION['pending_reg'] ?? []; $pending_email = $pending['email'] ?? ''; ?>
     <div class="otp-info-card">
-        📧 We'll send a 6-digit code to<br>
+        We'll send a 6-digit code to<br>
         <span class="otp-email-tag"><?php echo htmlspecialchars($pending_email); ?></span><br>
         <small style="color:#999;font-size:0.78rem;">Code expires in 10 minutes.</small>
     </div>
@@ -599,8 +599,8 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
         <p style="font-size:0.82rem;color:#555;margin-top:0.6rem;">Completing your registration…</p>
     </div>
     <div id="otpActions" style="display:flex;flex-direction:column;gap:0.75rem;margin-top:1.25rem;">
-        <button type="button" id="sendOtpBtn" class="btn-primary" onclick="sendOTP()">📨 Send OTP to My Email</button>
-        <button type="button" id="verifyOtpBtn" class="btn-primary" onclick="verifyOTP()" style="display:none;" disabled>✅ Verify OTP</button>
+        <button type="button" id="sendOtpBtn" class="btn-primary" onclick="sendOTP()">Send OTP to My Email</button>
+        <button type="button" id="verifyOtpBtn" class="btn-primary" onclick="verifyOTP()" style="display:none;" disabled>Verify OTP</button>
     </div>
     <form method="POST" id="completeRegForm" style="display:none;">
         <?php echo csrf_field(); ?>
@@ -634,7 +634,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
                    value="<?php echo htmlspecialchars($_POST['fp_email'] ?? ''); ?>">
         </div>
         <button type="button" id="fpSendOtpBtn" class="btn-primary" onclick="sendFpOTP()">
-            📨 Send OTP to My Email
+            Send OTP to My Email
         </button>
     </form>
 
@@ -655,7 +655,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
     </div>
 
     <div class="otp-info-card">
-        🔑 Enter the 6-digit OTP sent to<br>
+        Enter the 6-digit OTP sent to<br>
         <span class="otp-email-tag"><?php echo htmlspecialchars($_SESSION['fp_otp_email'] ?? ''); ?></span><br>
         <small style="color:#999;font-size:0.78rem;">Code expires in 10 minutes.</small>
     </div>
@@ -678,10 +678,10 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
 
     <div id="fpOtpActions" style="display:flex;flex-direction:column;gap:0.75rem;margin-top:1.25rem;">
         <button type="button" id="fpVerifyOtpBtn" class="btn-primary" onclick="verifyFpOTP()" disabled>
-            ✅ Verify OTP
+            Verify OTP
         </button>
         <button type="button" id="fpResendBtn" class="btn-secondary" onclick="resendFpOTP()" disabled>
-            🔄 Resend OTP
+            Resend OTP
         </button>
     </div>
 
@@ -721,7 +721,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
                    oninput="checkConfirm()">
         </div>
         <button type="submit" name="change_password" class="btn-primary">
-            🔒 Change Password
+            Change Password
         </button>
     </form>
 
@@ -782,7 +782,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
 
     <?php else: ?>
     <!-- ══════════════ LOGIN ══════════════ -->
-    <?php if ($register_success): ?><div class="alert alert-success">🎉 <?php echo $register_success; ?></div><?php endif; ?>
+    <?php if ($register_success): ?><div class="alert alert-success"><?php echo $register_success; ?></div><?php endif; ?>
     <?php if ($login_error): ?><div class="alert alert-danger"><?php echo $login_error; ?></div><?php endif; ?>
     <form method="POST">
         <?php echo csrf_field(); ?>
@@ -805,7 +805,7 @@ $show_register  = isset($_GET['register']) && !$show_otp_step;
                                transform:translateY(-50%);background:none;
                                border:none;cursor:pointer;font-size:1rem;
                                color:#A07850;padding:0;line-height:1;"
-                        aria-label="Show password">👁</button>
+                        aria-label="Show password"><?php echo spa_icon('eye'); ?></button>
             </div>
         </div>
         <button type="submit" name="login" class="btn-primary">Login</button>
@@ -860,22 +860,22 @@ function toggleVerifyBtn() { if (otpSent) verifyBtn.disabled = getOTP().length !
 function showMsg(msg, type) { otpMsg.textContent = msg; otpMsg.className = type; otpMsg.style.display = 'block'; }
 
 function sendOTP() {
-    sendBtn.disabled = true; sendBtn.textContent = '⏳ Sending…'; showMsg('', '');
+    sendBtn.disabled = true; sendBtn.textContent = 'Sending…'; showMsg('', '');
     fetch('auth.php?step=otp', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=send_otp&email=' + encodeURIComponent(pendingEmail) })
     .then(r => r.text()).then(text => {
         try {
             const data = JSON.parse(text);
             showMsg(data.message, data.success ? 'success' : 'error');
             if (data.success) { otpSent = true; document.getElementById('otpBox').style.display = 'flex'; verifyBtn.style.display = 'block'; startTimer(60); digits[0].focus(); }
-            else { sendBtn.disabled = false; sendBtn.textContent = '📨 Send OTP to My Email'; }
-        } catch(e) { showMsg('Server error. Check console.', 'error'); console.error(text); sendBtn.disabled = false; sendBtn.textContent = '📨 Send OTP to My Email'; }
-    }).catch(() => { showMsg('Could not reach server.', 'error'); sendBtn.disabled = false; sendBtn.textContent = '📨 Send OTP to My Email'; });
+            else { sendBtn.disabled = false; sendBtn.textContent = 'Send OTP to My Email'; }
+        } catch(e) { showMsg('Server error. Check console.', 'error'); console.error(text); sendBtn.disabled = false; sendBtn.textContent = 'Send OTP to My Email'; }
+    }).catch(() => { showMsg('Could not reach server.', 'error'); sendBtn.disabled = false; sendBtn.textContent = 'Send OTP to My Email'; });
 }
 
 function verifyOTP() {
     const otp = getOTP();
     if (otp.length !== 6) { showMsg('Please enter all 6 digits.', 'error'); return; }
-    verifyBtn.disabled = true; verifyBtn.textContent = '⏳ Verifying…';
+    verifyBtn.disabled = true; verifyBtn.textContent = 'Verifying…';
     fetch('auth.php?step=otp', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=verify_otp&otp=' + encodeURIComponent(otp) })
     .then(r => r.text()).then(text => {
         try {
@@ -888,9 +888,9 @@ function verifyOTP() {
                 timerEl.textContent = '';
                 document.getElementById('verifiedSection').style.display = 'block';
                 setTimeout(() => { document.getElementById('completeRegForm').submit(); }, 1200);
-            } else { verifyBtn.disabled = false; verifyBtn.textContent = '✅ Verify OTP'; }
-        } catch(e) { showMsg('Server error.', 'error'); verifyBtn.disabled = false; verifyBtn.textContent = '✅ Verify OTP'; }
-    }).catch(() => { showMsg('Could not reach server.', 'error'); verifyBtn.disabled = false; verifyBtn.textContent = '✅ Verify OTP'; });
+            } else { verifyBtn.disabled = false; verifyBtn.textContent = 'Verify OTP'; }
+        } catch(e) { showMsg('Server error.', 'error'); verifyBtn.disabled = false; verifyBtn.textContent = 'Verify OTP'; }
+    }).catch(() => { showMsg('Could not reach server.', 'error'); verifyBtn.disabled = false; verifyBtn.textContent = 'Verify OTP'; });
 }
 
 function startTimer(seconds) {
@@ -898,7 +898,7 @@ function startTimer(seconds) {
     sendBtn.textContent = 'Resend OTP';
     timerInterval = setInterval(() => {
         timerEl.textContent = `Resend available in ${remaining}s`; remaining--;
-        if (remaining < 0) { clearInterval(timerInterval); timerEl.textContent = ''; sendBtn.disabled = false; sendBtn.textContent = '🔄 Resend OTP'; }
+        if (remaining < 0) { clearInterval(timerInterval); timerEl.textContent = ''; sendBtn.disabled = false; sendBtn.textContent = 'Resend OTP'; }
     }, 1000);
 }
 document.getElementById('otpBox').style.display = 'none';
@@ -911,7 +911,7 @@ function sendFpOTP() {
     if (!email) { uiAlert('Please enter your email address.'); return; }
     const btn = document.getElementById('fpSendOtpBtn');
     const msg = document.getElementById('fpSendMsg');
-    btn.disabled = true; btn.textContent = '⏳ Sending…';
+    btn.disabled = true; btn.textContent = 'Sending…';
     msg.style.display = 'none';
     fetch('auth.php?step=forgot', {
         method: 'POST',
@@ -929,10 +929,10 @@ function sendFpOTP() {
                 // Save email to session via hidden redirect
                 window.location.href = 'auth.php?step=fp_otp&email=' + encodeURIComponent(email);
             } else {
-                btn.disabled = false; btn.textContent = '📨 Send OTP to My Email';
+                btn.disabled = false; btn.textContent = 'Send OTP to My Email';
             }
-        } catch(e) { msg.textContent = 'Server error.'; msg.style.display = 'block'; btn.disabled = false; btn.textContent = '📨 Send OTP to My Email'; }
-    }).catch(() => { btn.disabled = false; btn.textContent = '📨 Send OTP to My Email'; });
+        } catch(e) { msg.textContent = 'Server error.'; msg.style.display = 'block'; btn.disabled = false; btn.textContent = 'Send OTP to My Email'; }
+    }).catch(() => { btn.disabled = false; btn.textContent = 'Send OTP to My Email'; });
 }
 </script>
 
@@ -971,7 +971,7 @@ function showFpMsg(msg, type) { fpOtpMsg.textContent = msg; fpOtpMsg.className =
 function verifyFpOTP() {
     const otp = getFpOTP();
     if (otp.length !== 6) { showFpMsg('Please enter all 6 digits.', 'error'); return; }
-    fpVerBtn.disabled = true; fpVerBtn.textContent = '⏳ Verifying…';
+    fpVerBtn.disabled = true; fpVerBtn.textContent = 'Verifying…';
     fetch('auth.php?step=fp_otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -988,13 +988,13 @@ function verifyFpOTP() {
                 fpTimerEl.textContent = '';
                 document.getElementById('fpVerifiedSection').style.display = 'block';
                 setTimeout(() => { window.location.href = 'auth.php?step=fp_reset'; }, 1000);
-            } else { fpVerBtn.disabled = false; fpVerBtn.textContent = '✅ Verify OTP'; }
-        } catch(e) { showFpMsg('Server error.', 'error'); fpVerBtn.disabled = false; fpVerBtn.textContent = '✅ Verify OTP'; }
-    }).catch(() => { showFpMsg('Could not reach server.', 'error'); fpVerBtn.disabled = false; fpVerBtn.textContent = '✅ Verify OTP'; });
+            } else { fpVerBtn.disabled = false; fpVerBtn.textContent = 'Verify OTP'; }
+        } catch(e) { showFpMsg('Server error.', 'error'); fpVerBtn.disabled = false; fpVerBtn.textContent = 'Verify OTP'; }
+    }).catch(() => { showFpMsg('Could not reach server.', 'error'); fpVerBtn.disabled = false; fpVerBtn.textContent = 'Verify OTP'; });
 }
 
 function resendFpOTP() {
-    fpResBtn.disabled = true; fpResBtn.textContent = '⏳ Sending…';
+    fpResBtn.disabled = true; fpResBtn.textContent = 'Sending…';
     fetch('auth.php?step=forgot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1005,9 +1005,9 @@ function resendFpOTP() {
             const data = JSON.parse(text);
             showFpMsg(data.message, data.success ? 'success' : 'error');
             if (data.success) { startFpTimer(60); fpDigits.forEach(d => { d.value = ''; d.classList.remove('filled'); }); fpVerBtn.disabled = true; fpDigits[0].focus(); }
-            else { fpResBtn.disabled = false; fpResBtn.textContent = '🔄 Resend OTP'; }
-        } catch(e) { fpResBtn.disabled = false; fpResBtn.textContent = '🔄 Resend OTP'; }
-    }).catch(() => { fpResBtn.disabled = false; fpResBtn.textContent = '🔄 Resend OTP'; });
+            else { fpResBtn.disabled = false; fpResBtn.textContent = 'Resend OTP'; }
+        } catch(e) { fpResBtn.disabled = false; fpResBtn.textContent = 'Resend OTP'; }
+    }).catch(() => { fpResBtn.disabled = false; fpResBtn.textContent = 'Resend OTP'; });
 }
 
 function startFpTimer(seconds) {
@@ -1015,7 +1015,7 @@ function startFpTimer(seconds) {
     fpResBtn.disabled = true;
     fpTimerInterval = setInterval(() => {
         fpTimerEl.textContent = `Resend available in ${remaining}s`; remaining--;
-        if (remaining < 0) { clearInterval(fpTimerInterval); fpTimerEl.textContent = ''; fpResBtn.disabled = false; fpResBtn.textContent = '🔄 Resend OTP'; }
+        if (remaining < 0) { clearInterval(fpTimerInterval); fpTimerEl.textContent = ''; fpResBtn.disabled = false; fpResBtn.textContent = 'Resend OTP'; }
     }, 1000);
 }
 
@@ -1128,12 +1128,14 @@ document.addEventListener('keydown', function(e) {
 </script>
 
 <script>
+const ICON_EYE     = <?php echo json_encode(spa_icon('eye')); ?>;
+const ICON_EYE_OFF = <?php echo json_encode(spa_icon('eye-off')); ?>;
 function toggleLoginPwd() {
     const input  = document.getElementById('loginPwd');
     const btn    = document.getElementById('loginPwdToggle');
     const isHide = input.type === 'password';
     input.type   = isHide ? 'text' : 'password';
-    btn.textContent = isHide ? '🙈' : '👁';
+    btn.innerHTML = isHide ? ICON_EYE_OFF : ICON_EYE;
     btn.setAttribute('aria-label', isHide ? 'Hide password' : 'Show password');
 }
 </script>
@@ -1157,7 +1159,7 @@ function toggleLoginPwd() {
         <div style="width:52px;height:52px;border-radius:50%;
                     background:linear-gradient(135deg,#3B2A1A,#6B4C30);
                     display:flex;align-items:center;justify-content:center;
-                    font-size:1.4rem;margin:0 auto 0.85rem;">🔒</div>
+                    font-size:1.4rem;margin:0 auto 0.85rem;"><?php echo spa_icon('lock'); ?></div>
         <div style="font-size:1.05rem;font-weight:700;
                     color:#3B2A1A;margin-bottom:0.35rem;">
             Access Code Required
@@ -1202,10 +1204,10 @@ document.querySelectorAll('input[type="password"]').forEach(function(inp) {
     inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
     inp.style.paddingRight = '2.6rem';
     var btn = document.createElement('button');
-    btn.type = 'button'; btn.textContent = '👁';
+    btn.type = 'button'; btn.innerHTML = ICON_EYE;
     btn.setAttribute('aria-label', 'Show password');
     btn.style.cssText = 'position:absolute;right:.6rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;padding:0;color:#A07850;';
-    btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.textContent = s ? '🙈' : '👁'; };
+    btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.innerHTML = s ? ICON_EYE_OFF : ICON_EYE; };
     wrap.appendChild(btn);
 });
 </script>

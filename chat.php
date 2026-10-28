@@ -202,7 +202,7 @@ function chat_render_messages_html(array $messages, string $viewer_role): string
                   background:<?php echo $mine ? 'var(--rust,#C96A2C)' : 'var(--bg3,#f1e7da)'; ?>;
                   color:<?php echo $mine ? '#fff' : 'var(--brown,#3B2A1A)'; ?>;
                   border-bottom-<?php echo $mine ? 'right' : 'left'; ?>-radius:4px;">
-            <span style="font-size:1.1rem;flex-shrink:0;">📎</span>
+            <span style="font-size:1.1rem;flex-shrink:0;"><?php echo spa_icon('paperclip'); ?></span>
             <span style="font-size:0.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                 <?php echo htmlspecialchars($m['attachment_name']); ?>
             </span>
@@ -240,7 +240,7 @@ function chat_render_threads_html(array $threads): string {
         elseif ($diff < 86400) $tt = floor($diff / 3600) . 'h ago';
         else                   $tt = date('M d', strtotime($t['last_time']));
         if (trim($t['last_message']) === '' && !empty($t['last_attachment_type'])) {
-            $preview = $t['last_attachment_type'] === 'image' ? '📷 Photo' : '📎 File';
+            $preview = $t['last_attachment_type'] === 'image' ? 'Photo' : 'File';
         } else {
             $preview = mb_strlen($t['last_message']) > 42 ? mb_substr($t['last_message'], 0, 42) . '…' : $t['last_message'];
         }

@@ -565,21 +565,21 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
         <button class="nav-drawer-close" onclick="closeNavDrawer()">✕</button>
     </div>
     <div class="nav-drawer-links">
-        <a href="index.php" <?php echo $current_page==='index.php' ? 'class="active"' : ''; ?>>🏠 Home</a>
-        <a href="index.php#about">ℹ️ About Us</a>
-        <a href="services.php" <?php echo $current_page==='services.php' ? 'class="active"' : ''; ?>>💆 Services</a>
-        <a href="products.php" <?php echo $current_page==='products.php' ? 'class="active"' : ''; ?>>🛍️ Products</a>
-        <a href="index.php#contact">📞 Contact</a>
+        <a href="index.php" <?php echo $current_page==='index.php' ? 'class="active"' : ''; ?>>Home</a>
+        <a href="index.php#about">ℹ About Us</a>
+        <a href="services.php" <?php echo $current_page==='services.php' ? 'class="active"' : ''; ?>>Services</a>
+        <a href="products.php" <?php echo $current_page==='products.php' ? 'class="active"' : ''; ?>>Products</a>
+        <a href="index.php#contact">Contact</a>
         <?php if (isset($_SESSION['user_id'])): ?>
         <div class="nav-drawer-divider"></div>
-        <a href="appointments.php" <?php echo $current_page==='appointments.php' ? 'class="active"' : ''; ?>>📅 Appointments</a>
-        <a href="profile.php" <?php echo $current_page==='profile.php' ? 'class="active"' : ''; ?>>👤 My Profile</a>
+        <a href="appointments.php" <?php echo $current_page==='appointments.php' ? 'class="active"' : ''; ?>>Appointments</a>
+        <a href="profile.php" <?php echo $current_page==='profile.php' ? 'class="active"' : ''; ?>>My Profile</a>
         <div class="nav-drawer-divider"></div>
-        <a href="auth.php?logout=1" style="color:#ff8a8a;">🚪 Logout</a>
+        <a href="auth.php?logout=1" style="color:#ff8a8a;">Logout</a>
         <?php else: ?>
         <div class="nav-drawer-divider"></div>
-        <a href="auth.php">🔑 Login</a>
-        <a href="auth.php?register=1" class="hd-drawer-register">✨ Register</a>
+        <a href="auth.php">Login</a>
+        <a href="auth.php?register=1" class="hd-drawer-register">Register</a>
         <?php endif; ?>
     </div>
 </div>
@@ -642,7 +642,7 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                    class="cart-icon-btn"
                    id="cartIconBtn"
                    title="View Cart">
-                    🛒
+                    <?php echo spa_icon('cart'); ?>
                     <span class="cart-icon-badge" id="cartIconBadge"
                           style="<?php echo $cart_count===0 ? 'display:none' : ''; ?>">
                         <?php echo $cart_count > 99 ? '99+' : $cart_count; ?>
@@ -691,7 +691,7 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                                 border:1px solid #EAD8C0;z-index:9999;overflow:hidden;">
                         <div style="display:flex;justify-content:space-between;align-items:center;
                                     padding:0.65rem 1rem;background:#3B2A1A;color:#FAF3E8;">
-                            <span style="font-weight:600;font-size:0.85rem;">🔔 Notifications</span>
+                            <span style="font-weight:600;font-size:0.85rem;">Notifications</span>
                             <a id="userMarkAllRead" href="?mark_notif_read=1"
                                style="font-size:0.72rem;color:#C8A46B;text-decoration:none;display:<?php echo $notif_unread > 0 ? 'inline' : 'none'; ?>;">
                                 Mark all read
@@ -702,7 +702,7 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                             <div style="padding:1.5rem;text-align:center;color:#aaa;font-size:0.82rem;">No notifications yet</div>
                             <?php else: ?>
                             <?php
-                            $n_icons = ['order'=>'🛍️','appointment'=>'📅','status'=>'🔔','general'=>'💬'];
+                            $n_icons = ['order'=>spa_icon('bag'),'appointment'=>spa_icon('calendar'),'status'=>spa_icon('bell'),'general'=>spa_icon('chat')];
                             foreach ($notif_list as $n):
                                 $diff = time() - strtotime($n['created_at']);
                                 if ($diff < 60)        $n_time = 'Just now';
@@ -717,7 +717,7 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
                                       background:<?php echo $n['is_read'] ? '#fff' : '#fff8f3'; ?>;
                                       transition:background 0.15s;">
                                 <span style="font-size:1.2rem;flex-shrink:0;margin-top:1px;">
-                                    <?php echo $n_icons[$n['type']] ?? '🔔'; ?>
+                                    <?php echo $n_icons[$n['type']] ?? spa_icon('bell'); ?>
                                 </span>
                                 <div style="flex:1;min-width:0;">
                                     <div style="font-weight:600;font-size:0.82rem;color:#3B2A1A;
@@ -804,10 +804,10 @@ if (isset($_SESSION['user_id']) && isset($conn)) {
         <!-- Nav links stacked vertically -->
         <nav class="psb-nav">
             <a href="profile.php" <?php echo $current_page==='profile.php' ? 'class="active"':''; ?>>
-                <span class="psb-ico">✏️</span> Edit Profile
+                <span class="psb-ico">✏</span> Edit Profile
             </a>
             <a href="appointments.php" <?php echo $current_page==='appointments.php' ? 'class="active"':''; ?>>
-                <span class="psb-ico">📅</span> Appointments
+                <span class="psb-ico"><?php echo spa_icon('calendar'); ?></span> Appointments
             </a>
         </nav>
     </div>
@@ -820,7 +820,7 @@ $_logout_url = (strpos($_SERVER['PHP_SELF'], '/user/') !== false)
     : 'user/auth.php?logout=1';
 ?>
 <a href="<?php echo BASE_URL; ?>user/auth.php?logout=1" class="psb-logout">
-    <span>🚪</span> Log Out
+    <span><?php echo spa_icon('door'); ?></span> Log Out
 </a>
 
 
@@ -833,7 +833,7 @@ $_logout_url = (strpos($_SERVER['PHP_SELF'], '/user/') !== false)
 
 <div id="cartSlideDrawer" role="dialog" aria-label="Shopping Cart">
     <div class="csd-header">
-        <h2>🛒 Shopping Cart</h2>
+        <h2>Shopping Cart</h2>
         <button class="csd-close" onclick="closeCartSlide()" title="Close">✕</button>
     </div>
     <div id="cartSlideContent"></div>
@@ -847,17 +847,17 @@ $_logout_url = (strpos($_SERVER['PHP_SELF'], '/user/') !== false)
 
 <div id="chatSlideDrawer" role="dialog" aria-label="Message Us">
     <div class="ccd-header">
-        <h2>💬 Message Us</h2>
+        <h2>Message Us</h2>
         <button class="ccd-close" onclick="closeChatDrawer()" title="Close">✕</button>
     </div>
     <div id="chatMessages"></div>
     <div id="chatAttachPreview" class="chat-attach-preview">
-        <span>📎</span>
+        <span><?php echo spa_icon('paperclip'); ?></span>
         <span id="chatAttachName"></span>
         <button type="button" onclick="clearChatAttachment()" title="Remove">✕</button>
     </div>
     <form id="chatSendForm" class="chat-send-bar" enctype="multipart/form-data">
-        <button type="button" class="chat-attach-btn" onclick="document.getElementById('chatAttachInput').click()" title="Attach file or photo">📎</button>
+        <button type="button" class="chat-attach-btn" onclick="document.getElementById('chatAttachInput').click()" title="Attach file or photo"><?php echo spa_icon('paperclip'); ?></button>
         <input type="file" id="chatAttachInput" accept="image/*,.pdf,.doc,.docx,.xlsx,.xls,.txt" style="display:none;">
         <textarea id="chatInput" placeholder="Type your message…" rows="1"></textarea>
         <button type="submit">Send</button>
@@ -1044,7 +1044,7 @@ function updateDrawerMath(inputEl) {
     const btnCheck = c.querySelector('#checkoutBtn');
     if (qn)      qn.style.display = 'block';
     if (btnUp)   { btnUp.disabled = false; btnUp.classList.add('pulse'); }
-    if (btnCheck) { btnCheck.disabled = true; btnCheck.textContent = '⚠️ Update Cart First'; }
+    if (btnCheck) { btnCheck.disabled = true; btnCheck.textContent = '⚠ Update Cart First'; }
 }
 // ── Track dirty qty state ─────────────────────────────────────────────────────
 let drawerQtyDirty = false;
@@ -1188,7 +1188,7 @@ function renderSearchResults(data, query) {
     let html = '';
 
     if (products.length > 0) {
-        html += `<div class="search-results-label">🛍️ Products</div>`;
+        html += `<div class="search-results-label">Products</div>`;
         products.forEach(p => {
             const img = p.image
                 ? `<img class="search-result-img" src="../uploads/products/${escHtml(p.image)}" alt="${escHtml(p.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
@@ -1196,7 +1196,7 @@ function renderSearchResults(data, query) {
             html += `
             <a href="products.php?category=${encodeURIComponent(p.category_id || '')}&item=prd-${p.id}" class="search-result-item" onclick="closeSearchResults()">
                 ${img}
-                <div class="search-result-noimg" ${p.image ? 'style="display:none"' : ''}>🧴</div>
+                <div class="search-result-noimg" ${p.image ? 'style="display:none"' : ''}><?php echo spa_icon('bottle'); ?></div>
                 <div class="search-result-info">
                     <div class="search-result-name">${highlight(escHtml(p.name), query)}</div>
                     <div class="search-result-meta">Product ${p.stock > 0 ? '· In stock' : '· Out of stock'}</div>
@@ -1207,7 +1207,7 @@ function renderSearchResults(data, query) {
     }
 
     if (services.length > 0) {
-        html += `<div class="search-results-label">💆 Services</div>`;
+        html += `<div class="search-results-label">Services</div>`;
         services.forEach(s => {
             const img = s.image
                 ? `<img class="search-result-img" src="../uploads/services/${escHtml(s.image)}" alt="${escHtml(s.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
@@ -1215,7 +1215,7 @@ function renderSearchResults(data, query) {
             html += `
             <a href="services.php?category=${encodeURIComponent(s.category_id || '')}&item=svc-${s.id}" class="search-result-item" onclick="closeSearchResults()">
                 ${img}
-                <div class="search-result-noimg" ${s.image ? 'style="display:none"' : ''}>💆</div>
+                <div class="search-result-noimg" ${s.image ? 'style="display:none"' : ''}><?php echo spa_icon('leaf'); ?></div>
                 <div class="search-result-info">
                     <div class="search-result-name">${highlight(escHtml(s.name), query)}</div>
                     <div class="search-result-meta">Service${s.session_time ? ` · ${s.session_time} min` : ''}</div>
@@ -1293,10 +1293,12 @@ document.addEventListener('DOMContentLoaded', function() {
         inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
         inp.style.paddingRight = '2.6rem';
         var btn = document.createElement('button');
-        btn.type = 'button'; btn.textContent = '👁';
+        var iconEye = <?php echo json_encode(spa_icon('eye')); ?>;
+        var iconEyeOff = <?php echo json_encode(spa_icon('eye-off')); ?>;
+        btn.type = 'button'; btn.innerHTML = iconEye;
         btn.setAttribute('aria-label', 'Show password');
         btn.style.cssText = 'position:absolute;right:.6rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;padding:0;color:#A07850;';
-        btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.textContent = s ? '🙈' : '👁'; };
+        btn.onclick = function() { var s = inp.type === 'password'; inp.type = s ? 'text' : 'password'; btn.innerHTML = s ? iconEyeOff : iconEye; };
         wrap.appendChild(btn);
     });
 });

@@ -63,16 +63,16 @@ function send_order_receipt($conn, $order_id) {
     $customer_name = $order['customer_name'] ?: $order['full_name'];
     $order_date    = date('F d, Y \a\t h:i A', strtotime($order['created_at']));
     $total         = number_format($order['total_amount'], 2);
-    $pay_method    = $order['payment_method'] === 'online' ? '💳 Online (PayMongo)' : '🏪 Onsite / Cash';
+    $pay_method    = $order['payment_method'] === 'online' ? 'Online (PayMongo)' : 'Onsite / Cash';
 
     // Online service booking paid as a down payment: the rest is due at the spa.
     $dp_amount = (float)($order['dp_amount'] ?? 0);
     $dp_paid   = $dp_amount > 0 && $order['payment_status'] === 'unpaid';
     $pay_status_html = $dp_paid
-        ? '<span style="color:#198754;font-weight:bold;">✅ Down payment paid</span>'
+        ? '<span style="color:#198754;font-weight:bold;">Down payment paid</span>'
         : match($order['payment_status']) {
-        'paid'   => '<span style="color:#198754;font-weight:bold;">✅ Paid</span>',
-        'unpaid' => '<span style="color:#C96A2C;font-weight:bold;">🏪 Pay at Spa</span>',
+        'paid'   => '<span style="color:#198754;font-weight:bold;">Paid</span>',
+        'unpaid' => '<span style="color:#C96A2C;font-weight:bold;">Pay at Spa</span>',
         default  => htmlspecialchars($order['payment_status']),
     };
 
@@ -105,7 +105,7 @@ function send_order_receipt($conn, $order_id) {
                 <td style='padding:10px 16px;color:#3B2A1A;border-bottom:1px solid #EAD8C0;'>
                     {$name}
                     <div style='font-size:11px;color:#888;margin-top:3px;'>
-                        📅 {$appt_dt} &nbsp;·&nbsp; {$svc_type} &nbsp;·&nbsp; {$people} pax
+                        {$appt_dt} &nbsp;·&nbsp; {$svc_type} &nbsp;·&nbsp; {$people} pax
                         " . ($duration ? "&nbsp;·&nbsp; {$duration}" : "") . "
                     </div>
                 </td>
@@ -124,7 +124,7 @@ function send_order_receipt($conn, $order_id) {
             overflow:hidden;box-shadow:0 4px 24px rgba(59,42,26,0.12);'>
 
     <div style='background:linear-gradient(135deg,#3B2A1A,#6B4C30);padding:32px 24px;text-align:center;'>
-        <div style='font-size:2.2rem;margin-bottom:6px;'>💆</div>
+        <div style='font-size:2.2rem;margin-bottom:6px;'><?php echo spa_icon('leaf'); ?></div>
         <h1 style='color:#FAF3E8;margin:0;font-size:1.6rem;letter-spacing:2px;font-weight:300;'>RECOVERY SPA</h1>
         <p style='color:#C8A46B;margin:4px 0 0;font-size:0.85rem;letter-spacing:1px;'>Official Receipt</p>
     </div>
@@ -143,7 +143,7 @@ function send_order_receipt($conn, $order_id) {
             </tr>
             <tr>
                 <td style='color:#888;padding:5px 0;'>Order type</td>
-                <td style='color:#3B2A1A;text-align:right;'>" . ($is_service ? '📅 Service Appointment' : '🛍️ Product Order') . "</td>
+                <td style='color:#3B2A1A;text-align:right;'>" . ($is_service ? 'Service Appointment' : 'Product Order') . "</td>
             </tr>
             <tr>
                 <td style='color:#888;padding:5px 0;'>Date placed</td>
@@ -295,15 +295,15 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
 
     $pay_method_raw = $order['payment_method'] ?? 'onsite';
     $pay_method_lbl = match($pay_method_raw) {
-        'gcash'      => '📱 GCash',
-        'maya'       => '💜 Maya',
-        'qrph'       => '📷 QR Ph (InstaPay)',
-        'cash'       => '💵 Cash',
-        'bank'       => '🏦 Bank Transfer',
-        'card'       => '💳 Card',
-        'bpi_debit'  => '🏦 BPI Debit',
-        'bpi_credit' => '💳 BPI Credit',
-        default      => '🏪 ' . ucfirst($pay_method_raw),
+        'gcash'      => 'GCash',
+        'maya'       => 'Maya',
+        'qrph'       => 'QR Ph (InstaPay)',
+        'cash'       => 'Cash',
+        'bank'       => 'Bank Transfer',
+        'card'       => 'Card',
+        'bpi_debit'  => 'BPI Debit',
+        'bpi_credit' => 'BPI Credit',
+        default      => ucfirst($pay_method_raw),
     };
 
     $appt_date    = !empty($appt['appointment_date'])
@@ -322,7 +322,7 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
         <td style='padding:10px 16px;color:#3B2A1A;border-bottom:1px solid #EAD8C0;'>
             " . htmlspecialchars($appt['service_name']) . "
             <div style='font-size:11px;color:#888;margin-top:3px;'>
-                📅 {$appt_date} &nbsp;·&nbsp; {$svc_type_lbl} &nbsp;·&nbsp; {$people} pax
+                {$appt_date} &nbsp;·&nbsp; {$svc_type_lbl} &nbsp;·&nbsp; {$people} pax
                 " . ($duration ? "&nbsp;·&nbsp; {$duration}" : "") . "
             </div>
         </td>
@@ -339,8 +339,8 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
         $extras_html .= "
     <tr>
         <td style='padding:10px 16px;color:#3B2A1A;border-bottom:1px solid #EAD8C0;'>
-            ➕ {$es_label}
-            " . (!empty($es['therapist_name']) ? "<div style='font-size:11px;color:#888;margin-top:2px;'>💆 " . htmlspecialchars($es['therapist_name']) . "</div>" : "") . "
+            {$es_label}
+            " . (!empty($es['therapist_name']) ? "<div style='font-size:11px;color:#888;margin-top:2px;'>" . htmlspecialchars($es['therapist_name']) . "</div>" : "") . "
         </td>
         <td style='padding:10px 16px;text-align:center;color:#555;border-bottom:1px solid #EAD8C0;'>1</td>
         <td style='padding:10px 16px;text-align:right;color:#555;border-bottom:1px solid #EAD8C0;'>₱" . number_format($es['charged_price'], 2) . "</td>
@@ -362,7 +362,7 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
         $discount_html .= "
     <tr>
         <td colspan='3' style='padding:8px 16px;color:#b45309;font-size:13px;border-bottom:1px solid #EAD8C0;'>
-            🎟️ {$disc_label} <span style='font-size:11px;color:#888;'>(applied at booking)</span>
+            {$disc_label} <span style='font-size:11px;color:#888;'>(applied at booking)</span>
         </td>
         <td style='padding:8px 16px;text-align:right;color:#b45309;font-weight:bold;border-bottom:1px solid #EAD8C0;'>
             −₱" . number_format($discount_amt, 2) . "
@@ -381,7 +381,7 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
         $discount_html .= "
     <tr>
         <td colspan='3' style='padding:8px 16px;color:#b45309;font-size:13px;border-bottom:1px solid #EAD8C0;'>
-            🎟️ {$cd_label} <span style='font-size:11px;color:#888;'>(applied at completion)</span>
+            {$cd_label} <span style='font-size:11px;color:#888;'>(applied at completion)</span>
         </td>
         <td style='padding:8px 16px;text-align:right;color:#b45309;font-weight:bold;border-bottom:1px solid #EAD8C0;'>
             −₱" . number_format($cd_amt, 2) . "
@@ -404,7 +404,7 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
             overflow:hidden;box-shadow:0 4px 24px rgba(59,42,26,0.12);'>
 
     <div style='background:linear-gradient(135deg,#3B2A1A,#6B4C30);padding:32px 24px;text-align:center;'>
-        <div style='font-size:2.2rem;margin-bottom:6px;'>🎉</div>
+        <div style='font-size:2.2rem;margin-bottom:6px;'><?php echo spa_icon('check-circle'); ?></div>
         <h1 style='color:#FAF3E8;margin:0;font-size:1.6rem;letter-spacing:2px;font-weight:300;'>RECOVERY SPA</h1>
         <p style='color:#C8A46B;margin:4px 0 0;font-size:0.85rem;letter-spacing:1px;'>Session Completion Receipt</p>
     </div>
@@ -425,7 +425,7 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
             </tr>
             <tr>
                 <td style='color:#888;padding:5px 0;'>Payment status</td>
-                <td style='text-align:right;'><span style='color:#198754;font-weight:bold;'>✅ Paid</span></td>
+                <td style='text-align:right;'><span style='color:#198754;font-weight:bold;'>Paid</span></td>
             </tr>
         </table>
     </div>

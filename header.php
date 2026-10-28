@@ -174,20 +174,20 @@ if (isset($_SESSION['user_id'])) {
         <button class="nav-drawer-close" onclick="closeNavDrawer()" aria-label="Close menu">✕</button>
     </div>
     <div class="nav-drawer-links">
-        <a href="index.php">🏠 Home</a>
-        <a href="services.php">💆 Services</a>
-        <a href="products.php">🛍️ Products</a>
-        <a href="index.php#about">ℹ️ About Us</a>
-        <a href="index.php#contact">📞 Contact</a>
+        <a href="index.php">Home</a>
+        <a href="services.php">Services</a>
+        <a href="products.php">Products</a>
+        <a href="index.php#about">ℹ About Us</a>
+        <a href="index.php#contact">Contact</a>
         <div class="nav-drawer-divider"></div>
         <?php if (isset($_SESSION['user_id'])): ?>
-        <a href="user/cart.php">🛒 Cart (<?php echo $cart_count; ?>)</a>
-        <a href="user/appointments.php">📅 My Appointments</a>
-        <a href="user/profile.php">👤 My Profile</a>
-        <a href="user/auth.php?logout=1" style="color:#ff8a8a;">🚪 Logout</a>
+        <a href="user/cart.php">Cart (<?php echo $cart_count; ?>)</a>
+        <a href="user/appointments.php">My Appointments</a>
+        <a href="user/profile.php">My Profile</a>
+        <a href="user/auth.php?logout=1" style="color:#ff8a8a;">Logout</a>
         <?php else: ?>
-        <a href="user/auth.php">🔑 Login</a>
-        <a href="user/auth.php?register=1" class="hd-drawer-register">✨ Register</a>
+        <a href="user/auth.php">Login</a>
+        <a href="user/auth.php?register=1" class="hd-drawer-register">Register</a>
         <?php endif; ?>
     </div>
 </div>
@@ -225,7 +225,7 @@ if (isset($_SESSION['user_id'])) {
                 <a href="user/appointments.php" class="hd-link">My Appointments</a>
                 <a href="user/profile.php" class="hd-link">My Profile</a>
                 <a href="user/cart.php" class="cart-icon-btn" title="View Cart" aria-label="View cart, <?php echo $cart_count; ?> items">
-                    🛒
+                    <?php echo spa_icon('cart'); ?>
                     <span class="cart-icon-badge" id="cartIconBadge" style="<?php echo $cart_count === 0 ? 'display:none' : ''; ?>">
                         <?php echo $cart_count > 99 ? '99+' : $cart_count; ?>
                     </span>
@@ -290,26 +290,26 @@ function renderSearchResults(data, query) {
     }
     var html = '';
     if (services.length > 0) {
-        html += '<div class="search-results-label">💆 Services</div>';
+        html += '<div class="search-results-label">Services</div>';
         services.forEach(function(s) {
             var img = s.image
                 ? '<img class="search-result-img" src="uploads/services/' + escHtml(s.image) + '" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
                 : '';
             html += '<a href="services.php?category=' + encodeURIComponent(s.category_id || '') + '&item=svc-' + s.id + '" class="search-result-item">'
-                + img + '<div class="search-result-noimg" ' + (s.image ? 'style="display:none"' : '') + '>💆</div>'
+                + img + '<div class="search-result-noimg" ' + (s.image ? 'style="display:none"' : '') + '><?php echo spa_icon('leaf'); ?></div>'
                 + '<div class="search-result-info"><div class="search-result-name">' + highlight(escHtml(s.name), query) + '</div>'
                 + '<div class="search-result-meta">Service' + (s.session_time ? ' · ' + s.session_time + ' min' : '') + '</div></div>'
                 + '<div class="search-result-price">₱' + parseFloat(s.price).toLocaleString('en-PH',{minimumFractionDigits:2}) + '</div></a>';
         });
     }
     if (products.length > 0) {
-        html += '<div class="search-results-label">🛍️ Products</div>';
+        html += '<div class="search-results-label">Products</div>';
         products.forEach(function(p) {
             var img = p.image
                 ? '<img class="search-result-img" src="uploads/products/' + escHtml(p.image) + '" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
                 : '';
             html += '<a href="products.php?category=' + encodeURIComponent(p.category_id || '') + '&item=prd-' + p.id + '" class="search-result-item">'
-                + img + '<div class="search-result-noimg" ' + (p.image ? 'style="display:none"' : '') + '>🧴</div>'
+                + img + '<div class="search-result-noimg" ' + (p.image ? 'style="display:none"' : '') + '><?php echo spa_icon('bottle'); ?></div>'
                 + '<div class="search-result-info"><div class="search-result-name">' + highlight(escHtml(p.name), query) + '</div>'
                 + '<div class="search-result-meta">Product' + (p.stock > 0 ? ' · In stock' : ' · Out of stock') + '</div></div>'
                 + '<div class="search-result-price">₱' + parseFloat(p.price).toLocaleString('en-PH',{minimumFractionDigits:2}) + '</div></a>';

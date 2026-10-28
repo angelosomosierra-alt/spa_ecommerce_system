@@ -176,7 +176,7 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                                padding:0.35rem 0.55rem;border-radius:8px;position:relative;
                                color:var(--cream);transition:background 0.15s;"
                         title="Customer Messages">
-                    💬
+                    <?php echo spa_icon('chat'); ?>
                     <span id="adminChatBadge" style="position:absolute;top:-2px;right:-4px;background:#dc3545;
                                  color:#fff;font-size:0.6rem;font-weight:700;min-width:16px;
                                  height:16px;border-radius:8px;display:<?php echo $admin_chat_unread > 0 ? 'flex' : 'none'; ?>;align-items:center;
@@ -193,7 +193,7 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                                padding:0.35rem 0.55rem;border-radius:8px;position:relative;
                                color:var(--cream);transition:background 0.15s;"
                         title="Notifications">
-                    🔔
+                    <?php echo spa_icon('bell'); ?>
                     <span id="adminNotifBadge" style="position:absolute;top:-2px;right:-4px;background:#dc3545;
                                  color:#fff;font-size:0.6rem;font-weight:700;min-width:16px;
                                  height:16px;border-radius:8px;display:<?php echo $admin_notif_unread > 0 ? 'flex' : 'none'; ?>;align-items:center;
@@ -306,12 +306,12 @@ $nav_items = array_filter($all_nav, fn($item) => in_array($admin_role, $item['ro
                     </div>
                     <div id="adminChatMessages"></div>
                     <div id="adminChatAttachPreview" class="acd-attach-preview">
-                        <span>📎</span>
+                        <span><?php echo spa_icon('paperclip'); ?></span>
                         <span id="adminChatAttachName"></span>
                         <button type="button" onclick="clearAdminChatAttachment()" title="Remove">✕</button>
                     </div>
                     <form id="adminChatSendForm" class="acd-send-bar" enctype="multipart/form-data">
-                        <button type="button" class="acd-attach-btn" onclick="document.getElementById('adminChatAttachInput').click()" title="Attach file or photo">📎</button>
+                        <button type="button" class="acd-attach-btn" onclick="document.getElementById('adminChatAttachInput').click()" title="Attach file or photo"><?php echo spa_icon('paperclip'); ?></button>
                         <input type="file" id="adminChatAttachInput" accept="image/*,.pdf,.doc,.docx,.xlsx,.xls,.txt" style="display:none;">
                         <textarea id="adminChatInput" placeholder="Type a reply…" rows="1"></textarea>
                         <button type="submit">Send</button>

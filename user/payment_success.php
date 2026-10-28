@@ -246,12 +246,12 @@ if ($order['payment_status'] === 'paid') {
                 $checkout_type = $_SESSION['paymongo_checkout_type'] ?? 'product';
                 $notif_is_svc  = ($checkout_type === 'service');
                 add_notification($conn, $user_id, $notif_is_svc ? 'appointment' : 'order',
-                    '💳 Payment Confirmed!',
+                    'Payment Confirmed!',
                     'Your online payment for order #' . $order_id . ' was successful. Awaiting admin approval.',
                     $notif_is_svc ? 'appointments.php' : 'appointments.php#orders'
                 );
                 add_notification($conn, null, $notif_is_svc ? 'appointment' : 'order',
-                    '💳 New Online Payment',
+                    'New Online Payment',
                     'Order #' . $order_id . ' (₱' . number_format($order['total_amount'], 2) . ') paid online. Ref: ' . $paymongo_reference,
                     $notif_is_svc ? 'appointments.php' : 'orders.php'
                 );
@@ -313,10 +313,10 @@ require_once 'header.php';
 
 $dp_paid = $payment_confirmed && (float)($order['dp_amount'] ?? 0) > 0;
 $pay_badge = $dp_paid
-    ? '<span style="background:#d1e7dd;color:#0a3622;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">✅ Down payment paid</span>'
+    ? '<span style="background:#d1e7dd;color:#0a3622;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">Down payment paid</span>'
     : match($order['payment_status']) {
-    'paid'               => '<span style="background:#d1e7dd;color:#0a3622;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">✅ Paid</span>',
-    'unpaid'             => '<span style="background:#fff3cd;color:#664d03;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">🏪 Pay at Spa</span>',
+    'paid'               => '<span style="background:#d1e7dd;color:#0a3622;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">Paid</span>',
+    'unpaid'             => '<span style="background:#fff3cd;color:#664d03;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">Pay at Spa</span>',
     default              => '<span style="background:#e2e3e5;color:#41464b;padding:3px 12px;border-radius:20px;font-size:12px;">' . htmlspecialchars($order['payment_status']) . '</span>',
 };
 
@@ -331,14 +331,14 @@ $ref_display = !empty($paymongo_reference)
 <?php if ($paymongo_error): ?>
     <div style="background:#fff;border-radius:20px;padding:3rem 2rem;text-align:center;
                 box-shadow:0 8px 40px rgba(59,42,26,0.10);border:1px solid #EAD8C0;">
-        <div style="font-size:3rem;margin-bottom:1rem;">⚠️</div>
+        <div style="font-size:3rem;margin-bottom:1rem;">⚠</div>
         <h2 style="color:#C96A2C;font-family:'Cormorant Garamond',serif;font-weight:400;font-size:2rem;">
             Connection Error
         </h2>
         <p style="color:#555;margin-bottom:2rem;"><?php echo htmlspecialchars($paymongo_error); ?></p>
         <a href="payment_success.php?order_id=<?php echo $order_id;
             ?>&token=<?php echo htmlspecialchars($_GET['token'] ?? ''); ?>"
-           class="btn btn-primary" style="padding:0.75rem 1.5rem;">🔄 Try Again</a>
+           class="btn btn-primary" style="padding:0.75rem 1.5rem;">Try Again</a>
     </div>
 
 <?php elseif ($payment_confirmed): ?>
@@ -348,7 +348,7 @@ $ref_display = !empty($paymongo_reference)
                 box-shadow:0 8px 40px rgba(59,42,26,0.10);border:1px solid #EAD8C0;
                 margin-bottom:1.5rem;">
         <div style="font-size:3.5rem;margin-bottom:.5rem;">
-            <?php echo $is_service ? '📅' : '🎉'; ?>
+            <?php echo $is_service ? spa_icon('calendar') : spa_icon('check-circle'); ?>
         </div>
         <h2 style="color:#198754;margin-bottom:.4rem;
                    font-family:'Cormorant Garamond',serif;font-weight:400;font-size:2rem;">
@@ -362,7 +362,7 @@ $ref_display = !empty($paymongo_reference)
         </p>
         <?php if ($receipt_emailed): ?>
         <p style="color:#198754;font-size:.82rem;margin-top:.5rem;">
-            📧 Receipt sent to <strong><?php echo htmlspecialchars($order['email']); ?></strong>
+            Receipt sent to <strong><?php echo htmlspecialchars($order['email']); ?></strong>
         </p>
         <?php endif; ?>
     </div>
@@ -376,7 +376,7 @@ $ref_display = !empty($paymongo_reference)
         <!-- Header bar -->
         <div style="background:linear-gradient(135deg,#3B2A1A,#6B4C30);
                     padding:1.25rem 1.5rem;display:flex;align-items:center;gap:1rem;">
-            <div style="font-size:1.8rem;">🧾</div>
+            <div style="font-size:1.8rem;"><?php echo spa_icon('receipt'); ?></div>
             <div>
                 <div style="color:#FAF3E8;font-size:1rem;font-weight:600;letter-spacing:1px;">RECOVERY SPA</div>
                 <div style="color:#C8A46B;font-size:.75rem;letter-spacing:.5px;">Official Receipt</div>
@@ -424,12 +424,12 @@ $ref_display = !empty($paymongo_reference)
                 <div style="color:#888;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;">Payment</div>
                 <div style="color:#3B2A1A;">
                     <?php
-                    $pm_labels = ['gcash'=>'📱 GCash (PayMongo)','maya'=>'💜 Maya (PayMongo)',
-                                  'card'=>'💳 Card (PayMongo)','bank'=>'🏦 Bank (PayMongo)',
-                                  'online'=>'💳 Online (PayMongo)','cash'=>'💵 Cash',
-                                  'onsite'=>'🏪 Onsite / Cash'];
+                    $pm_labels = ['gcash'=>'GCash (PayMongo)','maya'=>'Maya (PayMongo)',
+                                  'card'=>'Card (PayMongo)','bank'=>'Bank (PayMongo)',
+                                  'online'=>'Online (PayMongo)','cash'=>'Cash',
+                                  'onsite'=>'Onsite / Cash'];
                     $display_pm = $order['paymongo_method'] ?? $order['payment_method'] ?? 'online';
-                    echo $pm_labels[$display_pm] ?? ('💳 '.ucfirst($display_pm));
+                    echo $pm_labels[$display_pm] ?? (''.ucfirst($display_pm));
                     ?>
                     &nbsp; <?php echo $pay_badge; ?>
                 </div>
@@ -469,7 +469,7 @@ $ref_display = !empty($paymongo_reference)
                         <div style="font-weight:600;"><?php echo htmlspecialchars($item['service_name']); ?></div>
                         <?php if (!empty($item['appointment_date'])): ?>
                         <div style="font-size:.76rem;color:#888;margin-top:3px;">
-                            📅 <?php echo date('M d, Y h:i A', strtotime($item['appointment_date'])); ?>
+                            <?php echo date('M d, Y h:i A', strtotime($item['appointment_date'])); ?>
                             &nbsp;·&nbsp; <?php echo ucfirst($item['service_type'] ?? 'onsite'); ?>
                             &nbsp;·&nbsp; <?php echo (int)($item['people_count'] ?? 1); ?> pax
                             <?php if ($item['session_time']): ?>
@@ -585,7 +585,7 @@ $ref_display = !empty($paymongo_reference)
             <button onclick="window.print()"
                     style="background:transparent;border:1px solid #C96A2C;color:#C96A2C;
                            padding:.45rem 1.1rem;border-radius:8px;cursor:pointer;font-size:.85rem;">
-                🖨️ Print Receipt
+                🖨 Print Receipt
             </button>
         </div>
     </div>
@@ -617,10 +617,10 @@ $ref_display = !empty($paymongo_reference)
 
     <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;margin-bottom:3rem;">
         <a href="appointments.php" class="btn btn-primary" style="padding:.75rem 1.5rem;">
-            📅 View My Orders
+            View My Orders
         </a>
         <a href="index.php" class="btn btn-secondary" style="padding:.75rem 1.5rem;">
-            🏠 Back to Home
+            Back to Home
         </a>
     </div>
 
@@ -628,7 +628,7 @@ $ref_display = !empty($paymongo_reference)
     <!-- Pending -->
     <div style="background:#fff;border-radius:20px;padding:3rem 2rem;text-align:center;
                 box-shadow:0 8px 40px rgba(59,42,26,0.10);border:1px solid #EAD8C0;">
-        <div style="font-size:3rem;margin-bottom:1rem;">⏳</div>
+        <div style="font-size:3rem;margin-bottom:1rem;"><?php echo spa_icon('hourglass'); ?></div>
         <h2 style="color:#C96A2C;font-family:'Cormorant Garamond',serif;font-weight:400;font-size:2rem;">
             Payment Pending
         </h2>
@@ -642,8 +642,8 @@ $ref_display = !empty($paymongo_reference)
                style="color:#C96A2C;font-weight:bold;">click here to check again</a>.
         </p>
         <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
-            <a href="appointments.php" class="btn btn-primary" style="padding:.75rem 1.5rem;">📅 View My Orders</a>
-            <a href="index.php" class="btn btn-secondary" style="padding:.75rem 1.5rem;">🏠 Back to Home</a>
+            <a href="appointments.php" class="btn btn-primary" style="padding:.75rem 1.5rem;">View My Orders</a>
+            <a href="index.php" class="btn btn-secondary" style="padding:.75rem 1.5rem;">Back to Home</a>
         </div>
     </div>
 <?php endif; ?>
