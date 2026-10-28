@@ -151,6 +151,7 @@ $method_label   = $method_labels[$pm_method ?? $order['payment_method']] ?? strt
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Payment Confirmed</title>
+    <?php include __DIR__ . '/../_favicon.php'; ?>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body {

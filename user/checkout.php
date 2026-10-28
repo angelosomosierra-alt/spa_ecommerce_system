@@ -26,6 +26,33 @@ if (isset($_SESSION['service_booking'])) {
     $service = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     if (!$service) { header("Location: index.php"); exit(); }
+
+    // Lengths and multi-session packages, priced the way Book Now prices them.
+    // A package is paid in full; Session 1 is booked here and staff schedule
+    // the rest from Appointments.
+    $duration_options = [];
+    if ($conn->query("SHOW TABLES LIKE 'service_durations'")->num_rows > 0) {
+        $_dq = $conn->prepare("SELECT * FROM service_durations WHERE service_id = ? ORDER BY session_count, duration_minutes");
+        $_dq->bind_param("i", $service_id); $_dq->execute();
+        foreach ($_dq->get_result()->fetch_all(MYSQLI_ASSOC) as $_d) {
+            $_ap = get_active_duration_price($_d);
+            $duration_options[(int)$_d['id']] = [
+                'id' => (int)$_d['id'], 'm' => (int)$_d['duration_minutes'], 'n' => max(1, (int)($_d['session_count'] ?? 1)),
+                'p' => (float)$_ap['price'], 'was' => $_ap['is_promo_active'] ? (float)$_d['regular_price'] : 0,
+            ];
+        }
+        $_dq->close();
+    }
+    // The option picked on the services page, or the first length.
+    $selected_duration_id = (int)($_POST['duration_id'] ?? ($_SESSION['service_booking']['duration_id'] ?? 0));
+    if (!isset($duration_options[$selected_duration_id])) $selected_duration_id = $duration_options ? (int)array_key_first($duration_options) : 0;
+    $selected_duration = $duration_options[$selected_duration_id] ?? null;
+    if ($selected_duration) {
+        $service['price']        = $selected_duration['p'];
+        $service['session_time'] = $selected_duration['m'];
+    }
+    $selected_sessions = $selected_duration['n'] ?? 1;
+
     $checkout_items[] = [
         'type'             => 'service',
         'id'               => $service['id'],
@@ -34,6 +61,8 @@ if (isset($_SESSION['service_booking'])) {
         'price'            => $service['price'],
         'quantity'         => 1,
         'session_time'     => $service['session_time'],
+        'duration_id'      => $selected_duration_id ?: null,
+        'sessions'         => $selected_sessions,
         'is_home_service'    => $service['is_home_service'],
         'home_service_fee'   => floatval($service['home_service_fee']   ?? 0),
         'home_service_price' => floatval($service['home_service_price'] ?? 0),
@@ -170,6 +199,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         $message_type = "danger";
         $payment_method = 'onsite';
     }
+    // Online service bookings need a non-refundable down payment, paid now
+    // through PayMongo (the spa's rule). Pay at Spa is only offered while
+    // online payment is switched off.
+    if ($checkout_type === 'service' && ONLINE_PAYMENT_ENABLED) {
+        $payment_method = 'online';
+        if (empty($_POST['dp_agree'])) {
+            $message = "Please tick the box to confirm that the down payment is non-refundable.";
+            $message_type = "danger";
+        }
+    }
+    // While PayMongo is off: pay the spa's GCash QR (down payment or in full),
+    // with the GCash reference number and a screenshot of the receipt. The
+    // receptionist verifies it in Appointments (see gcash_settings()).
+    $gcash_mode = $checkout_type === 'service' && !ONLINE_PAYMENT_ENABLED && gcash_qr_ready($conn);
+    $gcash_kind = ($_POST['pay_amount'] ?? 'dp') === 'full' ? 'full' : 'dp';
+    $gcash_ref  = preg_replace('/\D/', '', (string)($_POST['gcash_ref'] ?? ''));
+    $gcash_file = null;
+    if ($gcash_mode) {
+        $payment_method = 'gcash';
+        if (empty($message) && empty($_POST['dp_agree'])) {
+            $message = "Please tick the box to confirm that the payment is non-refundable.";
+            $message_type = "danger";
+        } elseif (empty($message) && (strlen($gcash_ref) < 10 || strlen($gcash_ref) > 20)) {
+            $message = "Please enter the GCash reference number from your receipt (10 to 20 digits).";
+            $message_type = "danger";
+        }
+    }
+    if (empty($message) && empty($_POST['terms_agree'])) {
+        $message = "Please tick the box to agree to the Terms and Conditions.";
+        $message_type = "danger";
+    }
     $service_type           = $_POST['service_type']   ?? 'onsite';
     $home_address           = sanitize_input($_POST['home_address'] ?? '');
     $home_notes             = sanitize_input($_POST['home_notes']   ?? '');
@@ -179,6 +239,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $discount_type = 'none';
 
     $payment_status  = $payment_method === 'online' ? 'pending_payment' : 'unpaid';
+
+    // A package's later sessions belong to one guest at the spa.
+    if ($checkout_type === 'service' && $selected_sessions > 1) {
+        if ($people_count > 1) {
+            $message = "A {$selected_sessions}-session package is for one person. Book one package per person, or choose a single session.";
+            $message_type = "danger";
+        } elseif ($service_type === 'home') {
+            $message = "Packages are done at the spa. Choose At the Spa, or a single session for home service.";
+            $message_type = "danger";
+        }
+    }
 
     $home_fee_applied = 0.00; // legacy, no longer added; home_service_price is the fixed total
     if ($checkout_type === 'service') {
@@ -220,9 +291,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             $message = "We open at 10:00 AM.";
             $message_type = "danger";
         }
-        $cutoff_time = strtotime('+2 hours');
+        $cutoff_time = strtotime('+30 minutes');
         if ($chosen_time < $cutoff_time && empty($message)) {
-            $message = "Appointments must be booked at least 2 hours in advance. Earliest: " . date('h:i A', $cutoff_time);
+            $message = "Appointments must be booked at least 30 minutes in advance. Earliest: " . date('h:i A', $cutoff_time);
             $message_type = "danger";
         }
     }
@@ -241,11 +312,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             } else {
                 date_default_timezone_set('Asia/Manila');
                 $chosen_time = strtotime($booking_date);
-                $cutoff_time = strtotime('+2 hours');
+                $cutoff_time = strtotime('+30 minutes');
                 if ($chosen_time < time()) {
                     $message = "You cannot book an appointment in the past."; $message_type = "danger";
                 } elseif ($chosen_time < $cutoff_time) {
-                    $message = "Appointments must be booked at least 2 hours in advance."; $message_type = "danger";
+                    $message = "Appointments must be booked at least 30 minutes in advance."; $message_type = "danger";
                 } else {
                     // ── Capacity soft warning ─────────────────────────────────
                     $is_today_booking = (date('Y-m-d', $chosen_time) === date('Y-m-d'));
@@ -278,11 +349,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     require_once __DIR__ . '/../admin/availability.php';
                     $engine     = new AvailabilityEngine($conn);
                     $appt_rate  = ($service_type === 'home') ? 'home' : 'regular';
+                    $sel_minutes = (int)($selected_duration['m'] ?? 0); // the picked length, not the service default
                     $slot_check = $engine->checkSlot(
                         (int)$service_id,
                         date('Y-m-d H:i:s', $chosen_time),
                         (int)$people_count,
-                        $appt_rate
+                        $appt_rate,
+                        0, 0, null, $sel_minutes
                     );
                     if (!$slot_check['available']) {
                         $reason = $slot_check['reason'] ?? 'No therapist is available at this time';
@@ -307,7 +380,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                             (int)$people_count,
                             $appt_rate,
                             0,
-                            $preferred_therapist_id
+                            $preferred_therapist_id,
+                            null,
+                            $sel_minutes
                         );
                         if (!$pref_check['available']) {
                             $tn = $conn->prepare("SELECT full_name FROM therapists WHERE id=?");
@@ -339,9 +414,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             if (!empty($stock_errors)) { $message = implode('<br>', $stock_errors); $message_type = "danger"; }
         }
 
+        if (empty($message) && $gcash_mode) {
+            $gcash_file = store_payment_image($_FILES['gcash_receipt'] ?? [], 'rcpt');
+            if ($gcash_file[0] === '!') { $message = substr($gcash_file, 1); $message_type = "danger"; $gcash_file = null; }
+        }
+
         if (empty($message)) {
             $discount_amount_calc = 0.00;
             $final_amount = $total_amount;
+            $dp_amount = ($checkout_type === 'service' && $payment_method === 'online')
+                ? round($final_amount * ONLINE_DP_PERCENT / 100, 2) : null;
 
             // ── Lock and verify stock before writing (prevents race conditions) ──
             if ($checkout_type === 'product' || $checkout_type === 'cart') {
@@ -381,6 +463,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
 
             if ($stmt->execute()) {
                 $order_id = $stmt->insert_id; $stmt->close();
+                if ($dp_amount !== null) {
+                    ensure_online_dp_column($conn);
+                    $dpu = $conn->prepare("UPDATE orders SET dp_amount = ? WHERE id = ?");
+                    $dpu->bind_param("di", $dp_amount, $order_id); $dpu->execute(); $dpu->close();
+                }
 
                 foreach ($checkout_items as $item) {
                     if ($item['type'] === 'product') {
@@ -402,22 +489,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                             INSERT INTO appointments
                                 (user_id, service_id, order_item_id, appointment_date, status,
                                  people_count, service_type, home_address, home_notes, customer_note,
-                                 charged_price, preferred_therapist_id)
-                            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+                                 charged_price, preferred_therapist_id, duration_minutes, service_duration_id)
+                            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ");
                         // FIXED: Bug 2 — store total for all people, not per-person
                         $appt_charged  = floatval($item['price']) * $people_count;
                         $pref_th_val   = $preferred_therapist_id > 0 ? $preferred_therapist_id : null;
+                        $appt_minutes  = (int)$item['session_time'];
+                        $appt_dur_id   = $item['duration_id'] ?: null;
                         $appt_stmt->bind_param(
-                            str_repeat('i',3) . 's' . 'i' . str_repeat('s',4) . 'di',
+                            str_repeat('i',3) . 's' . 'i' . str_repeat('s',4) . 'diii',
                             $user_id, $item['id'], $order_item_id,
                             $booking_date, $people_count,
                             $service_type, $home_address, $home_notes, $customer_note,
-                            $appt_charged, $pref_th_val
+                            $appt_charged, $pref_th_val, $appt_minutes, $appt_dur_id
                         );
                         $appt_stmt->execute();
                         $new_appt_id = $appt_stmt->insert_id;
                         $appt_stmt->close();
+
+                        // Multi-session package: Session 1 is this booking's date and time;
+                        // the other sessions wait for staff to schedule them in Appointments
+                        // (the same rows Book Now and Walk-in create).
+                        if ((int)$item['sessions'] > 1 && $new_appt_id > 0) {
+                            $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, session_date, therapist_id, duration_minutes, status) VALUES (?, 1, ?, ?, ?, 'scheduled')");
+                            $ss->bind_param("isii", $new_appt_id, $booking_date, $pref_th_val, $appt_minutes);
+                            $ss->execute(); $ss->close();
+                            for ($sn = 2; $sn <= (int)$item['sessions']; $sn++) {
+                                $ss = $conn->prepare("INSERT INTO appointment_sessions (appointment_id, session_number, duration_minutes, status) VALUES (?, ?, ?, 'not_scheduled')");
+                                $ss->bind_param("iii", $new_appt_id, $sn, $appt_minutes);
+                                $ss->execute(); $ss->close();
+                            }
+                        }
 
                         if ($preferred_therapist_id > 0 && $new_appt_id > 0) {
                             $af_notes = 'Customer preferred therapist';
@@ -498,7 +601,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     $_li_sum = 0;
                     foreach ($line_items as $_li) $_li_sum += $_li['amount'] * $_li['quantity'];
                     $_order_centavos = (int) round($final_amount * 100);
-                    if ($_li_sum !== $_order_centavos) {
+                    if ($dp_amount !== null) {
+                        // Service booking: charge only the down payment.
+                        $line_items = [[
+                            'currency'    => 'PHP',
+                            'amount'      => max(2000, (int) round($dp_amount * 100)),
+                            'description' => rtrim(rtrim(number_format(ONLINE_DP_PERCENT, 2), '0'), '.') . '% non-refundable down payment for '
+                                           . implode(', ', array_map(fn($i) => $i['name'], $checkout_items))
+                                           . '. Balance ₱' . number_format($final_amount - $dp_amount, 2) . ' is paid at the spa.',
+                            'name'        => 'Down payment · Booking #' . $order_id,
+                            'quantity'    => 1,
+                        ]];
+                    } elseif ($_li_sum !== $_order_centavos) {
                         $line_items = [[
                             'currency'    => 'PHP',
                             'amount'      => max(2000, $_order_centavos),
@@ -544,7 +658,7 @@ $payload = json_encode([
             'payment_method_types' => ['card','gcash','paymaya','qrph'],
             'success_url'   => $success_url,
             'cancel_url'    => $cancel_url,
-            'description'   => 'Recovery Spa Order #' . $order_id,
+            'description'   => ($dp_amount !== null ? 'Down payment · Recovery Spa Booking #' : 'Recovery Spa Order #') . $order_id,
         ]
     ]
 ]);
@@ -605,10 +719,12 @@ $payload = json_encode([
                             $_pm_charge = 0;
                             foreach ($line_items as $_li) $_pm_charge += $_li['amount'] * $_li['quantity'];
                             $_pm_charge /= 100;
+                            $_pm_expect = $dp_amount ?? $final_amount;
                             paymongo_log($conn, $order_id, 'checkout', 'session_created', 'ok',
                                 'Customer sent to PayMongo. Charge ₱' . number_format($_pm_charge, 2)
+                                . ($dp_amount !== null ? ' down payment' : '')
                                 . ' / order total ₱' . number_format($final_amount, 2)
-                                . (abs($_pm_charge - $final_amount) >= 0.01 ? ' — AMOUNTS DIFFER' : ''),
+                                . (abs($_pm_charge - $_pm_expect) >= 0.01 ? ' — AMOUNTS DIFFER' : ''),
                                 ['amount' => $_pm_charge, 'session_id' => $paymongo_link_id,
                                  'livemode' => $result['data']['attributes']['livemode'] ?? null]);
                             $_SESSION['paymongo_order_id'] = $order_id;
@@ -650,7 +766,16 @@ $payload = json_encode([
                     $_SESSION['last_order_id'] = $order_id;
 
                     require_once __DIR__ . '/../notify.php';
-                    if ($checkout_type === 'service') {
+                    if ($checkout_type === 'service' && $gcash_mode && $gcash_file) {
+                        // The GCash payment waits for the receptionist's check.
+                        ensure_manual_payments_table($conn);
+                        $gcash_amt = $gcash_kind === 'full' ? $final_amount : round($final_amount * ONLINE_DP_PERCENT / 100, 2);
+                        $mp = $conn->prepare("INSERT INTO manual_payments (order_id, user_id, amount, kind, reference_no, receipt_file) VALUES (?, ?, ?, ?, ?, ?)");
+                        $mp->bind_param("iidsss", $order_id, $user_id, $gcash_amt, $gcash_kind, $gcash_ref, $gcash_file);
+                        $mp->execute(); $mp->close();
+                        add_notification($conn, $user_id, 'appointment', 'Appointment Booked', 'Your booking #' . $order_id . ' is pending. The spa is checking your GCash payment of ₱' . number_format($gcash_amt, 2) . '.', 'appointments.php');
+                        add_notification($conn, null, 'appointment', 'New online booking · check the GCash payment', 'Booking #' . $order_id . ': ₱' . number_format($gcash_amt, 2) . ' GCash' . ($gcash_kind === 'full' ? ' (paid in full)' : ' (down payment)') . ', ref ' . $gcash_ref . '.', 'appointments.php');
+                    } elseif ($checkout_type === 'service') {
                         add_notification($conn, $user_id, 'appointment', 'Appointment Booked', 'Your booking #' . $order_id . ' is pending approval.', 'appointments.php');
                         add_notification($conn, null, 'appointment', 'New Service Booking', 'New appointment booking #' . $order_id . ' by a customer.', 'appointments.php');
                     } else {
@@ -750,12 +875,12 @@ require_once 'header.php';
 /* ── Layout ── */
 .co-grid {
     display: grid;
-    grid-template-columns: 1fr 420px;
+    grid-template-columns: minmax(0, 1fr) 420px;
     gap: 2rem;
     align-items: start;
 }
 @media (max-width: 860px) {
-    .co-grid { grid-template-columns: 1fr; }
+    .co-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ── Cards ── */
@@ -856,6 +981,41 @@ require_once 'header.php';
 .svc-type-btn .svc-type-sub { font-size: 0.7rem; opacity: 0.7; display: block; margin-top: 0.1rem; }
 .svc-type-btn.active .svc-type-sub { opacity: 0.85; }
 
+/* ── Length or package choice ── */
+.dur-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.6rem;
+}
+.dur-btn {
+    padding: 0.7rem 0.8rem;
+    border: 2px solid var(--cream2);
+    border-radius: 12px;
+    background: var(--cream);
+    cursor: pointer;
+    text-align: left;
+    font-family: 'DM Sans', sans-serif;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+.dur-btn:hover { border-color: var(--gold); }
+.dur-btn.active { border-color: var(--gold); background: linear-gradient(135deg, #C96A2C, #a94f1d); color: #fff; }
+.dur-btn .dur-label { font-size: 0.85rem; font-weight: 700; }
+.dur-btn .dur-price { font-size: 0.82rem; }
+.dur-btn .dur-sub { font-size: 0.7rem; opacity: 0.8; }
+.dur-pkg-note {
+    margin-top: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 10px;
+    background: #FFF8EA;
+    border: 1px solid var(--gold);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+.dur-pkg-note[hidden] { display: none; }
+
 /* ── Payment method ── */
 .pay-group {
     display: grid;
@@ -905,6 +1065,14 @@ require_once 'header.php';
     font-family: 'DM Sans', sans-serif;
     transition: all .2s;
 }
+
+/* ── Down payment (online service bookings) ── */
+.dp-box { border: 1px solid var(--cream2); border-radius: 12px; padding: 0.8rem 0.95rem; background: #FFFBF4; display: grid; gap: 0.35rem; margin-bottom: 0.9rem; font-family: 'DM Sans', sans-serif; }
+.dp-row { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.88rem; color: var(--brown); font-variant-numeric: tabular-nums; }
+.dp-row.dp-now { font-weight: 700; }
+.dp-row.dp-now b { color: var(--gold); font-size: 1.15rem; }
+.dp-agree { display: flex; gap: 0.6rem; align-items: flex-start; font-size: 0.84rem; line-height: 1.45; color: var(--brown); margin: 0 0 1rem; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+.dp-agree input { width: 17px; height: 17px; margin-top: 2px; flex: none; accent-color: var(--gold); }
 
 /* ── Order summary ── */
 .co-summary { position: sticky; top: 1.5rem; }
@@ -1387,9 +1555,9 @@ require_once 'header.php';
             <div class="co-card-head">
                 <div class="co-card-head-title">Contact Information</div>
             </div>
-            <form method="POST" id="checkoutForm">
+            <form method="POST" id="checkoutForm" enctype="multipart/form-data">
             <?php echo csrf_field(); ?>
-            <input type="hidden" name="payment_method" id="payment_method" value="onsite">
+            <input type="hidden" name="payment_method" id="payment_method" value="<?php echo ($checkout_type === 'service' && ONLINE_PAYMENT_ENABLED) ? 'online' : 'onsite'; ?>">
             <input type="hidden" name="service_type"   id="service_type_hidden" value="onsite">
             <div class="co-card-body">
                 <div class="co-input-row">
@@ -1425,6 +1593,35 @@ require_once 'header.php';
                 <div class="co-card-head-title">Booking Details</div>
             </div>
             <div class="co-card-body">
+
+                <!-- Length or package (service_durations) -->
+                <input type="hidden" name="duration_id" id="duration_id_input" value="<?php echo (int)$selected_duration_id; ?>">
+                <?php if (count($duration_options) > 1): ?>
+                <div class="co-field">
+                    <label class="co-label">Length or package <span>*</span></label>
+                    <div class="dur-group" role="group" aria-label="Length or package">
+                        <?php foreach ($duration_options as $_o):
+                            $_lbl = $_o['n'] > 1 ? $_o['n'] . ' sessions' : ($_o['m'] >= 60 ? (intdiv($_o['m'], 60) . ' hr' . ($_o['m'] % 60 ? ' ' . ($_o['m'] % 60) . ' min' : '')) : $_o['m'] . ' min');
+                            $_sub = $_o['n'] > 1 ? $_o['m'] . ' min each · ₱' . number_format($_o['p'] / $_o['n'], 2) . ' per session' : '';
+                        ?>
+                        <button type="button" class="dur-btn<?php echo $_o['id'] === $selected_duration_id ? ' active' : ''; ?>"
+                                aria-pressed="<?php echo $_o['id'] === $selected_duration_id ? 'true' : 'false'; ?>"
+                                data-dur="<?php echo $_o['id']; ?>" data-p="<?php echo $_o['p']; ?>" data-m="<?php echo $_o['m']; ?>"
+                                data-n="<?php echo $_o['n']; ?>" data-l="<?php echo htmlspecialchars($_lbl); ?>"
+                                onclick="selectDuration(this)">
+                            <span class="dur-label"><?php echo htmlspecialchars($_lbl); ?></span>
+                            <span class="dur-price">₱<?php echo number_format($_o['p'], 2); ?></span>
+                            <?php if ($_sub): ?><span class="dur-sub"><?php echo $_sub; ?></span><?php endif; ?>
+                        </button>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="dur-pkg-note" id="durPkgNote"<?php echo $selected_sessions > 1 ? '' : ' hidden'; ?>>
+                        <strong>Package:</strong> paid in full for all sessions. The date and time you pick below is <strong>Session 1</strong>;
+                        our staff will schedule the remaining sessions with you at your visit.
+                        Packages are for one person at the spa.
+                    </div>
+                </div>
+                <?php endif; ?>
 
                 <!-- Service type -->
                 <div class="co-field">
@@ -1583,6 +1780,87 @@ require_once 'header.php';
                 <div class="co-card-head-title">Payment Method</div>
             </div>
             <div class="co-card-body">
+                <?php if ($checkout_type === 'service' && ONLINE_PAYMENT_ENABLED):
+                    $_dp_pct_label = rtrim(rtrim(number_format(ONLINE_DP_PERCENT, 2), '0'), '.') . '%';
+                    $_dp_now = round($total_amount * ONLINE_DP_PERCENT / 100, 2); ?>
+                <!-- Online service bookings: non-refundable down payment through PayMongo -->
+                <div class="dp-box">
+                    <div class="dp-row"><span>Total</span><b id="dpTotal">₱<?php echo number_format($total_amount, 2); ?></b></div>
+                    <div class="dp-row dp-now"><span><?php echo $_dp_pct_label; ?> down payment, pay now online</span><b id="dpNow">₱<?php echo number_format($_dp_now, 2); ?></b></div>
+                    <div class="dp-row"><span>Balance, pay at the spa</span><b id="dpBal">₱<?php echo number_format($total_amount - $_dp_now, 2); ?></b></div>
+                </div>
+                <div class="pay-note" style="border-left-color:#198754;background:#f0fdf4;">
+                    Online bookings need a <strong><?php echo $_dp_pct_label; ?> down payment</strong>. You'll pay it on PayMongo's secure page with
+                    <strong>GCash, Maya, card or QR Ph</strong>. The down payment is <strong>non-refundable</strong> and is deducted from your bill on the day of your appointment.
+                </div>
+                <label class="dp-agree">
+                    <input type="checkbox" name="dp_agree" value="1" id="dpAgree" required>
+                    <span>I understand the down payment is <strong>non-refundable</strong>, including if I cancel or do not show up.</span>
+                </label>
+                <label class="dp-agree">
+                    <input type="checkbox" name="terms_agree" value="1" required>
+                    <span>I agree to the <a href="<?php echo BASE_URL; ?>terms.php" target="_blank" rel="noopener" style="color:#C96A2C;font-weight:700;">Terms and Conditions</a>.</span>
+                </label>
+                <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
+                    Pay <span id="dpBtnAmt">₱<?php echo number_format($_dp_now, 2); ?></span> down payment
+                </button>
+                <?php elseif ($checkout_type === 'service' && gcash_qr_ready($conn)):
+                    $_gc = gcash_settings($conn);
+                    $_dp_pct_label = rtrim(rtrim(number_format(ONLINE_DP_PERCENT, 2), '0'), '.') . '%';
+                    $_gc_dp = round($total_amount * ONLINE_DP_PERCENT / 100, 2);
+                    $_gc_full = (($_POST['pay_amount'] ?? '') === 'full'); ?>
+                <!-- While PayMongo is off: pay the spa's GCash QR, then send the reference number and receipt -->
+                <input type="hidden" name="pay_amount" id="gcKind" value="<?php echo $_gc_full ? 'full' : 'dp'; ?>">
+                <div class="pay-group">
+                    <div class="pay-btn<?php echo $_gc_full ? '' : ' active'; ?>" data-gc="dp" onclick="gcPick('dp')">
+                        <span class="pay-btn-label"><?php echo $_dp_pct_label; ?> down payment</span>
+                        <span class="pay-btn-sub" id="gcDpAmt">₱<?php echo number_format($_gc_dp, 2); ?> now, the rest at the spa</span>
+                    </div>
+                    <div class="pay-btn<?php echo $_gc_full ? ' active' : ''; ?>" data-gc="full" onclick="gcPick('full')">
+                        <span class="pay-btn-label">Pay in full</span>
+                        <span class="pay-btn-sub" id="gcFullAmt">₱<?php echo number_format($total_amount, 2); ?> now, nothing at the spa</span>
+                    </div>
+                </div>
+                <div class="dp-box">
+                    <div class="dp-row"><span>Total</span><b id="gcTotal">₱<?php echo number_format($total_amount, 2); ?></b></div>
+                    <div class="dp-row dp-now"><span>Send now by GCash</span><b id="gcNow">₱<?php echo number_format($_gc_full ? $total_amount : $_gc_dp, 2); ?></b></div>
+                    <div class="dp-row"><span>Balance, pay at the spa</span><b id="gcBal">₱<?php echo number_format($_gc_full ? 0 : $total_amount - $_gc_dp, 2); ?></b></div>
+                </div>
+                <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;border:1px dashed var(--cream2);border-radius:12px;padding:0.85rem;margin-bottom:0.9rem;font-family:'DM Sans',sans-serif;">
+                    <img src="<?php echo BASE_URL; ?>payment_qr.php" alt="Recovery Iloilo GCash QR code" style="width:160px;height:160px;object-fit:contain;border-radius:10px;background:#fff;border:1px solid var(--cream2);">
+                    <div style="display:grid;gap:0.3rem;font-size:0.88rem;color:var(--brown);min-width:0;">
+                        <span style="color:var(--gray);font-size:0.8rem;">Scan with GCash or any bank app (InstaPay), or send to:</span>
+                        <strong><?php echo htmlspecialchars($_gc['gcash_name']); ?></strong>
+                        <span><strong id="gcNum" style="letter-spacing:0.03em;"><?php echo htmlspecialchars($_gc['gcash_number']); ?></strong>
+                            <button type="button" onclick="gcCopy()" style="border:1px solid var(--cream2);background:#fff;border-radius:8px;padding:2px 8px;font-size:0.75rem;cursor:pointer;margin-left:4px;">Copy</button></span>
+                        <span style="color:var(--gray);font-size:0.8rem;">Amount to send: <strong id="gcSend" style="color:var(--gold);">₱<?php echo number_format($_gc_full ? $total_amount : $_gc_dp, 2); ?></strong></span>
+                    </div>
+                </div>
+                <div class="co-field" style="margin-bottom:0.8rem;">
+                    <label class="co-label">GCash reference number <span>*</span></label>
+                    <input type="text" name="gcash_ref" class="co-input" inputmode="numeric" autocomplete="off" required
+                           placeholder="From your GCash receipt, e.g. 1009 876 543210" value="<?php echo htmlspecialchars($_POST['gcash_ref'] ?? ''); ?>">
+                </div>
+                <div class="co-field" style="margin-bottom:0.9rem;">
+                    <label class="co-label">Screenshot of your receipt <span>*</span></label>
+                    <input type="file" name="gcash_receipt" accept="image/jpeg,image/png,image/webp" required class="co-input" style="padding:0.5rem;">
+                </div>
+                <div class="pay-note" style="border-left-color:#198754;background:#f0fdf4;">
+                    Your booking is <strong>pending</strong> until the spa checks your GCash payment; you'll get a notification once it's verified.
+                    The amount you send is <strong>non-refundable</strong> and is deducted from your bill on the day of your appointment.
+                </div>
+                <label class="dp-agree">
+                    <input type="checkbox" name="dp_agree" value="1" id="dpAgree" required>
+                    <span>I understand the payment is <strong>non-refundable</strong>, including if I cancel or do not show up.</span>
+                </label>
+                <label class="dp-agree">
+                    <input type="checkbox" name="terms_agree" value="1" required>
+                    <span>I agree to the <a href="<?php echo BASE_URL; ?>terms.php" target="_blank" rel="noopener" style="color:#C96A2C;font-weight:700;">Terms and Conditions</a>.</span>
+                </label>
+                <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
+                    Confirm booking · <span id="gcBtnAmt">₱<?php echo number_format($_gc_full ? $total_amount : $_gc_dp, 2); ?></span> sent by GCash
+                </button>
+                <?php else: ?>
                 <div class="pay-group" id="paymentBtnsGroup">
                     <div class="pay-btn active" id="paybtn-onsite" onclick="selectPayment('onsite')">
                         <span class="pay-btn-label">Pay at Spa</span>
@@ -1606,9 +1884,14 @@ require_once 'header.php';
                     <strong>Pending</strong> — pay when you arrive and staff will confirm.
                 </div>
 
+                <label class="dp-agree">
+                    <input type="checkbox" name="terms_agree" value="1" required>
+                    <span>I agree to the <a href="<?php echo BASE_URL; ?>terms.php" target="_blank" rel="noopener" style="color:#C96A2C;font-weight:700;">Terms and Conditions</a>.</span>
+                </label>
                 <button type="submit" name="place_order" id="placeOrderBtn" class="co-submit">
                     Confirm Booking
                 </button>
+                <?php endif; ?>
                 <a href="<?php echo $checkout_type === 'service' ? 'index.php' : 'cart.php'; ?>"
                    class="co-back">← Go Back</a>
                 <div class="co-secure">
@@ -1639,11 +1922,11 @@ require_once 'header.php';
                         <div style="flex:1;min-width:0;">
                             <div class="co-item-name"><?php echo htmlspecialchars($item['name']); ?></div>
                             <?php if (isset($item['session_time'])): ?>
-                            <div class="co-item-meta"><?php echo $item['session_time']; ?> mins</div>
+                            <div class="co-item-meta" id="itemLenMeta"><?php echo $item['session_time']; ?> mins<?php echo ($item['sessions'] ?? 1) > 1 ? ' · ' . (int)$item['sessions'] . '-session package' : ''; ?></div>
                             <?php endif; ?>
                             <div class="co-item-meta">Qty: <?php echo $item['quantity']; ?></div>
                         </div>
-                        <div class="co-item-price">
+                        <div class="co-item-price"<?php echo $item['type'] === 'service' ? ' id="itemPrice"' : ''; ?>>
                             ₱<?php echo number_format($item['price'] * $item['quantity'], 2); ?>
                         </div>
                     </div>
@@ -1872,7 +2155,38 @@ function checkCapacityWarning(count) {
 }
 
 // ── Service type ──────────────────────────────────────────────────────────────
-const BASE_PRICE    = <?php echo floatval($checkout_items[0]['price'] ?? 0); ?>;
+let   BASE_PRICE    = <?php echo floatval($checkout_items[0]['price'] ?? 0); ?>;
+
+// ── Length or package ─────────────────────────────────────────────────────────
+// The picked option sets the price and how long a slot must be, so a time
+// picked for another length is cleared.
+function selectDuration(btn) {
+    document.querySelectorAll('.dur-btn').forEach(b => {
+        b.classList.toggle('active', b === btn);
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+    });
+    document.getElementById('duration_id_input').value = btn.dataset.dur;
+    BASE_PRICE = parseFloat(btn.dataset.p) || 0;
+    const n = parseInt(btn.dataset.n) || 1;
+    const meta = document.getElementById('itemLenMeta');
+    if (meta) meta.textContent = btn.dataset.m + ' mins' + (n > 1 ? ' · ' + n + '-session package' : '');
+    const price = document.getElementById('itemPrice');
+    if (price) price.textContent = '₱' + BASE_PRICE.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    const note = document.getElementById('durPkgNote');
+    if (note) note.hidden = n <= 1;
+    if (n > 1) {
+        const ppl = document.getElementById('people_count');
+        if (ppl && parseInt(ppl.value) > 1) { ppl.value = 1; checkCapacityWarning(1); }
+        if (document.getElementById('svcbtn-home')?.classList.contains('active')) selectServiceType('onsite');
+    }
+    const dt = document.getElementById('booking_date_input');
+    if (dt && dt.value) {
+        dt.value = '';
+        const pick = document.getElementById('dtPickBtn');
+        if (pick) { pick.textContent = 'Pick Date & Time'; pick.classList.remove('has-value'); }
+    }
+    updateDiscountPreview();
+}
 const HOME_FEE      = <?php echo floatval($checkout_items[0]['home_service_fee'] ?? 0); ?>; // legacy
 const HOME_PRICE    = <?php echo floatval($checkout_items[0]['home_service_price'] ?? 0); ?>;
 
@@ -1902,8 +2216,60 @@ function selectServiceType(type) {
     updateDiscountPreview();
 }
 
+// ── Down payment figures follow the order total (people, length, add-ons) ─────
+(function () {
+    var grand = document.getElementById('grandTotal'), now = document.getElementById('dpNow');
+    if (!grand || !now) return;
+    var PCT = <?php echo json_encode((float)ONLINE_DP_PERCENT); ?>;
+    var fmt = function (n) { return '₱' + n.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}); };
+    function sync() {
+        var total = parseFloat(grand.textContent.replace(/[₱,+\s]/g, '')) || 0;
+        var dp = Math.round(total * PCT) / 100;
+        document.getElementById('dpTotal').textContent = fmt(total);
+        now.textContent = fmt(dp);
+        document.getElementById('dpBal').textContent = fmt(total - dp);
+        document.getElementById('dpBtnAmt').textContent = fmt(dp);
+    }
+    new MutationObserver(sync).observe(grand, {childList: true, characterData: true, subtree: true});
+    sync();
+}());
+
+// ── GCash QR: down payment or full, figures follow the order total ──────────
+function gcPick(kind) {
+    var k = document.getElementById('gcKind'); if (!k) return;
+    k.value = kind;
+    document.querySelectorAll('[data-gc]').forEach(function (b) { b.classList.toggle('active', b.dataset.gc === kind); });
+    gcSync();
+}
+function gcSync() {
+    var grand = document.getElementById('grandTotal'), k = document.getElementById('gcKind');
+    if (!grand || !k) return;
+    var PCT = <?php echo json_encode((float)ONLINE_DP_PERCENT); ?>;
+    var fmt = function (n) { return '₱' + n.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}); };
+    var total = parseFloat(grand.textContent.replace(/[₱,+\s]/g, '')) || 0;
+    var dp = Math.round(total * PCT) / 100, now = k.value === 'full' ? total : dp;
+    document.getElementById('gcTotal').textContent = fmt(total);
+    document.getElementById('gcNow').textContent = fmt(now);
+    document.getElementById('gcBal').textContent = fmt(total - now);
+    document.getElementById('gcSend').textContent = fmt(now);
+    document.getElementById('gcBtnAmt').textContent = fmt(now);
+    document.getElementById('gcDpAmt').textContent = fmt(dp) + ' now, the rest at the spa';
+    document.getElementById('gcFullAmt').textContent = fmt(total) + ' now, nothing at the spa';
+}
+function gcCopy() {
+    var t = (document.getElementById('gcNum') || {}).textContent || '';
+    if (navigator.clipboard) navigator.clipboard.writeText(t.replace(/\s/g, '')).catch(function () {});
+}
+(function () {
+    var grand = document.getElementById('grandTotal');
+    if (!grand || !document.getElementById('gcKind')) return;
+    new MutationObserver(gcSync).observe(grand, {childList: true, characterData: true, subtree: true});
+    gcSync();
+}());
+
 // ── Payment method ────────────────────────────────────────────────────────────
 function selectPayment(method) {
+    if (!document.getElementById('paybtn-onsite')) return; // down-payment layout: always online
     ['onsite','online'].forEach(m => {
         document.getElementById('paybtn-' + m)?.classList.toggle('active', m === method);
     });
@@ -2089,7 +2455,7 @@ function bmMinuteAvailable(h, m, d) {
     const endMin   = startMin + d.session_time; // buffer already baked into busy windows
     if (h < d.open_hour || h > d.close_hour) return false;
     if (h === d.close_hour && m > 0) return false;
-    // Grey out past times + 2-hour advance minimum (min_start_minutes = now+120 when is_today, else 0)
+    // Grey out past times + 30-minute advance minimum (min_start_minutes = now+30 when is_today, else 0)
     if (d.min_start_minutes > 0 && startMin < d.min_start_minutes) return false;
     // any-available mode: valid_starts gives exact ranges where at least one therapist
     // is free for the full duration — check membership directly (no overlap approximation)
@@ -2128,7 +2494,7 @@ function bmLoadBusyWindows(dateStr) {
     document.getElementById('bmHourList').innerHTML   = '';
     document.getElementById('bmMinuteList').innerHTML = '<div class="bm-time-hint">← Select an hour</div>';
 
-    fetch(`../admin/busy_windows.php?service_id=${SERVICE_ID}&date=${dateStr}&people=${people}&rate_type=${rateType}&therapist_id=${thId}`)
+    fetch(`../admin/busy_windows.php?service_id=${SERVICE_ID}&date=${dateStr}&people=${people}&rate_type=${rateType}&therapist_id=${thId}&duration_id=${document.getElementById('duration_id_input')?.value || ''}`)
         .then(r => r.json())
         .then(data => {
             loading.style.display = 'none';

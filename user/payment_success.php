@@ -58,8 +58,9 @@ if (!$user_id) {
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 3 — Ownership gate + fetch order and items
 // ─────────────────────────────────────────────────────────────────────────────
+ensure_online_dp_column($conn);
 $stmt = $conn->prepare("
-    SELECT id, payment_status, payment_method, paymongo_method,
+    SELECT id, payment_status, payment_method, paymongo_method, dp_amount,
            paymongo_link_id, paymongo_reference, total_amount,
            discount_amount, discount_type, final_amount,
            customer_name, email, phone, address, approval_status, created_at
@@ -171,7 +172,27 @@ if ($order['payment_status'] === 'paid') {
             $paymongo_method = $pm_method_map[$raw_pm_method] ?? $raw_pm_method ?? null;
         }
 
-        if ($pm_status === 'paid') {
+        if ($pm_status === 'paid' && (float)($order['dp_amount'] ?? 0) > 0) {
+            // Down payment for a service booking: save it as the booking's
+            // advance payment; the balance stays due at the spa.
+            $rows_changed = settle_online_down_payment($conn, $order_id, $paymongo_method, $paymongo_reference);
+            $payment_confirmed = true;
+            if ($rows_changed > 0) {
+                add_notification($conn, $user_id, 'appointment', 'Down Payment Received',
+                    'We received your ₱' . number_format($order['dp_amount'], 2) . ' down payment for booking #' . $order_id . '. Awaiting confirmation from the spa.',
+                    'appointments.php');
+                add_notification($conn, null, 'appointment', 'Online Down Payment',
+                    'Booking #' . $order_id . ': ₱' . number_format($order['dp_amount'], 2) . ' down payment paid online. Ref: ' . $paymongo_reference,
+                    'appointments.php');
+                $receipt_emailed = send_order_receipt($conn, $order_id);
+                unset(
+                    $_SESSION['direct_checkout'],         $_SESSION['service_booking'],
+                    $_SESSION['checkout_items'],          $_SESSION['checkout_item_ids'],
+                    $_SESSION['paymongo_order_id'],       $_SESSION['paymongo_checkout_type'],
+                    $_SESSION['paymongo_checkout_items'], $_SESSION['paymongo_checkout_ids']
+                );
+            }
+        } elseif ($pm_status === 'paid') {
             // Idempotent UPDATE — includes reference number
             $upd = $conn->prepare("
                 UPDATE orders
@@ -250,19 +271,26 @@ if ($order['payment_status'] === 'paid') {
     }
 
     // Payment log — what happened when the customer came back from PayMongo
-    $_pl_extra = ['amount' => $order['final_amount'] ?? $order['total_amount'] ?? null,
+    $_pl_extra = ['amount' => ((float)($order['dp_amount'] ?? 0) > 0 ? $order['dp_amount'] : ($order['final_amount'] ?? $order['total_amount'] ?? null)),
                   'method' => $paymongo_method ?? null, 'reference' => $paymongo_reference ?: null,
                   'session_id' => $link_id];
     if ($paymongo_error) {
         paymongo_log($conn, $order_id, 'customer', 'return', 'error', $paymongo_error, $_pl_extra);
     } elseif (($pm_status ?? '') === 'paid') {
         paymongo_log($conn, $order_id, 'customer', 'confirmed', 'ok',
-            !empty($rows_changed) ? 'Customer came back; PayMongo says paid. Order marked paid, receipt sent.'
+            !empty($rows_changed) ? ((float)($order['dp_amount'] ?? 0) > 0
+                                        ? 'Customer came back; PayMongo says paid. Down payment saved on the booking, balance due at the spa.'
+                                        : 'Customer came back; PayMongo says paid. Order marked paid, receipt sent.')
                                   : 'Customer came back; already marked paid (webhook got there first).', $_pl_extra);
     } else {
         paymongo_log($conn, $order_id, 'customer', 'return', 'info',
             'Customer came back but PayMongo does not show it paid yet' . (!empty($pm_status) ? ' (status: ' . $pm_status . ')' : '') . '.', $_pl_extra);
     }
+
+} elseif ($order['payment_status'] === 'unpaid' && (float)($order['dp_amount'] ?? 0) > 0) {
+    // Branch D — down payment already settled (refresh, or the webhook was first)
+    $payment_confirmed = true;
+    $already_paid      = true;
 
 } elseif ($order['payment_status'] === 'unpaid') {
     // Branch C — cash order; show receipt, no PayMongo reference
@@ -283,7 +311,10 @@ if ($order['payment_status'] === 'paid') {
 $page_title  = 'Payment Receipt';
 require_once 'header.php';
 
-$pay_badge = match($order['payment_status']) {
+$dp_paid = $payment_confirmed && (float)($order['dp_amount'] ?? 0) > 0;
+$pay_badge = $dp_paid
+    ? '<span style="background:#d1e7dd;color:#0a3622;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">✅ Down payment paid</span>'
+    : match($order['payment_status']) {
     'paid'               => '<span style="background:#d1e7dd;color:#0a3622;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">✅ Paid</span>',
     'unpaid'             => '<span style="background:#fff3cd;color:#664d03;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;">🏪 Pay at Spa</span>',
     default              => '<span style="background:#e2e3e5;color:#41464b;padding:3px 12px;border-radius:20px;font-size:12px;">' . htmlspecialchars($order['payment_status']) . '</span>',
@@ -321,7 +352,7 @@ $ref_display = !empty($paymongo_reference)
         </div>
         <h2 style="color:#198754;margin-bottom:.4rem;
                    font-family:'Cormorant Garamond',serif;font-weight:400;font-size:2rem;">
-            <?php echo $order['payment_method'] === 'online' ? 'Payment Successful!' : 'Order Placed!'; ?>
+            <?php echo $dp_paid ? 'Down Payment Received!' : ($order['payment_method'] === 'online' ? 'Payment Successful!' : 'Order Placed!'); ?>
         </h2>
         <p style="color:#555;margin-bottom:.3rem;">
             <?php echo $pay_badge; ?>
@@ -513,6 +544,16 @@ $ref_display = !empty($paymongo_reference)
                     ₱<?php echo number_format($final_amt, 2); ?>
                 </span>
             </div>
+            <?php if ($dp_paid): ?>
+            <div style="display:flex;justify-content:space-between;margin-top:0.5rem;font-size:0.95rem;color:#198754;font-weight:700;">
+                <span>Down payment paid online (non-refundable)</span>
+                <span>−₱<?php echo number_format((float)$order['dp_amount'], 2); ?></span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:0.35rem;font-size:1.05rem;color:#3B2A1A;font-weight:800;">
+                <span>Balance to pay at the spa</span>
+                <span>₱<?php echo number_format($final_amt - (float)$order['dp_amount'], 2); ?></span>
+            </div>
+            <?php endif; ?>
 
             <!-- VAT Summary box -->
             <div style="margin-top:0.85rem;padding:0.65rem 0.85rem;background:#fff;

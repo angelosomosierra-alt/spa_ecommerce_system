@@ -65,7 +65,12 @@ function send_order_receipt($conn, $order_id) {
     $total         = number_format($order['total_amount'], 2);
     $pay_method    = $order['payment_method'] === 'online' ? '💳 Online (PayMongo)' : '🏪 Onsite / Cash';
 
-    $pay_status_html = match($order['payment_status']) {
+    // Online service booking paid as a down payment: the rest is due at the spa.
+    $dp_amount = (float)($order['dp_amount'] ?? 0);
+    $dp_paid   = $dp_amount > 0 && $order['payment_status'] === 'unpaid';
+    $pay_status_html = $dp_paid
+        ? '<span style="color:#198754;font-weight:bold;">✅ Down payment paid</span>'
+        : match($order['payment_status']) {
         'paid'   => '<span style="color:#198754;font-weight:bold;">✅ Paid</span>',
         'unpaid' => '<span style="color:#C96A2C;font-weight:bold;">🏪 Pay at Spa</span>',
         default  => htmlspecialchars($order['payment_status']),
@@ -172,7 +177,15 @@ function send_order_receipt($conn, $order_id) {
             <tr>
                 <td style='font-size:1rem;color:#3B2A1A;font-weight:bold;'>Total Amount</td>
                 <td style='font-size:1.3rem;color:#C96A2C;font-weight:bold;text-align:right;'>₱{$total}</td>
+            </tr>" . ($dp_paid ? "
+            <tr>
+                <td style='font-size:0.9rem;color:#198754;font-weight:bold;padding-top:6px;'>Down payment paid (non-refundable)</td>
+                <td style='font-size:0.9rem;color:#198754;font-weight:bold;text-align:right;padding-top:6px;'>−₱" . number_format($dp_amount, 2) . "</td>
             </tr>
+            <tr>
+                <td style='font-size:1rem;color:#3B2A1A;font-weight:bold;padding-top:4px;'>Balance to pay at the spa</td>
+                <td style='font-size:1rem;color:#3B2A1A;font-weight:bold;text-align:right;padding-top:4px;'>₱" . number_format((float)$order['total_amount'] - $dp_amount, 2) . "</td>
+            </tr>" : "") . "
         </table>
     </div>
 
@@ -197,6 +210,10 @@ function send_order_receipt($conn, $order_id) {
     $plain .= "Date: {$order_date}\n";
     $plain .= "Payment: {$pay_method}\n";
     $plain .= "Total: ₱{$total}\n";
+    if ($dp_paid) {
+        $plain .= "Down payment paid (non-refundable): ₱" . number_format($dp_amount, 2) . "\n";
+        $plain .= "Balance to pay at the spa: ₱" . number_format((float)$order['total_amount'] - $dp_amount, 2) . "\n";
+    }
     $plain .= str_repeat('-', 40) . "\nThank you for choosing Recovery Spa!\n";
 
     // ── 8. Send via PHPMailer ─────────────────────────────────────────────────

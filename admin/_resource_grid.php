@@ -37,7 +37,11 @@ function _resource_grid_self_heal(mysqli $conn): void {
     }
 }
 
-function render_resource_grid_html(mysqli $conn): string {
+// $interactive (the Dashboard): blocks are buttons that open the booking's
+// panel (window.openApptPanel, see _appt_desk.php), today's done services
+// show too, and a customer's several services from one booking are marked
+// 1/2, 2/2 and light up together.
+function render_resource_grid_html(mysqli $conn, bool $interactive = false): string {
     _resource_grid_self_heal($conn);
 
     $type_labels = ['room' => 'Room', 'chair' => 'Chair', 'head_spa' => 'Head Spa'];
@@ -54,17 +58,21 @@ function render_resource_grid_html(mysqli $conn): string {
              . 'No active resources configured yet. Add some in <a href="resources.php">Resources</a>.</div></div>';
     }
 
-    $statuses = "'" . implode("','", RESOURCE_OCCUPYING_STATUSES) . "'";
+    $statuses = "'" . implode("','", array_merge(RESOURCE_OCCUPYING_STATUSES, $interactive ? ['completed'] : [])) . "'";
     $occ_rows = $conn->query("
         SELECT a.id, a.resource_id, a.appointment_date,
                COALESCE(a.duration_minutes, s.session_time, 60) AS eff_duration,
                s.name AS service_name,
                a.status,
-               GROUP_CONCAT(DISTINCT t.full_name SEPARATOR ', ') AS therapist_names
+               GROUP_CONCAT(DISTINCT t.full_name SEPARATOR ', ') AS therapist_names,
+               MAX(COALESCE(NULLIF(o.customer_name, ''), u.full_name)) AS customer, MAX(o.booking_group) AS booking_group
         FROM appointments a
         JOIN services s ON s.id = a.service_id
         LEFT JOIN appointment_therapists at2 ON at2.appointment_id = a.id
         LEFT JOIN therapists t ON t.id = at2.therapist_id
+        LEFT JOIN order_items oi ON oi.id = a.order_item_id
+        LEFT JOIN orders o ON o.id = oi.order_id
+        LEFT JOIN users u ON u.id = a.user_id
         WHERE a.resource_id IS NOT NULL
           AND a.status IN ($statuses)
           AND DATE(a.appointment_date) = CURDATE()
@@ -75,6 +83,19 @@ function render_resource_grid_html(mysqli $conn): string {
     $window_start = strtotime(date('Y-m-d') . ' ' . RESOURCE_GRID_START_HOUR . ':00:00');
     $window_mins  = (RESOURCE_GRID_END_HOUR - RESOURCE_GRID_START_HOUR) * 60;
     $total_height = $window_mins * $px_per_min;
+
+    // One customer's services from one booking (Book Now): number them in
+    // time order, and tell "next" (customer checked in, not started) apart.
+    $visits = [];
+    foreach ($occ_rows as $o) {
+        if ($o['booking_group']) $visits[$o['booking_group'] . '|' . $o['customer']][] = $o;
+    }
+    $visit_of = [];
+    foreach ($visits as $vk => $list) {
+        usort($list, fn($x, $y) => strcmp($x['appointment_date'], $y['appointment_date']) ?: ((int)$x['id'] <=> (int)$y['id']));
+        $in = (bool)array_filter($list, fn($x) => in_array($x['status'], ['approved', 'completed'], true));
+        foreach ($list as $i => $x) $visit_of[(int)$x['id']] = ['key' => $vk, 'n' => $i + 1, 'of' => count($list), 'in' => $in];
+    }
 
     // occupancy[resource_id] = flat list of blocks -- no per-hour slot to
     // collide over, so any number of back-to-back bookings just coexist.
@@ -102,6 +123,9 @@ function render_resource_grid_html(mysqli $conn): string {
             'service'    => $o['service_name'],
             'status'     => $o['status'],
             'time_label' => date('g:i A', $start_ts) . ' – ' . date('g:i A', $end_ts),
+            'id'         => (int)$o['id'],
+            'customer'   => $o['customer'] ?: 'Customer',
+            'visit'      => $visit_of[(int)$o['id']] ?? null,
         ];
     }
 
@@ -109,7 +133,10 @@ function render_resource_grid_html(mysqli $conn): string {
         'pending'  => ['#FEF3C7', '#92400E'],
         'assigned' => ['#cfe2ff', '#084298'],
         'approved' => ['#D1FAE5', '#065F46'],
+        'next'      => ['#FBEFD2', '#8A5A06'],
+        'completed' => ['#ECE7E0', '#6B5B4B'],
     ];
+    $status_words = ['pending' => 'Pending', 'assigned' => 'Booked', 'approved' => 'In session', 'next' => 'Next', 'completed' => 'Done'];
 
     // "Now" line — only meaningful within today's displayed window.
     $now_ts  = time();
@@ -143,6 +170,7 @@ function render_resource_grid_html(mysqli $conn): string {
                 <div id="resourceTimelineScroll"
                      data-start-hour="<?php echo RESOURCE_GRID_START_HOUR; ?>"
                      data-px-per-min="<?php echo $px_per_min; ?>"
+                     <?php if ($interactive): ?>data-interactive="1"<?php endif; ?>
                      style="max-height:<?php echo $viewport_max_h; ?>px;overflow-y:auto;position:relative;">
                     <div style="display:flex;position:relative;height:<?php echo $total_height; ?>px;">
 
@@ -164,14 +192,19 @@ function render_resource_grid_html(mysqli $conn): string {
                         <div style="flex:1;min-width:150px;position:relative;border-left:1px solid var(--border2);
                                     background-image:repeating-linear-gradient(to bottom, transparent, transparent <?php echo $hour_px - 1; ?>px, var(--border2) <?php echo $hour_px - 1; ?>px, var(--border2) <?php echo $hour_px; ?>px);">
                             <?php foreach ($occupancy[$r['id']] as $cell):
-                                [$cbg, $cfg] = $status_colors[$cell['status']] ?? ['#e2e3e5', '#41464b']; ?>
-                            <div style="position:absolute;top:<?php echo $cell['top']; ?>px;height:<?php echo $cell['height']; ?>px;left:4px;right:4px;
-                                        background:<?php echo $cbg; ?>;color:<?php echo $cfg; ?>;border-left:3px solid <?php echo $cfg; ?>;
-                                        border-radius:6px;padding:0.3rem 0.5rem;font-size:0.72rem;overflow:hidden;box-sizing:border-box;">
-                                <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($cell['therapist']); ?></div>
+                                $vis  = $cell['visit'];
+                                $look = ($interactive && $cell['status'] === 'assigned' && $vis && $vis['in']) ? 'next' : $cell['status'];
+                                [$cbg, $cfg] = $status_colors[$look] ?? ['#e2e3e5', '#41464b'];
+                                $tag  = $interactive ? 'button' : 'div'; ?>
+                            <<?php echo $tag; ?><?php if ($interactive): ?> type="button" class="rg-blk" data-appt="<?php echo $cell['id']; ?>"<?php if ($vis): ?> data-visit="<?php echo htmlspecialchars($vis['key']); ?>"<?php endif; ?> aria-label="<?php echo htmlspecialchars($cell['customer'] . ', ' . $cell['service'] . ', ' . ($status_words[$look] ?? $look)); ?>"<?php endif; ?>
+                                 style="position:absolute;top:<?php echo $cell['top']; ?>px;height:<?php echo $cell['height']; ?>px;left:4px;right:4px;
+                                        background:<?php echo $cbg; ?>;color:<?php echo $cfg; ?>;border:0;border-left:3px solid <?php echo $cfg; ?>;text-align:left;font:inherit;
+                                        border-radius:6px;padding:0.3rem 0.5rem;font-size:0.72rem;overflow:hidden;box-sizing:border-box;<?php echo $interactive ? 'cursor:pointer;' : ''; ?>">
+                                <?php if ($interactive && $vis && $vis['of'] > 1): ?><span style="position:absolute;top:4px;right:5px;font-size:0.6rem;font-weight:800;background:<?php echo $cfg; ?>;color:#fff;border-radius:999px;padding:0 6px;"><?php echo $vis['n'] . '/' . $vis['of']; ?></span><?php endif; ?>
+                                <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;<?php echo $interactive && $vis && $vis['of'] > 1 ? 'padding-right:2rem;' : ''; ?>"><?php echo htmlspecialchars($interactive ? $cell['customer'] . ' · ' . $cell['therapist'] : $cell['therapist']); ?></div>
                                 <div style="font-size:0.68rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($cell['service']); ?></div>
-                                <div style="font-size:0.62rem;opacity:0.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo $cell['time_label']; ?> · <?php echo ucfirst($cell['status']); ?></div>
-                            </div>
+                                <div style="font-size:0.62rem;opacity:0.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><?php echo $cell['time_label']; ?> · <?php echo $interactive ? ($status_words[$look] ?? ucfirst($look)) : ucfirst($cell['status']); ?></div>
+                            </<?php echo $tag; ?>>
                             <?php endforeach; ?>
                         </div>
                         <?php endforeach; ?>

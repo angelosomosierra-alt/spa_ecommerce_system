@@ -38,6 +38,7 @@ if (is_cashier() && empty($_SESSION['report_pin_ok'])) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Daily Report — PIN Required</title>
+    <?php include __DIR__ . '/../_favicon.php'; ?>
 <style>
 body{font-family:'Segoe UI',sans-serif;background:#f5f0eb;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
 .gate-box{background:#fff;border-radius:16px;padding:2.5rem 2rem;max-width:380px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.12);text-align:center;}
@@ -205,16 +206,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_header'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_denoms'])) {
     verify_csrf_token();
     if ($rpt && (!$LOCK_FEATURE_ENABLED || !$rpt['is_locked'])) {
-        // Save closing denominations only
-        $denoms = [1000,500,200,100,50,20,10,5,1];
+        // Save closing denominations only. PHP turns the "." in a coin's
+        // field name (closing_denom_0.25) into "_", so look coins up that way.
+        $denoms = [1000,500,200,100,50,20,10,5,1,0.5,0.25,0.1,0.05];
         $stmt = $conn->prepare("
             INSERT INTO daily_report_denominations (report_id, denomination, quantity, `type`)
             VALUES (?, ?, ?, 'closing')
             ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)
         ");
         foreach ($denoms as $d) {
-            $qty = intval($_POST['closing_denom_' . $d] ?? 0);
-            $stmt->bind_param("iii", $rpt['id'], $d, $qty);
+            $qty = max(0, intval($_POST['closing_denom_' . str_replace('.', '_', (string)$d)] ?? 0));
+            $stmt->bind_param("idi", $rpt['id'], $d, $qty);
             $stmt->execute();
         }
         $stmt->close();
@@ -271,6 +273,71 @@ if (isset($_GET['del_unpaid']) && is_full_access()) {
     $stmt = $conn->prepare("DELETE FROM unpaids_corp WHERE id=? AND report_date=?");
     $stmt->bind_param("is", intval($_GET['del_unpaid']), $report_date); $stmt->execute(); $stmt->close();
     header("Location: daily_report.php?date=$report_date&tab=gc"); exit();
+}
+
+// ── COLLECT AN EARLIER UNPAID ("Nagbayad na") ────────────────────────────────
+$_dr_editable = !($LOCK_FEATURE_ENABLED && $rpt && $rpt['is_locked']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['collect_unpaid'])) {
+    verify_csrf_token();
+    if (!$_dr_editable) { $msg = "Report is locked."; $msg_type = 'warning'; }
+    else {
+        $uc_id     = intval($_POST['uc_unpaid_id'] ?? 0);
+        $uc_amount = round(floatval($_POST['uc_amount'] ?? 0), 2);
+        $uc_method = in_array($_POST['uc_method'] ?? '', ['cash','card','gcash'], true) ? $_POST['uc_method'] : 'cash';
+        $q = $conn->prepare("SELECT u.client_name, u.amount - IFNULL((SELECT SUM(c.amount) FROM unpaid_collections c WHERE c.unpaid_id = u.id), 0) AS balance
+                             FROM unpaids_corp u WHERE u.id = ? AND u.report_date <= ?");
+        $q->bind_param("is", $uc_id, $report_date); $q->execute();
+        $uc_row = $q->get_result()->fetch_assoc(); $q->close();
+        if (!$uc_row) { $msg = "Unpaid entry not found."; $msg_type = 'danger'; }
+        elseif ($uc_amount <= 0 || $uc_amount > round((float)$uc_row['balance'], 2)) {
+            $msg = "Amount must be more than ₱0 and not more than the balance of ₱" . number_format((float)$uc_row['balance'], 2) . ".";
+            $msg_type = 'danger';
+        } else {
+            $uid = (int)$_SESSION['user_id'];
+            $stmt = $conn->prepare("INSERT INTO unpaid_collections (unpaid_id, report_date, amount, payment_method, created_by) VALUES (?,?,?,?,?)");
+            $stmt->bind_param("isdsi", $uc_id, $report_date, $uc_amount, $uc_method, $uid);
+            $stmt->execute(); $stmt->close();
+            $msg = "Payment recorded: " . htmlspecialchars($uc_row['client_name']) . " ₱" . number_format($uc_amount, 2) . " (" . ucfirst($uc_method) . ")."
+                 . ($uc_method === 'cash' ? " Include it in the cash count." : "");
+        }
+    }
+    $active_tab = 'gc';
+}
+if (isset($_GET['del_collection']) && is_full_access()) {
+    if ($_dr_editable) {
+        $stmt = $conn->prepare("DELETE FROM unpaid_collections WHERE id=? AND report_date=?");
+        $_dc = intval($_GET['del_collection']);
+        $stmt->bind_param("is", $_dc, $report_date); $stmt->execute(); $stmt->close();
+    }
+    header("Location: daily_report.php?date=$report_date&tab=gc"); exit();
+}
+
+// ── CARD TERMINAL CHECK: settlement slip total ───────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_card_slip'])) {
+    verify_csrf_token();
+    if (!$rpt) { $msg = "Save the report header first."; $msg_type = 'warning'; }
+    elseif (!$_dr_editable) { $msg = "Report is locked."; $msg_type = 'warning'; }
+    else {
+        $slip_raw = trim($_POST['card_slip_total'] ?? '');
+        $slip = $slip_raw === '' ? null : round(floatval($slip_raw), 2);
+        $stmt = $conn->prepare("UPDATE daily_reports SET card_slip_total=? WHERE id=?");
+        $stmt->bind_param("di", $slip, $rpt['id']); $stmt->execute(); $stmt->close();
+        $rpt['card_slip_total'] = $slip;
+        $msg = $slip === null ? "Settlement slip total cleared." : "Settlement slip total saved.";
+    }
+    $active_tab = 'summary';
+}
+
+// ── EXPENSE: paid from the drawer or not ─────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_exp_off_drawer']) && is_owner()) {
+    verify_csrf_token();
+    if ($_dr_editable) {
+        $_eid = intval($_POST['exp_id'] ?? 0);
+        $_off = !empty($_POST['off_drawer']) ? 1 : 0;
+        $stmt = $conn->prepare("UPDATE business_expenses SET off_drawer=? WHERE id=? AND expense_date=?");
+        $stmt->bind_param("iis", $_off, $_eid, $report_date); $stmt->execute(); $stmt->close();
+    }
+    header("Location: daily_report.php?date=$report_date&tab=expenses"); exit();
 }
 
 // ── SAVE PRODUCT SALE ─────────────────────────────────────────────────────────
@@ -838,10 +905,14 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
     // sessions have completed so far, so they import based on their booking
     // date (created_at) instead, independent of the appointment's current
     // status (which may still be 'assigned'/'approved' with sessions left).
+    // Book Now "Continue a package" links the session's appointment to its
+    // package_followups row (see admin/_book_now.php).
+    $conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS package_followup_id INT NULL DEFAULT NULL");
     $aq = $conn->prepare("
         SELECT
             a.id                      AS appt_id,
             a.appointment_date,
+            a.advance_payment, a.advance_payment_date, a.package_followup_id,
             a.duration_minutes,
             a.charged_price,
             -- appointments.therapist_id is a dead legacy column no other part of
@@ -881,7 +952,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
                 OR
                 -- Finding B fix: a package's revenue is recognized at booking
                 -- REGARDLESS of session-completion status, but only once it's
-                -- actually PAID — otherwise it's still sitting in $walkin_unpaids
+                -- actually PAID — otherwise it's still sitting in walkin_unpaids
                 -- (admin/_daily_report_data.php) and importing it here too would
                 -- double-touch the same order (once as recognized revenue, once
                 -- as unpaid). An unpaid package simply doesn't import yet; the
@@ -917,8 +988,8 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
              regular_price, promo_price, celeb_10,
              disc_20_pwd, comm_30, comm_20, comm_15, comm_25, disc_50_staff,
              net_sales, mode_of_payment, remarks, is_refund, created_by_name,
-             source_appointment_id, order_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             source_appointment_id, order_id, advance_payment)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
 
     foreach ($imp_appts as $ap) {
@@ -941,6 +1012,14 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         // is defined, same as before for services without one.
         $sd_promo    = (float)($ap['sd_promo_price'] ?? 0);
         $promo_price = $sd_promo > 0 ? $sd_promo : $regular_price;
+        // One session of a package started before the system tracked it:
+        // its price is that session's share, as in the sales report.
+        if (!empty($ap['package_followup_id'])) $regular_price = $promo_price = $charged_amount;
+        // A down payment received on an earlier day is deducted today as
+        // ADVANCE PAYMENT (the advance column); one received today is in
+        // the day's down payments instead.
+        $adv_col = (($ap['advance_payment_date'] ?? '') !== '' && $ap['advance_payment_date'] !== $report_date)
+            ? (float)$ap['advance_payment'] : 0.0;
         // Celebration discount can come from booking-time OR completion-time
         // discount fields -- appointments.celebration_discount is never populated.
         $celeb_10 = 0.0;
@@ -988,13 +1067,13 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $created_by  = 'import';
         $row_order_insert = $row_order ?? 0; // placeholder; anchored to own id below if this starts a new cluster
 
-        $ins->bind_param("sisssssisiddddddddddssisii",
+        $ins->bind_param("sisssssisiddddddddddssisiid",
             $report_date, $row_order_insert, $time_in, $time_out, $slip_no, $client_name,
             $svc_name, $service_id, $stylist, $therapist_id,
             $regular_price, $promo_price, $celeb_10,
             $disc_20_pwd, $comm_30, $comm_20, $comm_15, $comm_25, $disc_50_staff,
             $net_sales, $mode_of_pay, $remarks, $is_refund, $created_by,
-            $appt_id, $order_id);
+            $appt_id, $order_id, $adv_col);
         $ins->execute();
         if ($row_order === null) {
             $new_id = $conn->insert_id;
@@ -1634,7 +1713,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
 ══════════════════════════════════════════════════════════════════════════ -->
 <?php elseif ($active_tab === 'summary'): ?>
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start;">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start;grid-auto-flow:row dense;">
 
     <!-- Cash Denomination Breakdown (Opening + Closing) -->
     <div class="panel" style="grid-column:1/-1;">
@@ -1658,8 +1737,8 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                             </thead>
                             <tbody>
                             <?php foreach ($denom_list as $d):
-                                $c_qty = intval($denoms_closing[$d]['quantity'] ?? 0);
-                                $c_tot = floatval($denoms_closing[$d]['total']   ?? 0);
+                                $c_qty = intval($denoms_closing[denom_key($d)]['quantity'] ?? 0);
+                                $c_tot = floatval($denoms_closing[denom_key($d)]['total']   ?? 0);
                             ?>
                             <tr style="border-bottom:1px solid var(--border2);">
                                 <td style="padding:0.35rem 0.5rem;font-weight:600;color:var(--brown);">₱<?php echo number_format($d, $d < 1 ? 2 : 0); ?></td>
@@ -1694,6 +1773,40 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 <button type="submit" class="btn btn-primary" style="width:100%;margin-top:0.75rem;font-size:0.82rem;">Save Denominations</button>
                 <?php endif; ?>
             </form>
+        </div>
+    </div>
+
+    <!-- Card Terminal Check -->
+    <div class="panel">
+        <div class="panel-header"><span class="panel-title">Card Terminal Check</span></div>
+        <div class="panel-body" style="padding:1rem;display:flex;flex-direction:column;gap:0.6rem;">
+            <div style="font-size:0.75rem;color:var(--gray);">Type the total on the card machine's settlement slip. It is compared with everything recorded as Card / Swiper / QR today (sales, down payments and collected unpaids).</div>
+            <div style="display:flex;justify-content:space-between;font-size:0.85rem;">
+                <span style="font-weight:600;color:var(--brown);">Card machine in the system</span>
+                <span style="font-family:monospace;font-weight:700;color:var(--brown);">₱<?php echo number_format($card_machine_system,2); ?></span>
+            </div>
+            <form method="POST" style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap;">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="save_card_slip" value="1">
+                <div style="flex:1;min-width:140px;">
+                    <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:2px;">Settlement slip total (₱)</label>
+                    <input type="number" name="card_slip_total" step="0.01" min="0" inputmode="decimal"
+                           value="<?php echo $card_slip_total === null ? '' : number_format($card_slip_total,2,'.',''); ?>"
+                           <?php echo $locked ? 'disabled' : ''; ?>
+                           style="width:100%;padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:6px;background:var(--bg3);font-size:0.85rem;color:var(--brown);box-sizing:border-box;">
+                </div>
+                <?php if (!$locked): ?><button type="submit" class="btn btn-primary btn-sm">Check</button><?php endif; ?>
+            </form>
+            <?php if ($card_slip_total === null): ?>
+            <div style="padding:0.55rem 0.75rem;border-radius:8px;background:var(--bg3);color:var(--gray);font-size:0.8rem;">No slip total entered yet.</div>
+            <?php elseif (abs($card_slip_diff) < 0.005): ?>
+            <div style="padding:0.55rem 0.75rem;border-radius:8px;background:#DDF1E6;color:#198754;font-weight:700;font-size:0.82rem;">✓ The card machine and the system match.</div>
+            <?php else: ?>
+            <div style="padding:0.55rem 0.75rem;border-radius:8px;background:#FBE3E0;color:#A3261B;font-weight:700;font-size:0.82rem;">
+                The slip is <?php echo $card_slip_diff > 0 ? 'higher' : 'lower'; ?> by ₱<?php echo number_format(abs($card_slip_diff),2); ?>.
+                Look for a card payment recorded as Cash, or a cash payment recorded as Card.
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -1775,8 +1888,8 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
     </div>
     <?php endif; ?>
 
-    <!-- Summary Report -->
-    <div class="panel">
+    <!-- Summary Report — kept in the right column beside the panels on the left -->
+    <div class="panel" style="grid-column:2;grid-row:2 / span 6;">
         <div class="panel-header"><span class="panel-title">Summary Report</span></div>
         <div class="panel-body" style="padding:0;">
             <?php
@@ -1804,16 +1917,23 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'SWIPER (DP)',             'val' => $card_dp_total,        'color' => 'var(--rust)'],
                 ['label' => 'QRPH (DP)',               'val' => $qrph_dp_total,        'color' => 'var(--rust)'],
                 ['label' => 'PRODUCT SOLD',           'val' => $prod_sold_total,      'color' => '#198754'],
-                ['label' => 'EXPENSES',               'val' => $expenses_total,       'color' => 'var(--rust)'],
+                ['label' => 'EXPENSES',               'val' => $expenses_total,       'color' => 'var(--rust)',
+                 'note' => $expenses_off_drawer_total > 0
+                     ? '₱' . number_format($expenses_off_drawer_total, 2) . ' paid by GCash / bank — only ₱' . number_format($expenses_drawer_total, 2) . ' comes out of the drawer'
+                     : ''],
+                ['label' => 'COLLECTED UNPAIDS',      'val' => $collected_unpaids_total, 'color' => '#198754',
+                 'note' => 'Earlier unpaids paid today — Cash ₱' . number_format($collected_by_method['cash'], 2)
+                         . ' · Card ₱' . number_format($collected_by_method['card'], 2)
+                         . ' · GCash ₱' . number_format($collected_by_method['gcash'], 2) . '. Only the cash is added to Net Cash'],
                 ['label' => 'ADVANCES RECEIVED',      'val' => $advances_received_total, 'color' => '#C96A2C',
                  'note' => 'Cash collected today for future/upcoming appointments'],
                 ['label' => 'SPREADSHEET NET SALES',  'val' => $spreadsheet_net_total,    'color' => '#198754',
-                 'note' => 'Non-refund rows from Spreadsheet tab — added to Gross & Net Cash'],
+                 'note' => 'Non-refund rows from Spreadsheet tab. Only hand-typed rows are added to Gross & Net Cash; rows from appointments are already in the POS reading'],
                 ['label' => 'SPREADSHEET REFUNDS',   'val' => $spreadsheet_refund_total, 'color' => 'var(--rust)',
                  'note' => 'Refund rows from Spreadsheet tab — deducted from Net Cash'],
                 ['label' => 'NET CASH',               'val' => $net_cash,             'color' => '#198754', 'bold' => true,
                  'bg' => 'rgba(25,135,84,0.07)',
-                 'note' => 'POS Reading − payments − discounts − unpaids − advance − expenses − mktg ± spreadsheet'],
+                 'note' => 'POS Reading − payments − discounts − unpaids − advance − drawer expenses − mktg ± spreadsheet + collected cash'],
                 ['label' => 'CLOSING COH (Cash on Hand)', 'val' => $cash_on_hand,     'color' => '#0070f3', 'bold' => true,
                  'id' => 'live-coh',
                  'note' => 'Closing denomination count + advances received'],
@@ -1882,19 +2002,36 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
         <div class="table-wrap" style="border:none;border-radius:0;">
             <table>
                 <thead>
-                    <tr><th>Category</th><th>Description</th><th style="text-align:right;">Amount</th><th>Logged by</th><th>Time</th><?php if (is_owner()): ?><th style="text-align:center;">Actions</th><?php endif; ?></tr>
+                    <tr><th>Category</th><th>Description</th><th style="text-align:right;">Amount</th><th>Paid from</th><th>Logged by</th><th>Time</th><?php if (is_owner()): ?><th style="text-align:center;">Actions</th><?php endif; ?></tr>
                 </thead>
                 <tbody>
                 <?php if (empty($expenses)): ?>
-                <tr><td colspan="6" style="text-align:center;color:var(--gray);padding:2rem;">No expenses logged for this date.</td></tr>
+                <tr><td colspan="7" style="text-align:center;color:var(--gray);padding:2rem;">No expenses logged for this date.</td></tr>
                 <?php else: foreach ($expenses as $e): ?>
                 <tr>
                     <td><?php echo ucfirst($e['category']); ?></td>
                     <td style="font-weight:600;"><?php echo htmlspecialchars($e['label']); ?></td>
                     <td style="text-align:right;font-weight:700;color:var(--rust);">₱<?php echo number_format($e['amount'],2); ?></td>
+                    <td style="white-space:nowrap;">
+                        <?php $_off = !empty($e['off_drawer']); ?>
+                        <?php if (!$locked && is_owner()): ?>
+                        <form method="POST" style="margin:0;">
+                            <?php echo csrf_field(); ?>
+                            <input type="hidden" name="toggle_exp_off_drawer" value="1">
+                            <input type="hidden" name="exp_id" value="<?php echo (int)$e['id']; ?>">
+                            <label style="display:inline-flex;align-items:center;gap:0.35rem;font-size:0.75rem;cursor:pointer;margin:0;"
+                                   title="Tick when this was paid by GCash or bank transfer, not from the cash drawer">
+                                <input type="checkbox" name="off_drawer" value="1" <?php echo $_off ? 'checked' : ''; ?> onchange="this.form.submit()" style="width:auto;margin:0;">
+                                <?php echo $_off ? 'GCash / bank' : 'Drawer'; ?>
+                            </label>
+                        </form>
+                        <?php else: ?>
+                        <span style="font-size:0.75rem;font-weight:700;color:<?php echo $_off ? '#7A3FC4' : 'var(--gray)'; ?>;"><?php echo $_off ? 'GCash / bank' : 'Drawer'; ?></span>
+                        <?php endif; ?>
+                    </td>
                     <td style="font-size:0.78rem;color:var(--gray);">
                         <?php
-                        $by = $conn->query("SELECT full_name FROM users WHERE id={$e['added_by']}")->fetch_assoc();
+                        $by = $conn->query("SELECT full_name FROM users WHERE id=" . (int)($e['added_by'] ?? 0))->fetch_assoc();
                         echo htmlspecialchars($by['full_name'] ?? 'System');
                         ?>
                     </td>
@@ -1902,7 +2039,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <?php if (is_owner()): ?>
                     <td style="text-align:center;white-space:nowrap;">
                         <button type="button" title="Edit this expense"
-                                onclick='openEditExpenseModal(<?php echo (int)$e["id"]; ?>, <?php echo json_encode($e["category"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo json_encode($e["label"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo (float)$e["amount"]; ?>, <?php echo json_encode($e["notes"] ?? "", JSON_HEX_APOS|JSON_HEX_QUOT); ?>)'
+                                onclick='openEditExpenseModal(<?php echo (int)$e["id"]; ?>, <?php echo json_encode($e["category"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo json_encode($e["label"], JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo (float)$e["amount"]; ?>, <?php echo json_encode($e["notes"] ?? "", JSON_HEX_APOS|JSON_HEX_QUOT); ?>, <?php echo !empty($e["off_drawer"]) ? 1 : 0; ?>)'
                                 style="color:var(--brown);background:transparent;font-size:0.78rem;padding:0.2rem 0.45rem;border-radius:4px;border:1px solid var(--border2);cursor:pointer;">Edit</button>
                         <a href="?tab=expenses&date=<?php echo urlencode($report_date); ?>&del_expense=<?php echo $e['id']; ?>" title="Delete this expense"
                            style="color:var(--red);font-size:0.78rem;text-decoration:none;padding:0.2rem 0.45rem;
@@ -1917,8 +2054,15 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     <tr style="background:var(--bg3);font-weight:700;">
                         <td colspan="2" style="text-align:right;">Total Expenses</td>
                         <td style="text-align:right;color:var(--rust);">₱<?php echo number_format($expenses_total,2); ?></td>
-                        <td colspan="<?php echo is_owner() ? 3 : 2; ?>"></td>
+                        <td colspan="<?php echo is_owner() ? 4 : 3; ?>"></td>
                     </tr>
+                    <?php if ($expenses_off_drawer_total > 0): ?>
+                    <tr style="background:var(--bg3);font-weight:700;">
+                        <td colspan="2" style="text-align:right;">Taken from the drawer</td>
+                        <td style="text-align:right;color:var(--rust);">₱<?php echo number_format($expenses_drawer_total,2); ?></td>
+                        <td colspan="<?php echo is_owner() ? 4 : 3; ?>" style="font-size:0.75rem;font-weight:500;color:var(--gray);">₱<?php echo number_format($expenses_off_drawer_total,2); ?> paid by GCash / bank is not deducted from cash</td>
+                    </tr>
+                    <?php endif; ?>
                 </tfoot>
             </table>
         </div>
@@ -2080,6 +2224,96 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 <?php endforeach; endif; ?>
                 </tbody>
                 <tfoot><tr style="background:var(--bg3);font-weight:700;"><td colspan="2">Total Unpaids</td><td style="text-align:right;color:var(--rust);">₱<?php echo number_format($unpaids_total,2); ?></td><?php if (!$locked): ?><td></td><?php endif; ?></tr></tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- Still unpaid, from any day up to this date -->
+    <div class="panel" style="grid-column:1/-1;">
+        <div class="panel-header">
+            <span class="panel-title">Still Unpaid (all days)</span>
+            <span style="font-size:0.75rem;color:var(--gray);">Total: ₱<?php echo number_format(array_sum(array_column($unpaids_outstanding, 'balance')),2); ?></span>
+        </div>
+        <div style="padding:0.5rem 1rem;font-size:0.75rem;color:var(--gray);border-bottom:1px solid var(--border2);">
+            When an account pays (e.g. IQOR, Vermillion), press <b>Paid</b> and pick how they paid. It is recorded on this date as a Collected Unpaid. A partial payment keeps the rest on this list.
+        </div>
+        <div class="table-wrap" style="border:none;border-radius:0;">
+            <table>
+                <thead><tr><th>Date</th><th>Client / Account</th><th>Series / Invoice</th><th style="text-align:right;">Balance</th><?php if (!$locked): ?><th></th><?php endif; ?></tr></thead>
+                <tbody>
+                <?php if (empty($unpaids_outstanding)): ?>
+                <tr><td colspan="5" style="text-align:center;color:var(--gray);padding:1.5rem;">Nothing unpaid.</td></tr>
+                <?php else: foreach ($unpaids_outstanding as $uo): ?>
+                <tr>
+                    <td style="white-space:nowrap;"><?php echo date('M j', strtotime($uo['report_date'])); ?></td>
+                    <td style="font-weight:600;"><?php echo htmlspecialchars($uo['client_name']); ?>
+                        <?php if (round((float)$uo['balance'], 2) < round((float)$uo['amount'], 2)): ?>
+                        <div style="font-size:0.7rem;color:var(--gray);font-weight:400;">of ₱<?php echo number_format($uo['amount'],2); ?></div>
+                        <?php endif; ?></td>
+                    <td style="font-family:monospace;font-size:0.82rem;"><?php echo htmlspecialchars($uo['series'] ?: '—'); ?></td>
+                    <td style="text-align:right;font-weight:700;color:var(--rust);">₱<?php echo number_format($uo['balance'],2); ?></td>
+                    <?php if (!$locked): ?>
+                    <td style="text-align:right;"><button type="button" class="btn btn-sm" style="background:#198754;color:#fff;font-size:0.75rem;"
+                        onclick="var r=document.getElementById('uc-form-<?php echo (int)$uo['id']; ?>');r.hidden=!r.hidden;">Paid</button></td>
+                    <?php endif; ?>
+                </tr>
+                <?php if (!$locked): ?>
+                <tr id="uc-form-<?php echo (int)$uo['id']; ?>" hidden>
+                    <td colspan="5" style="background:#FFFBF3;">
+                        <form method="POST" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end;">
+                            <?php echo csrf_field(); ?>
+                            <input type="hidden" name="collect_unpaid" value="1">
+                            <input type="hidden" name="uc_unpaid_id" value="<?php echo (int)$uo['id']; ?>">
+                            <div>
+                                <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:2px;">Amount paid (₱)</label>
+                                <input type="number" name="uc_amount" step="0.01" min="0.01" max="<?php echo number_format($uo['balance'],2,'.',''); ?>" required
+                                       value="<?php echo number_format($uo['balance'],2,'.',''); ?>"
+                                       style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);width:130px;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.72rem;color:var(--gray);display:block;margin-bottom:2px;">Paid by</label>
+                                <select name="uc_method" style="padding:0.4rem 0.6rem;border:1px solid var(--border2);border-radius:6px;background:#fff;font-size:0.82rem;color:var(--brown);">
+                                    <option value="cash">Cash</option><option value="card">Card</option><option value="gcash">GCash</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-sm">Save payment</button>
+                        </form>
+                    </td>
+                </tr>
+                <?php endif; ?>
+                <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Collected unpaids on this date -->
+    <div class="panel" style="grid-column:1/-1;">
+        <div class="panel-header">
+            <span class="panel-title">Collected Unpaids (today)</span>
+            <span style="font-size:0.75rem;color:var(--gray);">Total: ₱<?php echo number_format($collected_unpaids_total,2); ?></span>
+        </div>
+        <div class="table-wrap" style="border:none;border-radius:0;">
+            <table>
+                <thead><tr><th>Client / Account</th><th>Unpaid from</th><th>Paid by</th><th style="text-align:right;">Amount</th><?php if (!$locked && is_full_access()): ?><th></th><?php endif; ?></tr></thead>
+                <tbody>
+                <?php if (empty($unpaid_collections)): ?>
+                <tr><td colspan="5" style="text-align:center;color:var(--gray);padding:1.5rem;">No unpaid was paid today. Use <b>Paid</b> above.</td></tr>
+                <?php else: foreach ($unpaid_collections as $uc): ?>
+                <tr>
+                    <td style="font-weight:600;"><?php echo htmlspecialchars($uc['client_name']); ?></td>
+                    <td><?php echo date('M j', strtotime($uc['unpaid_date'])); ?></td>
+                    <td><?php echo $uc['payment_method'] === 'gcash' ? 'GCash' : ucfirst($uc['payment_method']); ?></td>
+                    <td style="text-align:right;font-weight:700;color:#198754;">₱<?php echo number_format($uc['amount'],2); ?></td>
+                    <?php if (!$locked && is_full_access()): ?>
+                    <td><a href="daily_report.php?date=<?php echo $report_date; ?>&tab=gc&del_collection=<?php echo (int)$uc['id']; ?>"
+                           class="btn btn-danger btn-sm" style="font-size:0.7rem;"
+                           onclick="var _h=this.href;event.preventDefault();uiConfirm('Undo this payment? The amount goes back to Still Unpaid.').then(ok=>{if(ok)window.location.href=_h;})">✕</a></td>
+                    <?php endif; ?>
+                </tr>
+                <?php endforeach; endif; ?>
+                </tbody>
+                <tfoot><tr style="background:var(--bg3);font-weight:700;"><td colspan="3">Cash ₱<?php echo number_format($collected_by_method['cash'],2); ?> · Card ₱<?php echo number_format($collected_by_method['card'],2); ?> · GCash ₱<?php echo number_format($collected_by_method['gcash'],2); ?></td><td style="text-align:right;color:#198754;">₱<?php echo number_format($collected_unpaids_total,2); ?></td><?php if (!$locked && is_full_access()): ?><td></td><?php endif; ?></tr></tfoot>
             </table>
         </div>
     </div>
@@ -2328,7 +2562,28 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
         <span style="font-size:0.75rem;color:#198754;">Editing as <?php echo htmlspecialchars($ss_editor); ?><?php if (is_cashier() && $ss_unlocked): ?> (expires <?php echo date('g:i A', (int)$_SESSION['ss_edit_expires']); ?>)<?php endif; ?></span>
         <?php endif; ?>
         <span id="ss-row-count" style="font-size:0.75rem;color:var(--gray);"><?php echo count($spreadsheet_rows); ?> rows &nbsp;|&nbsp; Net Sales: ₱<span id="ss-net-total"><?php echo number_format($spreadsheet_net_total,2); ?></span></span>
+        <?php
+        // Which services go on the aesthetic slip series (see service_uses_aesthetic_slip).
+        $ss_aes_ids = [];
+        foreach ($conn->query("SELECT s.id, s.name, c.name AS category_name FROM services s LEFT JOIN categories c ON c.id = s.category_id")->fetch_all(MYSQLI_ASSOC) as $_sv) {
+            if (service_uses_aesthetic_slip($_sv['category_name'], $_sv['name'])) $ss_aes_ids[(int)$_sv['id']] = true;
+        }
+        $ss_slip_kind = function (array $r) use ($ss_aes_ids): string {
+            $sid = (int)($r['service_id'] ?? 0);
+            if ($sid) return isset($ss_aes_ids[$sid]) ? 'aes' : 'spa';
+            return preg_match('/diode|exilis|hifu|pico|carbon|drip|tightening|botox|filler|lemon bottle|tirzepatide|peptide|jawtox|gluta/i', (string)($r['service_name'] ?? '')) ? 'aes' : 'spa';
+        };
+        ?>
+        <span class="ss-slipf" role="group" aria-label="Show slips" style="margin-left:auto;display:inline-flex;border:1px solid var(--border2);border-radius:8px;overflow:hidden;">
+            <button type="button" data-slipf="all" class="on">All</button><button type="button" data-slipf="spa">Spa slips</button><button type="button" data-slipf="aes">Aesthetic slips</button>
+        </span>
     </div>
+    <style>
+    .ss-slipf button { border:0; background:#fff; padding:0.3rem 0.7rem; font-size:0.75rem; font-weight:600; cursor:pointer; color:var(--brown); }
+    .ss-slipf button.on { background:#3B2A1A; color:#fff; }
+    .ss-slipk { font-size:0.6rem; font-weight:800; border-radius:8px; padding:1px 5px; margin-left:4px; font-family:sans-serif; }
+    .ss-slipk.spa { background:#DDF0EA; color:#1F6F5C; } .ss-slipk.aes { background:#F7E3F0; color:#9B3D7A; }
+    </style>
     <div style="overflow-x:auto;">
         <table style="font-size:0.75rem;border-collapse:collapse;min-width:1640px;" id="ss-table">
             <thead>
@@ -2369,6 +2624,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
                 data-time-in="<?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?>"
                 data-time-out="<?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?>"
                 data-slip-no="<?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?>"
+                data-slip-kind="<?php echo $ss_slip_kind($_ssr); ?>"
                 data-client-name="<?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>"
                 data-service-id="<?php echo (int)($_ssr['service_id'] ?? 0); ?>"
                 data-service-name="<?php echo htmlspecialchars($_ssr['service_name'] ?? ''); ?>"
@@ -2401,7 +2657,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
                 <?php endif; ?>
                 <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_in'] ?? ''); ?></td>
                 <td style="padding:0.3rem 0.5rem;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['time_out'] ?? ''); ?></td>
-                <td style="padding:0.3rem 0.5rem;font-family:monospace;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?></td>
+                <td style="padding:0.3rem 0.5rem;font-family:monospace;white-space:nowrap;"><?php echo htmlspecialchars($_ssr['slip_no'] ?? ''); ?><?php $_sk = $ss_slip_kind($_ssr); ?><span class="ss-slipk <?php echo $_sk; ?>"><?php echo $_sk === 'aes' ? 'AES' : 'SPA'; ?></span></td>
                 <td style="padding:0.3rem 0.5rem;"><?php echo htmlspecialchars($_ssr['client_name'] ?? ''); ?>
                     <?php if ($_is_imported): ?><span style="font-size:0.62rem;background:rgba(13,110,253,0.1);color:#0d6efd;padding:1px 5px;border-radius:8px;margin-left:4px;white-space:nowrap;" title="Auto-imported from appointment #<?php echo (int)$_ssr['source_appointment_id']; ?>">appt</span><?php endif; ?>
                 </td>
@@ -2755,6 +3011,29 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
     function fmtNum(n) { return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
     function gv(id) { var el=document.getElementById(id); return el ? el.value.trim() : ''; }
     function eH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ── Spa vs aesthetic slip series ─────────────────────────────────────────
+    var SS_AES_IDS = <?php echo json_encode(array_map('intval', array_keys($ss_aes_ids ?? []))); ?>;
+    function ssSlipKind(d) {
+        var sid = parseInt(d.service_id, 10) || 0;
+        if (sid) return SS_AES_IDS.indexOf(sid) >= 0 ? 'aes' : 'spa';
+        return /diode|exilis|hifu|pico|carbon|drip|tightening|botox|filler|lemon bottle|tirzepatide|peptide|jawtox|gluta/i.test(d.service_name || '') ? 'aes' : 'spa';
+    }
+    var ssSlipFilter = 'all';
+    function ssApplySlipFilter() {
+        document.querySelectorAll('#ss-table tr.ss-row').forEach(function (tr) {
+            tr.style.display = (ssSlipFilter === 'all' || tr.dataset.slipKind === ssSlipFilter) ? '' : 'none';
+        });
+    }
+    document.querySelectorAll('[data-slipf]').forEach(function (b) {
+        b.addEventListener('click', function () {
+            ssSlipFilter = b.dataset.slipf;
+            document.querySelectorAll('[data-slipf]').forEach(function (x) { x.classList.toggle('on', x === b); });
+            ssApplySlipFilter();
+        });
+    });
+    var _ssBody = document.querySelector('#ss-table tbody');
+    if (_ssBody) new MutationObserver(function () { if (ssSlipFilter !== 'all') ssApplySlipFilter(); }).observe(_ssBody, { childList: true });
     function peso(v) { var n=parseFloat(v)||0; return n ? '₱'+fmtNum(n) : ''; }
 
     // ── Recalculate totals row + header count ────────────────────────────────
@@ -2805,6 +3084,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
         tr.dataset.timeIn       = d.time_in       || '';
         tr.dataset.timeOut      = d.time_out      || '';
         tr.dataset.slipNo       = d.slip_no       || '';
+        tr.dataset.slipKind     = ssSlipKind(d);
         tr.dataset.clientName   = d.client_name   || '';
         tr.dataset.serviceId    = d.service_id    || '0';
         tr.dataset.serviceName  = d.service_name  || '';
@@ -2829,7 +3109,7 @@ foreach ($conn->query("SELECT spc.package_service_id, spc.component_service_id, 
         tr.innerHTML = delCell +
             '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_in)         + '</td>' +
             '<td style="padding:0.3rem 0.5rem;white-space:nowrap;">'  + eH(d.time_out)        + '</td>' +
-            '<td style="padding:0.3rem 0.5rem;font-family:monospace;">'+ eH(d.slip_no)         + '</td>' +
+            '<td style="padding:0.3rem 0.5rem;font-family:monospace;white-space:nowrap;">'+ eH(d.slip_no) + '<span class="ss-slipk ' + tr.dataset.slipKind + '">' + (tr.dataset.slipKind === 'aes' ? 'AES' : 'SPA') + '</span></td>' +
             '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.client_name)     + '</td>' +
             '<td style="padding:0.3rem 0.5rem;">'                      + eH(d.service_name)    + '</td>' +
             '<td style="padding:0.3rem 0.5rem;color:var(--gray);">'   + eH(d.stylist)         + '</td>' +

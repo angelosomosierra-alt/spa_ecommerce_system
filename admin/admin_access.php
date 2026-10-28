@@ -65,7 +65,8 @@ function admin_nav_items(): array {
         ['file' => 'orders',       'label' => 'Orders',       'roles' => ['owner','it','hr','marketing','cashier']],
         ['file' => 'therapists',   'label' => 'Therapists',   'roles' => ['owner','it','hr','marketing','cashier']],
         ['file' => 'analytics',    'label' => 'Analytics',    'roles' => ['owner','it','hr','marketing']],
-        ['file' => 'walkin',       'label' => 'Walk-in',      'roles' => ['owner','it','hr','cashier','marketing']],
+        // Walk-in is no longer in the menu: Book Now (Dashboard) and the calendar
+        // cover it. The page itself still works for old links and its PayMongo returns.
         ['file' => 'partners',     'label' => 'Partners',     'roles' => ['owner','it','hr','marketing']],
         ['file' => 'discounts',    'label' => 'Discounts',    'roles' => ['owner','it','hr','marketing']],
         ['file' => 'daily_report', 'label' => 'Daily Report', 'roles' => ['owner','it','hr','marketing','cashier']],

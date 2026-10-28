@@ -33,6 +33,7 @@ $_footer_base        = $_footer_is_customer ? BASE_URL . 'user/' : BASE_URL;
                 <li><a href="<?php echo $_footer_base; ?>products.php">Products</a></li>
                 <li><a href="<?php echo $_footer_base; ?>index.php#about">About Us</a></li>
                 <li><a href="<?php echo $_footer_base; ?>index.php#contact">Contact</a></li>
+                <li><a href="<?php echo BASE_URL; ?>terms.php">Terms and Conditions</a></li>
             </ul>
         </div>
         <div class="footer-col">

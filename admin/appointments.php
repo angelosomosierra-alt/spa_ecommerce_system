@@ -1157,6 +1157,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
 }
 
 // ── SET / CHANGE RESOURCE (Room / Chair / Head Spa) — AJAX ─────────────────────
+// ── Slip number (the paper service slip) on the booking's order ──────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_slip') {
+    verify_csrf_token();
+    header('Content-Type: application/json');
+    $ss_appt_id = intval($_POST['appt_id'] ?? 0);
+    $ss_slip    = mb_substr(trim(sanitize_input($_POST['slip_number'] ?? '')), 0, 50);
+    $ss_slip    = $ss_slip !== '' ? $ss_slip : null;
+    $ss_q = $conn->prepare("SELECT oi.order_id FROM appointments a JOIN order_items oi ON oi.id = a.order_item_id WHERE a.id = ?");
+    $ss_q->bind_param("i", $ss_appt_id); $ss_q->execute();
+    $ss_order = (int)($ss_q->get_result()->fetch_assoc()['order_id'] ?? 0); $ss_q->close();
+    if (!$ss_order) { echo json_encode(['success' => false, 'message' => 'Booking not found.']); exit(); }
+    $ss_u = $conn->prepare("UPDATE orders SET slip_number = ? WHERE id = ?");
+    $ss_u->bind_param("si", $ss_slip, $ss_order); $ss_u->execute(); $ss_u->close();
+    // Rows already copied to the Daily Report spreadsheet follow the new number.
+    $ss_r = $conn->prepare("UPDATE daily_report_spreadsheet_rows SET slip_no = ? WHERE order_id = ?");
+    if ($ss_r) { $ss_r->bind_param("si", $ss_slip, $ss_order); $ss_r->execute(); $ss_r->close(); }
+    echo json_encode(['success' => true]);
+    exit();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_resource') {
     verify_csrf_token();
     header('Content-Type: application/json');
@@ -1318,17 +1338,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
 
                     if ($o_row) {
                         $orig = floatval($o_row['total_amount']);
-                        if ($disc_type === 'senior' || $disc_type === 'pwd') {
-                            $disc_amt = round($orig * 0.20, 2);
-                        } elseif ($disc_type === 'employee') {
-                            $disc_amt = round($orig * STAFF_DISCOUNT_PCT / 100, 2);
-                        } elseif ($disc_type === 'voucher' && $disc_value > 0) {
-                            $disc_amt = $disc_voucher_type === 'percent'
-                                ? round($orig * ($disc_value / 100), 2)
-                                : min($disc_value, $orig);
-                        } else {
-                            $disc_amt = 0.00;
-                        }
+                        // Not on excluded services (see config.php).
+                        $disc_elig = appt_discount_eligible($conn, $appt_id, $orig, true, 0, $disc_type, voucher_scope_from_post());
+                        $disc_amt = in_array($disc_type, PERSON_DISCOUNT_TYPES, true)
+                            ? person_discount_amount($disc_type, $orig, min($disc_elig, $orig), (float)$disc_value, $disc_voucher_type === 'percent' ? 'percent' : 'fixed')
+                            : 0.00;
                         $final_amt = max(0.00, $orig - $disc_amt);
                         $u = $conn->prepare("UPDATE orders SET discount_type=?, discount_amount=?, final_amount=? WHERE id=?");
                         $u->bind_param("sddi", $disc_type, $disc_amt, $final_amt, $o_row['id']); $u->execute(); $u->close();
@@ -1498,21 +1512,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $ci_extras_total = floatval($ci_es_q->get_result()->fetch_assoc()['t'] ?? 0); $ci_es_q->close();
 
                         $ci_base = floatval($po_row['total_amount']) + $ci_extras_total;
+                        // Senior / PWD / Staff / Voucher: only for the people who
+                        // qualify, and not on excluded services (see config.php).
+                        $ci_people = max(0, (int)($_POST['discount_people'] ?? 0));
+                        $ci_scope = voucher_scope_from_post();
+                        $ci_elig = appt_discount_eligible($conn, $appt_id, floatval($po_row['total_amount']), true, $ci_people, $ci_disc_type, $ci_scope);
                         $ci_disc_amt = 0.00;
-                        if ($ci_disc_type === 'pwd' || $ci_disc_type === 'senior') {
-                            $ci_disc_amt = round($ci_base * 0.20, 2);
-                        } elseif ($ci_disc_type === 'employee') {
-                            $ci_disc_amt = round($ci_base * STAFF_DISCOUNT_PCT / 100, 2);
+                        if ($ci_disc_type === 'pwd' || $ci_disc_type === 'senior' || $ci_disc_type === 'employee') {
+                            $ci_disc_amt = person_discount_amount($ci_disc_type, $ci_base, $ci_elig);
                         } elseif ($ci_disc_type === 'voucher') {
                             $ci_vchr_type  = sanitize_input($_POST['voucher_type']  ?? 'percent');
                             if (!in_array($ci_vchr_type, ['percent', 'fixed'])) $ci_vchr_type = 'percent';
                             $ci_vchr_value = floatval($_POST['voucher_value'] ?? 0);
                             if ($ci_vchr_value > 0) {
-                                if ($ci_vchr_type === 'percent') {
-                                    $ci_disc_amt = round($ci_base * (min($ci_vchr_value, 100) / 100), 2);
-                                } else {
-                                    $ci_disc_amt = round(min($ci_vchr_value, $ci_base), 2);
-                                }
+                                $ci_disc_amt = person_discount_amount('voucher', $ci_base, $ci_elig, $ci_vchr_value, $ci_vchr_type);
                             } else {
                                 $message .= ($message ? ' ' : '') . 'Voucher amount not entered — no discount applied.';
                                 $ci_disc_type = 'none';
@@ -1527,12 +1540,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                                 $ci_disc_type = 'none';
                             }
                         }
+                        if ($ci_disc_amt <= 0) $ci_disc_type = 'none'; // the discount doesn't reach these services
                         $ci_final = max(0.00, $ci_base - $ci_disc_amt);
 
                         $u = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, discount_type=?, discount_amount=?, final_amount=? WHERE id=? AND payment_status != 'paid'");
                         $u->bind_param("ssddi", $ci_pm, $ci_disc_type, $ci_disc_amt, $ci_final, $po_row['id']);
                         $u->execute(); $u->close();
-                        if ($ci_disc_type === 'voucher') save_voucher_label($conn, (int)$po_row['id'], (string)($_POST['voucher_label'] ?? ''));
+                        if ($ci_disc_type === 'voucher') save_voucher_label($conn, (int)$po_row['id'], trim((string)($_POST['voucher_label'] ?? '')) ?: VOUCHER_SCOPES[$ci_scope]);
 
                         if ($ci_extras_total > 0) {
                             $ci_es_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");
@@ -1650,7 +1664,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 ? $pr['full_name']
                 : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
             $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
-            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','unpaid'])) $cp_pay_method = 'cash';
+            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','unpaid','later'])) $cp_pay_method = 'cash';
+            // 'later': one of a guest's several services from one booking, done
+            // before the last one. It stays unpaid and is paid together with the
+            // last service (Pay for this guest). Only for such a visit.
+            $cp_later = false;
+            if ($cp_pay_method === 'later') {
+                $cl_q = $conn->prepare("
+                    SELECT COUNT(*) AS c FROM appointments a2
+                    JOIN order_items oi2 ON oi2.id = a2.order_item_id JOIN orders o2 ON o2.id = oi2.order_id
+                    JOIN order_items oi1 ON oi1.id = ? JOIN orders o1 ON o1.id = oi1.order_id
+                    WHERE o1.booking_group IS NOT NULL AND o2.booking_group = o1.booking_group
+                      AND o2.customer_name = o1.customer_name AND a2.id != ?
+                      AND a2.status NOT IN ('completed','cancelled','declined')");
+                $cl_oi = (int)($appt['order_item_id'] ?? 0);
+                $cl_q->bind_param("ii", $cl_oi, $appt_id); $cl_q->execute();
+                $cp_later = (int)$cl_q->get_result()->fetch_assoc()['c'] > 0; $cl_q->close();
+                if (!$cp_later) {
+                    $message = "This is the customer's last service: choose how they paid.";
+                    $message_type = "danger";
+                    goto end_action;
+                }
+            }
             $cp_unpaid_billto = trim(sanitize_input($_POST['complete_unpaid_billto'] ?? ''));
 
             // ── Completion discount — server-side recompute (never trust client totals) ──
@@ -1670,7 +1705,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $order_already_paid = ($oi_r2 && $oi_r2['payment_status'] === 'paid');
             }
 
-            if (!$order_already_paid) {
+            if (!$order_already_paid && !$cp_later) {
                 if ($cd_type === 'voucher' && $cd_vvalue <= 0) {
                     $message = "Please enter the voucher amount, or select 'None' if no voucher is used.";
                     $message_type = "danger";
@@ -1696,21 +1731,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     $sv_bdisc = floatval($oi_r2['discount_amount']);
                     $sv_gross = $sv_orig + $sv_extras;
 
-                    // Compute completion discount server-side
-                    $cd_amount = 0.0;
-                    if ($cd_type === 'senior' || $cd_type === 'pwd') {
-                        $cd_amount = round($sv_gross * 0.20, 2);
-                    } elseif ($cd_type === 'employee') {
-                        $cd_amount = round($sv_gross * STAFF_DISCOUNT_PCT / 100, 2);
-                    } elseif ($cd_type === 'celebration' && $cd_vvalue > 0) {
-                        $cd_amount = round($sv_gross * min(100.0, $cd_vvalue) / 100.0, 2);
-                    } elseif ($cd_type === 'voucher' && $cd_vvalue > 0) {
-                        $cd_amount = ($cd_vtype === 'percent')
-                            ? round($sv_gross * min(100.0, $cd_vvalue) / 100.0, 2)
-                            : min($cd_vvalue, $sv_gross);
-                    }
+                    // Compute completion discount server-side. Senior / PWD / Staff /
+                    // Voucher only for the people who qualify and not on excluded
+                    // services (see config.php); Celebration on the whole bill.
+                    $cd_people = max(0, (int)($_POST['discount_people'] ?? 0));
+                    $cd_scope  = voucher_scope_from_post();
+                    $cd_elig   = appt_discount_eligible($conn, $appt_id, $sv_orig, true, $cd_people, $cd_type, $cd_scope);
+                    $cd_amount = $cd_type === 'none' ? 0.0
+                        : person_discount_amount($cd_type, $sv_gross, $cd_elig, $cd_vvalue, $cd_vtype === 'percent' ? 'percent' : 'fixed');
                     // Clamp: completion discount cannot make combined discount exceed gross
                     $cd_amount = max(0.0, min($cd_amount, max(0.0, $sv_gross - $sv_bdisc)));
+                    if ($cd_amount <= 0) $cd_type = 'none'; // the discount doesn't reach these services
                     $new_final = max(0.0, $sv_orig + $sv_extras - $sv_bdisc - $cd_amount);
 
                     if ($cp_pay_method === 'unpaid') {
@@ -1721,7 +1752,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $upd_ord = $conn->prepare("UPDATE orders SET payment_status='unpaid', final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=?");
                         $upd_ord->bind_param("dsdsdi", $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
                         $upd_ord->execute(); $upd_ord->close();
-                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], (string)($_POST['voucher_label'] ?? ''));
+                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], trim((string)($_POST['voucher_label'] ?? '')) ?: VOUCHER_SCOPES[$cd_scope]);
 
                         $unpaid_amount = max(0.0, $new_final - floatval($appt['advance_payment'] ?? 0));
                         if ($unpaid_amount > 0) {
@@ -1744,7 +1775,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         $upd_ord = $conn->prepare("UPDATE orders SET payment_status='paid', payment_method=?, final_amount=?, completion_discount_type=?, completion_discount_amount=?, completion_voucher_type=?, completion_voucher_value=? WHERE id=? AND payment_status != 'paid'");
                         $upd_ord->bind_param("sdsdsdi", $cp_pay_method, $new_final, $cd_type, $cd_amount, $cd_vtype, $cd_vvalue, $oi_r2['id']);
                         $upd_ord->execute(); $upd_ord->close();
-                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], (string)($_POST['voucher_label'] ?? ''));
+                        if ($cd_type === 'voucher') save_voucher_label($conn, (int)$oi_r2['id'], trim((string)($_POST['voucher_label'] ?? '')) ?: VOUCHER_SCOPES[$cd_scope]);
                     }
                 }
 
@@ -1754,7 +1785,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             // account, since those extras haven't actually been paid either.
             // Runs unconditionally otherwise so extras added after check-in are
             // settled even when the main order was already paid.
-            if ($cp_pay_method !== 'unpaid') {
+            if ($cp_pay_method !== 'unpaid' && !$cp_later) {
                 $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
                 $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
             }
@@ -2594,6 +2625,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'pay_g
             log_activity($conn, 'group_payment', 'Group payment ₱' . number_format($pg_res['total'], 2) . ' for ' . implode(', ', $pg_res['guests']) . " (group $pg_group)", 'order', null, null);
         } else {
             $message = $pg_res['message']; $message_type = 'danger';
+        }
+    }
+}
+
+// ── GCASH QR PAYMENT CHECK (online bookings while PayMongo is off) ──────────
+// verify_manual_payment: the receptionist found the reference number in the
+// spa's GCash; the amount received is recorded as the booking's GCash advance
+// payment (Daily Report: GCASH (DP) today, deducted on the visit day).
+// reject_manual_payment: not found / wrong amount; the customer sees why.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['verify_manual_payment', 'reject_manual_payment'], true)) {
+    verify_csrf_token();
+    $mp_by = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
+    $mp_ok = true;
+    if (is_cashier()) {
+        $entered_pin = trim($_POST['pin'] ?? '');
+        $ps = $conn->prepare("SELECT full_name FROM receptionist_pins WHERE pin = ? LIMIT 1");
+        $ps->bind_param("s", $entered_pin); $ps->execute();
+        $pin_row = $ps->get_result()->fetch_assoc(); $ps->close();
+        if (!$pin_row) { $mp_ok = false; $message = "Incorrect PIN. Nothing was changed."; $message_type = "danger"; }
+        else $mp_by = $pin_row['full_name'];
+    }
+    ensure_manual_payments_table($conn);
+    $mp_id = (int)($_POST['mp_id'] ?? 0);
+    $q = $conn->prepare("SELECT mp.*, o.customer_name, o.final_amount FROM manual_payments mp JOIN orders o ON o.id = mp.order_id WHERE mp.id = ? AND mp.status = 'pending'");
+    $q->bind_param("i", $mp_id); $q->execute();
+    $mp = $q->get_result()->fetch_assoc(); $q->close();
+    if ($mp_ok && !$mp) { $mp_ok = false; $message = "This payment was already checked."; $message_type = "danger"; }
+    if ($mp_ok) {
+        require_once __DIR__ . '/../notify.php';
+        if ($_POST['action'] === 'verify_manual_payment') {
+            $got = round(max(0.0, (float)($_POST['amount_received'] ?? $mp['amount'])), 2);
+            $got = min($got, (float)$mp['final_amount']);
+            if ($got <= 0) { $message = "Enter the amount received."; $message_type = "danger"; }
+            else {
+                $conn->begin_transaction();
+                record_order_advance($conn, (int)$mp['order_id'], $got, 'gcash');
+                $u = $conn->prepare("UPDATE manual_payments SET status = 'verified', amount_received = ?, checked_by_name = ?, checked_at = NOW() WHERE id = ? AND status = 'pending'");
+                $u->bind_param("dsi", $got, $mp_by, $mp_id); $u->execute(); $u->close();
+                $conn->commit();
+                if ($mp['user_id']) add_notification($conn, (int)$mp['user_id'], 'appointment', 'GCash payment verified',
+                    'We received your ₱' . number_format($got, 2) . ' GCash payment for booking #' . $mp['order_id'] . '.' . ($got < (float)$mp['final_amount'] ? ' The balance of ₱' . number_format((float)$mp['final_amount'] - $got, 2) . ' is paid at the spa.' : ' Nothing more to pay at the spa.'), 'appointments.php');
+                log_activity($conn, 'gcash_verified', 'GCash payment ₱' . number_format($got, 2) . ' (ref ' . $mp['reference_no'] . ') verified for booking #' . $mp['order_id'], 'order', (int)$mp['order_id'], null);
+                $message = 'GCash payment of ₱' . number_format($got, 2) . ' verified for ' . ($mp['customer_name'] ?: 'the customer') . '.'; $message_type = 'success';
+            }
+        } else {
+            $why = trim(mb_substr(sanitize_input($_POST['reject_reason'] ?? ''), 0, 250));
+            if ($why === '') { $message = "Write the reason the customer will see."; $message_type = "danger"; }
+            else {
+                $u = $conn->prepare("UPDATE manual_payments SET status = 'rejected', reject_reason = ?, checked_by_name = ?, checked_at = NOW() WHERE id = ? AND status = 'pending'");
+                $u->bind_param("ssi", $why, $mp_by, $mp_id); $u->execute(); $u->close();
+                if ($mp['user_id']) add_notification($conn, (int)$mp['user_id'], 'appointment', 'GCash payment not accepted',
+                    'We could not accept the GCash payment for booking #' . $mp['order_id'] . ': ' . rtrim($why, '.') . '. Please contact the spa.', 'appointments.php');
+                log_activity($conn, 'gcash_rejected', 'GCash payment (ref ' . $mp['reference_no'] . ') rejected for booking #' . $mp['order_id'] . ': ' . $why, 'order', (int)$mp['order_id'], null);
+                $message = 'Payment rejected. ' . ($mp['customer_name'] ?: 'The customer') . ' was notified.'; $message_type = 'success';
+            }
         }
     }
 }
@@ -5576,12 +5662,13 @@ function gpRender() {
     if (!_gpGuests.length) { box.innerHTML = '<div style="color:var(--gray);font-size:0.82rem;">Everyone in this group has already paid.</div>'; gpTotal(); return; }
     box.innerHTML = _gpGuests.map(function (g, i) {
         var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2];
-        var due = Math.round(g.subtotal * (100 - pct)) / 100;
+        var due = Math.max(0, g.subtotal - Math.round((g.eligible !== undefined ? Math.min(g.eligible, g.subtotal) : g.subtotal) * pct) / 100 - (g.advance || 0));
         return '<div style="border:1px solid var(--border2);border-radius:10px;padding:0.6rem 0.75rem;' + (g.on ? '' : 'opacity:0.55;') + '">' +
             '<label style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;font-weight:700;color:var(--brown);cursor:pointer;">' +
             '<span><input type="checkbox" ' + (g.on ? 'checked' : '') + ' onchange="_gpGuests[' + i + '].on=this.checked;gpRender()"> ' + _gpEsc(g.name) + '</span>' +
             '<span>₱' + due.toFixed(2) + '</span></label>' +
             g.services.map(function (s) { return '<div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--gray);padding-left:1.4rem;"><span>' + _gpEsc(s.name) + '</span><span>₱' + s.amount.toFixed(2) + '</span></div>'; }).join('') +
+            (g.advance > 0 ? '<div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#C96A2C;padding-left:1.4rem;"><span>Advance paid at booking</span><span>−₱' + g.advance.toFixed(2) + '</span></div>' : '') +
             '<div style="display:flex;flex-wrap:wrap;gap:0.3rem;padding-left:1.4rem;margin-top:0.4rem;">' +
             GP_DISC.map(function (d) { var sel = g.disc === d[0]; return '<button type="button" onclick="_gpGuests[' + i + '].disc=\'' + d[0] + '\';gpRender()" style="border:1px solid ' + (sel ? '#C96A2C' : 'var(--border2)') + ';background:' + (sel ? '#C96A2C' : '#fff') + ';color:' + (sel ? '#fff' : 'var(--brown)') + ';border-radius:20px;padding:0.15rem 0.55rem;font-size:0.7rem;font-weight:700;cursor:pointer;">' + d[1] + '</button>'; }).join('') +
             '</div></div>';
@@ -5590,7 +5677,7 @@ function gpRender() {
 }
 function gpTotal() {
     var t = 0, any = false;
-    _gpGuests.forEach(function (g) { if (!g.on) return; any = true; var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2]; t += Math.round(g.subtotal * (100 - pct)) / 100; });
+    _gpGuests.forEach(function (g) { if (!g.on) return; any = true; var pct = GP_DISC.filter(function (d) { return d[0] === g.disc; })[0][2]; t += Math.max(0, g.subtotal - Math.round((g.eligible !== undefined ? Math.min(g.eligible, g.subtotal) : g.subtotal) * pct) / 100 - (g.advance || 0)); });
     document.getElementById('gp-total').textContent = '₱' + t.toFixed(2);
     document.getElementById('gp-submit').disabled = !any;
 }

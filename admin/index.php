@@ -346,7 +346,7 @@ function render_appt_day_list_html(mysqli $conn, string $date_str): string {
     </div>
     <?php if ($is_future_or_today): ?>
     <div class="appt-cal-day-booknow">
-        <button type="button" class="btn btn-primary btn-full" style="font-size:1.1rem;padding:1.1rem 1.5rem;" onclick="openQuickBook('<?php echo $date_str; ?>')">Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
+        <button type="button" class="btn btn-primary btn-full" style="font-size:1.1rem;padding:1.1rem 1.5rem;" onclick="openBookNow('<?php echo $date_str; ?>')">Book Now &mdash; <?php echo date('M j', strtotime($date_str)); ?></button>
     </div>
     <?php endif; ?>
     <?php
@@ -408,6 +408,7 @@ function render_quick_book_services_html(mysqli $conn): string {
                      data-price="<?php echo $d_price; ?>"
                      data-minutes="<?php echo $d_min; ?>"
                      data-home-price="<?php echo (float)($svc['home_service_price'] ?? 0); ?>"
+                     data-aes="<?php echo service_uses_aesthetic_slip($svc['category_name'], $svc['name']) ? 1 : 0; ?>"
                      onclick="qbSelectService(this)" ondblclick="qbSelectService(this); qbNext();">
                     <span class="qb-svc-row-name"><?php echo htmlspecialchars($svc['name']); ?></span>
                     <span class="qb-svc-row-meta"><?php echo htmlspecialchars($d_label); ?></span>
@@ -517,7 +518,7 @@ if (($_GET['ajax'] ?? '') === 'book_now_data') {
     redirect_if_not_admin();
     ob_clean();
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(book_now_data($conn));
+    echo json_encode(book_now_data($conn, isset($_GET['date']) ? (string)$_GET['date'] : null));
     exit;
 }
 require_once __DIR__ . '/_sell_product.php';
@@ -552,7 +553,9 @@ if (($_GET['ajax'] ?? '') === 'book_now_submit' && $_SERVER['REQUEST_METHOD'] ==
     header('Content-Type: application/json; charset=utf-8');
     verify_csrf_token();
     $bn_guests = json_decode($_POST['guests'] ?? '[]', true);
-    echo json_encode(book_now_save($conn, is_array($bn_guests) ? $bn_guests : []));
+    echo json_encode(book_now_save($conn, is_array($bn_guests) ? $bn_guests : [],
+        isset($_POST['date']) ? (string)$_POST['date'] : null,
+        ['amount' => (float)($_POST['dp_amount'] ?? 0), 'method' => (string)($_POST['dp_method'] ?? '')]));
     exit;
 }
 
@@ -573,6 +576,8 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
     $customer_name  = sanitize_input($_POST['customer_name'] ?? '');
     $phone          = sanitize_input($_POST['phone'] ?? '');
     $customer_note  = sanitize_input($_POST['customer_note'] ?? '');
+    $slip_number    = mb_substr(trim(sanitize_input($_POST['slip_number'] ?? '')), 0, 50);
+    $slip_number    = $slip_number !== '' ? $slip_number : null;
     $discount_type  = $_POST['discount_type'] ?? 'none';
     $voucher_type_i = $_POST['voucher_type'] ?? 'cash';
     $voucher_value  = max(0.0, floatval($_POST['voucher_value'] ?? 0));
@@ -678,8 +683,8 @@ if (($_GET['ajax'] ?? '') === 'quick_book_submit' && $_SERVER['REQUEST_METHOD'] 
 
     $conn->begin_transaction();
     try {
-        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, NULL)");
-        $stmt->bind_param("isssdsssdd", $walkin_user_id, $customer_name, $phone, $appointment_date, $charged_price, $payment_method, $order_payment_status, $discount_type, $discount_amount_calc, $final_amount);
+        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, booking_date, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)");
+        $stmt->bind_param("isssdsssdds", $walkin_user_id, $customer_name, $phone, $appointment_date, $charged_price, $payment_method, $order_payment_status, $discount_type, $discount_amount_calc, $final_amount, $slip_number);
         $stmt->execute();
         $order_id = $stmt->insert_id;
         $stmt->close();
@@ -829,8 +834,14 @@ require_once 'admin_header.php';
     </div>
 </div>
 
-<div id="resourceGridContainer" style="margin-bottom:1.5rem;"><?php require_once __DIR__ . '/_resource_grid.php'; echo render_resource_grid_html($conn); ?></div>
+<div id="resourceGridContainer" style="margin-bottom:1.5rem;"><?php require_once __DIR__ . '/_resource_grid.php'; echo render_resource_grid_html($conn, true); ?></div>
 <?php include __DIR__ . '/_resource_grid_js.php'; ?>
+<?php
+// A click on a booking in the grid opens the Appointments panel, centered
+// (same panel and actions as appointments.php; see _appt_desk.php).
+$DESK_MODAL = true;
+require __DIR__ . '/_appt_desk.php';
+?>
 
 <?php require_once __DIR__ . '/_advance_payments_widget.php'; ?>
 
@@ -927,6 +938,10 @@ require_once 'admin_header.php';
                     <div class="qb-field">
                         <label for="qbCustomerPhone">Phone Number <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
                         <input type="tel" id="qbCustomerPhone" placeholder="09XXXXXXXXX">
+                    </div>
+                    <div class="qb-field">
+                        <label for="qbSlipNumber"><span id="qbSlipLabel">Slip Number</span> <span style="font-weight:400;color:var(--gray);">(optional)</span></label>
+                        <input type="text" id="qbSlipNumber" maxlength="50" placeholder="e.g. 11082-2026">
                     </div>
                 </div>
                 <div class="qb-field" style="margin-top:1.25rem;">
@@ -1059,7 +1074,7 @@ function openQuickBook(prefillDate) {
         service_id: 0, service_name: '', price: 0, home_price: 0, minutes: 0,
         therapist_id: 0, therapist_name: '', resource_id: 0, resource_name: '',
         rate_type: 'regular', partner_id: 0, partner_name: '', partner_rate: null,
-        customer_name: '', phone: '', customer_note: '',
+        customer_name: '', phone: '', customer_note: '', slip_number: '',
         discount_type: 'none', voucher_type: 'cash', voucher_value: 0,
         payment_method: '', advance_payment: 0, advance_payment_method: ''
     };
@@ -1068,6 +1083,7 @@ function openQuickBook(prefillDate) {
     document.getElementById('qbCustomerName').value  = '';
     document.getElementById('qbCustomerPhone').value = '';
     document.getElementById('qbCustomerNote').value  = '';
+    document.getElementById('qbSlipNumber').value    = '';
     document.getElementById('qbVoucherAmount').value = 0;
     document.getElementById('qbCelebPct').value      = 0;
     document.getElementById('qbAdvancePayment').value = 0;
@@ -1181,6 +1197,7 @@ function qbNext() {
         qbState.customer_name  = name;
         qbState.phone          = document.getElementById('qbCustomerPhone').value.trim();
         qbState.customer_note  = document.getElementById('qbCustomerNote').value.trim();
+        qbState.slip_number    = document.getElementById('qbSlipNumber').value.trim();
         qbRecalc();
         qbGotoStep(4);
     }
@@ -1191,6 +1208,10 @@ function qbSelectService(el) {
     el.classList.add('selected');
     qbState.service_id   = el.getAttribute('data-service-id');
     qbState.service_name = el.getAttribute('data-service-name');
+    // Aesthetic treatments go on their own paper slip series.
+    var aes = el.getAttribute('data-aes') === '1';
+    document.getElementById('qbSlipLabel').textContent = aes ? 'Aesthetic slip #' : 'Slip Number';
+    document.getElementById('qbSlipNumber').placeholder = aes ? 'Aesthetic slip, e.g. 0130-2026' : 'e.g. 11082-2026';
     qbState.price         = parseFloat(el.getAttribute('data-price'));
     qbState.home_price    = parseFloat(el.getAttribute('data-home-price'));
     qbState.minutes        = parseInt(el.getAttribute('data-minutes'), 10);
@@ -1343,6 +1364,7 @@ function qbSubmit() {
         therapist_id: qbState.therapist_id, resource_id: qbState.resource_id,
         rate_type: qbState.rate_type, partner_id: qbState.partner_id,
         customer_name: qbState.customer_name, phone: qbState.phone, customer_note: qbState.customer_note,
+        slip_number: qbState.slip_number,
         discount_type: qbState.discount_type,
         voucher_type: document.getElementById('qbVoucherType').value,
         voucher_value: qbState.discount_type === 'celebration'

@@ -57,7 +57,7 @@ $now        = new DateTime('now', $tz);
 $today_str  = $now->format('Y-m-d');
 $is_today   = ($date === $today_str);
 $now_min         = $is_today ? ((int)$now->format('H') * 60 + (int)$now->format('i')) : 0;
-$min_start_min   = $is_today ? ($now_min + 120) : 0; // 2-hour advance minimum for checkout
+$min_start_min   = $is_today ? ($now_min + 30) : 0; // 30-minute advance minimum for checkout
 
 $on_duty      = false;
 $message      = '';

@@ -81,7 +81,9 @@ $wb->setActiveSheetIndex($wb->getIndex($ws));
 // silently invisible in the exported file despite being written correctly.
 // Un-merging first makes every row in the grid independently writable.
 foreach (array_keys($ws->getMergeCells()) as $range) {
-    [$c1, $r1, $c2, $r2] = Coordinate::rangeBoundaries($range);
+    // PhpSpreadsheet 2+ returns [[col, row], [col, row]]; older versions a flat list.
+    $_b = Coordinate::rangeBoundaries($range);
+    [$c1, $r1, $c2, $r2] = is_array($_b[0]) ? [$_b[0][0], $_b[0][1], $_b[1][0], $_b[1][1]] : $_b;
     if ($r1 >= 16 && $r2 <= 59 && $c1 >= Coordinate::columnIndexFromString('E')) {
         $ws->unmergeCells($range);
     }
@@ -96,7 +98,7 @@ $cv = function (string $cell, $value) use ($ws): void {
 $clr = function (array $cols, int $r_start, int $r_end) use ($ws): void {
     for ($r = $r_start; $r <= $r_end; $r++) {
         foreach ($cols as $col) {
-            $ws->getCell($col . $r)->setValue('');
+            $ws->getCell($col . $r)->setValue(null);   // '' would make =A*B show #VALUE!
         }
     }
 };
@@ -105,7 +107,10 @@ $clr = function (array $cols, int $r_start, int $r_end) use ($ws): void {
 // 1. HEADER — date, opening/closing cashier
 // ════════════════════════════════════════════════════════════════════════════
 // H5:K5 is merged — write to anchor H5 as an Excel serial date
-$ws->getCell('H5')->setValue(ExcelDate::PHPToExcel(strtotime($report_date)));
+// formattedPHPToExcel takes the calendar date as-is; PHPToExcel(timestamp)
+// shifted it by the UTC offset and showed the day before at 4:00 PM.
+[$_y, $_m, $_d] = array_map('intval', explode('-', $report_date));
+$ws->getCell('H5')->setValue(ExcelDate::formattedPHPToExcel($_y, $_m, $_d));
 $ws->getStyle('H5')->getNumberFormat()->setFormatCode('mmmm d, yyyy');
 
 if ($rpt) {
@@ -169,11 +174,9 @@ $clr(['R','S','T','U','V','W'], 97, 103);
 // ════════════════════════════════════════════════════════════════════════════
 // 3. SALES DATA ROWS (rows 16–57, columns E–W)
 //    Template SUM row 58 covers K15:K57 (and likewise for L–S, U).
-//    Max 42 rows (16 to 57). Overflow rows are silently truncated.
+//    Up to 42 rows fit (16 to 57); more are handled in section 8.
 // ════════════════════════════════════════════════════════════════════════════
-$data_row = 16;
-foreach ($spreadsheet_rows as $sr) {
-    if ($data_row > 57) break;
+$write_sales_row = function (array $sr, int $data_row) use ($cv): void {
 
     $cv('E' . $data_row, $sr['time_in']      ?? '');
     $cv('F' . $data_row, $sr['time_out']     ?? '');
@@ -218,6 +221,15 @@ foreach ($spreadsheet_rows as $sr) {
     if ($adv > 0) $cv('V' . $data_row, $adv);
     $cv('X' . $data_row, $sr['remarks'] ?? '');
 
+};
+
+// More than 42 lines: the first 41 go in rows 16-56 now, the rest are
+// written after inserting rows inside the block (section 8), so every
+// total and formula below moves down with them.
+$sales_overflow = count($spreadsheet_rows) > 42 ? array_slice($spreadsheet_rows, 41) : [];
+$data_row = 16;
+foreach ($sales_overflow ? array_slice($spreadsheet_rows, 0, 41) : $spreadsheet_rows as $sr) {
+    $write_sales_row($sr, $data_row);
     $data_row++;
 }
 // K16:L59 originally held =VLOOKUP(I_,services,...) formulas (a "services"
@@ -245,16 +257,24 @@ $cv('V58', '=SUM(V16:V57)');
 //    C17:C28 = =A*B formulas (already in template, preserved)
 //    C33     = =SUM(C17:C31) total (already in template, preserved)
 // ════════════════════════════════════════════════════════════════════════════
+// String keys: a float key like 0.5 would be truncated to 0 by PHP.
 $denom_row_map = [
-    1000 => 17, 500 => 18, 200 => 19, 100 => 20,
-      50 => 21,  20 => 22,  10 => 23,   5 => 24,
-       1 => 25, 0.5 => 26, 0.1 => 27, 0.05 => 28,
+    '1000.00' => 17, '500.00' => 18, '200.00' => 19, '100.00' => 20,
+      '50.00' => 21,  '20.00' => 22,  '10.00' => 23,   '5.00' => 24,
+       '1.00' => 25,   '0.50' => 26,   '0.10' => 27,   '0.05' => 28,
 ];
 foreach ($denom_row_map as $denom => $drow) {
-    $qty = (int)($denoms_saved[(float)$denom]['quantity'] ?? 0);
+    $qty = (int)($denoms_saved[$denom]['quantity'] ?? 0);
     if ($qty > 0) {
         $cv('A' . $drow, $qty);
     }
+}
+// ₱0.25 has no row in the template: use the first spare row (29, which
+// already has =A29*B29 and is inside C33's SUM).
+$qty_025 = (int)($denoms_saved['0.25']['quantity'] ?? 0);
+if ($qty_025 > 0) {
+    $cv('A29', $qty_025);
+    $cv('B29', 0.25);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -293,14 +313,39 @@ $cv('R58', '=SUM(R16:R57)');
 $cv('B37', '=O58+P58+Q58+R58+N76');
 // Advance Payment total — see the B48 note above: was still =U58 (now Mode
 // of Payment text) after the comm_25 insertion moved it to column V.
-$cv('B48', '=V58');
-$cv('B40', (float)$total_discounts);
+// Sales report: ADVANCE PAYMENT = advance column + down payments received
+// today (=U53+T69), and the down payments are part of POS READING
+// (=K53+V99+K71+T69) but not of GROSS SALES (=B34+B33-B45-T69). The DP box's
+// Amount column is T after the comm_25 insertion (total in T74).
+$cv('B48', '=V58+T74');
+$cv('B39', '=K58+SUM(K65:K75)+W104+T74');
+$cv('B36', '=B39+B38-B50-T74');
+// MARKETING EXPENSE = influencer at-cost total (=K71 in the sales report);
+// the template's =O76 pointed at an empty cell.
+$cv('B50', '=SUM(K65:K75)');
+// COH = the cash breakdown total, as in the sales report (=C29 there).
+$cv('B53', '=C33');
+// Two lines the template has no cell for, in its spare rows 54-55, both
+// added back in Net Cash: cash paid today for an earlier day's unpaid, and
+// expenses paid by GCash / bank (listed in EXPENSES but not from the drawer).
+$cv('A54', 'COLLECTED UNPAIDS (CASH)');
+$cv('B54', (float)$collected_by_method['cash']);
+$cv('A55', 'EXPENSES NOT FROM DRAWER');
+$cv('B55', (float)$expenses_off_drawer_total);
+$cv('B52', '=B39-B40-B41-B42-B43-B44-B45-B46-B47-B48-B49-B50-B51+B54+B55');
+// CELEB. DISCOUNTS (B41) is the M column; DISCOUNTS holds every other
+// discount (staff 50%, PWD/Senior 20%, vouchers) so the celebration discount
+// is not taken off Net Cash twice.
+$cv('B40', (float)($total_discounts - $celeb_discount));
 $cv('B42', (float)$gc_redeem_total);
-$cv('B43', (float)$card_total);
-$cv('B44', (float)$gcash_total);
+// SWIPER = everything swiped that day, card and QR, sales and down payments
+// alike, as in the sales report (its down payments are then also in B48).
+$cv('B43', (float)($card_total + $qrph_total + $card_dp_total + $qrph_dp_total));
+// GCASH (SALES) likewise holds GCash down payments, as in the sales report.
+$cv('B44', (float)($gcash_total + $gcash_dp_total));
 $cv('B45', (float)$maya_total);
-$cv('B46', (float)$noncash_dp_total);  // total non-cash DP: GCash + Maya + Card/Swiper + QRPH
-$cv('B53', (float)$cash_on_hand);
+// Every down payment, whatever the method, is already in B48 via T74.
+$cv('B46', 0.0);
 
 // ════════════════════════════════════════════════════════════════════════════
 // 6. INFLUENCER / MARKETING (rows 65-75, columns E-N)
@@ -351,10 +396,12 @@ for ($r = $inf_row; $r <= 69; $r++) {
 $dp_row = 64;
 foreach ($advances_received as $dp) {
     if ($dp_row > 73) break;
-    $cv('R' . $dp_row, $dp['customer_name'] ?? '');
-    $cv('S' . $dp_row, (float)($dp['advance_payment'] ?? 0));
-    $cv('T' . $dp_row, ucfirst($dp['advance_payment_method'] ?? 'cash'));
-    $cv('U' . $dp_row, $dp['service_name'] ?? '');
+    // Name / Amount / MOP / Remarks sit in S-V after the comm_25 column
+    // insertion (the template's R-U), so the Amount lands under T74's SUM.
+    $cv('S' . $dp_row, $dp['customer_name'] ?? '');
+    $cv('T' . $dp_row, (float)($dp['advance_payment'] ?? 0));
+    $cv('U' . $dp_row, ucfirst($dp['advance_payment_method'] ?? 'cash'));
+    $cv('V' . $dp_row, $dp['service_name'] ?? '');
     $dp_row++;
 }
 
@@ -366,7 +413,7 @@ $exp_row = 80;
 foreach ($expenses as $e) {
     if ($exp_row > 94) break;
     $cv('F' . $exp_row, '•');
-    $cv('G' . $exp_row, $e['label']     ?? ($e['particular'] ?? ''));
+    $cv('G' . $exp_row, ($e['label'] ?? ($e['particular'] ?? '')) . (!empty($e['off_drawer']) ? ' (GCash/bank)' : ''));
     $cv('H' . $exp_row, (float)($e['amount'] ?? 0));
     $exp_row++;
 }
@@ -427,6 +474,24 @@ foreach ($all_products as $p) {
 $filename = 'Recovery_Spa_Report_' . date('M_j_Y', strtotime($report_date)) . '.xlsx';
 
 if (ob_get_length()) ob_end_clean();
+// ════════════════════════════════════════════════════════════════════════════
+// 8. SALES OVERFLOW — more than 42 lines that day
+//    Insert the missing rows inside the sales block (before row 57) so the
+//    SUM(…15:…57) totals stretch over them and every row and formula below
+//    (totals row, summary, influencer, down payment, expenses…) moves down.
+// ════════════════════════════════════════════════════════════════════════════
+if ($sales_overflow) {
+    $ws->insertNewRowBefore(57, count($sales_overflow) - 1);
+    $row = 57;
+    foreach ($sales_overflow as $sr) {
+        foreach (['E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X'] as $col) {
+            $ws->getCell($col . $row)->setValue(null);
+        }
+        $write_sales_row($sr, $row);
+        $row++;
+    }
+}
+
 header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 header('Content-Disposition: attachment; filename="' . $filename . '"');
 header('Cache-Control: max-age=0');

@@ -6,7 +6,31 @@
  */
 require_once '../config.php';
 require_once __DIR__ . '/admin_access.php';
+require_once __DIR__ . '/../notify.php';
 enforce_page_access();
+
+// ─── GCASH QR (pay by scanning the spa's QR; checked at the desk) ────────────
+$gc_msg = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_gcash') {
+    verify_csrf_token();
+    $by = (int)($_SESSION['user_id'] ?? 0);
+    $gc_err = '';
+    if (($_FILES['gcash_qr']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+        $qr = store_payment_image($_FILES['gcash_qr'], 'qr');
+        if ($qr[0] === '!') $gc_err = substr($qr, 1);
+        else save_gcash_setting($conn, 'gcash_qr_file', $qr, $by);
+    }
+    if ($gc_err === '') {
+        save_gcash_setting($conn, 'gcash_name', mb_substr(trim((string)($_POST['gcash_name'] ?? '')), 0, 100), $by);
+        save_gcash_setting($conn, 'gcash_number', preg_replace('/[^\d+ ]/', '', (string)($_POST['gcash_number'] ?? '')), $by);
+        save_gcash_setting($conn, 'gcash_qr_enabled', !empty($_POST['gcash_qr_enabled']) ? '1' : '0', $by);
+        log_activity($conn, 'payment_settings', 'Updated the GCash QR payment settings');
+    }
+    $_SESSION['gc_msg'] = $gc_err !== '' ? '!' . str_replace('receipt', 'QR', $gc_err) : 'GCash settings saved.';
+    header('Location: payment_log.php'); exit;
+}
+if (!empty($_SESSION['gc_msg'])) { $gc_msg = $_SESSION['gc_msg']; unset($_SESSION['gc_msg']); }
+$gc = gcash_settings($conn);
 
 // ─── SETUP CHECK ─────────────────────────────────────────────────────────────
 $pm_mode = PAYMONGO_SECRET_KEY === '' ? 'none'
@@ -165,6 +189,27 @@ require_once __DIR__ . '/admin_header.php';
             <span class="pl-state off">○ Online payment is OFF — customers only see Pay at Spa</span>
         <?php endif; ?>
     </div>
+
+    <form class="pl-card" method="POST" enctype="multipart/form-data">
+        <?php echo csrf_field(); ?><input type="hidden" name="action" value="save_gcash">
+        <h3>GCash QR payment (online bookings)</h3>
+        <?php if ($gc_msg !== ''): ?><div class="pl-note" style="margin:0 0 .6rem;<?php echo $gc_msg[0] === '!' ? 'background:#FDECEA;border-color:#F5C2BD;' : 'background:#DDF3E4;border-color:#B7E3C5;'; ?>"><?php echo htmlspecialchars(ltrim($gc_msg, '!')); ?></div><?php endif; ?>
+        <div class="pl-check">
+            <div class="pl-dot <?php echo gcash_qr_ready($conn) ? 'y' : 'n'; ?>"><?php echo gcash_qr_ready($conn) ? '✓' : '!'; ?></div>
+            <div><b><?php echo gcash_qr_ready($conn) ? 'Customers can pay by GCash QR' : 'Not shown to customers yet'; ?></b>
+                <span>Customers scan this QR at checkout, pay the 50% down payment or the full amount, then send the reference number and a screenshot. The receptionist verifies it in Appointments.<?php echo ONLINE_PAYMENT_ENABLED ? ' (Hidden while PayMongo online payment is ON.)' : ''; ?></span></div>
+        </div>
+        <div class="pl-filter" style="margin:.6rem 0 0;align-items:center;">
+            <input type="text" name="gcash_name" maxlength="100" placeholder="Account name" value="<?php echo htmlspecialchars($gc['gcash_name']); ?>" style="width:220px;">
+            <input type="text" name="gcash_number" maxlength="20" placeholder="GCash number" value="<?php echo htmlspecialchars($gc['gcash_number']); ?>" style="width:170px;">
+            <input type="file" name="gcash_qr" accept="image/jpeg,image/png,image/webp" style="width:auto;">
+            <label style="font-size:.82rem;font-weight:700;display:flex;gap:.35rem;align-items:center;"><input type="checkbox" name="gcash_qr_enabled" value="1" style="width:auto;" <?php echo $gc['gcash_qr_enabled'] === '1' ? 'checked' : ''; ?>> Turn on</label>
+            <button type="submit">Save</button>
+        </div>
+        <?php if ($gc['gcash_qr_file'] !== ''): ?>
+        <div class="pl-url"><img src="<?php echo BASE_URL; ?>payment_qr.php?v=<?php echo urlencode($gc['gcash_qr_file']); ?>" alt="GCash QR" style="width:120px;height:120px;object-fit:contain;border:1px solid #EADFCF;border-radius:8px;background:#fff;"> Current QR. Upload a new image to replace it.</div>
+        <?php endif; ?>
+    </form>
 
     <div class="pl-card">
         <h3>PayMongo setup check</h3>

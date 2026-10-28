@@ -2,6 +2,12 @@
 require_once '../config.php';
 redirect_if_not_admin();
 
+// Walk-in has been retired: walk-ins are booked with Book Now on the Dashboard
+// (several guests, slip numbers) and paid in Appointments. Anyone opening the
+// old page or an old bookmark lands on the Dashboard instead.
+header('Location: index.php');
+exit();
+
 $conn->query("ALTER TABLE therapists ADD COLUMN IF NOT EXISTS is_generalist TINYINT(1) NOT NULL DEFAULT 0");
 // 2-Session Package linking column — admin/appointments.php and
 // admin/appt_poll.php also self-heal this defensively (in case this file

@@ -36,7 +36,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                u.full_name AS user_name, u.phone AS user_phone,
                o.id AS order_id, o.customer_name, o.phone AS order_phone, o.total_amount,
                o.discount_type, o.discount_amount, o.final_amount, o.payment_status,
-               o.payment_method, o.paymongo_method, o.booking_group,
+               o.payment_method, o.paymongo_method, o.booking_group, o.slip_number,
                o.completion_discount_type, o.completion_discount_amount, o.voucher_label,
                (SELECT COUNT(DISTINCT o2.customer_name) FROM orders o2
                 WHERE o.booking_group IS NOT NULL AND o2.booking_group = o.booking_group) AS group_size
@@ -62,6 +62,19 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
 
     $ids = array_map(fn($r) => (int)$r['id'], $rows);
     $slots = $extras = $sessions = [];
+    // GCash QR payment sent with an online booking (latest per order).
+    $manual_pay = [];
+    $order_ids = array_values(array_unique(array_filter(array_map(fn($r) => (int)($r['order_id'] ?? 0), $rows))));
+    if ($order_ids) {
+        ensure_manual_payments_table($conn);
+        foreach ($conn->query("SELECT * FROM manual_payments WHERE order_id IN (" . implode(',', $order_ids) . ") ORDER BY id")->fetch_all(MYSQLI_ASSOC) as $m) {
+            $manual_pay[(int)$m['order_id']] = [
+                'id' => (int)$m['id'], 'amount' => (float)$m['amount'], 'kind' => $m['kind'], 'ref' => $m['reference_no'],
+                'status' => $m['status'], 'received' => $m['amount_received'] !== null ? (float)$m['amount_received'] : null,
+                'reason' => $m['reject_reason'] ?? '', 'by' => $m['checked_by_name'] ?? '', 'sent' => $m['created_at'],
+            ];
+        }
+    }
     if ($ids) {
         $in = implode(',', $ids); // ints only
         foreach ($conn->query("SELECT appointment_id, person_slot, therapist_id FROM appointment_therapists WHERE appointment_id IN ($in) ORDER BY person_slot")->fetch_all(MYSQLI_ASSOC) as $r) {
@@ -126,9 +139,14 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
 
         // Add-ons: a multi-session add-on is one row per session sharing an
         // extra_group_id. Shown as one add-on with its sessions.
-        $addons = []; $extras_unpaid = 0.0; $extras_all = 0.0;
+        $addons = []; $extras_unpaid = 0.0; $extras_all = 0.0; $extras_elig = 0.0;
+        $velig = [];
+        foreach (array_keys(VOUCHER_SCOPES) as $vs) $velig[$vs] = service_in_voucher_scope($r['category_name'] ?? '', $r['service_name'] ?? '', $vs) ? (float)$r['total_amount'] : 0.0;
         foreach ($extras[$id] ?? [] as $e) {
             $extras_all += (float)$e['charged_price'];
+            $e_nodisc = service_discount_excluded($e['category_name'], $e['name']);
+            if (!$e_nodisc) $extras_elig += (float)$e['charged_price'];
+            foreach (array_keys(VOUCHER_SCOPES) as $vs) if (service_in_voucher_scope($e['category_name'], $e['name'], $vs)) $velig[$vs] += (float)$e['charged_price'];
             if ($e['payment_status'] !== 'paid') $extras_unpaid += (float)$e['charged_price'];
             $key = ((int)$e['total_sessions'] > 1 && $e['extra_group_id']) ? 'g' . $e['extra_group_id'] : 'e' . $e['id'];
             if (!isset($addons[$key])) {
@@ -138,6 +156,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                     'person' => $e['person_label'], 'rows' => [],
                     'med' => service_is_medical($conn, (int)$e['service_id']),
                     'topup' => !empty($e['is_upgrade_topup']),
+                    'nodisc' => $e_nodisc,
                 ];
             }
             $addons[$key]['price'] += (float)$e['charged_price'];
@@ -184,6 +203,8 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
             'people' => max(1, (int)$r['people_count']),
             'rate_type' => $r['rate_type'] ?: 'regular',
             'upgraded_from' => $r['upgraded_from'] ?? null,
+            'slip' => $r['slip_number'] ?? '',
+            'slip_aes' => service_uses_aesthetic_slip($r['category_name'] ?? '', $r['service_name'] ?? ''),
             'service' => [
                 'id' => (int)$r['service_id'], 'name' => $r['service_name'],
                 'mins' => (int)($r['duration_minutes'] ?: $r['session_time'] ?: 60),
@@ -191,6 +212,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                 'res' => book_now_resource_type($r['category_name']),
                 'qual' => $qual((int)$r['service_id']),
                 'med' => service_is_medical($conn, (int)$r['service_id']),
+                'nodisc' => service_discount_excluded($r['category_name'] ?? '', $r['service_name'] ?? ''),
             ],
             'slots' => $slots[$id] ?? [],
             'resource_id' => $r['resource_id'] !== null ? (int)$r['resource_id'] : null,
@@ -210,6 +232,10 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
                 'paid' => $paid, 'paid_amount' => $paid ? (float)$r['final_amount'] : 0.0,
                 'method' => $r['paymongo_method'] ?: $r['payment_method'],
                 'due' => round($due, 2),
+                'gcash' => $manual_pay[(int)($r['order_id'] ?? 0)] ?? null, // GCash QR payment sent online
+                // What Senior / PWD / Staff / Voucher can apply to (all people).
+                'velig' => array_map(fn($v) => round($v, 2), $velig), // each voucher kind
+                'eligible' => round((service_discount_excluded($r['category_name'] ?? '', $r['service_name'] ?? '') ? 0.0 : $order_total) + $extras_elig, 2),
             ],
         ];
     }

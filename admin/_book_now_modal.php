@@ -2,8 +2,10 @@
 /**
  * _book_now_modal.php
  * ─────────────────────────────────────────────────────────────────────────────
- * Book Now modal for walk-ins happening now: several guests, several services
- * each. The receptionist adds services per guest; the planner below assigns
+ * Book Now modal: several guests, several services each, for today (Dashboard
+ * button) or another day (a day on the calendar → openBookNow('YYYY-MM-DD')).
+ * Another day can take an optional advance payment here. "Continue a package" books
+ * the next session of a customer's multi-session package. The receptionist adds services per guest; the planner below assigns
  * every service a start time, therapist (today's rotation, qualified, free)
  * and room (right type, free), runs a guest's services back-to-back and
  * guests side by side, and can reorder a guest's services to cut waiting.
@@ -23,6 +25,8 @@
         <div class="modal-box-header">
             <span class="modal-box-title">Book Now <span class="bn-sub" id="bnSub">· walk-in · today</span></span>
             <div style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="bn-when">Date <input type="date" id="bnDate"></label>
+                <label class="bn-when">Start <input type="time" id="bnStart" step="300"></label>
                 <button class="modal-box-close" type="button" onclick="closeBookNow()">✕</button>
             </div>
         </div>
@@ -32,7 +36,8 @@
                 <div class="bn-guests" id="bnGuests"></div>
                 <div class="bn-body">
                     <div class="bn-col">
-                        <p class="bn-ct">Add services to <span id="bnAddTo">Guest 1</span></p>
+                        <div class="bn-tabs2"><button type="button" data-mode="new" class="on">New services</button><button type="button" data-mode="pkg">Continue a package</button></div>
+                        <p class="bn-ct">Add <span id="bnAddWhat">services</span> to <span id="bnAddTo">Guest 1</span></p>
                         <input type="text" id="bnQ" class="bn-input" placeholder="Search services&hellip;" autocomplete="off" aria-label="Search services">
                         <div class="bn-chips" id="bnCats"></div>
                         <div class="bn-svcs" id="bnSvcs"></div>
@@ -51,13 +56,14 @@
                         <p class="bn-ct">Estimated total</p>
                         <div class="bn-bill" id="bnBill"></div>
                         <div class="bn-sum" id="bnSum"></div>
-                        <p class="bn-hint">Payment and discounts (Senior, PWD, Staff, voucher) are taken in <b>Appointments</b> at check-in or when done. A group can pay together there with <b>Pay for group</b>.</p>
+                        <div class="bn-dp" id="bnDp" hidden></div>
+                        <p class="bn-hint" id="bnPayHint">Payment and discounts (Senior, PWD, Staff, voucher) are taken in <b>Appointments</b> at check-in or when done. A group can pay together there with <b>Pay for group</b>.</p>
                         <p class="bn-miss" id="bnMiss"></p>
                         <button type="button" class="bn-book" id="bnBookBtn">Book</button>
                     </div>
                 </div>
                 <div class="bn-prev">
-                    <p class="bn-ct" style="margin-bottom:0.4rem;">Room preview &middot; today</p>
+                    <p class="bn-ct" style="margin-bottom:0.4rem;">Room preview &middot; <span id="bnPrevDay">today</span></p>
                     <div class="bn-tl-scroll"><div class="bn-tl" id="bnTl"></div></div>
                 </div>
             </div>
@@ -70,6 +76,20 @@
 #bookNowModal .modal-box-body { flex:1; overflow-y:auto; }
 .bn-sub { color:var(--gray); font-weight:500; font-size:0.85rem; }
 .bn-loading { padding:3rem; text-align:center; color:var(--gray); }
+.bn-when { display:flex; align-items:center; gap:0.35rem; font-size:0.72rem; font-weight:700; color:var(--gray); }
+.bn-when input { border:1px solid var(--border2); border-radius:7px; padding:0.3rem 0.45rem; font:inherit; font-size:0.82rem; color:var(--brown); background:#fff; }
+.bn-tabs2 { display:flex; gap:0; border:1px solid var(--border2); border-radius:9px; overflow:hidden; }
+.bn-tabs2 button { flex:1; border:0; background:var(--bg3); color:var(--brown-md); font-weight:700; font-size:0.78rem; padding:0.45rem; cursor:pointer; }
+.bn-tabs2 button.on { background:var(--rust); color:#fff; }
+.bn-pkg { border:1px solid var(--border2); border-radius:9px; padding:0.5rem 0.6rem; display:flex; flex-direction:column; gap:0.3rem; }
+.bn-pkg b { font-size:0.84rem; color:var(--brown); }
+.bn-pkg .meta { font-size:0.72rem; color:var(--gray); }
+.bn-pkg .prog { display:flex; gap:3px; }
+.bn-pkg .prog i { width:16px; height:5px; border-radius:3px; background:var(--border2); }
+.bn-pkg .prog i.d { background:var(--green); }
+.bn-dp[hidden] { display:none; }
+.bn-dp { border:2px solid var(--rust); border-radius:10px; padding:0.6rem 0.7rem; display:flex; flex-direction:column; gap:0.45rem; }
+.bn-dp input { width:100%; box-sizing:border-box; border:1px solid var(--border2); border-radius:8px; padding:0.45rem 0.6rem; font:inherit; font-weight:700; }
 .bn-ct { font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.08em; color:var(--gray); margin:0; }
 .bn-hint { font-size:0.72rem; color:var(--gray); line-height:1.45; margin:0; }
 .bn-input { width:100%; padding:0.55rem 0.7rem; border:1px solid var(--border2); border-radius:8px; background:var(--bg3); color:var(--brown); font:inherit; font-size:0.85rem; box-sizing:border-box; }
@@ -83,6 +103,8 @@
 .bn-gtab .sw { width:10px; height:10px; border-radius:50%; background:var(--gc); flex:none; }
 .bn-gtab input { border:0; background:none; font-weight:700; width:9.5em; padding:2px 0; color:var(--brown); font:inherit; font-size:0.85rem; }
 .bn-gtab input:focus { outline:none; }
+.bn-gtab input.gs { width:5.5em; font-weight:500; border-left:1px solid var(--border2); padding-left:0.45rem; }
+.bn-gtab input.gs.aes { width:8.5em; }
 .bn-gtab .cnt { font-size:0.7rem; color:var(--gray); white-space:nowrap; }
 .bn-gtab .rm { border:0; background:none; color:var(--gray); cursor:pointer; padding:0 2px; }
 .bn-addg { border:1px dashed var(--gold); background:none; border-radius:10px; padding:0.45rem 0.8rem; font-weight:700; cursor:pointer; color:var(--brown-md); font-size:0.82rem; }
@@ -171,8 +193,9 @@
 
     var D = null;          // data snapshot from ajax=book_now_data
     var SVC = {}, TH = {}; // id → row
-    var FIRST = 0;         // earliest start: now, rounded up to 5 min
+    var FIRST = 0;         // earliest start: now (rounded up to 5 min) or the Start picked
     var uid = 1, S = null, PLAN = null, SAVED = 0;
+    var DAY = '';          // booking date, YYYY-MM-DD
 
     function $(id) { return document.getElementById(id); }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -181,29 +204,61 @@
     function pesoShort(n) { return peso(n).replace(/\.00$/, ''); }
     function ov(a, ad, b, bd) { return a < b + bd && b < a + ad; }
     function gname(g, i) { return g.name.trim() || 'Guest ' + (i + 1); }
-    function newGuest() { return { id: uid++, name: '', items: [] }; }
+    function newGuest() { return { id: uid++, name: '', slip: '', slipAes: '', items: [] }; }
 
     // ── Open / close ──────────────────────────────────────────────────────
-    window.openBookNow = function () {
-        $('bookNowModal').classList.add('active');
+    // date: 'YYYY-MM-DD' from the calendar; none = today (Dashboard button).
+    function hhmm(m) { return (m < 600 ? '0' : '') + Math.floor(m / 60) + ':' + (m % 60 < 10 ? '0' : '') + (m % 60); }
+    function load(date, keep) {
         $('bnApp').hidden = true; $('bnLoading').hidden = false;
         $('bnLoading').textContent = 'Loading services, therapists and rooms…';
-        fetch('index.php?ajax=book_now_data', { credentials: 'same-origin' })
+        fetch('index.php?ajax=book_now_data' + (date ? '&date=' + encodeURIComponent(date) : ''), { credentials: 'same-origin' })
             .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
             .then(function (data) {
-                D = data; SVC = {}; TH = {};
+                D = data; SVC = {}; TH = {}; DAY = D.date;
                 D.services.forEach(function (s) { SVC[s.id] = s; });
                 D.therapists.forEach(function (t) { TH[t.id] = t; });
                 FIRST = Math.ceil(D.now / 5) * 5;
-                S = { guests: [newGuest()], active: 0, cat: 'All', open: null, saving: false };
-                $('bnQ').value = ''; $('bnOptOrder').checked = true; $('bnOptSame').checked = true;
-                $('bnSub').textContent = '· walk-in · today, starting ' + fmt(FIRST);
+                if (keep && S) {
+                    // Date changed: keep the guests, re-read their services
+                    // from the new snapshot (who is trained / on duty that day).
+                    S.guests.forEach(function (g) {
+                        g.items = g.items.filter(function (it) { return SVC[it.svc.id]; });
+                        g.items.forEach(function (it) { it.svc = SVC[it.svc.id]; it.lockT = null; it.lockR = null; });
+                    });
+                    S.open = null; S.saving = false;
+                } else {
+                    S = { guests: [newGuest()], active: 0, cat: 'All', open: null, saving: false, mode: 'new', dp: '', dpm: 'gcash' };
+                    $('bnQ').value = ''; $('bnOptOrder').checked = true; $('bnOptSame').checked = true;
+                }
+                var nd = new Date(); $('bnDate').min = nd.getFullYear() + '-' + ('0' + (nd.getMonth() + 1)).slice(-2) + '-' + ('0' + nd.getDate()).slice(-2);
+                $('bnDate').value = DAY;
+                $('bnStart').value = hhmm(FIRST);
                 $('bnLoading').hidden = true; $('bnApp').hidden = false;
                 renderAll();
-                var first = $('bnGuests').querySelector('input'); if (first) first.focus();
+                if (!keep) { var first = $('bnGuests').querySelector('input'); if (first) first.focus(); }
             })
             .catch(function () { $('bnLoading').textContent = 'Could not load booking data. Close and try again.'; });
+    }
+    window.openBookNow = function (date) {
+        $('bookNowModal').classList.add('active');
+        load(typeof date === 'string' ? date : null, false);
     };
+    $('bnDate').addEventListener('change', function () { if (this.value && this.value !== DAY) load(this.value, true); });
+    $('bnStart').addEventListener('change', function () {
+        if (!D || !/^\d{2}:\d{2}$/.test(this.value)) return;
+        var a = this.value.split(':'), m = +a[0] * 60 + +a[1];
+        var min = D.today ? Math.ceil(D.now / 5) * 5 : 0;
+        FIRST = Math.max(min, Math.round(m / 5) * 5);
+        this.value = hhmm(FIRST);
+        renderAll();
+    });
+    function subtitle() {
+        var d = new Date(DAY + 'T00:00:00');
+        $('bnSub').textContent = D.today ? '· today, starting ' + fmt(FIRST)
+            : '· ' + d.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' }) + ', starting ' + fmt(FIRST);
+        $('bnPrevDay').textContent = D.today ? 'today' : d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+    }
     window.closeBookNow = function () { $('bookNowModal').classList.remove('active'); };
 
     // ── Planner ───────────────────────────────────────────────────────────
@@ -308,7 +363,10 @@
         var h = S.guests.map(function (g, i) {
             var sub = g.items.reduce(function (a, it) { return a + it.dur.p; }, 0);
             return '<div class="bn-gtab' + (i === S.active ? ' on' : '') + '" data-i="' + i + '" style="--gc:' + GC[i % 4] + '">' +
-                '<span class="sw"></span><input type="text" value="' + esc(g.name) + '" placeholder="Guest ' + (i + 1) + ' name" data-i="' + i + '" aria-label="Guest ' + (i + 1) + ' name">' +
+                '<span class="sw"></span><input type="text" class="gn" value="' + esc(g.name) + '" placeholder="Guest ' + (i + 1) + ' name" data-i="' + i + '" aria-label="Guest ' + (i + 1) + ' name">' +
+                // Aesthetic treatments are written on their own slip series.
+                ((!g.items.length || g.items.some(function (it) { return !it.svc.aes; })) ? '<input type="text" class="gs" value="' + esc(g.slip) + '" placeholder="Slip #" maxlength="50" data-i="' + i + '" aria-label="Guest ' + (i + 1) + ' slip number">' : '') +
+                (g.items.some(function (it) { return it.svc.aes; }) ? '<input type="text" class="gs aes" value="' + esc(g.slipAes) + '" placeholder="Aesthetic slip #" maxlength="50" data-i="' + i + '" aria-label="Guest ' + (i + 1) + ' aesthetic slip number">' : '') +
                 '<span class="cnt">' + g.items.length + ' svc · ' + pesoShort(sub) + '</span>' +
                 (S.guests.length > 1 ? '<button class="rm" type="button" data-rm="' + i + '" title="Remove guest">✕</button>' : '') + '</div>';
         }).join('');
@@ -329,6 +387,8 @@
         });
         $('bnGuests').querySelectorAll('input').forEach(function (inp) {
             inp.addEventListener('input', function () {
+                if (inp.classList.contains('aes')) { S.guests[+inp.dataset.i].slipAes = inp.value; return; }
+                if (inp.classList.contains('gs')) { S.guests[+inp.dataset.i].slip = inp.value; return; }
                 S.guests[+inp.dataset.i].name = inp.value;
                 $('bnAddTo').textContent = gname(S.guests[S.active], S.active);
                 renderPlan(); renderBill(); renderPreview();
@@ -341,13 +401,18 @@
         var add = $('bnAddG');
         if (add) add.onclick = function () {
             S.guests.push(newGuest()); S.active = S.guests.length - 1; renderAll();
-            var ins = $('bnGuests').querySelectorAll('input'); ins[ins.length - 1].focus();
+            var ins = $('bnGuests').querySelectorAll('input.gn'); ins[ins.length - 1].focus();
         };
         $('bnAddTo').textContent = gname(S.guests[S.active], S.active);
     }
 
     // ── Catalog ───────────────────────────────────────────────────────────
     function renderCatalog() {
+        document.querySelectorAll('#bookNowModal .bn-tabs2 button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === S.mode); });
+        $('bnAddWhat').textContent = S.mode === 'pkg' ? 'a package session' : 'services';
+        $('bnQ').placeholder = S.mode === 'pkg' ? 'Search customer name…' : 'Search services…';
+        $('bnCats').hidden = S.mode === 'pkg';
+        if (S.mode === 'pkg') { renderPackages(); return; }
         var cats = ['All'];
         D.services.forEach(function (s) { if (cats.indexOf(s.cat) < 0) cats.push(s.cat); });
         $('bnCats').innerHTML = cats.map(function (c) { return '<button type="button" class="bn-chip' + (S.cat === c ? ' sel' : '') + '" data-c="' + esc(c) + '">' + esc(c) + '</button>'; }).join('');
@@ -371,9 +436,40 @@
             };
         });
     }
+    // Customers with sessions left on a package: in the system (paid with
+    // the package) or started before it was tracked (price still due).
+    function pkgTaken(f) {
+        return S.guests.some(function (g) { return g.items.some(function (it) { return it.pkg && it.pkg.kind === f.kind && it.pkg.id === f.id; }); });
+    }
+    function renderPackages() {
+        var q = $('bnQ').value.trim().toLowerCase();
+        var list = (D.followups || []).filter(function (f) { return SVC[f.service_id] && (!q || f.who.toLowerCase().indexOf(q) >= 0 || f.service.toLowerCase().indexOf(q) >= 0); });
+        $('bnSvcs').innerHTML = '<p class="bn-hint">Customers who still have sessions left on a package. Picking one adds the next session at the price still due.</p>' +
+            (list.length ? list.map(function (f) {
+                var i = D.followups.indexOf(f), prog = '';
+                for (var k = 1; k <= f.total; k++) prog += '<i class="' + (k < f.next ? 'd' : '') + '"></i>';
+                var taken = pkgTaken(f);
+                return '<div class="bn-pkg"><b>' + esc(f.who) + '</b><div class="meta">' + esc(f.service) + ' · ' + f.total + '-session package</div>' +
+                    '<div class="prog">' + prog + '</div>' +
+                    '<div class="meta">' + (f.last ? 'Last session ' + esc(f.last) + ' · ' : '') + esc(f.paid_note) + '</div>' +
+                    '<div class="bn-durs"><button type="button" class="bn-dur" data-f="' + i + '"' + (taken ? ' disabled' : '') + '>' + (taken ? 'Added' : '+ Session ' + f.next + ' · ' + (f.due > 0 ? pesoShort(f.due) + ' to pay' : 'already paid')) + '</button></div></div>';
+            }).join('') : '<p class="bn-hint">' + (q ? 'No customer matches “' + esc($('bnQ').value) + '”.' : 'No packages with sessions left.') + '</p>');
+        $('bnSvcs').querySelectorAll('[data-f]').forEach(function (b) {
+            b.onclick = function () {
+                var f = D.followups[+b.dataset.f], g = S.guests[S.active];
+                if (pkgTaken(f)) return;
+                if (!g.name.trim()) g.name = f.who;
+                g.items.push({ key: uid++, svc: SVC[f.service_id], dur: { id: null, m: f.m, p: f.due, n: 1 }, pkg: f, lockT: null, lockR: null });
+                renderAll();
+            };
+        });
+    }
+    document.querySelectorAll('#bookNowModal .bn-tabs2 button').forEach(function (b) {
+        b.onclick = function () { if (!S) return; S.mode = b.dataset.mode; $('bnQ').value = ''; renderCatalog(); };
+    });
     $('bnQ').addEventListener('input', function () { if (S) renderCatalog(); });
     $('bnQ').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { var f = $('bnSvcs').querySelector('.bn-dur'); if (f) { e.preventDefault(); f.click(); $('bnQ').select(); } }
+        if (e.key === 'Enter') { var f = $('bnSvcs').querySelector('.bn-dur:not(:disabled)'); if (f) { e.preventDefault(); f.click(); $('bnQ').select(); } }
     });
 
     // ── Plan ──────────────────────────────────────────────────────────────
@@ -424,7 +520,8 @@
                 var idx = g.items.indexOf(it);
                 return '<div class="bn-line">' +
                     '<span class="tm">' + fmt(L.s) + '<br><span>–' + fmt(L.s + it.dur.m) + '</span></span>' +
-                    '<span class="sv"><b>' + esc(it.svc.name) + '</b><small>' + (it.dur.n > 1 ? 'Session 1 of ' + it.dur.n + ' · ' : '') + it.dur.m + ' min · ' + pesoShort(it.dur.p) + (it.dur.n > 1 ? ' package' : '') + '</small></span>' +
+                    '<span class="sv"><b>' + esc(it.svc.name) + '</b><small>' + (it.pkg ? 'Session ' + it.pkg.next + ' of ' + it.pkg.total + ' · ' + it.dur.m + ' min · ' + (it.dur.p > 0 ? pesoShort(it.dur.p) + ' due' : 'already paid')
+                        : (it.dur.n > 1 ? 'Session 1 of ' + it.dur.n + ' · ' : '') + it.dur.m + ' min · ' + pesoShort(it.dur.p) + (it.dur.n > 1 ? ' package' : '')) + '</small></span>' +
                     '<span><button class="bn-ib" type="button" title="Move up" data-mv="' + gi + ',' + idx + ',-1">↑</button><button class="bn-ib" type="button" title="Move down" data-mv="' + gi + ',' + idx + ',1">↓</button><button class="bn-ib" type="button" title="Remove" data-del="' + gi + ',' + idx + '">✕</button></span>' +
                     '<span class="bn-assign">' +
                         (it.svc.med
@@ -469,7 +566,7 @@
             var sub = g.items.reduce(function (a, it) { return a + it.dur.p; }, 0);
             total += sub; n += g.items.length;
             return '<div class="bn-brow" style="--gc:' + GC[gi % 4] + '"><div class="t"><span><i></i>' + esc(gname(g, gi)) + '</span><span>' + peso(sub) + '</span></div>' +
-                g.items.map(function (it) { return '<div class="ln"><span>' + esc(it.svc.name) + ' · ' + (it.dur.n > 1 ? it.dur.n + ' sessions × ' : '') + it.dur.m + ' min</span><span>' + pesoShort(it.dur.p) + '</span></div>'; }).join('') +
+                g.items.map(function (it) { return '<div class="ln"><span>' + esc(it.svc.name) + ' · ' + (it.pkg ? 'Session ' + it.pkg.next + ' of ' + it.pkg.total : (it.dur.n > 1 ? it.dur.n + ' sessions × ' : '') + it.dur.m + ' min') + '</span><span>' + pesoShort(it.dur.p) + '</span></div>'; }).join('') +
                 '</div>';
         }).join('');
         $('bnSum').innerHTML =
@@ -477,9 +574,39 @@
             '<div class="big"><span>Total before discounts</span><span>' + peso(total) + '</span></div>' +
             (n ? '<div><span>Everyone done by</span><span>' + fmt(PLAN.end) + '</span></div>' : '');
 
+        // Another day (calendar booking): optional advance payment. Saved on
+        // the appointment; Appointments deducts it from the bill at check-in.
+        var fut = !D.today, sugg = Math.round(total / 2);
+        $('bnDp').hidden = !fut;
+        if (fut) {
+            var methods = [['cash', 'Cash'], ['gcash', 'GCash'], ['maya', 'Maya'], ['qrph', 'QR Ph'], ['card', 'Card']];
+            $('bnDp').innerHTML = '<p class="bn-ct">Advance payment <span style="text-transform:none;font-weight:600;">(optional)</span></p>' +
+                '<p class="bn-hint">' + (total > 0 ? 'If the customer pays ahead, enter it here. It is deducted from their bill at check-in.' : 'Add a service first.') + '</p>' +
+                '<div style="display:flex;gap:0.4rem;"><input type="number" id="bnDpAmt" min="0" step="0.01" max="' + total + '" placeholder="₱0.00" value="' + esc(S.dp) + '"' + (total > 0 ? '' : ' disabled') + ' aria-label="Advance payment amount">' +
+                (total > 0 ? '<button type="button" class="bn-chip" id="bnDp50" title="Half of the total">50% · ' + pesoShort(sugg) + '</button>' : '') + '</div>' +
+                '<div class="bn-chips">' + methods.map(function (m) { return '<button type="button" class="bn-chip' + (S.dpm === m[0] ? ' sel' : '') + '" data-m="' + m[0] + '">' + m[1] + '</button>'; }).join('') + '</div>' +
+                '<p class="bn-miss" id="bnDpErr"></p>';
+            $('bnDpAmt').oninput = function () { S.dp = this.value; renderMiss(); };
+            if ($('bnDp50')) $('bnDp50').onclick = function () { S.dp = String(sugg); $('bnDpAmt').value = sugg; renderMiss(); };
+            $('bnDp').querySelectorAll('[data-m]').forEach(function (b) { b.onclick = function () { S.dpm = b.dataset.m; renderBill(); }; });
+        }
+        $('bnPayHint').innerHTML = fut
+            ? 'The balance, and any discount (Senior, PWD, Staff, voucher), is collected in <b>Appointments</b> on the day.'
+            : 'Payment and discounts (Senior, PWD, Staff, voucher) are taken in <b>Appointments</b> at check-in or when done. A group can pay together there with <b>Pay for group</b>.';
+        renderMiss();
+        subtitle();
+    }
+    function dpAmount() { var el = $('bnDpAmt'); return el && !$('bnDp').hidden ? parseFloat(el.value) || 0 : 0; }
+    function renderMiss() {
+        var n = 0, total = 0;
+        S.guests.forEach(function (g) { n += g.items.length; g.items.forEach(function (it) { total += it.dur.p; }); });
         var miss = [];
         S.guests.forEach(function (g, gi) { if (!g.items.length) miss.push(gname(g, gi) + ' has no service'); });
-        if (PLAN.lines.some(function (ls) { return ls.some(function (L) { return !L.t || !L.r; }); })) miss.push('a service has no free therapist or room today');
+        if (PLAN.lines.some(function (ls) { return ls.some(function (L) { return !L.t || !L.r; }); })) miss.push('a service has no free therapist or room that day');
+        // The advance is optional, but never more than the bill.
+        var over = !D.today && dpAmount() > total + 0.001;
+        if ($('bnDpErr')) $('bnDpErr').textContent = over ? 'More than the total (' + peso(total) + ').' : '';
+        if (over) miss.push('a smaller advance payment');
         $('bnMiss').textContent = miss.length ? 'Still needed: ' + miss.join(', ') : '';
         $('bnBookBtn').disabled = miss.length > 0 || S.saving;
         $('bnBookBtn').textContent = S.saving ? 'Booking…' : 'Book ' + S.guests.length + ' guest' + (S.guests.length > 1 ? 's' : '') + ' · ' + n + ' service' + (n !== 1 ? 's' : '');
@@ -488,7 +615,7 @@
     // ── Room preview ──────────────────────────────────────────────────────
     function renderPreview() {
         if (!D.resources.length) { $('bnTl').innerHTML = '<p class="bn-hint">No active rooms set up yet. Add them in Resources.</p>'; return; }
-        var start = Math.max(0, Math.floor(D.now / 60) * 60 - 60);
+        var start = Math.max(0, Math.floor(Math.min(D.now, FIRST) / 60) * 60 - 60);
         var end = Math.min(DAY_END, Math.max(start + 8 * 60, Math.ceil((PLAN.end + 30) / 60) * 60));
         var span = end - start;
         function x(m) { return ((m - start) / span * 100) + '%'; }
@@ -506,7 +633,7 @@
                     blocks += '<div class="bn-blk new" style="--gc:' + GC[gi % 4] + ';left:' + x(L.s) + ';width:' + w(L.item.dur.m) + '">' + esc(gname(S.guests[gi], gi)) + (TH[L.t] ? ' · ' + esc(TH[L.t].name) : '') + '</div>';
                 });
             });
-            h += '<div class="bn-tr"><div class="bn-tn">' + esc(r.name) + '</div><div class="bn-tk">' + blocks + '<div class="bn-now" style="left:' + x(D.now) + '"></div></div></div>';
+            h += '<div class="bn-tr"><div class="bn-tn">' + esc(r.name) + '</div><div class="bn-tk">' + blocks + (D.today ? '<div class="bn-now" style="left:' + x(D.now) + '"></div>' : '') + '</div></div>';
         });
         $('bnTl').innerHTML = h;
     }
@@ -523,9 +650,12 @@
         var guests = S.guests.map(function (g, gi) {
             return {
                 name: g.name.trim(),
+                slip: (g.slip || '').trim(),
+                slip_aes: (g.slipAes || '').trim(),
                 items: (PLAN.lines[gi] || []).map(function (L) {
                     return { service_id: L.item.svc.id, duration_id: L.item.dur.id, therapist_id: L.t > 0 ? L.t : 0, resource_id: L.r, start: L.s,
-                             override: L.t > 0 && L.item.svc.qual.indexOf(L.t) < 0 };
+                             override: L.t > 0 && L.item.svc.qual.indexOf(L.t) < 0,
+                             kind: L.item.pkg ? L.item.pkg.kind : 'new', ref_id: L.item.pkg ? L.item.pkg.id : 0 };
                 })
             };
         });
@@ -533,7 +663,7 @@
         fetch('index.php?ajax=book_now_submit', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': QB_CSRF },
-            body: new URLSearchParams({ guests: JSON.stringify(guests) }).toString()
+            body: new URLSearchParams({ guests: JSON.stringify(guests), date: DAY, dp_amount: D.today ? 0 : dpAmount(), dp_method: S.dpm }).toString()
         })
             .then(function (r) { return r.json(); })
             .then(function (res) {

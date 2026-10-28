@@ -159,6 +159,13 @@ $_show_gcash_maya = $_show_gcash_maya ?? filter_var(getenv('SHOW_GCASH_MAYA') ?:
 define('SHOW_GCASH_MAYA', (bool)$_show_gcash_maya);
 unset($_show_gcash_maya);
 
+// Online service bookings are paid as a non-refundable down payment of this
+// share of the total (the rest is paid at the spa). Override with
+// $_online_dp_percent in config.local.php or ONLINE_DP_PERCENT in .env.
+$_online_dp_percent = $_online_dp_percent ?? (getenv('ONLINE_DP_PERCENT') !== false ? (float)getenv('ONLINE_DP_PERCENT') : 50.0);
+define('ONLINE_DP_PERCENT', max(1.0, min(100.0, (float)$_online_dp_percent)));
+unset($_online_dp_percent);
+
 // Automatic per-appointment stock deduction (service_supply_usage "recipes",
 // admin/appointments.php completion handler). Off because exact per-appointment
 // usage formulas aren't known yet — inventory tracking relies on Deliveries
@@ -249,12 +256,254 @@ function paymongo_log($conn, $order_id, string $source, string $step, string $re
     }
 }
 
+// ─── AESTHETIC SLIP ──────────────────────────────────────────────────────────
+// The spa writes aesthetic treatments on their own paper slip series (the
+// aesthetics menu: Diode, Exilis RF, HIFU, Pico, Carbon Glow, boosters / Botox
+// / fillers, drips and the aesthetic combos). Facials use the spa slip.
+function service_uses_aesthetic_slip(?string $category_name, ?string $service_name = ''): bool {
+    $cat = strtolower((string)$category_name);
+    if (preg_match('/diode|exilis|hifu|pico|carbon|drip/', $cat)) return true;
+    if (in_array(trim($cat), ['aesthetics', 'aesthetic combos'], true)) return true;
+    return (bool)preg_match('/full face tightening|exilis/i', (string)$service_name);
+}
+
+// ─── PERSON DISCOUNTS ────────────────────────────────────────────────────────
+// Senior 20%, PWD 20%, Staff and Voucher are for one person: in a booking for
+// several people only the ones who qualify get it. Senior, PWD and Staff are
+// never on the services below (spa rule): every Daytime promo, nail services
+// (Nail Care, Nail Care - Promo, Design) and lash services. A voucher is for
+// the services of its kind (VOUCHER_SCOPES); a Gift card / GC is for all.
+// Celebration stays on the whole bill.
+const PERSON_DISCOUNT_TYPES = ['senior', 'pwd', 'employee', 'voucher'];
+const VOUCHER_SCOPES = [
+    'all'     => 'Gift card / GC',
+    'nails'   => 'Nails voucher',
+    'lash'    => 'Lash voucher',
+    'headspa' => 'Head spa voucher',
+    'massage' => 'Body massage voucher',
+];
+function service_discount_excluded(?string $category_name, ?string $service_name = ''): bool {
+    $cat = strtolower(trim((string)$category_name));
+    if (stripos((string)$service_name, 'daytime') !== false) return true;
+    return str_contains($cat, 'nail') || str_contains($cat, 'lash') || $cat === 'design';
+}
+function service_in_voucher_scope(?string $category_name, ?string $service_name, string $scope): bool {
+    $cat = strtolower(trim((string)$category_name)); $name = strtolower((string)$service_name);
+    switch ($scope) {
+        case 'nails':   return str_contains($cat, 'nail') || $cat === 'design';
+        case 'lash':    return str_contains($cat, 'lash');
+        case 'headspa': return str_contains($cat, 'head spa') || (bool)preg_match('/head ?spa/', $name);
+        case 'massage': return $cat === 'massage services' || (bool)preg_match('/body massage|daytime massage/', $name);
+    }
+    return true; // 'all': gift card / GC
+}
+// Can this discount apply to this service? $scope is the voucher's kind.
+function service_takes_discount(?string $category_name, ?string $service_name, string $type, string $scope = 'all'): bool {
+    if ($type === 'voucher') return service_in_voucher_scope($category_name, $service_name, $scope);
+    if (in_array($type, ['senior', 'pwd', 'employee'], true)) return !service_discount_excluded($category_name, $service_name);
+    return true;
+}
+// What a discount can apply to on one appointment: its order total plus its
+// add-ons (unpaid ones only, or all), leaving out services it isn't for; for
+// a booking of several people, only $people of them (0 = all of them).
+function appt_discount_eligible(mysqli $conn, int $appt_id, float $order_total, bool $unpaid_extras_only = true, int $people = 0, string $type = 'senior', string $scope = 'all'): float {
+    $q = $conn->prepare("SELECT a.people_count, s.name, c.name AS cat FROM appointments a JOIN services s ON s.id = a.service_id LEFT JOIN categories c ON c.id = s.category_id WHERE a.id = ?");
+    $q->bind_param("i", $appt_id); $q->execute();
+    $a = $q->get_result()->fetch_assoc(); $q->close();
+    if (!$a) return $order_total;
+    if (!in_array($type, PERSON_DISCOUNT_TYPES, true)) return $order_total; // whole bill
+    $elig = service_takes_discount($a['cat'], $a['name'], $type, $scope) ? $order_total : 0.0;
+    $q = $conn->prepare("SELECT aes.charged_price, aes.payment_status, s.name, c.name AS cat FROM appointment_extra_services aes JOIN services s ON s.id = aes.service_id LEFT JOIN categories c ON c.id = s.category_id WHERE aes.appointment_id = ?");
+    $q->bind_param("i", $appt_id); $q->execute();
+    foreach ($q->get_result()->fetch_all(MYSQLI_ASSOC) as $e) {
+        if ($unpaid_extras_only && $e['payment_status'] === 'paid') continue;
+        if (service_takes_discount($e['cat'], $e['name'], $type, $scope)) $elig += (float)$e['charged_price'];
+    }
+    $q->close();
+    $n = max(1, (int)$a['people_count']);
+    if ($people > 0 && $people < $n) $elig = $elig * $people / $n;
+    return round($elig, 2);
+}
+function voucher_scope_from_post(string $key = 'voucher_scope'): string {
+    $s = (string)($_POST[$key] ?? 'all');
+    return array_key_exists($s, VOUCHER_SCOPES) ? $s : 'all';
+}
+// The amount of a discount on a bill: person discounts on the eligible part,
+// Celebration on the whole bill.
+function person_discount_amount(string $type, float $base, float $eligible, float $value = 0, string $vtype = 'percent'): float {
+    $eligible = min($eligible, $base);
+    switch ($type) {
+        case 'senior': case 'pwd': return round($eligible * 0.20, 2);
+        case 'employee':           return round($eligible * STAFF_DISCOUNT_PCT / 100, 2);
+        case 'voucher':            return $value <= 0 ? 0.0 : ($vtype === 'percent' ? round($eligible * min($value, 100) / 100, 2) : round(min($value, $eligible), 2));
+        case 'celebration':        return $value <= 0 ? 0.0 : round($base * min($value, 100) / 100, 2);
+    }
+    return 0.0;
+}
+
+// ─── ONLINE DOWN PAYMENT ─────────────────────────────────────────────────────
+// orders.dp_amount is set when a customer books a service online: PayMongo
+// then charges only that down payment, and the rest is paid at the spa.
+function ensure_online_dp_column($conn): void {
+    static $done = false;
+    if ($done) return;
+    $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS dp_amount DECIMAL(10,2) NULL DEFAULT NULL");
+    $done = true;
+}
+
+// Called once PayMongo says a down-payment order is paid (from the success
+// page or the webhook, whichever comes first). The order goes back to
+// 'unpaid' (the balance is still due) and the down payment is saved on its
+// appointments exactly like a down payment typed in by staff, so it shows in
+// that day's Daily Report and is taken off the bill at completion.
+// Returns 1 if this call settled it, 0 if it was already settled / not a DP order.
+function settle_online_down_payment($conn, int $order_id, ?string $method, ?string $reference): int {
+    ensure_online_dp_column($conn);
+    $q = $conn->prepare("SELECT dp_amount FROM orders WHERE id = ? AND payment_status = 'pending_payment' AND dp_amount > 0");
+    $q->bind_param("i", $order_id); $q->execute();
+    $row = $q->get_result()->fetch_assoc(); $q->close();
+    if (!$row) return 0;
+    $dp = round((float)$row['dp_amount'], 2);
+
+    $upd = $conn->prepare("
+        UPDATE orders
+        SET payment_status     = 'unpaid',
+            paymongo_method    = COALESCE(paymongo_method, ?),
+            paymongo_reference = COALESCE(paymongo_reference, ?)
+        WHERE id = ? AND payment_status = 'pending_payment'");
+    $upd->bind_param("ssi", $method, $reference, $order_id); $upd->execute();
+    $changed = $upd->affected_rows; $upd->close();
+    if ($changed < 1) return 0;
+
+    // Same method names the Daily Report's DP lines use.
+    $adv_method = in_array($method, ['gcash', 'maya', 'card', 'qrph'], true) ? $method : 'card';
+    $ap = $conn->prepare("
+        SELECT a.id, a.charged_price FROM appointments a
+        JOIN order_items oi ON oi.id = a.order_item_id
+        WHERE oi.order_id = ? ORDER BY a.id");
+    $ap->bind_param("i", $order_id); $ap->execute();
+    $appts = $ap->get_result()->fetch_all(MYSQLI_ASSOC); $ap->close();
+    if (!$appts) return 1;
+    // Split across the order's appointments by price; the last one takes
+    // the rounding remainder so the parts add up to the amount paid.
+    $sum = array_sum(array_map(fn($a) => (float)$a['charged_price'], $appts));
+    $left = $dp;
+    $set = $conn->prepare("UPDATE appointments SET advance_payment = ?, advance_payment_date = CURDATE(), advance_payment_method = ? WHERE id = ?");
+    foreach ($appts as $i => $a) {
+        $part = ($i === count($appts) - 1) ? $left
+              : round($sum > 0 ? $dp * (float)$a['charged_price'] / $sum : $dp / count($appts), 2);
+        $left = round($left - $part, 2);
+        $aid = (int)$a['id'];
+        $set->bind_param("dsi", $part, $adv_method, $aid); $set->execute();
+    }
+    $set->close();
+    return 1;
+}
+
+// ─── GCASH QR PAYMENTS (manual) ──────────────────────────────────────────────
+// While PayMongo is off, an online service booking can be paid to the spa's
+// GCash QR: the customer sends the 50% down payment or the full amount, types
+// the GCash reference number and uploads the receipt; the receptionist checks
+// it in Appointments and verifies it (recorded as a GCash advance payment,
+// like a Calendar down payment) or rejects it with a reason.
+// Settings (Admin → Payment Log): gcash_qr_enabled, gcash_name, gcash_number,
+// gcash_qr_file — stored in system_settings.
+function gcash_settings($conn): array {
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    $conn->query("CREATE TABLE IF NOT EXISTS system_settings (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, setting_key VARCHAR(100) NOT NULL UNIQUE,
+        setting_value VARCHAR(255) NOT NULL, updated_by INT NULL, updated_at DATETIME NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $cache = ['gcash_qr_enabled' => '0', 'gcash_name' => '', 'gcash_number' => '', 'gcash_qr_file' => ''];
+    $r = $conn->query("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('gcash_qr_enabled','gcash_name','gcash_number','gcash_qr_file')");
+    if ($r) foreach ($r->fetch_all(MYSQLI_ASSOC) as $row) $cache[$row['setting_key']] = $row['setting_value'];
+    return $cache;
+}
+// On, and set up enough for a customer to pay (number and QR image).
+function gcash_qr_ready($conn): bool {
+    $g = gcash_settings($conn);
+    return $g['gcash_qr_enabled'] === '1' && $g['gcash_number'] !== '' && $g['gcash_qr_file'] !== '';
+}
+function save_gcash_setting($conn, string $key, string $value, int $by): void {
+    gcash_settings($conn);
+    $s = $conn->prepare("INSERT INTO system_settings (setting_key, setting_value, updated_by, updated_at) VALUES (?, ?, ?, NOW())
+                         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = NOW()");
+    $s->bind_param("ssi", $key, $value, $by); $s->execute(); $s->close();
+}
+function ensure_manual_payments_table($conn): void {
+    static $done = false;
+    if ($done) return;
+    $conn->query("CREATE TABLE IF NOT EXISTS manual_payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        user_id INT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        kind ENUM('dp','full') NOT NULL DEFAULT 'dp',
+        reference_no VARCHAR(40) NOT NULL,
+        receipt_file VARCHAR(120) NOT NULL,
+        status ENUM('pending','verified','rejected') NOT NULL DEFAULT 'pending',
+        amount_received DECIMAL(10,2) NULL,
+        reject_reason VARCHAR(255) NULL,
+        checked_by_name VARCHAR(100) NULL,
+        checked_at DATETIME NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_mp_order (order_id), INDEX idx_mp_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $done = true;
+}
+// Receipts and the QR live outside the deploy path on Hostinger (a deploy
+// would delete them) and are only served through admin/payment_file.php.
+function manual_payment_dir(): string {
+    $dir = PERSISTENT_UPLOADS_ENABLED ? '/home/u655952816/persistent_uploads/payments/' : __DIR__ . '/uploads/payments/';
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    if (!PERSISTENT_UPLOADS_ENABLED && !is_file($dir . '.htaccess')) @file_put_contents($dir . '.htaccess', "Require all denied\nDeny from all\n");
+    return $dir;
+}
+// Saves an uploaded image (JPG/PNG/WEBP, up to 8 MB). Returns the stored file
+// name, or an error message starting with '!'.
+function store_payment_image(array $file, string $prefix): string {
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) return '!Please add the screenshot of your receipt.';
+    if ($file['size'] > 8 * 1024 * 1024) return '!The image is too big (8 MB at most).';
+    $info = @getimagesize($file['tmp_name']);
+    $ext = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_WEBP => 'webp'][$info[2] ?? 0] ?? null;
+    if (!$ext) return '!The receipt must be a JPG, PNG or WEBP image.';
+    $name = $prefix . '_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+    if (!@move_uploaded_file($file['tmp_name'], manual_payment_dir() . $name)) return '!Could not save the image. Please try again.';
+    return $name;
+}
+// Splits an amount paid in advance over an order's appointments by price
+// (the last one takes the rounding), as each appointment's advance payment.
+function record_order_advance($conn, int $order_id, float $amount, string $method): void {
+    $ap = $conn->prepare("SELECT a.id, a.charged_price FROM appointments a JOIN order_items oi ON oi.id = a.order_item_id WHERE oi.order_id = ? ORDER BY a.id");
+    $ap->bind_param("i", $order_id); $ap->execute();
+    $appts = $ap->get_result()->fetch_all(MYSQLI_ASSOC); $ap->close();
+    if (!$appts) return;
+    $sum = array_sum(array_map(fn($a) => (float)$a['charged_price'], $appts));
+    $left = round($amount, 2);
+    $set = $conn->prepare("UPDATE appointments SET advance_payment = ?, advance_payment_date = CURDATE(), advance_payment_method = ? WHERE id = ?");
+    foreach ($appts as $i => $a) {
+        $part = ($i === count($appts) - 1) ? $left
+              : round($sum > 0 ? $amount * (float)$a['charged_price'] / $sum : $amount / count($appts), 2);
+        $left = round($left - $part, 2);
+        $aid = (int)$a['id'];
+        $set->bind_param("dsi", $part, $method, $aid); $set->execute();
+    }
+    $set->close();
+}
+
 // ─── BASE URL ─────────────────────────────────────────────────────────────────
 $protocol      = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
 $host          = $_SERVER['HTTP_HOST'] ?? 'localhost';
-$_is_hostinger = strpos($host, 'hostingersite.com') !== false;
+// Hostinger: the temporary *.hostingersite.com address, or any domain pointed at
+// this hosting account (e.g. recoveryiloilo.com) -- the app then lives in the
+// account's home folder and is served from the site root.
+$_is_hostinger = strpos($host, 'hostingersite.com') !== false || strpos(__DIR__, '/home/u655952816/') === 0;
 $folder        = $_is_hostinger ? '/' : (getenv('APP_SUBFOLDER') ?: '/spa_ecommerce_system/');
 define('BASE_URL', $protocol . '://' . $host . $folder);
+// The site's public address (search engines, links people share). The
+// temporary *.hostingersite.com address sends visitors here (header.php).
+if (!defined('SITE_URL')) define('SITE_URL', rtrim(getenv('SITE_URL') ?: 'https://recoveryiloilo.com', '/'));
 
 // ─── UPLOAD DIRECTORIES ───────────────────────────────────────────────────────
 define('UPLOAD_DIR_SERVICES', __DIR__ . '/uploads/services/');
