@@ -332,6 +332,9 @@ $cv('A54', 'COLLECTED UNPAIDS (CASH)');
 $cv('B54', (float)$collected_by_method['cash']);
 $cv('A55', 'EXPENSES NOT FROM DRAWER');
 $cv('B55', (float)$expenses_off_drawer_total);
+// PRODUCT SOLD is the product list total once (W104). The template's W105
+// (=SUM(W97:W104)) adds that total to itself, which doubled it here.
+$cv('B51', '=W104');
 $cv('B52', '=B39-B40-B41-B42-B43-B44-B45-B46-B47-B48-B49-B50-B51+B54+B55');
 // CELEB. DISCOUNTS (B41) is the M column; DISCOUNTS holds every other
 // discount (staff 50%, PWD/Senior 20%, vouchers) so the celebration discount
