@@ -1125,6 +1125,26 @@ function route_commission_to_buckets($conn, int $service_id, int $therapist_id, 
     return $buckets;
 }
 
+// Runs $fn after the response has gone to the browser (emails: an SMTP send
+// takes seconds and the receptionist shouldn't wait on it). The session is
+// saved first so the next request isn't held up behind it.
+function run_after_response(callable $fn): void {
+    static $queue = null;
+    if ($queue === null) {
+        $queue = [];
+        register_shutdown_function(function () use (&$queue) {
+            if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+            ignore_user_abort(true);
+            if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
+            elseif (function_exists('litespeed_finish_request')) litespeed_finish_request();
+            foreach ($queue as $f) {
+                try { $f(); } catch (Throwable $e) { error_log('[after response] ' . $e->getMessage()); }
+            }
+        });
+    }
+    $queue[] = $fn;
+}
+
 // Walk-in-sourced appointments are attributed to this account (see admin/walkin.php);
 // online-sourced ones use the real customer's own user_id from user/checkout.php.
 // Slotting and Rotation's approval flow (admin/appointments.php) uses this to tell

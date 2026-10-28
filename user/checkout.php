@@ -264,6 +264,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
     $extra_svc_ids       = array_map('intval', $_POST['extra_svc_ids']      ?? []);
     $extra_therapist_ids = array_map('intval', $_POST['extra_therapist_ids'] ?? []);
     $extra_services_data = [];
+    // Add-ons are their own rows (appointment_extra_services), as everywhere
+    // else: the order total is the main service; the customer pays both.
+    $extras_total = 0.0;
     if ($checkout_type === 'service' && !empty($extra_svc_ids)) {
         foreach ($extra_svc_ids as $_eidx => $_esid) {
             if ($_esid <= 0) continue;
@@ -274,7 +277,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             $_es_price = ($service_type === 'home')
                 ? floatval($_esr['home_service_price'] ?? 0)
                 : floatval($_esr['price']);
-            $total_amount += $_es_price;
+            $extras_total += $_es_price;
             $extra_services_data[] = [
                 'service_id'   => $_esid,
                 'therapist_id' => intval($extra_therapist_ids[$_eidx] ?? 0),
@@ -422,8 +425,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
         if (empty($message)) {
             $discount_amount_calc = 0.00;
             $final_amount = $total_amount;
+            $pay_total = $final_amount + ($extras_total ?? 0.0); // with the add-ons
             $dp_amount = ($checkout_type === 'service' && $payment_method === 'online')
-                ? round($final_amount * ONLINE_DP_PERCENT / 100, 2) : null;
+                ? round($pay_total * ONLINE_DP_PERCENT / 100, 2) : null;
 
             // ── Lock and verify stock before writing (prevents race conditions) ──
             if ($checkout_type === 'product' || $checkout_type === 'cart') {
@@ -600,7 +604,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                     // line for the whole order instead.
                     $_li_sum = 0;
                     foreach ($line_items as $_li) $_li_sum += $_li['amount'] * $_li['quantity'];
-                    $_order_centavos = (int) round($final_amount * 100);
+                    $_order_centavos = (int) round($pay_total * 100);
                     if ($dp_amount !== null) {
                         // Service booking: charge only the down payment.
                         $line_items = [[
@@ -608,7 +612,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                             'amount'      => max(2000, (int) round($dp_amount * 100)),
                             'description' => rtrim(rtrim(number_format(ONLINE_DP_PERCENT, 2), '0'), '.') . '% non-refundable down payment for '
                                            . implode(', ', array_map(fn($i) => $i['name'], $checkout_items))
-                                           . '. Balance ₱' . number_format($final_amount - $dp_amount, 2) . ' is paid at the spa.',
+                                           . '. Balance ₱' . number_format($pay_total - $dp_amount, 2) . ' is paid at the spa.',
                             'name'        => 'Down payment · Booking #' . $order_id,
                             'quantity'    => 1,
                         ]];
@@ -719,11 +723,11 @@ $payload = json_encode([
                             $_pm_charge = 0;
                             foreach ($line_items as $_li) $_pm_charge += $_li['amount'] * $_li['quantity'];
                             $_pm_charge /= 100;
-                            $_pm_expect = $dp_amount ?? $final_amount;
+                            $_pm_expect = $dp_amount ?? $pay_total;
                             paymongo_log($conn, $order_id, 'checkout', 'session_created', 'ok',
                                 'Customer sent to PayMongo. Charge ₱' . number_format($_pm_charge, 2)
                                 . ($dp_amount !== null ? ' down payment' : '')
-                                . ' / order total ₱' . number_format($final_amount, 2)
+                                . ' / order total ₱' . number_format($pay_total, 2)
                                 . (abs($_pm_charge - $_pm_expect) >= 0.01 ? ' — AMOUNTS DIFFER' : ''),
                                 ['amount' => $_pm_charge, 'session_id' => $paymongo_link_id,
                                  'livemode' => $result['data']['attributes']['livemode'] ?? null]);
@@ -769,7 +773,7 @@ $payload = json_encode([
                     if ($checkout_type === 'service' && $gcash_mode && $gcash_file) {
                         // The GCash payment waits for the receptionist's check.
                         ensure_manual_payments_table($conn);
-                        $gcash_amt = $gcash_kind === 'full' ? $final_amount : round($final_amount * ONLINE_DP_PERCENT / 100, 2);
+                        $gcash_amt = $gcash_kind === 'full' ? $pay_total : round($pay_total * ONLINE_DP_PERCENT / 100, 2);
                         $mp = $conn->prepare("INSERT INTO manual_payments (order_id, user_id, amount, kind, reference_no, receipt_file) VALUES (?, ?, ?, ?, ?, ?)");
                         $mp->bind_param("iidsss", $order_id, $user_id, $gcash_amt, $gcash_kind, $gcash_ref, $gcash_file);
                         $mp->execute(); $mp->close();
@@ -2316,20 +2320,35 @@ function selectTherapist(id, card) {
     document.getElementById('preferred_therapist_id').value = id;
     document.querySelectorAll('.therapist-card').forEach(c => c.classList.remove('active'));
     card.classList.add('active');
-    // If a date is already picked in the modal, reload slots for the new therapist
-    if (bmSelectedDate) bmLoadSlots(bmSelectedDate);
+    bmPickChanged();
+}
+
+// A time picked for another therapist or number of people may no longer be
+// free, so it is cleared and picked again (as selectDuration does).
+function bmPickChanged() {
+    bwData = null; bmSelectedHour = null; bmSelectedMinute = null;
+    const dt = document.getElementById('booking_date_input');
+    if (dt && dt.value) {
+        dt.value = '';
+        const pick = document.getElementById('dtPickBtn');
+        if (pick) { pick.textContent = 'Pick Date & Time'; pick.classList.remove('has-value'); }
+    }
 }
 
 // ── People counter ────────────────────────────────────────────────────────────
+// A multi-session package is for one person (the server refuses more).
 function changePeople(delta) {
     const inp = document.getElementById('people_count');
     let val = parseInt(inp.value) + delta;
     if (val < 1) val = 1;
     if (val > Math.max(TOTAL_QUALIFIED, 10)) val = Math.max(TOTAL_QUALIFIED, 10);
+    const pkg = document.querySelector('.dur-btn.active');
+    if (pkg && (parseInt(pkg.dataset.n) || 1) > 1) val = 1;
+    if (val === parseInt(inp.value)) return;
     inp.value = val;
     checkCapacityWarning(val);
     updateDiscountPreview();
-    if (bmSelectedDate) bmLoadSlots(bmSelectedDate);
+    bmPickChanged();
 }
 
 // ── Booking Modal ─────────────────────────────────────────────────────────────

@@ -296,7 +296,8 @@ function send_approval_email($conn, $appt_id) {
     $appt = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    if (!$appt || empty($appt['email'])) return false;
+    // The shared walk-in account's address is not a real customer's.
+    if (!$appt || empty($appt['email']) || (int)$appt['user_id'] === get_walkin_customer_id()) return false;
 
     try {
         require_once __DIR__ . '/../_mailer.php';
@@ -1375,7 +1376,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 add_notification($conn,$appt['user_id'],'appointment','Appointment Confirmed!',
                     $notif_body, 'appointments.php');
 
-                send_approval_email($conn, $appt_id);
+                run_after_response(fn() => send_approval_email($conn, $appt_id));
 
                 $message = "Appointment #$appt_id confirmed. Therapist: $notif_therapist."; $message_type = "success";
                 $_actor_ap = (is_cashier() && !empty($pr_approve['full_name']))
@@ -1966,7 +1967,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $_ord_id_row = $_ord_id_stmt->get_result()->fetch_assoc(); $_ord_id_stmt->close();
                 if ($_ord_id_row) {
                     require_once __DIR__ . '/../send_receipt.php';
-                    send_completion_receipt($conn, $appt_id, (int)$_ord_id_row['order_id']);
+                    $_rcpt_oid = (int)$_ord_id_row['order_id'];
+                    run_after_response(fn() => send_completion_receipt($conn, $appt_id, $_rcpt_oid));
                 }
             }
             $message = "Appointment #$appt_id completed. Therapist(s) returned to rotation."; $message_type = "success";
@@ -2059,7 +2061,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     ' has been confirmed.',
                     'appointments.php');
 
-                send_approval_email($conn, $appt_id);
+                run_after_response(fn() => send_approval_email($conn, $appt_id));
 
                 if (!empty($appt['order_item_id'])) {
                     $po = $conn->prepare("SELECT o.id FROM orders o
@@ -2356,7 +2358,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     date('F j, Y g:i A', strtotime($appt['appointment_date'])) .
                     ' has been confirmed.',
                     'appointments.php');
-                send_approval_email($conn, $appt_id);
+                run_after_response(fn() => send_approval_email($conn, $appt_id));
                 if (!empty($appt['order_item_id'])) {
                     $po2 = $conn->prepare("SELECT o.id FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.id=? LIMIT 1");
                     $po2->bind_param("i", $appt['order_item_id']); $po2->execute();
@@ -2648,7 +2650,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
     }
     ensure_manual_payments_table($conn);
     $mp_id = (int)($_POST['mp_id'] ?? 0);
-    $q = $conn->prepare("SELECT mp.*, o.customer_name, o.final_amount FROM manual_payments mp JOIN orders o ON o.id = mp.order_id WHERE mp.id = ? AND mp.status = 'pending'");
+    // At most the whole bill: the order plus the add-ons booked with it.
+    $q = $conn->prepare("SELECT mp.*, o.customer_name,
+               o.final_amount + (SELECT COALESCE(SUM(x.charged_price), 0) FROM appointment_extra_services x
+                                 JOIN appointments a ON a.id = x.appointment_id JOIN order_items oi ON oi.id = a.order_item_id
+                                 WHERE oi.order_id = o.id) AS final_amount
+        FROM manual_payments mp JOIN orders o ON o.id = mp.order_id WHERE mp.id = ? AND mp.status = 'pending'");
     $q->bind_param("i", $mp_id); $q->execute();
     $mp = $q->get_result()->fetch_assoc(); $q->close();
     if ($mp_ok && !$mp) { $mp_ok = false; $message = "This payment was already checked."; $message_type = "danger"; }

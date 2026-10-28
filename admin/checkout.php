@@ -1959,8 +1959,19 @@ function selectTherapist(id, card) {
     document.getElementById('preferred_therapist_id').value = id;
     document.querySelectorAll('.therapist-card').forEach(c => c.classList.remove('active'));
     card.classList.add('active');
-    // If a date is already picked in the modal, reload slots for the new therapist
-    if (bmSelectedDate) bmLoadSlots(bmSelectedDate);
+    bmPickChanged();
+}
+
+// A time picked for another therapist or number of people may no longer be
+// free, so it is cleared and picked again.
+function bmPickChanged() {
+    bwData = null; bmSelectedHour = null; bmSelectedMinute = null;
+    const dt = document.getElementById('booking_date_input');
+    if (dt && dt.value) {
+        dt.value = '';
+        const pick = document.getElementById('dtPickBtn');
+        if (pick) { pick.textContent = 'Pick Date & Time'; pick.classList.remove('has-value'); }
+    }
 }
 
 // ── People counter ────────────────────────────────────────────────────────────
@@ -1972,7 +1983,7 @@ function changePeople(delta) {
     inp.value = val;
     checkCapacityWarning(val);
     updateDiscountPreview();
-    if (bmSelectedDate) bmLoadSlots(bmSelectedDate);
+    bmPickChanged();
 }
 
 // ── Booking Modal ─────────────────────────────────────────────────────────────

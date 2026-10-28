@@ -375,7 +375,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
         if (a.rate_type === 'influencer') return '<span class="dk-pill p-pkg">Influencer · ₱0</span>' + (b.due > 0 ? '<span class="dk-pill p-unpaid">Add-ons ' + pesoS(b.due) + '</span>' : '');
         if (b.gcash && b.gcash.status === 'pending') return '<span class="dk-pill p-need">Check payment · ' + pesoS(b.gcash.amount) + ' GCash</span>';
         if (b.gcash && b.gcash.status === 'rejected' && !b.paid && !b.advance) return '<span class="dk-pill p-need">GCash rejected · unpaid ' + pesoS(b.due) + '</span>';
-        if (b.gcash && b.gcash.status === 'verified' && !b.paid && b.advance >= b.order_total - b.discount - 0.005) {
+        if (b.gcash && b.gcash.status === 'verified' && b.gcash.kind === 'full' && !b.paid) {
             return '<span class="dk-pill p-paid">Paid in full · GCash</span>' + (b.due > 0 ? '<span class="dk-pill p-unpaid">Add-ons ' + pesoS(b.due) + '</span>' : '');
         }
         if (b.paid && b.due <= 0) return '<span class="dk-pill p-paid">Paid' + (b.method ? ' · ' + esc(b.method) : '') + '</span>';
@@ -818,7 +818,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
     }
     function goLabel(a) {
         var na = nextAction(a), b = a.bill; if (!na) return '';
-        if (na.k === 'checkin' && S.panel === 'checkin') return b.paid && b.due <= 0 ? 'Check in' : (S.payNow ? 'Check in & take ' + peso(dueWithDisc(a)) : 'Check in · pay later');
+        if (na.k === 'checkin' && S.panel === 'checkin') return b.due <= 0 && !sibsOwe(a).length ? 'Check in' : (S.payNow ? 'Check in & take ' + peso(dueWithDisc(a)) : 'Check in · pay later');
         if (na.k === 'complete' && !isLastOpen(a)) return na.l;
         if (na.k === 'complete' && dueWithDisc(a) <= 0) return 'Complete';
         if (na.k === 'complete' && S.panel === 'complete') return S.method === 'unpaid' ? 'Complete · charge to account' : 'Complete & take ' + peso(dueWithDisc(a));
@@ -914,7 +914,8 @@ $DESK_MODAL = !empty($DESK_MODAL);
             }
             if (na.k === 'checkin') {
                 var m2 = missing(a, true); if (m2.length) return err('Choose a ' + m2.join(', ') + ' first.');
-                if (b.paid && b.due <= 0) return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
+                // Nothing to collect (paid, or covered by the down payment): just check in.
+                if (b.due <= 0 && !sibsOwe(a).length) return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
                 if (S.panel !== 'checkin') { S.panel = 'checkin'; S.grp = false; return renderDrawer(); }
                 if (S.payNow && !S.method) return err('Choose a payment method, or pick Pay later.');
                 if (S.payNow && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
@@ -944,7 +945,8 @@ $DESK_MODAL = !empty($DESK_MODAL);
                     return post('complete', a.id, { complete_pay_method: S.method || 'cash', complete_unpaid_billto: '', complete_disc_type: 'none', complete_voucher_type: 'cash', complete_voucher_value: 0, voucher_label: '', celebration_discount: 0, advance_payment: 0 }, false, true);
                 });
                 return post('complete', a.id, {
-                    complete_pay_method: S.method || 'cash', complete_unpaid_billto: ($('dkBill') || {}).value || '',
+                    // Nothing left to collect: recorded under the down payment's method.
+                    complete_pay_method: S.method || (b.advance > 0 && b.advance_method ? b.advance_method : 'cash'), complete_unpaid_billto: ($('dkBill') || {}).value || '',
                     complete_disc_type: b.paid ? 'none' : S.disc, discount_people: a.people > 1 ? Math.min(S.dp || 1, a.people) : 0, complete_voucher_type: S.vt === 'percent' ? 'percent' : 'cash', complete_voucher_value: b.paid ? 0 : (parseFloat(S.dv) || 0), voucher_label: !b.paid && S.disc === 'voucher' ? voucherLabel(S.vs, S.vl) : '', voucher_scope: S.vs || 'all',
                     celebration_discount: 0, advance_payment: 0
                 }, false, true);

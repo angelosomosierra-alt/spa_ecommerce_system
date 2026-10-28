@@ -219,12 +219,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     }
 
     $image_name = '';
+    $photo_note = ''; // why a chosen photo was not saved (the rest still is)
 
     // 1. HANDLE IMAGE UPLOAD FIRST
-    if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+    $_img_err = $_FILES['image']['error'] ?? UPLOAD_ERR_NO_FILE;
+    if (in_array($_img_err, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) {
+        $photo_note = 'big';
+    } elseif ($_img_err !== UPLOAD_ERR_OK && $_img_err !== UPLOAD_ERR_NO_FILE) {
+        $photo_note = 'failed';
+    } elseif ($_img_err === UPLOAD_ERR_OK && !@getimagesize($_FILES['image']['tmp_name'])) {
+        $photo_note = 'notimage';
+    }
+    if ($_img_err === UPLOAD_ERR_OK && $photo_note === '') {
         $file_tmp = $_FILES['image']['tmp_name'];
         $file_name = $_FILES['image']['name'];
-        $ext = pathinfo($file_name, PATHINFO_EXTENSION);
+        $ext = strtolower(pathinfo($file_name, PATHINFO_EXTENSION)) ?: 'jpg';
         
         $image_name = 'service_' . time() . '.' . $ext;
         $target_path = UPLOAD_DIR_SERVICES . $image_name;
@@ -352,7 +361,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                 $ins_pkg->execute(); $ins_pkg->close();
             }
             // ──────────────────────────────────────────────────────────────
-            $redirect_to = $id ? "services.php?edit={$svc_logged_id}&saved=1" : "services.php?success=1";
+            $redirect_to = ($id ? "services.php?edit={$svc_logged_id}&saved=1" : "services.php?success=1")
+                         . ($photo_note !== '' ? '&photo=' . $photo_note : '');
             header("Location: $redirect_to");
             exit();
         } else {
@@ -462,6 +472,16 @@ $avg_price         = $total_services ? array_sum(array_column($services, 'price'
 $categorized_count = count(array_filter($services, fn($s) => !empty($s['category_id'])));
 $with_recipe_count = count(array_filter($services, fn($s) => !$s['deleted_at'] && ($svc_recipe_counts[$s['id']] ?? 0) > 0));
 
+// The service was saved but its new photo was not (see $photo_note above).
+$_photo_msgs = [
+    'big'      => 'the photo is too big for the server (limit ' . ini_get('upload_max_filesize') . 'B). Use a smaller photo, or one saved for web.',
+    'failed'   => 'the photo did not finish uploading. Please try again.',
+    'notimage' => 'that file is not a photo the site can show. Use a JPG, PNG or WEBP.',
+];
+if (!$message && isset($_GET['photo'], $_photo_msgs[$_GET['photo']])) {
+    $message = (isset($_GET['success']) ? 'Service added, but ' : 'Service updated, but ') . $_photo_msgs[$_GET['photo']];
+    $message_type = 'warning';
+}
 if (!$message && isset($_GET['saved']))   { $message = "Service updated.";           $message_type = "success"; }
 if (!$message && isset($_GET['success'])) { $message = "Service added successfully."; $message_type = "success"; }
 
@@ -1022,10 +1042,32 @@ var svcDurationVariants = <?php echo json_encode(array_values($svc_durations_lis
     });
 
     // ── Photo preview ──────────────────────────────────────────────────
+    // A big photo (camera, Canva export) is made smaller here first, so the
+    // server's upload limit never drops it: at most 1600px, saved as JPG.
+    var SE_MAX_PX = 1600, SE_MAX_BYTES = 1500 * 1024;
     $('seImg').addEventListener('change', function () {
-        var f = this.files && this.files[0]; if (!f) return;
+        var inp = this, f = inp.files && inp.files[0]; if (!f) return;
         var r = new FileReader();
-        r.onload = function () { $('seThumb').style.backgroundImage = 'url(' + r.result + ')'; $('seThumbTxt').style.display = 'none'; };
+        r.onload = function () {
+            $('seThumb').style.backgroundImage = 'url(' + r.result + ')'; $('seThumbTxt').style.display = 'none';
+            var img = new Image();
+            img.onload = function () {
+                var big = Math.max(img.width, img.height);
+                if (f.size <= SE_MAX_BYTES && big <= SE_MAX_PX) return;
+                var k = Math.min(1, SE_MAX_PX / big), c = document.createElement('canvas');
+                c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+                var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+                var btns = form.querySelectorAll('button[type=submit]'); btns.forEach(function (b) { b.disabled = true; });
+                c.toBlob(function (blob) {
+                    btns.forEach(function (b) { b.disabled = false; });
+                    if (!blob || typeof DataTransfer === 'undefined') return;
+                    var dt = new DataTransfer();
+                    dt.items.add(new File([blob], f.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }));
+                    inp.files = dt.files;
+                }, 'image/jpeg', 0.85);
+            };
+            img.src = r.result;
+        };
         r.readAsDataURL(f);
     });
 
