@@ -148,6 +148,11 @@ if (PAYMONGO_SECRET_KEY === '') {
 // (ONLINE_PAYMENT_ENABLED=true) once the PayMongo keys are filled in.
 // It stays off when there is no secret key, so checkout can't break.
 $_online_payment = $_online_payment ?? filter_var(getenv('ONLINE_PAYMENT_ENABLED') ?: 'false', FILTER_VALIDATE_BOOLEAN);
+// Temporarily force OFF regardless of .env/config.local.php — the owner
+// hasn't approved online payment yet (service photos aren't all in place
+// either). Remove this line to go back to the .env-controlled switch above
+// once it's approved.
+$_online_payment = false;
 define('ONLINE_PAYMENT_ENABLED', (bool)$_online_payment && PAYMONGO_SECRET_KEY !== '');
 unset($_online_payment);
 
@@ -422,6 +427,11 @@ function gcash_settings($conn): array {
 }
 // On, and set up enough for a customer to pay (number and QR image).
 function gcash_qr_ready($conn): bool {
+    // Temporarily forced OFF — same reason as ONLINE_PAYMENT_ENABLED above
+    // (owner hasn't approved online payment yet). The Admin → Payment Log
+    // toggle and saved settings are untouched; remove this line to go back
+    // to reading them once it's approved.
+    return false;
     $g = gcash_settings($conn);
     return $g['gcash_qr_enabled'] === '1' && $g['gcash_number'] !== '' && $g['gcash_qr_file'] !== '';
 }
