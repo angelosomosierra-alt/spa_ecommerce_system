@@ -89,10 +89,14 @@
 
         var btn = (e.submitter && form.contains(e.submitter)) ? e.submitter : null;
         if (!btn) btn = form.querySelector('button[type="submit"]:not([disabled]), input[type="submit"]:not([disabled])');
-        if (btn) {
+        // Disabled only after the browser has collected the form data: a
+        // button disabled during this event is left out of the POST, and many
+        // handlers check the clicked button's name (add_to_cart, save_...).
+        // The busy flag above already blocks a second submit meanwhile.
+        if (btn) setTimeout(function () {
             btn.disabled = true;
             btn.classList.add('_uim_busy');
-        }
+        }, 0);
 
         setTimeout(function () {
             form.dataset.uimBusy = '0';
