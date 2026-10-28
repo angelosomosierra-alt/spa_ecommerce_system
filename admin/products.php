@@ -10,6 +10,11 @@ $conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS deleted_at DATETIME 
 $message      = '';
 $message_type = '';
 $field_errors = [];
+if (!empty($_SESSION['products_flash'])) {
+    $message      = $_SESSION['products_flash']['message'];
+    $message_type = $_SESSION['products_flash']['type'];
+    unset($_SESSION['products_flash']);
+}
 
 // ─── FETCH PRODUCT CATEGORIES ─────────────────────────────────────────────────
 $categories = [];
@@ -58,6 +63,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $stmt->close();
     }
     end_prod_delete:;
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['products_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: products.php');
+    exit;
 }
 
 // ─── RESTORE ─────────────────────────────────────────────────────────────────
@@ -69,6 +79,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resto
     $stmt->execute(); $stmt->close();
     $message      = "Product restored.";
     $message_type = "success";
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['products_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: products.php');
+    exit;
 }
 
 // ─── ADD / EDIT ───────────────────────────────────────────────────────────────
@@ -180,6 +195,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                 } else {
                     log_activity($conn, 'product_created', "Created product: {$name}", 'product', $prod_logged_id, $_actor_prod);
                 }
+                $stmt->close();
+                // PRG: a save actually wrote to the database, so redirect
+                // instead of rendering this message on the same POST
+                // response — refreshing (or Back) must not resend it and
+                // create a duplicate product. A validation failure above
+                // never reaches here (nothing was written), so that path
+                // keeps rendering inline with the typed values and field
+                // errors intact, same as before.
+                $_SESSION['products_flash'] = ['message' => $message, 'type' => $message_type];
+                header('Location: products.php' . ($id ? '?edit=' . $prod_logged_id : ''));
+                exit;
             } else {
                 $message      = "Error saving product: " . $conn->error;
                 $message_type = "danger";

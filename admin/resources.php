@@ -23,6 +23,11 @@ if ($_fk_chk == 0) {
 unset($_fk_chk);
 
 $message = ''; $message_type = '';
+if (!empty($_SESSION['resources_flash'])) {
+    $message      = $_SESSION['resources_flash']['message'];
+    $message_type = $_SESSION['resources_flash']['type'];
+    unset($_SESSION['resources_flash']);
+}
 
 $type_labels = ['room' => 'Room', 'chair' => 'Chair', 'head_spa' => 'Head Spa'];
 
@@ -47,6 +52,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_resource'])) {
         }
         $stmt->close();
     }
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['resources_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: resources.php');
+    exit;
 }
 
 // ─── EDIT ───────────────────────────────────────────────────────────────────
@@ -68,6 +78,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_resource'])) {
         if ($ok) log_activity($conn, 'resource_updated', "Updated resource: {$name} ({$type})", 'service_resource', $id);
         $stmt->close();
     }
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['resources_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: resources.php');
+    exit;
 }
 
 // ─── DEACTIVATE / REACTIVATE (soft — never hard-delete, historical

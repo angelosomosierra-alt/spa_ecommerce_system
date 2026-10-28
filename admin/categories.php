@@ -6,6 +6,11 @@ redirect_if_not_admin();
 require_once __DIR__ . '/../notify.php';
 
 $message = ''; $message_type = '';
+if (!empty($_SESSION['categories_flash'])) {
+    $message      = $_SESSION['categories_flash']['message'];
+    $message_type = $_SESSION['categories_flash']['type'];
+    unset($_SESSION['categories_flash']);
+}
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['add_category'])) {
     verify_csrf_token();
@@ -45,6 +50,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['add_category'])) {
             $stmt->close();
         }
     }
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['categories_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: categories.php');
+    exit;
 }
 
 if (isset($_GET['delete'])) {
@@ -74,6 +84,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['edit_category'])) {
     $message_type = $ok ? "success"           : "danger";
     if ($ok) log_activity($conn, 'category_updated', "Updated category: {$name} ({$type})", 'category', $id);
     $stmt->close();
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['categories_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: categories.php');
+    exit;
 }
 
 $service_cats = []; $product_cats = [];

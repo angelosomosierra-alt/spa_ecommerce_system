@@ -10,6 +10,11 @@ redirect_if_not_admin();
 redirect_if_not_owner();
 
 $message = ''; $message_type = '';
+if (!empty($_SESSION['partners_flash'])) {
+    $message      = $_SESSION['partners_flash']['message'];
+    $message_type = $_SESSION['partners_flash']['type'];
+    unset($_SESSION['partners_flash']);
+}
 
 // ── DELETE PARTNER ────────────────────────────────────────────────────────────
 if (isset($_GET['delete']) && is_owner()) {
@@ -54,6 +59,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_partner'])) {
             $message = "Partner <strong>" . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "</strong> added."; $message_type = "success";
         }
     }
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['partners_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: partners.php');
+    exit;
 }
 
 // ── SAVE RATE MATRIX ──────────────────────────────────────────────────────────
@@ -85,6 +95,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_rates'])) {
         }
         $message = "Rates saved."; $message_type = "success";
     }
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['partners_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: partners.php');
+    exit;
 }
 
 // ── FETCH DATA ────────────────────────────────────────────────────────────────

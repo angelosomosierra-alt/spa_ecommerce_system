@@ -16,6 +16,11 @@ redirect_if_not_user();
 $user_id = $_SESSION['user_id'];
 $message = '';
 $message_type = '';
+if (!empty($_SESSION['profile_flash'])) {
+    $message      = $_SESSION['profile_flash']['message'];
+    $message_type = $_SESSION['profile_flash']['type'];
+    unset($_SESSION['profile_flash']);
+}
 
 // Get user info
 $stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
@@ -104,12 +109,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
                     $message_type = "success";
                 }
 
-                // Refresh user data
-                $stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
-                $stmt->bind_param("i", $user_id);
-                $stmt->execute();
-                $user = $stmt->get_result()->fetch_assoc();
-                $stmt->close();
+                $update_stmt->close();
+                $check_stmt->close();
+                // PRG: the profile fields were just written to the database
+                // (whatever happened with the optional password change), so
+                // redirect instead of rendering this message on the same POST
+                // response — refreshing (or Back) must not resend the form,
+                // especially one carrying a password attempt. A validation
+                // failure above (empty fields, taken email, DB error) never
+                // reaches here, so that path keeps rendering inline with the
+                // typed values intact, same as before.
+                $_SESSION['profile_flash'] = ['message' => $message, 'type' => $message_type];
+                header('Location: profile.php');
+                exit;
             } else {
                 $message = "Error updating profile.";
                 $message_type = "danger";

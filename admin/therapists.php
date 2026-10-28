@@ -7,6 +7,11 @@ require_once __DIR__ . '/../notify.php';
 ensure_commission_events_view($conn);
 
 $message = ''; $message_type = '';
+if (!empty($_SESSION['therapists_flash'])) {
+    $message      = $_SESSION['therapists_flash']['message'];
+    $message_type = $_SESSION['therapists_flash']['type'];
+    unset($_SESSION['therapists_flash']);
+}
 
 // ── CHECK IN EXISTING THERAPIST ───────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_today'])) {
@@ -49,6 +54,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_today'])) {
             }
         }
     }
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['therapists_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: therapists.php');
+    exit;
 }
 
 // ── REORDER ROTATION ─────────────────────────────────────────────────────────

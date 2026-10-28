@@ -53,6 +53,11 @@ service_is_medical($conn, 1); // makes sure services.is_medical exists
 
 $message      = '';
 $message_type = '';
+if (!empty($_SESSION['services_flash'])) {
+    $message      = $_SESSION['services_flash']['message'];
+    $message_type = $_SESSION['services_flash']['type'];
+    unset($_SESSION['services_flash']);
+}
 
 // ─── FETCH SERVICE CATEGORIES ─────────────────────────────────────────────────
 $categories = [];
@@ -124,6 +129,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $stmt->close();
     }
     end_svc_delete:;
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['services_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: services.php');
+    exit;
 }
 
 // ─── RESTORE ─────────────────────────────────────────────────────────────────
@@ -135,6 +145,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resto
     $stmt->execute(); $stmt->close();
     $message      = "Service restored.";
     $message_type = "success";
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form.
+    $_SESSION['services_flash'] = ['message' => $message, 'type' => $message_type];
+    header('Location: services.php');
+    exit;
 }
 
 // ─── ADD / EDIT ───────────────────────────────────────────────────────────────
@@ -372,6 +387,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         $stmt->close();
     }
     end_svc_action:;
+    // PRG: redirect instead of rendering this message on the same POST
+    // response, so refreshing (or Back) can't resubmit the form. The
+    // success path above already redirects and exits before reaching here.
+    if ($message !== '') {
+        $_SESSION['services_flash'] = ['message' => $message, 'type' => $message_type];
+        header('Location: services.php');
+        exit;
+    }
 }
 // ─── FETCH FOR EDITING ────────────────────────────────────────────────────────
 $edit_service = null;
