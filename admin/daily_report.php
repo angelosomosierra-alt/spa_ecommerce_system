@@ -932,6 +932,8 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
             o.discount_amount,
             o.completion_discount_type, o.voucher_label,
             IFNULL(o.completion_discount_amount, 0) AS completion_discount_amount,
+            o.payment_status,
+            GREATEST(1, IFNULL(a.people_count, 1)) AS people,
             oi.service_id,
             COALESCE(s.name, '[Deleted Service]') AS service_name,
             COALESCE(sd.regular_price, s.price) AS regular_price,
@@ -1012,6 +1014,8 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         // is defined, same as before for services without one.
         $sd_promo    = (float)($ap['sd_promo_price'] ?? 0);
         $promo_price = $sd_promo > 0 ? $sd_promo : $regular_price;
+        // A booking for several people is one row: its prices are for all of them.
+        $regular_price *= (int)$ap['people']; $promo_price *= (int)$ap['people'];
         // One session of a package started before the system tracked it:
         // its price is that session's share, as in the sales report.
         if (!empty($ap['package_followup_id'])) $regular_price = $promo_price = $charged_amount;
@@ -1025,7 +1029,13 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $celeb_10 = 0.0;
         if (($ap['discount_type'] ?? '') === 'celebration') $celeb_10 += (float)$ap['discount_amount'];
         if (($ap['completion_discount_type'] ?? '') === 'celebration') $celeb_10 += (float)$ap['completion_discount_amount'];
+        // Senior / PWD and Staff, given at booking or at Check in / Complete
+        // (shown on the row; DISCOUNTS in the summary already counts them).
         $disc_20_pwd   = 0.0; $disc_50_staff = 0.0;
+        foreach ([['discount_type', 'discount_amount'], ['completion_discount_type', 'completion_discount_amount']] as [$_dt, $_da]) {
+            if (in_array($ap[$_dt] ?? '', ['senior', 'pwd'], true)) $disc_20_pwd   += (float)$ap[$_da];
+            if (($ap[$_dt] ?? '') === 'employee')                   $disc_50_staff += (float)$ap[$_da];
+        }
         $total_comm    = (float)($ap['total_commission'] ?? 0);
 
         // Route commission to the column(s) matching the therapist's actual
@@ -1039,6 +1049,7 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $net_sales   = $charged_amount - $total_comm;
         $raw_mop     = strtolower(trim($ap['payment_method'] ?? ''));
         $mode_of_pay = $mop_map[$raw_mop] ?? 'Cash';
+        if (($ap['payment_status'] ?? '') === 'unpaid') $mode_of_pay = 'Unpaid'; // charged to account
         $order_id    = (int)($ap['order_id'] ?? 0);
         $slip_no     = $ap['slip_number']   ?? '';
         $client_name = $ap['customer_name'] ?? '';
@@ -1427,8 +1438,11 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     $c30 = $_row_buckets['comm_30']; $c20 = $_row_buckets['comm_20'];
                     $c15 = $_row_buckets['comm_15']; $c25 = $_row_buckets['comm_25'];
                     // Discount columns
-                    $disc_pwd  = in_array($row['discount_type'], ['senior','pwd']) ? (float)$row['discount_amount'] : 0;
-                    $disc_50   = ($row['discount_type'] === 'employee')            ? (float)$row['discount_amount'] : 0;
+                    // Booking-time or completion-time (given at Check in / Complete).
+                    $disc_pwd  = (in_array($row['discount_type'], ['senior','pwd']) ? (float)$row['discount_amount'] : 0)
+                               + (in_array($row['completion_discount_type'] ?? '', ['senior','pwd']) ? (float)$row['completion_discount_amount'] : 0);
+                    $disc_50   = (($row['discount_type'] === 'employee') ? (float)$row['discount_amount'] : 0)
+                               + ((($row['completion_discount_type'] ?? '') === 'employee') ? (float)$row['completion_discount_amount'] : 0);
                     // Celebration discount can come from booking-time OR completion-time
                     // discount fields -- appointments.celebration_discount is never populated.
                     $disc_celeb = 0.0;
@@ -1448,6 +1462,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                     $t_d50   += $disc_50;  $t_net += $net;
                     // Payment display
                     $display_pm = !empty($row['paymongo_method']) ? $row['paymongo_method'] : ($row['payment_method'] ?? 'cash');
+                    if (($row['payment_status'] ?? '') === 'unpaid') $display_pm = 'unpaid'; // charged to account
                     $status_color = match($row['appt_status']) {
                         'completed' => '#198754', 'approved', 'assigned' => '#0070f3',
                         'cancelled', 'declined'  => '#dc3545', default   => '#f59e0b'
@@ -1901,7 +1916,7 @@ if (!$LOCK_FEATURE_ENABLED) $locked = false;
                 ['label' => 'SOLD GC',                'val' => $gc_sold_total,        'color' => 'var(--brown)'],
                 ['label' => 'POS READING',            'val' => $pos_reading,          'color' => 'var(--brown)',
                  'note' => 'Manual entry from POS machine'],
-                ['label' => 'DISCOUNTS',              'val' => $total_discounts,      'color' => 'var(--rust)'],
+                ['label' => 'DISCOUNTS',              'val' => $total_discounts - $celeb_discount, 'color' => 'var(--rust)'],
                 ['label' => 'CELEB. DISCOUNTS',  'val' => $celeb_discount,       'color' => 'var(--rust)'],
                 ['label' => 'REDEEMED GC',            'val' => $gc_redeem_total,      'color' => 'var(--rust)'],
                 ['label' => 'SWIPER',                 'val' => $card_total,           'color' => 'var(--brown)',

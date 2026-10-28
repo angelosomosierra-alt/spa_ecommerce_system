@@ -2648,7 +2648,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
     }
     ensure_manual_payments_table($conn);
     $mp_id = (int)($_POST['mp_id'] ?? 0);
-    $q = $conn->prepare("SELECT mp.*, o.customer_name, o.final_amount FROM manual_payments mp JOIN orders o ON o.id = mp.order_id WHERE mp.id = ? AND mp.status = 'pending'");
+    // At most the whole bill: the order plus the add-ons booked with it.
+    $q = $conn->prepare("SELECT mp.*, o.customer_name,
+               o.final_amount + (SELECT COALESCE(SUM(x.charged_price), 0) FROM appointment_extra_services x
+                                 JOIN appointments a ON a.id = x.appointment_id JOIN order_items oi ON oi.id = a.order_item_id
+                                 WHERE oi.order_id = o.id) AS final_amount
+        FROM manual_payments mp JOIN orders o ON o.id = mp.order_id WHERE mp.id = ? AND mp.status = 'pending'");
     $q->bind_param("i", $mp_id); $q->execute();
     $mp = $q->get_result()->fetch_assoc(); $q->close();
     if ($mp_ok && !$mp) { $mp_ok = false; $message = "This payment was already checked."; $message_type = "danger"; }

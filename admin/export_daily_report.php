@@ -393,8 +393,28 @@ for ($r = $inf_row; $r <= 69; $r++) {
 //     Received panel and the Spreadsheet tab's own Down Payment panel.
 //     Max 10 rows.
 // ════════════════════════════════════════════════════════════════════════════
-$dp_row = 64;
+// One line per customer and method; past 10 lines the last one holds the
+// rest, so the total (T74, also in POS and ADVANCE PAYMENT) stays whole.
+$dp_lines = [];
 foreach ($advances_received as $dp) {
+    $k = ($dp['customer_name'] ?? '') . '|' . ($dp['advance_payment_method'] ?? 'cash');
+    if (!isset($dp_lines[$k])) { $dp_lines[$k] = $dp; continue; }
+    $dp_lines[$k]['advance_payment'] = (float)$dp_lines[$k]['advance_payment'] + (float)$dp['advance_payment'];
+    $dp_lines[$k]['service_name']   .= ', ' . ($dp['service_name'] ?? '');
+}
+$dp_lines = array_values($dp_lines);
+if (count($dp_lines) > 10) {
+    $rest = array_slice($dp_lines, 9);
+    $methods = array_unique(array_map(fn($d) => $d['advance_payment_method'] ?? 'cash', $rest));
+    $dp_lines = array_merge(array_slice($dp_lines, 0, 9), [[
+        'customer_name' => '+' . count($rest) . ' more',
+        'advance_payment' => array_sum(array_map(fn($d) => (float)$d['advance_payment'], $rest)),
+        'advance_payment_method' => count($methods) === 1 ? reset($methods) : 'mixed',
+        'service_name' => implode('; ', array_map(fn($d) => ($d['customer_name'] ?? '') . ' ₱' . number_format((float)$d['advance_payment'], 2) . ' ' . ($d['advance_payment_method'] ?? ''), $rest)),
+    ]]);
+}
+$dp_row = 64;
+foreach ($dp_lines as $dp) {
     if ($dp_row > 73) break;
     // Name / Amount / MOP / Remarks sit in S-V after the comm_25 column
     // insertion (the template's R-U), so the Amount lands under T74's SUM.

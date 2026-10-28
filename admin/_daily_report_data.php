@@ -200,11 +200,13 @@ $_s = $conn->prepare("
         o.final_amount,
         o.total_amount,
         o.created_at,
+        o.payment_status,
         oi.id             AS oi_id,
         oi.service_id,
         COALESCE(s.name, '[Deleted Service]') AS service_name,
         COALESCE(sd.regular_price, s.price) AS regular_price,
         sd.promo_price    AS sd_promo_price,
+        GREATEST(1, IFNULL(a.people_count, 1)) AS people,
         a.id              AS appt_id,
         a.appointment_date,
         a.duration_minutes,
@@ -238,6 +240,12 @@ $_s->bind_param("ss", $report_date, $_pkg_from);
 $_s->execute();
 $service_rows = $_s->get_result()->fetch_all(MYSQLI_ASSOC);
 $_s->close();
+// A booking for several people is one row: its prices are for all of them.
+foreach ($service_rows as &$_pr) {
+    $_pr['regular_price'] = (float)$_pr['regular_price'] * (int)$_pr['people'];
+    if ($_pr['sd_promo_price'] !== null) $_pr['sd_promo_price'] = (float)$_pr['sd_promo_price'] * (int)$_pr['people'];
+}
+unset($_pr);
 
 // ── Multi-session packages, per session (see PKG_SPLIT_FROM in config.php) ──
 // One sales row per session completed on this date, worth that session's
@@ -287,7 +295,7 @@ foreach ($_pk->get_result()->fetch_all(MYSQLI_ASSOC) as $_p) {
         'discount_type' => $_p['discount_type'], 'discount_amount' => $_disc,
         'completion_discount_type' => $_p['completion_discount_type'], 'completion_discount_amount' => $_cdisc,
         'voucher_label' => $_p['voucher_label'] ?? null,
-        'final_amount' => $_p['final_amount'], 'total_amount' => $_p['total_amount'], 'created_at' => $_p['created_at'],
+        'final_amount' => $_p['final_amount'], 'total_amount' => $_p['total_amount'], 'created_at' => $_p['created_at'], 'payment_status' => 'paid',
         'oi_id' => $_p['oi_id'], 'service_id' => $_p['service_id'],
         'service_name' => $_p['service_name'] . ' — Session ' . $_n . ' of ' . $_N,
         'regular_price' => round($_reg / $_N, 2),
@@ -379,6 +387,7 @@ $adv_q = $conn->prepare("
            a.appointment_date, a.service_type,
            s.name AS service_name,
            IFNULL(sd.session_count, 1) AS session_count,
+           (SELECT COUNT(*) FROM appointment_sessions x WHERE x.appointment_id = a.id) AS sess_rows,
            COALESCE(o.customer_name, u.full_name) AS customer_name
     FROM appointments a
     JOIN services s ON s.id = a.service_id
@@ -399,7 +408,9 @@ $adv_q->close();
 // so it reads as "what was this a down payment toward", not just a bare
 // service name that looks identical to a same-day sale of the same service.
 foreach ($advances_received as &$_adv_lbl) {
-    if ((int)($_adv_lbl['session_count'] ?? 1) > 1) {
+    // A package tracked session by session: the down payment is for the package.
+    if ((int)($_adv_lbl['sess_rows'] ?? 0) > 0) $_adv_lbl['service_name'] .= ' — package down payment';
+    elseif ((int)($_adv_lbl['session_count'] ?? 1) > 1) {
         $_adv_lbl['service_name'] .= ' — Session 2 of ' . (int)$_adv_lbl['session_count'] . ' (not yet rendered)';
     }
 }
@@ -696,7 +707,8 @@ foreach ($spreadsheet_rows as $_ssr) {
         $spreadsheet_refund_total += (float)$_ssr['net_sales'];
     } else {
         $spreadsheet_net_total += (float)$_ssr['net_sales'];
-        if (empty($_ssr['source_appointment_id'])) {
+        // Add-on and package-session rows are imported too (their own source ids).
+        if (empty($_ssr['source_appointment_id']) && empty($_ssr['source_extra_service_id']) && empty($_ssr['source_session_id'])) {
             $spreadsheet_manual_net += (float)$_ssr['net_sales'];
             // A manual row has no order behind it, so its own discount
             // cells are the only record of the discount it was given.
@@ -741,11 +753,13 @@ $net_sales     = $gross_sales - $staff_cf;
 // and the rest by card puts ₱1,249 under card, not ₱1,998; a session paid in
 // full on an earlier day (e.g. Session 2 of a package) adds nothing today.
 $pm_totals = [];
+$_adv_left = []; // down payment beyond the main service: it paid the add-ons first
 foreach ($service_rows as $row) {
     $_row_due = (float)$row['charged_price']
               - (float)($row['discount_amount'] ?? 0)
               - (float)($row['completion_discount_amount'] ?? 0)
               - (float)($row['advance_payment'] ?? 0);
+    if ($_row_due < 0 && !empty($row['appt_id'])) $_adv_left[$row['appt_id']] = -$_row_due;
     if ($_row_due <= 0.005) continue;   // fully prepaid or free
 
     $pm = (!empty($row['paymongo_method']))
@@ -754,8 +768,11 @@ foreach ($service_rows as $row) {
     $pm_totals[$pm] = ($pm_totals[$pm] ?? 0) + $_row_due;
 }
 foreach ($addon_rows as $_ar) {
-    $_pm = $_ar['payment_method'] ?? 'cash';
-    $pm_totals[$_pm] = ($pm_totals[$_pm] ?? 0) + (float)$_ar['charged_price'];
+    $_pm  = $_ar['payment_method'] ?? 'cash';
+    $_amt = (float)$_ar['charged_price'];
+    $_use = min($_amt, $_adv_left[$_ar['appointment_id']] ?? 0.0);
+    if ($_use > 0) { $_amt -= $_use; $_adv_left[$_ar['appointment_id']] -= $_use; }
+    if ($_amt > 0.005) $pm_totals[$_pm] = ($pm_totals[$_pm] ?? 0) + $_amt;
 }
 foreach ($system_product_sales as $_sp) {
     $_pm = (!empty($_sp['paymongo_method']))
@@ -828,7 +845,7 @@ $net_cash = $pos_reading
           - $qrph_dp_total       // QRPH (DP) — non-cash, not in physical drawer
           - $unpaids_total
           - $advance_payment_total
-          - $total_discounts
+          - ($total_discounts - $celeb_discount) // DISCOUNTS without the celebration ones (as B40 in the export)
           - $celeb_discount
           - $expenses_drawer_total     // GCash / bank expenses never left the drawer
           - $mktg_expense
