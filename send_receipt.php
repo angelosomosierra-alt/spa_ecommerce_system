@@ -249,7 +249,8 @@ function send_completion_receipt($conn, $appt_id, $order_id) {
     $stmt->execute();
     $appt = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    if (!$appt) return false;
+    // The shared walk-in account's address is not a real customer's.
+    if (!$appt || (int)$appt['user_id'] === get_walkin_customer_id()) return false;
 
     // ── 2. Fetch order (payment + discount info) ───────────────────────────────
     $stmt = $conn->prepare("
