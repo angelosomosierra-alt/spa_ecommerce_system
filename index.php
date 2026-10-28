@@ -17,7 +17,8 @@ if (isset($_GET['logout'])) {
 // 2. CONTACT FORM HANDLER
 $contact_sent = false;
 $contact_error = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
+// Messages are sent by logged-in customers (the form asks others to log in first).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message']) && is_logged_in()) {
     $cf_name    = sanitize_input($_POST['cf_name'] ?? '');
     $cf_email   = sanitize_input($_POST['cf_email'] ?? '');
     $cf_message = sanitize_input($_POST['cf_message'] ?? '');
@@ -775,7 +776,11 @@ if ($rib) { while (count($rib) < 8) $rib = array_merge($rib, $rib); }
                         <div class="cf-group"><label>Email *</label><input type="email" name="cf_email" required placeholder="you@email.com"></div>
                     </div>
                     <div class="cf-group"><label>Message *</label><textarea name="cf_message" required placeholder="Write your message here..."></textarea></div>
+                    <?php if (is_logged_in()): ?>
                     <button type="submit" name="send_message" class="btn-send">✉ Send Message</button>
+                    <?php else: ?>
+                    <a href="<?php echo BASE_URL; ?>user/auth.php" class="btn-send" style="display:block;text-align:center;text-decoration:none;">Register / Log in to message us</a>
+                    <?php endif; ?>
                 </form>
                 <?php endif; ?>
             </div>

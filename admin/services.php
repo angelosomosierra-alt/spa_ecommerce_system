@@ -1074,9 +1074,16 @@ var svcDurationVariants = <?php echo json_encode(array_values($svc_durations_lis
         r.onload = function () {
             $('seThumb').style.backgroundImage = 'url(' + r.result + ')'; $('seThumbTxt').style.display = 'none';
             var img = new Image();
+            // A phone photo in another format (iPhone HEIC) is turned into a JPG too;
+            // one this browser can't open at all is refused here, with how to fix it.
+            img.onerror = function () {
+                inp.value = '';
+                $('seThumb').style.backgroundImage = ''; $('seThumbTxt').style.display = '';
+                $('seThumbTxt').textContent = "This photo can't be used (" + (f.name.split('.').pop() || 'unknown').toUpperCase() + "). Use a JPG or PNG: on iPhone, Settings > Camera > Formats > Most Compatible, or send it as a screenshot.";
+            };
             img.onload = function () {
-                var big = Math.max(img.width, img.height);
-                if (f.size <= SE_MAX_BYTES && big <= SE_MAX_PX) return;
+                var big = Math.max(img.width, img.height), web = /^image\/(jpeg|png|webp)$/.test(f.type);
+                if (web && f.size <= SE_MAX_BYTES && big <= SE_MAX_PX) return;
                 var k = Math.min(1, SE_MAX_PX / big), c = document.createElement('canvas');
                 c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
                 var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
