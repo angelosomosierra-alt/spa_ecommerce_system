@@ -492,7 +492,7 @@ $promo_href = $home_deal ? '#deal' : $home_base . 'services.php';
             </div>
             <div class="rx-trust">
                 <div><b>2,000+</b><span>Happy clients</span></div>
-                <div><b>5+</b><span>Years in Iloilo</span></div>
+                <div><b>2+</b><span>Years in Iloilo</span></div>
                 <?php if ($home_rating): ?>
                 <div><b><span class="rx-stars" aria-hidden="true">★★★★★</span></b><span><?php echo number_format($home_rating['avg'], 1); ?> from <?php echo number_format($home_rating['count']); ?> reviews</span></div>
                 <?php else: ?>
@@ -714,7 +714,7 @@ if ($rib) { while (count($rib) < 8) $rib = array_merge($rib, $rib); }
             </div>
         </div>
         <div class="stats-bar">
-            <div class="stat-item"><div class="stat-num">5+</div><div class="stat-lbl">Years of Service</div></div>
+            <div class="stat-item"><div class="stat-num">2+</div><div class="stat-lbl">Years of Service</div></div>
             <div class="stat-item"><div class="stat-num">2,000+</div><div class="stat-lbl">Happy Clients</div></div>
             <div class="stat-item"><div class="stat-num">30+</div><div class="stat-lbl">Services Offered</div></div>
             <div class="stat-item"><div class="stat-num">100%</div><div class="stat-lbl">All-Natural Products</div></div>
