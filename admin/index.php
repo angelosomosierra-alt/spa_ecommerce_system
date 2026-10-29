@@ -807,7 +807,7 @@ require_once 'admin_header.php';
         <div class="stat-number"><?php echo $on_duty_count; ?></div>
         <div class="stat-label">Therapists On Duty</div>
     </div>
-    <a href="orders.php" style="display:block;text-decoration:none;color:inherit;">
+    <a href="appointments.php" style="display:block;text-decoration:none;color:inherit;">
         <div class="stat-card amber" style="height:100%;box-sizing:border-box;">
             <div class="stat-icon"></div>
             <div class="stat-number"><?php echo $pending_orders; ?></div>

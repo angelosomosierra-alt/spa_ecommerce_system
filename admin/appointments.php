@@ -1076,7 +1076,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
     $appt_id      = intval($_POST['appt_id'] ?? 0);
     $cancel_reason = sanitize_input($_POST['cancel_reason'] ?? '');
 
-    $chk = $conn->prepare("SELECT a.user_id, a.status, a.session_group_id, s.name AS service_name FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.id=?");
+    $chk = $conn->prepare("SELECT a.user_id, a.status, a.session_group_id, a.order_item_id, s.name AS service_name FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.id=?");
     $chk->bind_param("i", $appt_id); $chk->execute();
     $chk_row = $chk->get_result()->fetch_assoc(); $chk->close();
 
@@ -1099,9 +1099,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
         try {
             $upd = $conn->prepare("UPDATE appointments SET status='cancelled', cancel_reason=?, cancelled_by=?, cancelled_by_name=? WHERE id=?");
             $upd->bind_param("sisi", $cancel_reason, $cn_by, $cn_name, $appt_id); $upd->execute(); $upd->close();
+            void_order_if_unpaid($conn, $chk_row['order_item_id'] ?? null);
 
             if ($is_no_show && $is_session1) {
-                $s2_chk = $conn->prepare("SELECT id, user_id, status FROM appointments WHERE session_group_id = ? AND id != ? LIMIT 1");
+                $s2_chk = $conn->prepare("SELECT id, user_id, status, order_item_id FROM appointments WHERE session_group_id = ? AND id != ? LIMIT 1");
                 $s2_chk->bind_param("ii", $appt_id, $appt_id);
                 $s2_chk->execute();
                 $s2_row = $s2_chk->get_result()->fetch_assoc();
@@ -1112,6 +1113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
                     $s2_upd = $conn->prepare("UPDATE appointments SET status='cancelled', cancel_reason=?, cancelled_by=?, cancelled_by_name=? WHERE id=?");
                     $s2_upd->bind_param("sisi", $s2_cancel_reason, $cn_by, $cn_name, $s2_row['id']);
                     $s2_upd->execute(); $s2_upd->close();
+                    void_order_if_unpaid($conn, $s2_row['order_item_id'] ?? null);
                     $s2_cascaded_id = (int)$s2_row['id'];
                 }
             }
@@ -1420,6 +1422,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             $dc_name = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
             $upd = $conn->prepare("UPDATE appointments SET status='declined', declined_by=?, declined_by_name=? WHERE id=?");
             $upd->bind_param("isi",$dc_by,$dc_name,$appt_id); $upd->execute(); $upd->close();
+            void_order_if_unpaid($conn, $appt['order_item_id'] ?? null);
 
             if (!empty($appt['order_item_id'])) {
                 $oi_stmt = $conn->prepare("SELECT order_id FROM order_items WHERE id=?");

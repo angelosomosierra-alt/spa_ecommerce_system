@@ -272,6 +272,24 @@ function service_uses_aesthetic_slip(?string $category_name, ?string $service_na
     return (bool)preg_match('/full face tightening|exilis/i', (string)$service_name);
 }
 
+// ─── VOID A DEAD BOOKING'S ORDER ─────────────────────────────────────────────
+// Cancelling or declining an appointment leaves nothing left to collect for
+// it, but the order itself stayed 'unpaid' (inflating "Pending Payments" on
+// the Dashboard with bookings that will never be paid). Called right after
+// an appointment is set to cancelled/declined, for its own order_item_id.
+// Never touches an order that's already paid/refunded, or shared with
+// still-open items (e.g. a product bought alongside the same visit).
+function void_order_if_unpaid($conn, ?int $order_item_id): void {
+    if (!$order_item_id) return;
+    $stmt = $conn->prepare("
+        UPDATE orders o
+        JOIN order_items oi ON oi.order_id = o.id
+        SET o.payment_status = 'void'
+        WHERE oi.id = ? AND o.payment_status = 'unpaid'
+    ");
+    $stmt->bind_param("i", $order_item_id); $stmt->execute(); $stmt->close();
+}
+
 // ─── PERSON DISCOUNTS ────────────────────────────────────────────────────────
 // Senior 20%, PWD 20%, Staff and Voucher are for one person: in a booking for
 // several people only the ones who qualify get it. Senior, PWD and Staff are
