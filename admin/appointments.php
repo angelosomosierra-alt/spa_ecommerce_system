@@ -757,10 +757,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_p
     if (!in_array($apb_method, ['cash', 'gcash', 'maya', 'qrph', 'card', 'swiper'], true)) $apb_method = 'cash';
 
     $apb_link = sell_product_booking_group_for_appointment($conn, $apb_appt_id);
+    // Before the visit is done the product goes on its bill (To collect);
+    // after it, it is paid on the spot as before.
+    $apb_st = $conn->prepare("SELECT status FROM appointments WHERE id = ?");
+    $apb_st->bind_param("i", $apb_appt_id); $apb_st->execute();
+    $apb_open = in_array($apb_st->get_result()->fetch_assoc()['status'] ?? '', ['pending', 'assigned', 'approved'], true); $apb_st->close();
     if (!$apb_link['ok']) {
         $message = $apb_link['message']; $message_type = 'danger';
     } else {
-        $apb_res = sell_product_save($conn, is_array($apb_items) ? $apb_items : [], $apb_link['customer_name'], '', 'none', 0.0, $apb_method, $apb_link['booking_group']);
+        $apb_res = sell_product_save($conn, is_array($apb_items) ? $apb_items : [], $apb_link['customer_name'], '', 'none', 0.0, $apb_method, $apb_link['booking_group'], $apb_open ? $apb_appt_id : null);
         $message = $apb_res['message'];
         $message_type = $apb_res['ok'] ? 'success' : 'danger';
     }
@@ -1586,6 +1591,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                         }
                     }
                 }
+                // Products added to this visit are paid with it.
+                if ($pay_choice === 'now') {
+                    $ci_pm_p = sanitize_input($_POST['pay_method'] ?? 'cash');
+                    visit_products_settle($conn, $appt_id, in_array($ci_pm_p, ['cash','gcash','maya','qrph','card','swiper'], true) ? $ci_pm_p : 'cash');
+                }
 
                 // ── 2-Session Package: attribute Session 2's portion as an advance ──
                 // Only when this check-in is for Session 1 (id = session_group_id) AND
@@ -1826,6 +1836,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
             if ($cp_pay_method !== 'unpaid' && !$cp_later) {
                 $es_paid_upd = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status='unpaid'");
                 $es_paid_upd->bind_param("si", $cp_pay_method, $appt_id); $es_paid_upd->execute(); $es_paid_upd->close();
+                visit_products_settle($conn, $appt_id, $cp_pay_method); // products added to this visit
+            } elseif ($cp_pay_method === 'unpaid') {
+                // Unpaid / Charge to: the visit's products are owed too. They count
+                // as sold today and their amount is added to the Unpaids entry.
+                $cp_prod = visit_products_settle($conn, $appt_id, 'onsite');
+                if ($cp_prod > 0) {
+                    $cp_up = $conn->prepare("UPDATE unpaids_corp SET amount = amount + ? WHERE appointment_id = ? ORDER BY id DESC LIMIT 1");
+                    $cp_up->bind_param("di", $cp_prod, $appt_id); $cp_up->execute();
+                    $cp_hit = $cp_up->affected_rows; $cp_up->close();
+                    if (!$cp_hit) {
+                        $cp_nm = $cp_unpaid_billto !== '' ? $cp_unpaid_billto : ($oi_r2['customer_name'] ?? ($appt['full_name'] ?? 'Unknown'));
+                        $cp_ser = ($cp_is_charge ? 'CHARGE APT-' : 'APT-') . $appt_id; $cp_uby = (int)$_SESSION['user_id'];
+                        $cp_ins = $conn->prepare("INSERT INTO unpaids_corp (report_date, client_name, amount, series, created_by, appointment_id) VALUES (CURDATE(), ?, ?, ?, ?, ?)");
+                        $cp_ins->bind_param("sdsii", $cp_nm, $cp_prod, $cp_ser, $cp_uby, $appt_id); $cp_ins->execute(); $cp_ins->close();
+                    }
+                }
             }
             // This visit is concluding now — whichever session of each
             // multi-session extra was still waiting on "has this happened yet"

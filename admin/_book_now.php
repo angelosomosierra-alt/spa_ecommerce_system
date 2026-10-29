@@ -574,18 +574,21 @@ if (!function_exists('book_now_group_bill')) {
  * order each) with the unpaid extras added to them since booking.
  */
 function book_now_group_bill(mysqli $conn, string $group): array {
+    if (function_exists('visit_products_schema')) visit_products_schema($conn);
     $stmt = $conn->prepare("
         SELECT o.id AS order_id, o.customer_name, o.total_amount, (o.payment_status = 'paid') AS order_paid,
                a.id AS appt_id, a.appointment_date, s.name AS service_name, IFNULL(a.advance_payment, 0) AS adv,
                (SELECT COALESCE(SUM(aes.charged_price), 0) FROM appointment_extra_services aes
-                WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras
+                WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras,
+               (SELECT COALESCE(SUM(po.final_amount), 0) FROM orders po
+                WHERE po.visit_appt_id = a.id AND po.payment_status = 'unpaid') AS products
         FROM orders o
         JOIN order_items oi ON oi.order_id = o.id
         JOIN appointments a ON a.order_item_id = oi.id
         JOIN services s ON s.id = a.service_id
         WHERE o.booking_group = ?
           AND a.status NOT IN ('cancelled', 'declined', 'refunded')
-        HAVING order_paid = 0 OR extras > 0   -- a paid guest's later add-ons still count
+        HAVING order_paid = 0 OR extras > 0 OR products > 0   -- a paid guest's later add-ons / products still count
         ORDER BY o.customer_name, a.appointment_date
     ");
     $stmt->bind_param("s", $group); $stmt->execute();
@@ -601,11 +604,12 @@ function book_now_group_bill(mysqli $conn, string $group): array {
             $guests[$name]['eligible'] += appt_discount_eligible($conn, (int)$r['appt_id'], (float)$r['total_amount'], true, 0, 'senior');
             foreach (array_keys(VOUCHER_SCOPES) as $vs) $guests[$name]['elig'][$vs] += appt_discount_eligible($conn, (int)$r['appt_id'], (float)$r['total_amount'], true, 0, 'voucher', $vs);
         }
-        $amt = ($r['order_paid'] ? 0.0 : (float)$r['total_amount']) + (float)$r['extras'];
+        $amt = ($r['order_paid'] ? 0.0 : (float)$r['total_amount']) + (float)$r['extras'] + (float)$r['products'];
         // An advance paid at booking (calendar) is already collected: the
         // discount is on the full price, then the advance comes off.
         if (!$r['order_paid']) $guests[$name]['advance'] += (float)$r['adv'];
         $label = $r['order_paid'] ? $r['service_name'] . ' — added services' : $r['service_name'] . ((float)$r['extras'] > 0 ? ' + added services' : '');
+        if ((float)$r['products'] > 0) $label .= ' + products';
         $guests[$name]['services'][] = ['name' => $label, 'amount' => $amt];
         $guests[$name]['subtotal'] += $amt;
     }
@@ -623,6 +627,7 @@ if (!function_exists('book_now_pay_group')) {
  * order fields check-in's Pay Now writes, so Mark Complete sees them as paid.
  */
 function book_now_pay_group(mysqli $conn, string $group, array $discounts, string $method): array {
+    if (function_exists('visit_products_schema')) visit_products_schema($conn);
     if (!in_array($method, ['cash', 'gcash', 'maya', 'qrph', 'card', 'swiper'], true)) return ['ok' => false, 'message' => 'Choose a payment method.'];
     if (!$discounts) return ['ok' => false, 'message' => 'Choose at least one guest to pay for.'];
 
@@ -630,13 +635,15 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
         SELECT o.id AS order_id, o.customer_name, o.total_amount, (o.payment_status = 'paid') AS order_paid, a.id AS appt_id,
                IFNULL(a.advance_payment, 0) AS adv,
                (SELECT COALESCE(SUM(aes.charged_price), 0) FROM appointment_extra_services aes
-                WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras
+                WHERE aes.appointment_id = a.id AND aes.payment_status != 'paid') AS extras,
+               (SELECT COALESCE(SUM(po.final_amount), 0) FROM orders po
+                WHERE po.visit_appt_id = a.id AND po.payment_status = 'unpaid') AS products
         FROM orders o
         JOIN order_items oi ON oi.order_id = o.id
         JOIN appointments a ON a.order_item_id = oi.id
         WHERE o.booking_group = ?
           AND a.status NOT IN ('cancelled', 'declined', 'refunded')
-        HAVING order_paid = 0 OR extras > 0
+        HAVING order_paid = 0 OR extras > 0 OR products > 0
     ");
     $stmt->bind_param("s", $group); $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
@@ -677,7 +684,7 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
                 $ue = $conn->prepare("UPDATE appointment_extra_services SET payment_status='paid', payment_method=? WHERE appointment_id=? AND payment_status != 'paid'");
                 $ue->bind_param("si", $method, $r['appt_id']);
                 $ue->execute(); $ue->close();
-                $paid_total += (float)$r['extras']; $paid_guests[$name] = true;
+                $paid_total += (float)$r['extras'] + visit_products_settle($conn, (int)$r['appt_id'], $method); $paid_guests[$name] = true;
                 continue;
             }
             $base = (float)$r['total_amount'] + (float)$r['extras'];
@@ -704,7 +711,7 @@ function book_now_pay_group(mysqli $conn, string $group, array $discounts, strin
             }
             // Same as check-in: final_amount is the sale after discount; the
             // advance paid at booking is already in, so less is collected now.
-            $paid_total += max(0.0, round($final - (float)$r['adv'], 2)); $paid_guests[$name] = true;
+            $paid_total += max(0.0, round($final - (float)$r['adv'], 2)) + visit_products_settle($conn, (int)$r['appt_id'], $method); $paid_guests[$name] = true;
         }
         $conn->commit();
     } catch (Throwable $e) {

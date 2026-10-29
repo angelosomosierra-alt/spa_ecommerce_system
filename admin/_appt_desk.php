@@ -639,7 +639,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
     function canAddProduct(a) { return ['cancelled', 'declined'].indexOf(a.status) < 0; }
     function productsHtml(a) {
         var bought = (a.products || []).map(function (p) {
-            return '<div><span>' + esc(p.name) + (p.qty > 1 ? ' ×' + p.qty : '') + '</span><span>' + peso(p.amount) + '</span></div>';
+            return '<div><span>' + esc(p.name) + (p.qty > 1 ? ' ×' + p.qty : '') + (p.paid === false ? ' <small>· to collect</small>' : '') + '</span><span>' + peso(p.amount) + '</span></div>';
         }).join('');
         var boughtBlock = bought ? '<div class="dk-bill">' + bought + '</div>' : '';
         if (!canAddProduct(a)) return boughtBlock;
@@ -662,8 +662,12 @@ $DESK_MODAL = !empty($DESK_MODAL);
         return boughtBlock + '<div class="dk-inline" id="dkAddProdBox">' +
             '<div class="dk-svch"><span><b>' + esc(p.name) + '</b></span><span class="dk-amt">' + peso(p.price * qty) + '</span></div>' +
             '<div class="dk-g2"><div><label class="dk-lbl" for="dkAddProdQty">Quantity</label><input id="dkAddProdQty" type="number" min="1" max="' + p.stock + '" value="' + qty + '"></div></div>' +
-            '<div><label class="dk-lbl">Payment method</label><div class="dk-bar">' + PAYS.map(function (m) { return '<button type="button" class="dk-chip sm' + (AP.method === m[0] ? ' sel' : '') + '" data-apm="' + m[0] + '">' + m[1] + '</button>'; }).join('') + '</div></div>' +
-            '<div class="dk-bar"><button type="button" class="dk-btn primary" id="dkAddProdGo">Add &amp; charge</button><button type="button" class="dk-btn" id="dkAddProdBack">Pick another</button><button type="button" class="dk-btn" id="dkAddProdCancel">Cancel</button></div></div>';
+            // Before the visit is done the product goes on its bill (To collect);
+            // after it, it is paid on the spot.
+            (a.status === 'completed'
+                ? '<div><label class="dk-lbl">Payment method</label><div class="dk-bar">' + PAYS.map(function (m) { return '<button type="button" class="dk-chip sm' + (AP.method === m[0] ? ' sel' : '') + '" data-apm="' + m[0] + '">' + m[1] + '</button>'; }).join('') + '</div></div>'
+                : '<p class="dk-hint">Added to this booking\'s bill (To collect) and paid together with the service.</p>') +
+            '<div class="dk-bar"><button type="button" class="dk-btn primary" id="dkAddProdGo">' + (a.status === 'completed' ? 'Add &amp; charge' : 'Add to bill') + '</button><button type="button" class="dk-btn" id="dkAddProdBack">Pick another</button><button type="button" class="dk-btn" id="dkAddProdCancel">Cancel</button></div></div>';
     }
     function wireProducts(a) {
         var open = $('dkAddProdOpen');
@@ -774,6 +778,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
         }).join('');
         var billHtml = '<div class="dk-bill"><div><span>' + (Math.abs(b.order_total - a.service.price) > 0.01 ? 'Order total' : esc(a.service.name)) + '</span><span>' + peso(b.order_total) + '</span></div>' +
             addonBillLines +
+            (b.products_due > 0 ? '<div><span>Products</span><span>' + peso(b.products_due) + '</span></div>' : '') +
             (b.discount ? '<div><span>Discount (' + esc(b.discount_type === 'voucher' && b.voucher_label ? 'voucher: ' + b.voucher_label : b.discount_type) + ')</span><span>−' + peso(b.discount) + '</span></div>' : '') +
             (b.advance ? '<div><span>Down payment' + (b.advance_method ? ' (' + esc(b.advance_method) + ')' : '') + '</span><span>−' + peso(b.advance) + '</span></div>' : '') +
             (b.paid ? '<div><span>Paid' + (b.method ? ' · ' + esc(b.method) : '') + '</span><span>' + peso(b.paid_amount) + '</span></div>' : '') +
@@ -900,13 +905,14 @@ $DESK_MODAL = !empty($DESK_MODAL);
     // for this service and the guest's other unpaid services (paid together
     // through pay_group: discount on the full price, then the advances off).
     function dueWithDisc(a) {
-        var list = [a].concat(sibsOwe(a)), base = 0, elig = 0, adv = 0, paidDue = 0;
+        var list = [a].concat(sibsOwe(a)), base = 0, elig = 0, adv = 0, paidDue = 0, prod = 0;
         list.forEach(function (x) {
             var b = x.bill;
             if (b.paid) paidDue += b.due;
-            else { base += b.order_total + b.addons - b.discount; elig += eligOf(x, x === a); adv += b.advance; }
+            else { base += b.order_total + b.addons - b.discount; elig += eligOf(x, x === a); adv += b.advance; prod += b.products_due || 0; }
         });
-        return paidDue + Math.max(0, base - discAmt(base, S, elig) - adv);
+        // Products on the bill take no service discount.
+        return paidDue + prod + Math.max(0, base - discAmt(base, S, elig) - adv);
     }
     // Pay this guest's services in one go (book_now_pay_group), then run the
     // step (check in / complete) on this service, which is then already paid.

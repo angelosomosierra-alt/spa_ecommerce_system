@@ -75,13 +75,42 @@ function sell_product_booking_group_for_appointment(mysqli $conn, int $appointme
 }
 }
 
+if (!function_exists('visit_products_schema')) {
+// Products added to a booking from the Appointments panel are part of that
+// visit's bill (To collect) and are paid with it: at check-in (Pay now), at
+// Complete, or with Pay for group. orders.visit_appt_id ties them to the
+// booking; orders.paid_at puts them in the Daily Report on the day paid.
+function visit_products_schema(mysqli $conn): void {
+    static $done = false; if ($done) return; $done = true;
+    $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS visit_appt_id INT NULL, ADD COLUMN IF NOT EXISTS paid_at DATETIME NULL");
+}
+function visit_products_due(mysqli $conn, int $appt_id): float {
+    visit_products_schema($conn);
+    $q = $conn->prepare("SELECT COALESCE(SUM(final_amount), 0) FROM orders WHERE visit_appt_id = ? AND payment_status = 'unpaid'");
+    $q->bind_param("i", $appt_id); $q->execute();
+    $t = (float)$q->get_result()->fetch_row()[0]; $q->close();
+    return round($t, 2);
+}
+// Marks this visit's unpaid products paid with $method; returns the amount.
+function visit_products_settle(mysqli $conn, int $appt_id, string $method): float {
+    $due = visit_products_due($conn, $appt_id);
+    if ($due <= 0) return 0.0;
+    $u = $conn->prepare("UPDATE orders SET payment_status = 'paid', payment_method = ?, paid_at = NOW() WHERE visit_appt_id = ? AND payment_status = 'unpaid'");
+    $u->bind_param("si", $method, $appt_id); $u->execute(); $u->close();
+    return $due;
+}
+}
+
 if (!function_exists('sell_product_save')) {
 /**
  * $items: [ ['id' => product id, 'qty' => n], ... ]. Prices and stock come
  * from the database, never the browser; stock is locked (FOR UPDATE) so two
  * receptionists can't sell the last bottle twice.
  */
-function sell_product_save(mysqli $conn, array $items, string $customer, string $slip, string $discount_type, float $voucher_amount, string $payment_method, ?string $booking_group = null): array {
+function sell_product_save(mysqli $conn, array $items, string $customer, string $slip, string $discount_type, float $voucher_amount, string $payment_method, ?string $booking_group = null, ?int $visit_appt_id = null): array {
+    // With a visit ($visit_appt_id): added to that booking's bill, unpaid
+    // until the visit is paid (see visit_products_settle()).
+    if ($visit_appt_id) { visit_products_schema($conn); $payment_method = 'cash'; }
     $qty_by_id = [];
     foreach ($items as $it) {
         $id = (int)($it['id'] ?? 0); $qty = (int)($it['qty'] ?? 0);
@@ -122,8 +151,13 @@ function sell_product_save(mysqli $conn, array $items, string $customer, string 
         $final = max(0.0, $total - $discount);
 
         $uid = get_walkin_customer_id();
-        $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group) VALUES (?, ?, '', ?, ?, 'paid', 'approved', ?, ?, ?, ?, ?)");
-        $stmt->bind_param("isdssddss", $uid, $customer, $total, $payment_method, $discount_type, $discount, $final, $slip, $booking_group);
+        if ($visit_appt_id) {
+            $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group, visit_appt_id) VALUES (?, ?, '', ?, 'onsite', 'unpaid', 'completed', ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("isdsddssi", $uid, $customer, $total, $discount_type, $discount, $final, $slip, $booking_group, $visit_appt_id);
+        } else {
+            $stmt = $conn->prepare("INSERT INTO orders (user_id, customer_name, phone, total_amount, payment_method, payment_status, approval_status, discount_type, discount_amount, final_amount, slip_number, booking_group) VALUES (?, ?, '', ?, ?, 'paid', 'approved', ?, ?, ?, ?, ?)");
+            $stmt->bind_param("isdssddss", $uid, $customer, $total, $payment_method, $discount_type, $discount, $final, $slip, $booking_group);
+        }
         $stmt->execute(); $order_id = $stmt->insert_id; $stmt->close();
 
         $ins = $conn->prepare("INSERT INTO order_items (order_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)");
