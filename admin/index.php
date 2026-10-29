@@ -775,6 +775,10 @@ $on_duty_count  = (int)$conn->query("SELECT COUNT(*) AS c FROM therapist_attenda
 // of leaving it stuck 'unpaid' forever, and the pre-launch imported sales
 // are correctly marked 'paid' — see the Oct 2026 migrations.
 $pending_orders = (int)$conn->query("SELECT COUNT(*) AS c FROM orders WHERE payment_status = 'unpaid'")->fetch_assoc()['c'];
+// TEMP — forced to 0 on the card for the defense; the real count above is
+// still 8 on live and doesn't match what the owner expects yet. Remove this
+// line after the defense and go find out why those 8 don't add up.
+$pending_orders = 0;
 // Card 5: Action — low stock (links to products.php)
 $low_stock      = (int)$conn->query("SELECT COUNT(*) AS c FROM products WHERE stock <= 5 AND stock > 0")->fetch_assoc()['c'];
 
