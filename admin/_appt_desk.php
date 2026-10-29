@@ -169,6 +169,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
 .dk-add-durs { display:flex; flex-wrap:wrap; gap:0.3rem; margin-top:0.35rem; }
 .dk-add-dur { border:1px solid var(--gold); background:#fff; color:var(--brown); border-radius:7px; padding:0.2rem 0.5rem; font-size:0.74rem; font-weight:700; cursor:pointer; }
 .dk-add-dur:hover { background:var(--rust); border-color:var(--rust); color:#fff; }
+.dk-add-dur:disabled, .dk-add-dur:disabled:hover { background:var(--bg3); border-color:var(--border2); color:var(--gray); cursor:not-allowed; }
 </style>
 
 <script>
@@ -646,12 +647,14 @@ $DESK_MODAL = !empty($DESK_MODAL);
         var AP = S.addProduct;
         if (!AP.item) {
             var q = (AP.q || '').toLowerCase();
-            var list = (D.products_catalog || []).filter(function (p) { return !q || (p.name + ' ' + p.cat).toLowerCase().indexOf(q) >= 0; }).slice(0, 12);
+            // In stock first; out-of-stock ones stay listed but can't be added.
+            var list = (D.products_catalog || []).filter(function (p) { return !q || (p.name + ' ' + p.cat).toLowerCase().indexOf(q) >= 0; })
+                .sort(function (x, y) { return (y.stock > 0) - (x.stock > 0); }).slice(0, 12);
             return boughtBlock + '<div class="dk-inline" id="dkAddProdBox">' +
                 '<input class="dk-add-q" id="dkAddProdQ" type="search" placeholder="Search a product…" autocomplete="off" value="' + esc(AP.q || '') + '" aria-label="Search a product">' +
                 '<div class="dk-add-list">' + (list.length ? list.map(function (p) {
                     return '<div class="dk-add-item"><b>' + esc(p.name) + '</b><small>' + esc(p.cat) + ' · ' + p.stock + ' in stock</small>' +
-                        '<div class="dk-add-durs"><button type="button" class="dk-add-dur" data-prodpick="' + p.id + '"' + (p.stock < 1 ? ' disabled' : '') + '>+ ' + pesoS(p.price) + '</button></div></div>';
+                        '<div class="dk-add-durs"><button type="button" class="dk-add-dur" data-prodpick="' + p.id + '"' + (p.stock < 1 ? ' disabled title="Add stock in Products first">Out of stock · ' + pesoS(p.price) : '>+ ' + pesoS(p.price)) + '</button></div></div>';
                 }).join('') : '<span class="dk-hint">No product matches.</span>') + '</div>' +
                 '<div class="dk-bar"><button type="button" class="dk-btn" id="dkAddProdCancel">Cancel</button></div></div>';
         }
