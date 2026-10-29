@@ -770,17 +770,11 @@ $today_appts    = (int)$conn->query("SELECT COUNT(*) AS c FROM appointments WHER
 $pending_appts  = (int)$conn->query("SELECT COUNT(*) AS c FROM appointments WHERE status = 'pending'")->fetch_assoc()['c'];
 // Card 3: Staffing right now (clocked in, not yet timed out)
 $on_duty_count  = (int)$conn->query("SELECT COUNT(*) AS c FROM therapist_attendance WHERE duty_date = CURDATE() AND (time_out IS NULL OR time_out = '')")->fetch_assoc()['c'];
-// Card 4: Action — orders still tied to an appointment that hasn't been
-// approved yet (same meaning as "pending" everywhere else on this page: not
-// yet confirmed, not "completed but unpaid" or "charged to account" — those
-// are real, settled bookings and were never what this card meant to flag).
-$pending_orders = (int)$conn->query("
-    SELECT COUNT(DISTINCT o.id) AS c
-    FROM orders o
-    JOIN order_items oi ON oi.order_id = o.id
-    JOIN appointments a ON a.order_item_id = oi.id
-    WHERE a.status = 'pending'
-")->fetch_assoc()['c'];
+// Card 4: Action — unpaid orders (links to appointments.php). Genuinely
+// "unpaid" now that cancelling/declining a booking voids its order instead
+// of leaving it stuck 'unpaid' forever, and the pre-launch imported sales
+// are correctly marked 'paid' — see the Oct 2026 migrations.
+$pending_orders = (int)$conn->query("SELECT COUNT(*) AS c FROM orders WHERE payment_status = 'unpaid'")->fetch_assoc()['c'];
 // Card 5: Action — low stock (links to products.php)
 $low_stock      = (int)$conn->query("SELECT COUNT(*) AS c FROM products WHERE stock <= 5 AND stock > 0")->fetch_assoc()['c'];
 
