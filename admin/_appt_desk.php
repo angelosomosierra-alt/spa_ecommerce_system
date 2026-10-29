@@ -25,7 +25,14 @@
  */
 $DESK_MODAL = !empty($DESK_MODAL);
 ?>
-<?php if ($DESK_MODAL): ?><div hidden><?php endif; ?>
+<?php if ($DESK_MODAL): ?>
+<!-- On the Dashboard the rest of the board stays hidden below (the Live
+     Resource Grid replaces it) -- but a pending online booking has no room
+     yet, so it never appears in that grid. Without this it would be
+     invisible on the Dashboard entirely; only this one lane stays visible
+     here so staff still see it needs a therapist. -->
+<div id="dkPendingLane" class="dk-board" style="margin-bottom:1.5rem;"></div>
+<div hidden><?php endif; ?>
 <div class="dk-top">
     <div class="dk-bar">
         <input type="text" id="dkQ" class="dk-search" placeholder="Search name, service, therapist" aria-label="Search appointments">
@@ -326,7 +333,8 @@ $DESK_MODAL = !empty($DESK_MODAL);
             try { localStorage.setItem('dkTodayOnly', S.todayOnly ? '1' : '0'); } catch (e) {}
             renderBoard();
         }; });
-        $('dkBoard').innerHTML = LANES.map(function (L) {
+        var pendingEl = $('dkPendingLane');
+        var laneSections = LANES.map(function (L) {
             var list = D.appointments.filter(function (a) {
                 if (laneOf(a) !== L.k) return false;
                 if (S.todayOnly && String(a.when).slice(0, 10) > D.today) return false;
@@ -356,19 +364,31 @@ $DESK_MODAL = !empty($DESK_MODAL);
                 if (d !== lastDay) { html += '<div class="dk-day' + (d < D.today ? ' over' : '') + '">' + (d < D.today ? 'Overdue · ' : '') + dayLabel(it.when) + '</div>'; lastDay = d; }
                 html += it.group ? (it.list.length > 1 || sibsDone(it.list[0]).length ? groupCard(it.list, L.c) : card(it.list[0], L.c)) : card(it.a, L.c);
             });
-            return '<section class="dk-lane"><h2><span>' + L.l + '<small>' + L.s + '</small></span><span class="dk-count">' + list.length + '</span></h2>' +
-                (list.length ? html : '<div class="dk-empty">Nothing here.</div>') + '</section>';
-        }).join('');
-        $('dkBoard').querySelectorAll('.dk-card[data-id], .dk-grow[data-id], .dk-srow[data-id]').forEach(function (c) {
-            c.onclick = function (e) { if (e.target.closest('[data-go], [data-rmwait]')) return; e.stopPropagation(); openDrawer(+c.dataset.id); };
-            c.onkeydown = function (e) { if (e.key === 'Enter' && e.target === c) openDrawer(+c.dataset.id); };
+            return { k: L.k, html: '<section class="dk-lane"><h2><span>' + L.l + '<small>' + L.s + '</small></span><span class="dk-count">' + list.length + '</span></h2>' +
+                (list.length ? html : '<div class="dk-empty">Nothing here.</div>') + '</section>' };
         });
-        $('dkBoard').querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { openDrawer(+b.dataset.id, b.dataset.go); }; });
-        $('dkBoard').querySelectorAll('[data-rmwait]').forEach(function (b) { b.onclick = function (e) {
-            e.stopPropagation();
-            if (!confirm('Remove this service? The customer no longer wants it.')) return;
-            post('cancel', +b.dataset.rmwait, { cancel_reason: 'Removed before it started' });
-        }; });
+        // A pending online booking has no room yet, so it never appears in
+        // the Dashboard's Live Resource Grid -- #dkPendingLane (outside the
+        // hidden wrapper there) keeps that one lane visible on its own.
+        if (pendingEl) {
+            pendingEl.innerHTML = laneSections.filter(function (x) { return x.k === 'pending'; }).map(function (x) { return x.html; }).join('');
+            $('dkBoard').innerHTML = laneSections.filter(function (x) { return x.k !== 'pending'; }).map(function (x) { return x.html; }).join('');
+        } else {
+            $('dkBoard').innerHTML = laneSections.map(function (x) { return x.html; }).join('');
+        }
+        [$('dkBoard'), pendingEl].forEach(function (root) {
+            if (!root) return;
+            root.querySelectorAll('.dk-card[data-id], .dk-grow[data-id], .dk-srow[data-id]').forEach(function (c) {
+                c.onclick = function (e) { if (e.target.closest('[data-go], [data-rmwait]')) return; e.stopPropagation(); openDrawer(+c.dataset.id); };
+                c.onkeydown = function (e) { if (e.key === 'Enter' && e.target === c) openDrawer(+c.dataset.id); };
+            });
+            root.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { openDrawer(+b.dataset.id, b.dataset.go); }; });
+            root.querySelectorAll('[data-rmwait]').forEach(function (b) { b.onclick = function (e) {
+                e.stopPropagation();
+                if (!confirm('Remove this service? The customer no longer wants it.')) return;
+                post('cancel', +b.dataset.rmwait, { cancel_reason: 'Removed before it started' });
+            }; });
+        });
     }
     function payPill(a) {
         var b = a.bill;
@@ -1067,9 +1087,9 @@ $DESK_MODAL = !empty($DESK_MODAL);
         return load().then(go);
     };
     <?php if (!$DESK_MODAL && !empty($message)): ?>toast(<?php echo json_encode($message); ?>, <?php echo json_encode(($message_type ?? '') === 'danger'); ?>);<?php endif; ?>
-    if (!MODAL) {
-        load();
-        setInterval(function () { if (!S.open && !document.hidden) load(); }, 60000);
-    }
+    // Loaded on the Dashboard too (not just the standalone board) so
+    // #dkPendingLane has something to show without waiting for a click.
+    load();
+    setInterval(function () { if (!S.open && !document.hidden) load(); }, 60000);
 })();
 </script>
