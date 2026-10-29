@@ -89,23 +89,14 @@
 
         var btn = (e.submitter && form.contains(e.submitter)) ? e.submitter : null;
         if (!btn) btn = form.querySelector('button[type="submit"]:not([disabled]), input[type="submit"]:not([disabled])');
-        if (btn) {
-            // Disabled form controls are left out of the submission the browser
-            // is about to serialize — so disabling the clicked button here would
-            // silently drop its name=value (e.g. login=, add_product=...) from
-            // $_POST, and many handlers gate their whole branch on
-            // isset($_POST['<that name>']). A hidden shadow field carries the
-            // same pair through, unaffected by the button being disabled.
-            if (btn.name) {
-                var shadow = document.createElement('input');
-                shadow.type = 'hidden';
-                shadow.name = btn.name;
-                shadow.value = btn.value || '';
-                form.appendChild(shadow);
-            }
+        // Disabled only after the browser has collected the form data: a
+        // button disabled during this event is left out of the POST, and many
+        // handlers check the clicked button's name (add_to_cart, save_...).
+        // The busy flag above already blocks a second submit meanwhile.
+        if (btn) setTimeout(function () {
             btn.disabled = true;
             btn.classList.add('_uim_busy');
-        }
+        }, 0);
 
         setTimeout(function () {
             form.dataset.uimBusy = '0';

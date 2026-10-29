@@ -39,7 +39,6 @@
                         <div class="bn-tabs2"><button type="button" data-mode="new" class="on">New services</button><button type="button" data-mode="pkg">Continue a package</button></div>
                         <p class="bn-ct">Add <span id="bnAddWhat">services</span> to <span id="bnAddTo">Guest 1</span></p>
                         <input type="text" id="bnQ" class="bn-input" placeholder="Search services&hellip;" autocomplete="off" aria-label="Search services">
-                        <div class="bn-chips" id="bnCats"></div>
                         <div class="bn-svcs" id="bnSvcs"></div>
                         <p class="bn-hint">Tap a duration to add it to the selected guest. <b>+ All guests</b> adds it to everyone in one tap.</p>
                     </div>
@@ -228,7 +227,7 @@
                     });
                     S.open = null; S.saving = false;
                 } else {
-                    S = { guests: [newGuest()], active: 0, cat: 'All', open: null, saving: false, mode: 'new', dp: '', dpm: 'gcash' };
+                    S = { guests: [newGuest()], active: 0, open: null, saving: false, mode: 'new', dp: '', dpm: 'gcash' };
                     $('bnQ').value = ''; $('bnOptOrder').checked = true; $('bnOptSame').checked = true;
                 }
                 var nd = new Date(); $('bnDate').min = nd.getFullYear() + '-' + ('0' + (nd.getMonth() + 1)).slice(-2) + '-' + ('0' + nd.getDate()).slice(-2);
@@ -411,15 +410,11 @@
         document.querySelectorAll('#bookNowModal .bn-tabs2 button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === S.mode); });
         $('bnAddWhat').textContent = S.mode === 'pkg' ? 'a package session' : 'services';
         $('bnQ').placeholder = S.mode === 'pkg' ? 'Search customer name…' : 'Search services…';
-        $('bnCats').hidden = S.mode === 'pkg';
         if (S.mode === 'pkg') { renderPackages(); return; }
-        var cats = ['All'];
-        D.services.forEach(function (s) { if (cats.indexOf(s.cat) < 0) cats.push(s.cat); });
-        $('bnCats').innerHTML = cats.map(function (c) { return '<button type="button" class="bn-chip' + (S.cat === c ? ' sel' : '') + '" data-c="' + esc(c) + '">' + esc(c) + '</button>'; }).join('');
-        $('bnCats').querySelectorAll('.bn-chip').forEach(function (b) { b.onclick = function () { S.cat = b.dataset.c; renderCatalog(); }; });
 
         var q = $('bnQ').value.trim().toLowerCase();
-        var list = D.services.filter(function (s) { return (S.cat === 'All' || s.cat === S.cat) && (!q || s.name.toLowerCase().indexOf(q) >= 0); });
+        // No category chips: the search also matches the category (e.g. "nail").
+        var list = D.services.filter(function (s) { return !q || (s.name + ' ' + s.cat).toLowerCase().indexOf(q) >= 0; });
         $('bnSvcs').innerHTML = list.length ? list.map(function (s) {
             return '<div class="bn-svc"><div class="nm">' + esc(s.name) + '<span>' + esc(s.cat) + '</span></div><div class="bn-durs">' +
                 s.durs.map(function (d, di) { return '<button type="button" class="bn-dur" data-s="' + s.id + '" data-d="' + di + '"' + (d.n > 1 ? ' title="' + d.n + '-session package: session 1 now, the rest scheduled later in Appointments"' : '') + '>+ ' + d.m + ' min' + (d.n > 1 ? ' × ' + d.n + ' sessions' : '') + ' · ' + pesoShort(d.p) + (d.promo ? ' promo' : '') + '</button>'; }).join('') +

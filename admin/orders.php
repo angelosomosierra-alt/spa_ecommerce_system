@@ -37,6 +37,7 @@ if (isset($_GET['approve_order'])) {
     $approver_id = (int)$_SESSION['user_id'];
     $approver_nm = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
     $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_by_name VARCHAR(120) NULL");
+    $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at DATETIME NULL");
 
     $stmt = $conn->prepare("SELECT payment_method, payment_status, user_id, total_amount FROM orders WHERE id=?");
     $stmt->bind_param("i",$id); $stmt->execute();
@@ -46,9 +47,11 @@ if (isset($_GET['approve_order'])) {
         $stmt = $conn->prepare("UPDATE orders SET approval_status='approved', approved_by=?, approved_by_name=? WHERE id=?");
         $stmt->bind_param("isi", $approver_id, $approver_nm, $id); $stmt->execute(); $stmt->close();
 
-        if (in_array($o['payment_method'], ['onsite','cash','gcash','maya','qrph','bank','card'])) {
+        // Pay at Spa ('onsite') is paid when the customer picks the order up
+        // (Complete), so the Daily Report counts it on that day.
+        if (in_array($o['payment_method'], ['cash','gcash','maya','qrph','bank','card'])) {
             // Guard: only mark paid for product orders; service orders are paid via the Complete action in appointments.php
-            $stmt = $conn->prepare("UPDATE orders o INNER JOIN order_items oi ON oi.order_id=o.id AND oi.product_id IS NOT NULL SET o.payment_status='paid' WHERE o.id=?");
+            $stmt = $conn->prepare("UPDATE orders o INNER JOIN order_items oi ON oi.order_id=o.id AND oi.product_id IS NOT NULL SET o.payment_status='paid', o.paid_at=IFNULL(o.paid_at, NOW()) WHERE o.id=?");
             $stmt->bind_param("i",$id); $stmt->execute(); $stmt->close();
         }
 
@@ -70,6 +73,7 @@ if (isset($_GET['complete_order'])) {
     $id         = intval($_GET['complete_order']);
     $updater_nm = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
     $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_by_name VARCHAR(120) NULL");
+    $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at DATETIME NULL");
 
     $stmt = $conn->prepare("SELECT user_id, total_amount FROM orders WHERE id=?");
     $stmt->bind_param("i", $id); $stmt->execute();
@@ -77,7 +81,7 @@ if (isset($_GET['complete_order'])) {
 
     if ($o) {
         // Guard: only mark paid for product orders; service orders are paid via the Complete action in appointments.php
-        $stmt = $conn->prepare("UPDATE orders o INNER JOIN order_items oi ON oi.order_id=o.id AND oi.product_id IS NOT NULL SET o.approval_status='completed', o.payment_status='paid', o.updated_by_name=? WHERE o.id=? AND o.approval_status='approved'");
+        $stmt = $conn->prepare("UPDATE orders o INNER JOIN order_items oi ON oi.order_id=o.id AND oi.product_id IS NOT NULL SET o.approval_status='completed', o.payment_status='paid', o.paid_at=IFNULL(o.paid_at, NOW()), o.updated_by_name=? WHERE o.id=? AND o.approval_status='approved'");
         $stmt->bind_param("si", $updater_nm, $id); $stmt->execute(); $stmt->close();
 
         require_once __DIR__ . '/../notify.php';
@@ -96,9 +100,15 @@ if (isset($_GET['reject_order'])) {
     $updater_nm = $_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin');
     $conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_by_name VARCHAR(120) NULL");
 
-    $stmt = $conn->prepare("SELECT user_id, total_amount FROM orders WHERE id=?");
+    $stmt = $conn->prepare("SELECT user_id, total_amount, approval_status FROM orders WHERE id=?");
     $stmt->bind_param("i",$id); $stmt->execute();
     $o = $stmt->get_result()->fetch_assoc(); $stmt->close();
+
+    // The products were taken from stock at checkout: put them back (once).
+    if ($o && !in_array($o['approval_status'], ['declined', 'completed'], true)) {
+        $stmt = $conn->prepare("UPDATE products p JOIN order_items oi ON oi.product_id = p.id SET p.stock = p.stock + oi.quantity WHERE oi.order_id = ? AND oi.product_id IS NOT NULL");
+        $stmt->bind_param("i", $id); $stmt->execute(); $stmt->close();
+    }
 
     $stmt = $conn->prepare("UPDATE orders SET payment_status='rejected', approval_status='declined', updated_by_name=? WHERE id=?");
     $stmt->bind_param("si",$updater_nm,$id); $stmt->execute(); $stmt->close();

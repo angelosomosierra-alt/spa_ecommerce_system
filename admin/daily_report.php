@@ -1016,6 +1016,9 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $promo_price = $sd_promo > 0 ? $sd_promo : $regular_price;
         // A booking for several people is one row: its prices are for all of them.
         $regular_price *= (int)$ap['people']; $promo_price *= (int)$ap['people'];
+        // Sold at its promo price (price mode Promo): the sale is the promo
+        // price, so Regular Price (summed into POS READING) is too.
+        if ($charged_amount > 0 && $charged_amount < $regular_price && abs($charged_amount - $promo_price) < 0.01) $regular_price = $charged_amount;
         // One session of a package started before the system tracked it:
         // its price is that session's share, as in the sales report.
         if (!empty($ap['package_followup_id'])) $regular_price = $promo_price = $charged_amount;
@@ -1254,6 +1257,9 @@ function ss_zero_commission_reason(mysqli $conn, array $r, bool $locked): string
         $therapist_id  = (int)($ex['therapist_id'] ?? 0);
         $regular_price = (float)($ex['regular_price'] ?? 0);
         $promo_price   = (float)($ex['charged_price'] ?? 0);
+        // Added at a lower price (promo, or free/complimentary): Regular Price,
+        // summed into POS READING, is what it was sold for.
+        if ($promo_price < $regular_price) $regular_price = $promo_price;
         $total_comm    = (float)($ex['commission'] ?? 0);
         // Route commission to the column(s) matching the therapist's actual
         // rate(s) -- package-aware, see route_commission_to_buckets().

@@ -605,6 +605,9 @@ $_ps->bind_param("s", $report_date); $_ps->execute();
 $product_sales = $_ps->get_result()->fetch_all(MYSQLI_ASSOC); $_ps->close();
 
 // ── System product orders ─────────────────────────────────────────────────────
+// Counted on the day they were paid: an online order picked up and paid the
+// next day belongs to that day (paid_at); a sale at the desk is paid at once.
+$conn->query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at DATETIME NULL");
 $_spo = $conn->prepare("
     SELECT
         COALESCE(p.name, '[Deleted Product]') AS particular,
@@ -620,7 +623,7 @@ $_spo = $conn->prepare("
     JOIN   orders    o  ON o.id   = oi.order_id
     LEFT JOIN products  p  ON p.id   = oi.product_id
     WHERE  oi.product_id IS NOT NULL
-      AND  DATE(o.created_at) = ?
+      AND  DATE(COALESCE(o.paid_at, o.created_at)) = ?
       AND  o.payment_status   = 'paid'
     ORDER BY o.id ASC, oi.id ASC
 ");

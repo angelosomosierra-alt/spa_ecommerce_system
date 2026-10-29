@@ -26,7 +26,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
     <?php include __DIR__ . '/../_favicon.php'; ?>
 <link rel="stylesheet" href="../assets/style.css?v=<?php echo filemtime('../assets/style.css'); ?>">
 <link rel="stylesheet" href="../assets/responsive.css?v=<?php echo filemtime('../assets/responsive.css'); ?>">
-<script src="../assets/ui-modal.js"></script>
+<script src="../assets/ui-modal.js?v=<?php echo filemtime(__DIR__ . '/../assets/ui-modal.js'); ?>"></script>
     <style>
         /* ── Cart icon button ── */
         .cart-icon-btn {
