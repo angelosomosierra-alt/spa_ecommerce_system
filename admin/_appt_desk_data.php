@@ -83,7 +83,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
         foreach ($conn->query("
             SELECT aes.id, aes.appointment_id, aes.service_id, aes.therapist_id, aes.person_label, aes.charged_price,
                    aes.payment_status, aes.payment_method, aes.session_number, aes.total_sessions, aes.extra_group_id,
-                   aes.session_status, aes.therapist_selected, aes.is_upgrade_topup, s.name, c.name AS category_name
+                   aes.session_status, aes.therapist_selected, aes.is_upgrade_topup, aes.slip_number, s.name, c.name AS category_name
             FROM appointment_extra_services aes
             JOIN services s ON s.id = aes.service_id
             LEFT JOIN categories c ON c.id = s.category_id
@@ -151,12 +151,14 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
             $key = ((int)$e['total_sessions'] > 1 && $e['extra_group_id']) ? 'g' . $e['extra_group_id'] : 'e' . $e['id'];
             if (!isset($addons[$key])) {
                 $addons[$key] = [
-                    'name' => $e['name'], 'service_id' => (int)$e['service_id'], 'price' => 0.0,
+                    'id' => (int)$e['id'], 'name' => $e['name'], 'service_id' => (int)$e['service_id'], 'price' => 0.0,
                     'res' => book_now_resource_type($e['category_name']), 'qual' => $qual((int)$e['service_id']),
                     'person' => $e['person_label'], 'rows' => [],
                     'med' => service_is_medical($conn, (int)$e['service_id']),
                     'topup' => !empty($e['is_upgrade_topup']),
                     'nodisc' => $e_nodisc,
+                    'slip_aes' => service_uses_aesthetic_slip($e['category_name'] ?? '', $e['name'] ?? ''),
+                    'slip' => $e['slip_number'] ?? '',
                 ];
             }
             $addons[$key]['price'] += (float)$e['charged_price'];

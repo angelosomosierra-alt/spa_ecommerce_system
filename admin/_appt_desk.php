@@ -699,8 +699,12 @@ $DESK_MODAL = !empty($DESK_MODAL);
                 return '<div class="dk-srow"><span class="dk-dot ' + (r.status === 'completed' ? 'done' : '') + '">' + r.n + '</span><span>Session ' + r.n + ' of ' + r.of + '<small>' + (r.status === 'completed' ? 'Done' : 'Not done yet') + '</small></span>' +
                     (!locked && r.status !== 'completed' && a.status === 'approved' ? '<button type="button" class="dk-btn ok" data-xdone="' + r.id + '">Mark done</button>' : '') + '</div>';
             }).join('') + '</div>' : '';
+            var slipHtml = x.slip_aes ? ('<div class="dk-g2"><div><label class="dk-lbl" for="dkXSlip' + xi + '">Aesthetic slip #</label>' +
+                (locked ? '<div class="dk-hint">' + esc(x.slip || '—') + '</div>' : '<input id="dkXSlip' + xi + '" type="text" maxlength="50" placeholder="Aesthetic slip number" value="' + esc(x.slip || '') + '" data-xslip="' + x.id + '">') + '</div>' +
+                '<div><label class="dk-lbl">Slip type</label><span class="dk-slipk aes">Aesthetic slip</span></div></div>') : '';
             return '<div class="dk-svc"><div class="dk-svch"><span><b>' + esc(x.name) + '</b> <small>add-on' + (x.rows.length > 1 ? ' · ' + x.rows.length + ' sessions' : '') + (x.person ? ' · ' + esc(x.person) : '') + '</small></span><span class="dk-amt">' + peso(x.price) + '</span></div>' +
                 (x.med ? '<div><label class="dk-lbl">Done by</label><div class="dk-hint">Doctor / Nurse</div></div>' : locked ? '<div class="dk-hint">' + esc(TH[th] ? TH[th].name : '—') + '</div>' : '<div><label class="dk-lbl">Therapist</label>' + therSelect(x.qual, th, 'data-xth="' + xi + '"', a.status === 'pending') + '</div>') +
+                slipHtml +
                 rows +
                 (!locked && !x.rows.some(function (r) { return r.paid || r.status === 'completed'; }) ? '<button type="button" class="dk-btn danger" data-xrm="' + xi + '" style="align-self:flex-start;">Remove add-on</button>' : '') +
                 '</div>';
@@ -719,9 +723,15 @@ $DESK_MODAL = !empty($DESK_MODAL);
 
         // Bill
         var owe = sibsOwe(a);
+        var addonBillLines = a.addons.map(function (x) {
+            if (x.price <= 0.005) return '';
+            var label = x.topup ? 'Upgrade difference' : (esc(x.name) + (x.person ? ' · ' + esc(x.person) : ''));
+            var paidRows = x.rows.filter(function (r) { return r.paid; }).length;
+            var tag = paidRows === x.rows.length ? ' · paid' : paidRows === 0 ? ' · to pay' : ' · partly paid';
+            return '<div><span>' + label + tag + '</span><span>' + peso(x.price) + '</span></div>';
+        }).join('');
         var billHtml = '<div class="dk-bill"><div><span>' + (Math.abs(b.order_total - a.service.price) > 0.01 ? 'Order total' : esc(a.service.name)) + '</span><span>' + peso(b.order_total) + '</span></div>' +
-            (b.addons - b.addons_unpaid > 0.005 ? '<div><span>Added services · paid</span><span>' + peso(b.addons - b.addons_unpaid) + '</span></div>' : '') +
-            (b.addons_unpaid > 0.005 ? '<div><span>Added services · to pay</span><span>' + peso(b.addons_unpaid) + '</span></div>' : '') +
+            addonBillLines +
             (b.discount ? '<div><span>Discount (' + esc(b.discount_type === 'voucher' && b.voucher_label ? 'voucher: ' + b.voucher_label : b.discount_type) + ')</span><span>−' + peso(b.discount) + '</span></div>' : '') +
             (b.advance ? '<div><span>Down payment' + (b.advance_method ? ' (' + esc(b.advance_method) + ')' : '') + '</span><span>−' + peso(b.advance) + '</span></div>' : '') +
             (b.paid ? '<div><span>Paid' + (b.method ? ' · ' + esc(b.method) : '') + '</span><span>' + peso(b.paid_amount) + '</span></div>' : '') +
@@ -881,6 +891,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
         }; });
         var room = $('dkRoom'); if (room) room.onchange = function () { if (room.value) post('set_resource', a.id, { resource_id: room.value }); };
         var slip = $('dkSlip'); if (slip) slip.onchange = function () { post('set_slip', a.id, { slip_number: slip.value.trim() }); };
+        W.querySelectorAll('[data-xslip]').forEach(function (inp) { inp.onchange = function () { post('set_extra_slip', a.id, { extra_id: inp.dataset.xslip, slip_number: inp.value.trim() }); }; });
         W.querySelectorAll('[data-xrm]').forEach(function (bt) { bt.onclick = function () {
             var rows = a.addons[+bt.dataset.xrm].rows, chain = Promise.resolve();
             rows.forEach(function (r) { chain = chain.then(function () { return post('remove_extra_service', a.id, { extra_id: r.id }, true); }); });

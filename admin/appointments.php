@@ -1178,6 +1178,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_s
     exit();
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_extra_slip') {
+    verify_csrf_token();
+    header('Content-Type: application/json');
+    $ses_extra_id = intval($_POST['extra_id'] ?? 0);
+    $ses_slip     = mb_substr(trim(sanitize_input($_POST['slip_number'] ?? '')), 0, 50);
+    $ses_slip     = $ses_slip !== '' ? $ses_slip : null;
+    if ($ses_extra_id <= 0) { echo json_encode(['success' => false, 'message' => 'Add-on not found.']); exit(); }
+    $ses_u = $conn->prepare("UPDATE appointment_extra_services SET slip_number = ? WHERE id = ?");
+    $ses_u->bind_param("si", $ses_slip, $ses_extra_id); $ses_u->execute(); $ses_u->close();
+    echo json_encode(['success' => true]);
+    exit();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_resource') {
     verify_csrf_token();
     header('Content-Type: application/json');
