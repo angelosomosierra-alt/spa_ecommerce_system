@@ -64,6 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_cashier'])) {
 
     // Map button value → admin_role column value
     $valid_roles   = ['cashier' => 'cashier', 'marketing' => 'marketing', 'it' => 'it', 'hr' => 'hr'];
+    // users.admin_role was created without 'hr', so an HR account was saved with
+    // no role at all. Add it before saving.
+    $_ar = $conn->query("SHOW COLUMNS FROM users LIKE 'admin_role'")->fetch_assoc();
+    if ($_ar && strpos($_ar['Type'], "'hr'") === false) $conn->query("ALTER TABLE users MODIFY admin_role ENUM('owner','cashier','marketing','it','hr') NULL DEFAULT NULL");
     $admin_role_val = $valid_roles[$role_type] ?? 'cashier';
     $role_labels   = ['cashier' => 'Receptionist', 'marketing' => 'Marketing', 'it' => 'IT Support', 'hr' => 'HR'];
     $role_label    = $role_labels[$admin_role_val] ?? 'Staff';

@@ -24,6 +24,8 @@ if (isset($_SESSION['user_id'])) {
 $login_error = '';
 if (isset($_GET['ended'])) {
     $login_error = 'Your session was ended because the account was signed in on another device.';
+} elseif (isset($_GET['norole'])) {
+    $login_error = 'This account has no role yet. Ask the owner to set it in Staff.';
 } elseif (isset($_GET['hours_ended'])) {
     $login_error = 'Your session ended — receptionist login is no longer within the allowed hours.';
 }

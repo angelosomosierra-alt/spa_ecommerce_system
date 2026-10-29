@@ -106,42 +106,6 @@ function enforce_page_access(): void {
         exit();
     }
 
-    // Per-request re-validation for cashier: session token + login hours
-    if ($role === 'cashier') {
-        global $conn;
-        $uid = (int)($_SESSION['user_id'] ?? 0);
-        $tok = $_SESSION['session_token'] ?? '';
-
-        $s = $conn->prepare("SELECT session_token, session_started FROM users WHERE id=? AND role='admin'");
-        $s->bind_param("i", $uid);
-        $s->execute();
-        $db_row = $s->get_result()->fetch_assoc();
-        $s->close();
-
-        if (!$db_row || $db_row['session_token'] !== $tok) {
-            session_unset();
-            session_destroy();
-            header('Location: ' . BASE_URL . 'admin/admin_login.php?ended=1');
-            exit();
-        }
-
-        $tz_r = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_timezone' LIMIT 1")->fetch_assoc();
-        $st_r = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_login_start' LIMIT 1")->fetch_assoc();
-        $en_r = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='receptionist_login_end' LIMIT 1")->fetch_assoc();
-        date_default_timezone_set($tz_r['setting_value'] ?? 'Asia/Manila');
-        $now  = date('H:i');
-        $tst  = $st_r['setting_value'] ?? '07:00';
-        $tend = $en_r['setting_value'] ?? '23:59';
-
-        if ($now < $tst || $now > $tend) {
-            $clr = $conn->prepare("UPDATE users SET session_token=NULL, session_started=NULL WHERE id=?");
-            $clr->bind_param("i", $uid);
-            $clr->execute();
-            $clr->close();
-            session_unset();
-            session_destroy();
-            header('Location: ' . BASE_URL . 'admin/admin_login.php?hours_ended=1');
-            exit();
-        }
-    }
+    // Unknown role, and the receptionist's one-device session + login hours (config.php).
+    admin_session_checks();
 }

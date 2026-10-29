@@ -1233,6 +1233,44 @@ function redirect_if_not_admin(): void {
         header('Location: ' . BASE_URL . 'admin/admin_login.php');
         exit();
     }
+    admin_session_checks();
+}
+
+/**
+ * Runs on every admin page (redirect_if_not_admin / enforce_page_access):
+ * an account without a known role is signed out, and a receptionist's
+ * session must still be the current one (one device at a time) and within
+ * the allowed login hours.
+ */
+function admin_session_checks(): void {
+    global $conn;
+    if (!in_array(current_admin_role(), ['owner', 'it', 'hr', 'marketing', 'cashier'], true)) {
+        session_unset(); session_destroy();
+        header('Location: ' . BASE_URL . 'admin/admin_login.php?norole=1');
+        exit();
+    }
+    if (!is_cashier()) return;
+    $uid = (int)($_SESSION['user_id'] ?? 0);
+    $tok = $_SESSION['session_token'] ?? '';
+    $s = $conn->prepare("SELECT session_token FROM users WHERE id=? AND role='admin'");
+    $s->bind_param("i", $uid); $s->execute();
+    $db_row = $s->get_result()->fetch_assoc(); $s->close();
+    if (!$db_row || $tok === '' || $db_row['session_token'] !== $tok) {
+        session_unset(); session_destroy();
+        header('Location: ' . BASE_URL . 'admin/admin_login.php?ended=1');
+        exit();
+    }
+    $set = [];
+    $r = $conn->query("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('receptionist_timezone','receptionist_login_start','receptionist_login_end')");
+    if ($r) foreach ($r->fetch_all(MYSQLI_ASSOC) as $row) $set[$row['setting_key']] = $row['setting_value'];
+    $now = (new DateTime('now', new DateTimeZone($set['receptionist_timezone'] ?? 'Asia/Manila')))->format('H:i');
+    if ($now < ($set['receptionist_login_start'] ?? '07:00') || $now > ($set['receptionist_login_end'] ?? '23:59')) {
+        $clr = $conn->prepare("UPDATE users SET session_token=NULL, session_started=NULL WHERE id=?");
+        $clr->bind_param("i", $uid); $clr->execute(); $clr->close();
+        session_unset(); session_destroy();
+        header('Location: ' . BASE_URL . 'admin/admin_login.php?hours_ended=1');
+        exit();
+    }
 }
 
 function redirect_if_not_user(): void {

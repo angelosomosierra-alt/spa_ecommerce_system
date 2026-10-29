@@ -8,6 +8,7 @@ require_once '../config.php';
 redirect_if_not_admin();
 
 $report_date = $_GET['date'] ?? date('Y-m-d');
+if (is_cashier()) $report_date = date('Y-m-d'); // receptionist: today's report only, as on the Daily Report page
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $report_date) || !strtotime($report_date)) {
     $report_date = date('Y-m-d');
 }

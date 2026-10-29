@@ -22,8 +22,19 @@ if (isset($_POST['verify_pin_only'])) {
     if (!$row) {
         echo json_encode(['ok' => false, 'error' => 'Incorrect PIN. Try again.']); exit();
     }
+    // The action that follows (approve / complete / decline) checks this, so
+    // the PIN can't be skipped by opening the action's link directly.
+    $_SESSION['order_pin_at'] = time();
     echo json_encode(['ok' => true, 'name' => $row['full_name']]);
     exit();
+}
+
+// Receptionist: an order action needs the PIN just entered (within 2 minutes), once.
+foreach (['approve_order', 'complete_order', 'reject_order', 'decline_online'] as $_oa) {
+    if (isset($_GET[$_oa]) && is_cashier()) {
+        if (time() - (int)($_SESSION['order_pin_at'] ?? 0) > 120) { header("Location: orders.php?msg=pin_needed"); exit(); }
+        unset($_SESSION['order_pin_at']);
+    }
 }
 
 // Cashier access denied to non-approval pages — redirect to orders
@@ -225,6 +236,7 @@ require_once 'admin_header.php';
         'approved'               => 'Order approved! Customer has been notified that their order is ready for pick up.',
         'completed'              => 'Order marked as completed! Transaction is done.',
         'rejected'               => 'Order declined.',
+        'pin_needed'             => 'Enter your PIN to approve, complete or decline an order.',
         'refunded'               => 'Order declined and full refund issued to customer via PayMongo.',
         'declined_no_refund'     => 'Order declined. No payment was collected so no refund was needed.',
         'declined_refund_failed' => 'Order declined, but the automatic refund failed: <strong>' . htmlspecialchars($_GET['err'] ?? '') . '</strong>. Please issue the refund manually in your <a href="https://dashboard.paymongo.com" target="_blank" style="color:inherit;font-weight:bold;">PayMongo dashboard</a>.',
