@@ -26,8 +26,13 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
     // whatever its date: nothing drops off until it's completed, cancelled or
     // declined. Completed bookings come back for the last $done_days days, for
     // the Completed section (view + Undo complete).
+    // Unpaid / Charge to picked at check-in (see checkin_appointment).
+    $conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS owe_method VARCHAR(10) NULL, ADD COLUMN IF NOT EXISTS owe_to VARCHAR(120) NULL");
+    // Add-on slip # (database/migrations/2026_10_29_add_slip_number_to_extra_services.sql),
+    // added here too so the board still opens where that file wasn't run.
+    $conn->query("ALTER TABLE appointment_extra_services ADD COLUMN IF NOT EXISTS slip_number VARCHAR(50) NULL DEFAULT NULL AFTER person_label");
     $stmt = $conn->prepare("
-        SELECT a.id, a.user_id, a.status, a.appointment_date, a.people_count, a.customer_note,
+        SELECT a.id, a.user_id, a.status, a.appointment_date, a.people_count, a.customer_note, a.owe_method, a.owe_to,
                a.charged_price, a.advance_payment, a.advance_payment_date, a.advance_payment_method,
                a.resource_id, a.duration_minutes, a.service_id, a.order_item_id, a.rate_type,
                a.session_group_id, a.upgraded_from,
@@ -204,6 +209,7 @@ function appt_desk_data(mysqli $conn, int $done_days = 7): array {
             'online' => !$is_walkin,
             'people' => max(1, (int)$r['people_count']),
             'rate_type' => $r['rate_type'] ?: 'regular',
+            'owe' => $r['owe_method'] ? ['m' => $r['owe_method'], 'to' => $r['owe_to'] ?? ''] : null,
             'upgraded_from' => $r['upgraded_from'] ?? null,
             'slip' => $r['slip_number'] ?? '',
             'slip_aes' => service_uses_aesthetic_slip($r['category_name'] ?? '', $r['service_name'] ?? ''),

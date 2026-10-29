@@ -1499,6 +1499,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 $message = 'Please choose Pay Now or Pay Later.'; $message_type = 'danger';
                 goto end_action;
             }
+            // Unpaid / Charge to chosen at check-in: nothing is collected now;
+            // the choice is kept and the Unpaid is recorded at Complete.
+            $ci_owe = in_array($_POST['owe_method'] ?? '', ['unpaid', 'charge'], true) ? $_POST['owe_method'] : '';
+            $ci_owe_to = $ci_owe === 'charge' ? trim(sanitize_input($_POST['owe_to'] ?? '')) : '';
+            if ($ci_owe === 'charge' && $ci_owe_to === '') {
+                $message = 'Type the company or hotel to charge it to.'; $message_type = 'danger';
+                goto end_action;
+            }
+            if ($ci_owe !== '') {
+                $pay_choice = 'later';
+                $conn->query("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS owe_method VARCHAR(10) NULL, ADD COLUMN IF NOT EXISTS owe_to VARCHAR(120) NULL");
+                $ow = $conn->prepare("UPDATE appointments SET owe_method = ?, owe_to = ? WHERE id = ?");
+                $ow->bind_param("ssi", $ci_owe, $ci_owe_to, $appt_id); $ow->execute(); $ow->close();
+            }
 
             // ── Check-in + payment + Session 2 advance attribution — atomic transaction ──
             $conn->begin_transaction();
@@ -1681,7 +1695,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 ? $pr['full_name']
                 : ($_SESSION['full_name'] ?? ($_SESSION['username'] ?? 'Admin'));
             $cp_pay_method = sanitize_input($_POST['complete_pay_method'] ?? 'cash');
-            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','unpaid','later'])) $cp_pay_method = 'cash';
+            if (!in_array($cp_pay_method, ['cash','gcash','maya','qrph','card','swiper','unpaid','charge','later'])) $cp_pay_method = 'cash';
+            // 'charge' (Charge to): an Unpaid billed to a company or hotel.
+            $cp_is_charge = $cp_pay_method === 'charge';
+            if ($cp_is_charge) $cp_pay_method = 'unpaid';
             // 'later': one of a guest's several services from one booking, done
             // before the last one. It stays unpaid and is paid together with the
             // last service (Pay for this guest). Only for such a visit.
@@ -1704,6 +1721,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                 }
             }
             $cp_unpaid_billto = trim(sanitize_input($_POST['complete_unpaid_billto'] ?? ''));
+            if ($cp_is_charge && $cp_unpaid_billto === '') {
+                $message = 'Type the company or hotel to charge it to.'; $message_type = 'danger';
+                goto end_action;
+            }
 
             // ── Completion discount — server-side recompute (never trust client totals) ──
             $cd_type  = sanitize_input($_POST['complete_disc_type'] ?? 'none');
@@ -1784,7 +1805,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
 
                             $up_by  = (int)$_SESSION['user_id'];
                             $up_ins = $conn->prepare("INSERT INTO unpaids_corp (report_date, client_name, amount, series, created_by, appointment_id, order_id) VALUES (CURDATE(), ?, ?, ?, ?, ?, ?)");
-                            $up_series = 'APT-' . $appt_id;
+                            $up_series = ($cp_is_charge ? 'CHARGE APT-' : 'APT-') . $appt_id;
                             $up_ins->bind_param("sdsiii", $unpaid_name, $unpaid_amount, $up_series, $up_by, $appt_id, $oi_r2['id']);
                             $up_ins->execute(); $up_ins->close();
                         }
@@ -5407,7 +5428,7 @@ function closeCompleteModal() {
 
 function cmSelectPayment(method) {
     cmState.payMethod = method;
-    ['cash','swiper','qrph','bank','unpaid'].forEach(function(m) {
+    ['cash','card','qrph','bank','unpaid'].forEach(function(m) {
         var btn = document.getElementById('cm-pay-' + m);
         if (!btn) return;
         btn.style.borderColor = m === method ? '#C96A2C' : '#e5e7eb';
@@ -5640,7 +5661,7 @@ function submitComplete() {
             <div id="gp-guests" style="display:flex;flex-direction:column;gap:0.6rem;"></div>
             <label style="font-size:0.78rem;font-weight:600;color:var(--brown);display:block;margin:1rem 0 0.4rem;">Payment Method</label>
             <select id="gp-method" style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.88rem;">
-                <option value="cash">Cash</option><option value="swiper">Swiper</option><option value="gcash">GCash</option>
+                <option value="cash">Cash</option><option value="gcash">GCash</option>
                 <option value="maya">Maya</option><option value="card">Card</option><option value="qrph">QR Ph</option>
             </select>
             <div style="display:flex;justify-content:space-between;font-weight:800;font-size:1rem;color:var(--brown);margin-top:1rem;padding-top:0.6rem;border-top:1px solid var(--border2);">
@@ -5769,7 +5790,6 @@ function submitGroupPay() {
             <select id="ci-pay-method-select"
                     style="width:100%;padding:0.55rem 0.75rem;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);font-size:0.88rem;color:#1a1a1a;">
                 <option value="cash">Cash</option>
-                <option value="swiper">Swiper</option>
                 <option value="gcash">GCash</option>
                 <option value="maya">Maya</option>
                 <option value="card">Card</option>
@@ -5940,10 +5960,10 @@ function submitGroupPay() {
                     <div style="font-size:1rem;"></div>
                     <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Cash</div>
                 </div>
-                <div id="cm-pay-swiper" onclick="cmSelectPayment('swiper')"
+                <div id="cm-pay-card" onclick="cmSelectPayment('card')"
                      style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">
                     <div style="font-size:1rem;"></div>
-                    <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Swiper</div>
+                    <div style="font-size:0.72rem;font-weight:700;margin-top:2px;color:#3B2A1A;">Card</div>
                 </div>
                 <div id="cm-pay-qrph" onclick="cmSelectPayment('qrph')"
                      style="padding:0.7rem 0.4rem;border:2px solid #e5e7eb;border-radius:10px;text-align:center;cursor:pointer;transition:all .15s;">

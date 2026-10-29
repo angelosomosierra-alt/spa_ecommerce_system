@@ -1057,7 +1057,7 @@ var QB_PAYMENT_METHODS = <?php
     // Staff are recording how a walk-in/counter customer actually paid, not
     // processing an online gateway transaction — so this list isn't gated by
     // ONLINE_PAYMENT_ENABLED (that flag only controls customer self-checkout).
-    $pm_wk = ['cash' => 'Cash', 'gcash' => 'GCash', 'maya' => 'Maya', 'qrph' => 'QR Ph', 'card' => 'Card', 'swiper' => 'Swiper'];
+    $pm_wk = ['cash' => 'Cash', 'gcash' => 'GCash', 'maya' => 'Maya', 'qrph' => 'QR Ph', 'card' => 'Card']; // Swiper is the card machine: same as Card
     $qb_pm_list = [];
     foreach ($pm_wk as $pmv => $pml) {
         $qb_pm_list[] = ['value' => $pmv, 'label' => $pml];

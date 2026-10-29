@@ -64,6 +64,8 @@ $DESK_MODAL = !empty($DESK_MODAL);
 .dk-chip { border:1px solid var(--border2); background:#fff; color:var(--brown); border-radius:20px; padding:0.35rem 0.8rem; font-size:0.78rem; font-weight:700; cursor:pointer; }
 .dk-chip.sel { background:var(--rust); border-color:var(--rust); color:#fff; }
 .dk-chip.sm { padding:0.2rem 0.6rem; font-size:0.72rem; }
+.dk-chip.owe.sel { background:#7A5300; border-color:#7A5300; }
+.dk-sep { width:1px; align-self:stretch; background:var(--border2); margin:0 0.15rem; }
 .dk-btn { border:1px solid var(--border2); background:#fff; color:var(--brown); border-radius:8px; padding:0.45rem 0.8rem; font-weight:700; cursor:pointer; font-size:0.82rem; }
 .dk-btn.primary { background:var(--rust); border-color:var(--rust); color:#fff; }
 .dk-btn.ok { background:var(--green); border-color:var(--green); color:#fff; }
@@ -173,7 +175,16 @@ $DESK_MODAL = !empty($DESK_MODAL);
 (function () {
     var CSRF = <?php echo json_encode(generate_csrf_token()); ?>;
     var MODAL = <?php echo $DESK_MODAL ? 'true' : 'false'; ?>;
-    var PAYS = [['cash','Cash'],['gcash','GCash'],['maya','Maya'],['qrph','QR Ph'],['card','Card'],['swiper','Swiper']];
+    var PAYS = [['cash','Cash'],['gcash','GCash'],['maya','Maya'],['qrph','QR Ph'],['card','Card']]; // Swiper = Card
+    // Nothing collected: Unpaid (the customer owes it) or Charge to (a company / hotel).
+    var OWE = [['unpaid','Unpaid'],['charge','Charge to']];
+    function owing() { return S.method === 'unpaid' || S.method === 'charge'; }
+    function oweTo() { var el = $('dkBill'); return ((el ? el.value : S.bill) || '').trim(); }
+    function oweHtml(a) {
+        if (S.method === 'charge') return '<div><label class="dk-lbl" for="dkBill">Charge to (company / hotel)</label><input id="dkBill" type="text" maxlength="120" placeholder="e.g. IQOR, Vermillion" value="' + esc(S.bill || '') + '"></div>';
+        if (S.method === 'unpaid') return '<p class="dk-hint">' + esc(a.name) + ' will owe it. It goes to Unpaids under this name until paid.</p>';
+        return '';
+    }
     // Fixed-rate discounts carry their %; Voucher (₱ or %) and Celebration (%)
     // take a value typed in by the receptionist.
     var DISC = [['none','None',0],['senior','Senior 20%',20],['pwd','PWD 20%',20],['employee','Staff <?php echo STAFF_DISCOUNT_PCT; ?>%',<?php echo STAFF_DISCOUNT_PCT; ?>],['voucher','Voucher',null],['celebration','Celebration',null]];
@@ -503,7 +514,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
     // ── Drawer ────────────────────────────────────────────────────────────
     function openDrawer(id, panel) {
         S.open = id; S.panel = panel === 'checkin' || panel === 'complete' ? panel : null;
-        S.method = null; S.dp = 1; S.vs = 'all'; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.vl = ''; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false; S.add = null; S.addProduct = null;
+        var oa = byId(id); S.method = oa && oa.owe ? oa.owe.m : null; S.bill = oa && oa.owe ? oa.owe.to || '' : ''; S.dp = 1; S.vs = 'all'; S.disc = 'none'; S.dv = ''; S.vt = 'fixed'; S.vl = ''; S.payNow = true; S.infl = false; S.schedFor = null; S.resched = S.cancelling = S.grp = false; S.add = null; S.addProduct = null;
         renderBoard(); renderDrawer(); $('dkDrawer').hidden = false; $('dkScrim').hidden = false;
     }
     function closeDrawer() {
@@ -781,14 +792,14 @@ $DESK_MODAL = !empty($DESK_MODAL);
             // Already paid but services were added since: only those are due now.
             payForm = '<div class="dk-inline">' + (b.paid ? '<p class="dk-hint">Already paid; the services added since come to ' + peso(b.due) + '.</p>' : '') +
                 '<div class="dk-bar"><button type="button" class="dk-chip' + (S.payNow ? ' sel' : '') + '" data-pn="1">Pay now</button><button type="button" class="dk-chip' + (!S.payNow ? ' sel' : '') + '" data-pn="0">Pay later</button></div>' +
-                (S.payNow ? (b.paid ? '' : discChips()) + methodChips(false) : '<p class="dk-hint">Payment will be collected when the session is done.</p>') + '</div>';
+                (S.payNow ? (b.paid || owing() ? '' : discChips()) + methodChips(true) + oweHtml(a) + (owing() ? '<p class="dk-hint">Discounts (senior, staff…) are chosen at Complete.</p>' : '') : '<p class="dk-hint">Payment will be collected when the session is done.</p>') + '</div>';
         } else if (S.panel === 'complete' && !isLastOpen(a)) {
             var nx = nextOf(a);
             payForm = '<div class="dk-inline"><p class="dk-hint">' + esc(a.service.name) + ' is done.' + (nx ? ' <b>' + esc(nx.service.name) + '</b> starts next (booked ' + tm(nx.when) + ').' : '') +
                 (owe.length || b.due > 0 ? ' Payment for all services is taken when the last service is completed.' : '') + '</p></div>';
         } else if (S.panel === 'complete' && (b.due > 0 || owe.length)) {
             payForm = '<div class="dk-inline">' + (b.paid ? '' : discChips()) + methodChips(true) +
-                (S.method === 'unpaid' ? '<div><label class="dk-lbl" for="dkBill">Charge to (company / hotel)</label><input id="dkBill" type="text" placeholder="' + esc(a.name) + '"></div>' : '') + '</div>';
+                (a.owe ? '<p class="dk-hint">Picked at check-in: <b>' + (a.owe.m === 'charge' ? 'Charge to ' + esc(a.owe.to) : 'Unpaid') + '</b>. You can still change it.</p>' : '') + oweHtml(a) + '</div>';
         }
 
         var groupHtml = '';
@@ -848,10 +859,10 @@ $DESK_MODAL = !empty($DESK_MODAL);
     }
     function goLabel(a) {
         var na = nextAction(a), b = a.bill; if (!na) return '';
-        if (na.k === 'checkin' && S.panel === 'checkin') return b.due <= 0 && !sibsOwe(a).length ? 'Check in' : (S.payNow ? 'Check in & take ' + peso(dueWithDisc(a)) : 'Check in · pay later');
+        if (na.k === 'checkin' && S.panel === 'checkin') return b.due <= 0 && !sibsOwe(a).length ? 'Check in' : (!S.payNow ? 'Check in · pay later' : S.method === 'unpaid' ? 'Check in · Unpaid' : S.method === 'charge' ? 'Check in · Charge to ' + (oweTo() || '…') : 'Check in & take ' + peso(dueWithDisc(a)));
         if (na.k === 'complete' && !isLastOpen(a)) return na.l;
         if (na.k === 'complete' && dueWithDisc(a) <= 0) return 'Complete';
-        if (na.k === 'complete' && S.panel === 'complete') return S.method === 'unpaid' ? 'Complete · charge to account' : 'Complete & take ' + peso(dueWithDisc(a));
+        if (na.k === 'complete' && S.panel === 'complete') return S.method === 'unpaid' ? 'Complete · Unpaid ' + peso(dueWithDisc(a)) : S.method === 'charge' ? 'Complete · Charge to ' + (oweTo() || '…') + ' ' + peso(dueWithDisc(a)) : 'Complete & take ' + peso(dueWithDisc(a));
         return na.l;
     }
     function discChips() {
@@ -892,9 +903,10 @@ $DESK_MODAL = !empty($DESK_MODAL);
         var map = {}; map[a.name] = { type: S.disc, value: parseFloat(S.dv) || 0, vtype: S.vt === 'percent' ? 'percent' : 'fixed', label: S.disc === 'voucher' ? voucherLabel(S.vs, S.vl) : '', scope: S.vs || 'all' };
         return post('pay_group', a.id, { booking_group: a.group, guest_discounts: JSON.stringify(map), pay_method: S.method }).then(step);
     }
-    function methodChips(allowAccount) {
-        var list = PAYS.concat(allowAccount ? [['unpaid', 'Charge to account']] : []);
-        return '<div><label class="dk-lbl">Payment method</label><div class="dk-bar">' + list.map(function (p) { return '<button type="button" class="dk-chip sm' + (S.method === p[0] ? ' sel' : '') + '" data-pm="' + p[0] + '">' + p[1] + '</button>'; }).join('') + '</div></div>';
+    function methodChips(allowOwe) {
+        function chip(p, cls) { return '<button type="button" class="dk-chip sm' + cls + (S.method === p[0] ? ' sel' : '') + '" data-pm="' + p[0] + '">' + p[1] + '</button>'; }
+        return '<div><label class="dk-lbl">Payment method</label><div class="dk-bar">' + PAYS.map(function (p) { return chip(p, ''); }).join('') +
+            (allowOwe ? '<span class="dk-sep" aria-hidden="true"></span>' + OWE.map(function (p) { return chip(p, ' owe'); }).join('') : '') + '</div></div>';
     }
 
     function wire(a) {
@@ -934,6 +946,7 @@ $DESK_MODAL = !empty($DESK_MODAL);
         W.querySelectorAll('[data-vs]').forEach(function (bt) { bt.onclick = function () { S.vs = bt.dataset.vs; renderDrawer(); }; });
         var dvEl = $('dkDv'); if (dvEl) dvEl.oninput = function () { S.dv = dvEl.value; var g = $('dkGo'), a2 = byId(S.open); if (g && a2) g.textContent = goLabel(a2); };
         W.querySelectorAll('[data-pm]').forEach(function (bt) { bt.onclick = function () { S.method = bt.dataset.pm; renderDrawer(); }; });
+        var bill = $('dkBill'); if (bill) bill.oninput = function () { S.bill = bill.value; var g = $('dkGo'); if (g) g.textContent = goLabel(a); };
 
         var go = $('dkGo');
         if (go) go.onclick = function () {
@@ -949,6 +962,10 @@ $DESK_MODAL = !empty($DESK_MODAL);
                 if (b.due <= 0 && !sibsOwe(a).length) return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
                 if (S.panel !== 'checkin') { S.panel = 'checkin'; S.grp = false; return renderDrawer(); }
                 if (S.payNow && !S.method) return err('Choose a payment method, or pick Pay later.');
+                if (S.payNow && owing()) {
+                    if (S.method === 'charge' && !oweTo()) return err('Type the company or hotel to charge it to.');
+                    return post('checkin_appointment', a.id, { pay_choice: 'later', owe_method: S.method, owe_to: S.method === 'charge' ? oweTo() : '' }, false, true);
+                }
                 if (S.payNow && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
                 if (S.payNow && sibsOwe(a).length) return payGuestThen(a, function () { return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true); });
                 if (!S.payNow && sibs(a).length) return post('checkin_appointment', a.id, { pay_choice: 'later' }, false, true);
@@ -972,12 +989,13 @@ $DESK_MODAL = !empty($DESK_MODAL);
                 if (oweAll > 0 && S.panel !== 'complete') { S.panel = 'complete'; S.grp = false; return renderDrawer(); }
                 if (oweAll > 0 && !S.method) return err('Choose how the customer paid.');
                 if (b.due > 0 && !b.paid && discNeedsValue(S)) return err(S.disc === 'voucher' ? 'Type the voucher amount.' : 'Type the celebration %.');
-                if (S.method !== 'unpaid' && sibsOwe(a).length) return payGuestThen(a, function () {
+                if (S.method === 'charge' && !oweTo()) return err('Type the company or hotel to charge it to.');
+                if (!owing() && sibsOwe(a).length) return payGuestThen(a, function () {
                     return post('complete', a.id, { complete_pay_method: S.method || 'cash', complete_unpaid_billto: '', complete_disc_type: 'none', complete_voucher_type: 'cash', complete_voucher_value: 0, voucher_label: '', celebration_discount: 0, advance_payment: 0 }, false, true);
                 });
                 return post('complete', a.id, {
                     // Nothing left to collect: recorded under the down payment's method.
-                    complete_pay_method: S.method || (b.advance > 0 && b.advance_method ? b.advance_method : 'cash'), complete_unpaid_billto: ($('dkBill') || {}).value || '',
+                    complete_pay_method: S.method || (b.advance > 0 && b.advance_method ? b.advance_method : 'cash'), complete_unpaid_billto: S.method === 'charge' ? oweTo() : '',
                     complete_disc_type: b.paid ? 'none' : S.disc, discount_people: a.people > 1 ? Math.min(S.dp || 1, a.people) : 0, complete_voucher_type: S.vt === 'percent' ? 'percent' : 'cash', complete_voucher_value: b.paid ? 0 : (parseFloat(S.dv) || 0), voucher_label: !b.paid && S.disc === 'voucher' ? voucherLabel(S.vs, S.vl) : '', voucher_scope: S.vs || 'all',
                     celebration_discount: 0, advance_payment: 0
                 }, false, true);
